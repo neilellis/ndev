@@ -156,6 +156,28 @@ async function setup($: EngineInterface, all: boolean) {
   return `Set-up: an agent is resolving ${result.typed.join('; ')} and will write ${CONFIG_FILE}.`
 }
 
+// What /dev shows: the commands, and this project's current settings.
+async function helpText($: EngineInterface) {
+  const g = project?.config.github
+  const github =
+    project === undefined ? 'project folder not known yet'
+    : project.error ? `${project.path} has an error (${project.error})`
+    : missingGitHub(project.config).length > 0 ? 'not set up; run /dev setup'
+    : g?.repo ? `${g.repo}, ${g.board ? `board ${g.board.owner} #${g.board.number}` : 'no project board'}`
+    : 'no GitHub repository'
+  return [
+    'neil-development commands:',
+    '  /dev                 show this help; run the set-up first if this project is not set up',
+    '  /dev help            show this help',
+    `  /dev setup           answer the set-up questions (GitHub repository and board) again; saved in ${CONFIG_FILE}`,
+    '  /dev-mode [light|heavy]              switch development mode (no value toggles)',
+    '  /dev-steering [interactive|auto]     switch steering (no value toggles)',
+    '  /learn               review this session for lessons and record them in ~/dev-wiki',
+    '',
+    `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
+  ].join('\n')
+}
+
 // Asks at session start when a value is missing. With no one to ask, says how to answer later.
 async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
   if (project === undefined || project.error) return
@@ -171,6 +193,11 @@ async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
 export const register: Register = on => {
   quality(on, () => project)
   on('session.start', async ($, e, next) => {
+    await $.command.register({
+      name: 'dev',
+      description: 'neil-development: show help (runs the set-up first if this project is not set up)',
+      argumentHint: '[help|setup]',
+    })
     await $.command.register({
       name: 'dev-mode',
       description: 'Switch development mode: light (work-light) or heavy (work-heavy)',
@@ -230,6 +257,16 @@ export const register: Register = on => {
     }
   })
 
+  // '' shows the help, or runs the set-up when this project has never answered it.
+  on('command.run', { command: 'dev' }, async ($, e) => {
+    const word = e.args.trim().toLowerCase()
+    if (word === 'setup') return { text: await setup($, true) }
+    if (word === 'help') return { text: await helpText($) }
+    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help or /dev setup.` }
+    if (project !== undefined && !project.error && missingGitHub(project.config).length > 0) return { text: await setup($, false) }
+    return { text: await helpText($) }
+  })
+
   on('command.run', { command: 'dev-setup' }, async $ => ({ text: await setup($, true) }))
 
   on('command.run', { command: 'learn' }, () => ({
@@ -258,7 +295,7 @@ export const register: Register = on => {
       brandingText(project?.config.branding),
       githubText(project?.config.github),
       WIKI_TEXT,
-      'The human switches these with /dev-mode and /dev-steering, sets the GitHub repository and board with /dev-setup, and asks for a lesson review with /learn.',
+      'The human lists the plugin commands with /dev, switches these with /dev-mode and /dev-steering, sets the GitHub repository and board with /dev setup (or /dev-setup), and asks for a lesson review with /learn.',
     ]
       .filter(Boolean)
       .join('\n\n')

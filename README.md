@@ -103,6 +103,11 @@ Claude follows the selected workflow.
 
 A command with no value toggles the switch.
 
+`/dev` lists the plugin's commands and shows the project's current settings. In a project that
+has not answered the set-up questions yet, `/dev` runs the set-up dialog first. `/dev help`
+always shows the help. `/dev setup` asks all the set-up questions again (the same as
+`/dev-setup`).
+
 ## Per-project settings: `.neil-dev.json`
 
 All the plugin's settings for a project live in one file at the project root, checked in with
@@ -127,7 +132,7 @@ the project. Every key is optional:
   missing values. It offers the git origin and the owner's boards. Choose an option, or type an
   answer under Other. An exact answer (`owner/name`, `3`, `owner/3`) is saved at once. A free
   answer ("the roadmap board") goes to an agent, which finds the value with `gh` and writes the
-  key. "Ask me later" saves nothing, and the next session asks again. Run `/dev-setup` to answer
+  key. "Ask me later" saves nothing, and the next session asks again. Run `/dev setup` (or `/dev-setup`) to answer
   all the questions again. With no one to ask (a non-interactive run), a message names
   `/dev-setup`. The scripts in `scripts/github/` and `scripts/board/` read these values. A value
   that is already in the environment (`GH_REPO`, `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER`) wins.
