@@ -21,11 +21,11 @@ CONFIG_SH="$DIR/../github/project-config.sh"
 die() { echo "board.sh: $1" >&2; [ -n "${2:-}" ] && echo "  Repair: $2" >&2; exit 2; }
 
 [ -f "$CONFIG_SH" ] || die "project-config.sh is missing at $CONFIG_SH" \
-  "reinstall the plugin (claude plugin update neil-development) so scripts/github/ sits beside scripts/board/"
+  "reinstall the plugin (claude plugin update ndev) so scripts/github/ sits beside scripts/board/"
 # shellcheck source=../github/project-config.sh
 . "$CONFIG_SH"
 [ -x "$GHSH" ] || die "gh.sh is missing or not executable at $GHSH" \
-  "reinstall the plugin (claude plugin update neil-development) so scripts/github/ sits beside scripts/board/"
+  "reinstall the plugin (claude plugin update ndev) so scripts/github/ sits beside scripts/board/"
 { [ -n "${GH_PROJECT_OWNER:-}" ] && [ -n "${GH_PROJECT_NUMBER:-}" ]; } \
   || die "no project board is set (GH_PROJECT_OWNER='${GH_PROJECT_OWNER:-}' GH_PROJECT_NUMBER='${GH_PROJECT_NUMBER:-}')" \
          "run /dev-setup in Claude Code to save the board in .neil-dev.json, or export GH_PROJECT_OWNER=<org-or-user> GH_PROJECT_NUMBER=<n> (find them with 'gh project list --owner <org>')"

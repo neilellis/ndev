@@ -1,4 +1,4 @@
-# neil-development
+# ndev (neil-development)
 
 The software factory: one place for the development procedures that repeat in every project.
 It is a Claude Code plugin. It holds the methodology, the workflow skills, the subagents and a
@@ -17,7 +17,7 @@ knowledge base. A project enables the plugin and gets all of them.
 
 ## Skills
 
-Each skill is `neil-development:<name>`. The table shows the first sentence of each skill's description; the skill's `SKILL.md` has the rest.
+Each skill is `ndev:<name>`. The table shows the first sentence of each skill's description; the skill's `SKILL.md` has the rest.
 
 | Skill | What it does |
 |---|---|
@@ -106,10 +106,16 @@ Claude follows the selected workflow.
 
 | Command | Values | Default | Effect |
 |---|---|---|---|
-| `/dev-mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
-| `/dev-steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
+| `/dev mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
+| `/dev steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
 
-A command with no value toggles the switch.
+A command with no value toggles the switch. The older names `/dev-mode`, `/dev-steering` and
+`/dev-setup` still work.
+
+`/dev` lists the plugin's commands and shows the project's current settings. In a project that
+has not answered the set-up questions yet, `/dev` runs the set-up dialog first. `/dev help`
+always shows the help. `/dev setup` asks all the set-up questions again (the same as
+`/dev-setup`).
 
 ## Per-project settings: `.neil-dev.json`
 
@@ -127,7 +133,7 @@ the project. Every key is optional:
 ```
 
 - `mode` and `steering` set the switches at session start. With no file, a session starts at
-  `light · interactive`. `/dev-mode` and `/dev-steering` write the new value back to the file;
+  `light · interactive`. `/dev mode` and `/dev steering` write the new value back to the file;
   commit it to share it.
 - `github` holds the project's GitHub repository and Projects v2 board, so no skill or script
   looks them up again. `null` means "none" (`"repo": null`, or `"board": null`). When a session
@@ -135,7 +141,7 @@ the project. Every key is optional:
   missing values. It offers the git origin and the owner's boards. Choose an option, or type an
   answer under Other. An exact answer (`owner/name`, `3`, `owner/3`) is saved at once. A free
   answer ("the roadmap board") goes to an agent, which finds the value with `gh` and writes the
-  key. "Ask me later" saves nothing, and the next session asks again. Run `/dev-setup` to answer
+  key. "Ask me later" saves nothing, and the next session asks again. Run `/dev setup` (or `/dev-setup`) to answer
   all the questions again. With no one to ask (a non-interactive run), a message names
   `/dev-setup`. The scripts in `scripts/github/` and `scripts/board/` read these values. A value
   that is already in the environment (`GH_REPO`, `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER`) wins.
@@ -177,7 +183,7 @@ and each pull request's checks in a pane.
 
 The loop first asks the agent that owns a pull request to fix it. When that agent does not
 answer, the loop gives the pull request to this session's model. The model reports the result with
-the `report` tool (`mcp__neil-development__report`): `pushed`, or `blocked` with the reason.
+the `report` tool (`mcp__ndev__report`): `pushed`, or `blocked` with the reason.
 
 ## Worktree init: scripts/init-project.sh
 
@@ -226,7 +232,7 @@ install the plugin.
     }
   },
   "enabledPlugins": {
-    "neil-development@neil-development": true
+    "ndev@neil-development": true
   }
 }
 ```
@@ -235,10 +241,14 @@ Or install it by hand:
 
 ```
 /plugin marketplace add neilellis/neil-development
-/plugin install neil-development@neil-development
+/plugin install ndev@neil-development
 ```
 
-Plugin skills are namespaced, for example `/neil-development:work-light`. A project skill with the
+The plugin was called `neil-development` before version 0.6.0. To move an existing install, run
+`/plugin uninstall ndev@neil-development`, then `/plugin install ndev@neil-development`,
+and change `enabledPlugins` in your settings to `"ndev@neil-development": true`.
+
+Plugin skills are namespaced, for example `/ndev:work-light`. A project skill with the
 same name stays separate. Delete the project copy when the plugin version replaces it.
 
 The repository is private. To install it, you must have read access on GitHub and a working

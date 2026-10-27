@@ -5,7 +5,7 @@ import type { EngineInterface } from 'claude-code'
 export const MARKER = '.ndev-inited'
 export const SCRIPT = 'scripts/init-project.sh'
 
-const SECTION = 'neil-development:init-project'
+const SECTION = 'ndev:init-project'
 const RERUN = `bash ${SCRIPT} && touch ${MARKER}`
 // $.process.run kills a child after ten minutes at most; a longer build is finished by the agent.
 const TIMEOUT_MS = 10 * 60_000
@@ -48,18 +48,18 @@ async function build($: EngineInterface, at: string) {
     ran = await $.process.run(['bash', `${at}/${SCRIPT}`], { cwd: at, timeoutMs: TIMEOUT_MS })
   } catch (error) {
     state = { kind: 'failed', detail: `${SCRIPT} did not finish: ${String(error).slice(0, 300)}` }
-    $.ui.toast(`neil-development: ${SCRIPT} did not finish: ${String(error).slice(0, 160)}`)
+    $.ui.toast(`ndev: ${SCRIPT} did not finish: ${String(error).slice(0, 160)}`)
     return
   }
   if (ran.exitCode !== 0) {
     const output = tail([ran.stdout, ran.stderr].filter(t => t.trim() !== '').join('\n'))
     state = { kind: 'failed', detail: `${SCRIPT} exited ${ran.exitCode}. Last ${TAIL_LINES} lines of its output:\n${output}` }
-    $.ui.toast(`neil-development: ${SCRIPT} exited ${ran.exitCode}: ${tail(ran.stderr || ran.stdout).split('\n').at(-1)?.slice(0, 160) ?? ''}`)
+    $.ui.toast(`ndev: ${SCRIPT} exited ${ran.exitCode}: ${tail(ran.stderr || ran.stdout).split('\n').at(-1)?.slice(0, 160) ?? ''}`)
     return
   }
   await $.fs.write(`${at}/${MARKER}`, `${new Date().toISOString()}\n`)
   state = { kind: 'done' }
-  $.ui.toast(`neil-development: ${SCRIPT} passed; this worktree is built.`)
+  $.ui.toast(`ndev: ${SCRIPT} passed; this worktree is built.`)
 }
 
 // Decides what this worktree needs, and starts the build when the script and the ignore rule are in place.
@@ -74,7 +74,7 @@ async function check($: EngineInterface, cwd: string) {
   if (ignore.exitCode !== 0) {
     const detail = ignore.exitCode === 1 ? 'git check-ignore exited 1' : `git check-ignore exited ${ignore.exitCode}: ${ignore.stderr.trim().slice(0, 160)}`
     state = { kind: 'not-ignored', detail }
-    $.ui.toast(`neil-development: ${MARKER} is not git-ignored, so ${SCRIPT} did not run. Repair: echo ${MARKER} >> .gitignore`)
+    $.ui.toast(`ndev: ${MARKER} is not git-ignored, so ${SCRIPT} did not run. Repair: echo ${MARKER} >> .gitignore`)
     return
   }
   if (!(await $.fs.exists(`${at}/${SCRIPT}`))) {
@@ -92,7 +92,7 @@ export async function startInitProject($: EngineInterface, cwd: string) {
   try {
     await check($, cwd)
   } catch (error) {
-    $.ui.toast(`neil-development: project init check failed: ${String(error).slice(0, 200)}`)
+    $.ui.toast(`ndev: project init check failed: ${String(error).slice(0, 200)}`)
   }
 }
 

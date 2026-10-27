@@ -1,6 +1,6 @@
 # <project name>
 
-<!-- Starter CLAUDE.md for a project that adopts the neil-development plugin.
+<!-- Starter CLAUDE.md for a project that adopts the ndev plugin.
      Replace every <placeholder>. Keep the core beliefs short: the plugin's kb holds the detail.
      Write in Simple English (kb/writing.md). Keep AGENTS.md the same as this file, or make it point here. -->
 

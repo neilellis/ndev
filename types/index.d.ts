@@ -109,7 +109,7 @@ export type Loop = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'neil-development': {
+    'ndev': {
       mode: Mode
       steering: Steering
       // The fix-all-prs loop (hooks/fix-all-prs.tsx).

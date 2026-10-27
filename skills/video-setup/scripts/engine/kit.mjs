@@ -1,14 +1,15 @@
 // The kit's copy in a project: which files it owns, whether anyone edited them, and whether the
 // plugin has a newer version. A project holds the engine in scripts/video-kit/, and
 // kit.lock.json records a hash of each file. The kit's source is the video-setup skill's scripts/
-// folder in the neil-development plugin.
+// folder in the ndev plugin.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
 export const PLUGIN = "video-kit";
-export const PLUGIN_ID = "neil-development";
+export const PLUGIN_ID = "ndev";
+export const MARKETPLACE = "neil-development";
 export const SKILL_PATH = "skills/video-setup/scripts";
 export const ENV = "VIDEO_KIT_SOURCE";
 export const ENGINE_DIR = "scripts/video-kit";
@@ -99,7 +100,7 @@ export function findSource(root) {
       return { dir, via: `Claude Code plugin ${pick.version} at ${pick.installPath}` };
     }
   }
-  const clone = path.join(plugins, "marketplaces", PLUGIN_ID, SKILL_PATH);
+  const clone = path.join(plugins, "marketplaces", MARKETPLACE, SKILL_PATH);
   if (looks(clone)) return { dir: clone, via: "Claude Code marketplace clone" };
   return null;
 }

@@ -113,7 +113,7 @@ async function main() {
     process.exit(2);
   }
   if (!existsSync(WAITER)) {
-    agent(`The pull request waiter is missing: ${WAITER}. Repair: reinstall the neil-development plugin (claude plugin update neil-development); it ships scripts/github/ at its root.`);
+    agent(`The pull request waiter is missing: ${WAITER}. Repair: reinstall the ndev plugin (claude plugin update ndev); it ships scripts/github/ at its root.`);
     process.exit(2);
   }
   const branch = must("git", ["branch", "--show-current"]);

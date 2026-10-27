@@ -3,7 +3,7 @@
   "owner": { "name": "Neil Ellis" },
   "plugins": [
     {
-      "name": "neil-development",
+      "name": "ndev",
       "source": "./",
       "description": "Development methodology, workflow skills, subagents and knowledge base."
     }

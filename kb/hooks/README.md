@@ -61,7 +61,7 @@ All four Claude Code hooks in one `.claude/settings.json`:
 
 ## Use them through the plugin
 
-The `neil-development` plugin can run the four Claude Code hooks for you, with no copy and no `.claude/settings.json` entry. It runs each script from the plugin's own `kb/hooks/`, gives it the same JSON payload on stdin that Claude Code gives, and sets its settings as environment variables.
+The `ndev` plugin can run the four Claude Code hooks for you, with no copy and no `.claude/settings.json` entry. It runs each script from the plugin's own `kb/hooks/`, gives it the same JSON payload on stdin that Claude Code gives, and sets its settings as environment variables.
 
 Each hook is opt-in per project. Add a `quality` key to `.neil-dev.json` at the project root (the git top level) and commit it. A hook that is not listed does not run. `{}` runs a hook with its defaults. A full example is in [templates/neil-dev.json](../../templates/neil-dev.json).
 

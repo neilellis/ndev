@@ -23,7 +23,7 @@ Read the skill that matches the task before starting:
 | Add or edit a guide page | `guide-pages` |
 | Add, replace or credit an image | `brand-assets` |
 | Any text, including agent files and skills | `copy` |
-| Any change, pull requests, tests, replies and rule changes | light-work, github, testing, i-have-adhd and harness-sync from the neil-development plugin |
+| Any change, pull requests, tests, replies and rule changes | light-work, github, testing, i-have-adhd and harness-sync from the ndev plugin |
 
 ## Work and approval
 

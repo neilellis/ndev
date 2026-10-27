@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-const SECTION = 'neil-development:dev-mode'
+const SECTION = 'ndev:dev-mode'
 
 type On = Parameters<Parameters<typeof test>[1]>[1]
 
@@ -17,7 +17,7 @@ const engine = (on: On, files: Map<string, string> = new Map(), wiki = true) => 
   const runs: string[][] = []
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   // The fix-all-prs loop registers its tool and timer at session start.
-  on('tool.register', () => ({ value: { tool: 'mcp__neil-development__report' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   on('clock.now', () => ({ value: 0 }))
   on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -62,7 +62,7 @@ test('a session starts light and interactive', async ($, on) => {
 
   const text = await section($)
   expect(text).toContain('LIGHT')
-  expect(text).toContain('neil-development:work-light')
+  expect(text).toContain('ndev:work-light')
   expect(text).toContain('INTERACTIVE')
 })
 
@@ -72,7 +72,7 @@ test('/dev-mode toggles to heavy and back', async ($, on) => {
 
   const ran = await $.command.run({ command: 'dev-mode', args: '' })
   expect(ran.text).toContain('Development mode is now heavy.')
-  expect(await section($)).toContain('neil-development:work-heavy')
+  expect(await section($)).toContain('ndev:work-heavy')
 
   await $.command.run({ command: 'dev-mode', args: '' })
   expect(await section($)).toContain('LIGHT')
@@ -86,10 +86,10 @@ test('/dev-steering auto tells the model not to stop for questions', async ($, o
   const text = await section($)
   expect(text).toContain('AUTO')
   expect(text).not.toContain('INTERACTIVE')
-  expect(text).toContain('neil-development:work-light-auto')
+  expect(text).toContain('ndev:work-light-auto')
 
   await $.command.run({ command: 'dev-mode', args: 'heavy' })
-  expect(await section($)).toContain('neil-development:work-heavy-auto')
+  expect(await section($)).toContain('ndev:work-heavy-auto')
 })
 
 test('an unknown value is refused and changes nothing', async ($, on) => {
@@ -107,7 +107,7 @@ test('the prompt names ~/dev-wiki and the dev-wiki skill', async ($, on) => {
 
   const text = await section($)
   expect(text).toContain('~/dev-wiki')
-  expect(text).toContain('neil-development:dev-wiki')
+  expect(text).toContain('ndev:dev-wiki')
 })
 
 test('/learn hands the model the review instruction', async ($, on) => {
@@ -124,7 +124,7 @@ test('a correction gets the record-the-lesson nudge; a plain prompt does not', a
   await start($)
 
   const corrected = await $.prompt.submit({ text: "No, don't poll the CI run." })
-  expect(corrected.context?.join(' ')).toContain('neil-development:dev-wiki')
+  expect(corrected.context?.join(' ')).toContain('ndev:dev-wiki')
 
   const plain = await $.prompt.submit({ text: 'Add a date column to the table.' })
   expect(plain.context ?? []).toHaveLength(0)
@@ -148,7 +148,7 @@ test('the project file sets the mode and steering', async ($, on) => {
   const text = await section($)
   expect(text).toContain('HEAVY')
   expect(text).toContain('AUTO')
-  expect(text).toContain('neil-development:work-heavy-auto')
+  expect(text).toContain('ndev:work-heavy-auto')
 })
 
 test('/dev-mode writes the project file and keeps its other keys', async ($, on) => {
@@ -220,3 +220,45 @@ for (const [label, bad] of [['an empty', '""'], ['an absolute', '"/Users/someone
     expect(toasts.join(' ')).toContain('"branding.path" must be a folder relative to the project root')
   })
 }
+
+test('/dev mode toggles and sets the mode like /dev-mode', async ($, on) => {
+  const files = new Map<string, string>()
+  engine(on, files)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'mode' })
+  expect(ran.text).toContain('Development mode is now heavy.')
+  expect(await section($)).toContain('ndev:work-heavy')
+
+  await $.command.run({ command: 'dev', args: 'Mode light' })
+  expect(await section($)).toContain('LIGHT')
+  expect(JSON.parse(files.get(CONFIG) ?? '{}').mode).toBe('light')
+})
+
+test('/dev steering auto sets the steering like /dev-steering', async ($, on) => {
+  engine(on)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'steering auto' })
+  expect(ran.text).toContain('Steering is now auto.')
+  expect(await section($)).toContain('ndev:work-light-auto')
+})
+
+test('/dev mode with an unknown value names /dev mode in the refusal', async ($, on) => {
+  engine(on)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'mode medium' })
+  expect(ran.text).toContain('"medium" is not a mode')
+  expect(ran.text).toContain('/dev mode heavy')
+  expect(await section($)).toContain('LIGHT')
+})
+
+test('the /dev help lists /dev mode and /dev steering', async ($, on) => {
+  engine(on)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'help' })
+  expect(ran.text).toContain('/dev mode [light|heavy]')
+  expect(ran.text).toContain('/dev steering [interactive|auto]')
+})

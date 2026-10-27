@@ -10,7 +10,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
 
-const PLUGIN = 'neil-development'
+const PLUGIN = 'ndev'
 
 export type QualityConfig = {
   editedFileGuards?: { venv?: string }

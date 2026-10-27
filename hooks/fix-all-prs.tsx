@@ -10,7 +10,7 @@ const TICK_MS = 60_000
 const MAX_ROUNDS = 3
 // How long an owning agent has to answer before this session's model takes the pull request.
 const ASK_WAIT_MS = 30 * 60_000
-const REPORT_TOOL = 'mcp__neil-development__report'
+const REPORT_TOOL = 'mcp__ndev__report'
 // After a GitHub error the loop waits 1, 2, 4… minutes before the next try, never longer than this.
 const MAX_BACKOFF_MS = 30 * 60_000
 // Refused merges of one pull request before the loop records it as blocked.
@@ -27,24 +27,24 @@ const STORAGE_WAIT_MS = 6 * 60 * 60_000
 const RERUN_GRACE_MS = 5 * 60_000
 
 const snapshot = atom(
-  { plugin: 'neil-development', key: 'snapshot' } as const,
+  { plugin: 'ndev', key: 'snapshot' } as const,
   { queue: [], rows: [], checkedAt: 0 } as Snapshot,
   { shape: 'snapshot-3' },
 )
 
 // What passed between this session and each pull request's owning agent, by pull request number.
-const comms = atom({ plugin: 'neil-development', key: 'comms' } as const, {} as Record<string, Comm>, { shape: 'comms-1' })
+const comms = atom({ plugin: 'ndev', key: 'comms' } as const, {} as Record<string, Comm>, { shape: 'comms-1' })
 
 // The loop: which pull request it is on, who is fixing it, and what became of the others.
 const loop = atom(
-  { plugin: 'neil-development', key: 'loop' } as const,
+  { plugin: 'ndev', key: 'loop' } as const,
   { phase: 'idle', attempts: 0, outcomes: {}, log: [] } as Loop,
   { shape: 'loop-1' },
 )
 
 // When this session last worked: a turn ended or a message arrived. In an owning session, the loop's
 // message compacts the conversation first past STALE_MS, since the prompt cache has gone cold by then.
-const activity = atom({ plugin: 'neil-development', key: 'activity' } as const, {} as { at?: number }, { shape: 'activity-1' })
+const activity = atom({ plugin: 'ndev', key: 'activity' } as const, {} as { at?: number }, { shape: 'activity-1' })
 const STALE_MS = 50 * 60_000
 
 type Check = { name?: string; context?: string; status?: string; conclusion?: string; state?: string }
@@ -772,7 +772,7 @@ async function compactIfStale($: EngineInterface, e: { origin: object; text: str
   const now = await $.clock.now()
   const at = (await read($, activity)).at ?? now
   await update($, activity, () => ({ at: now }))
-  const isFromLoop = 'plugin' in e.origin && e.origin.plugin === 'neil-development'
+  const isFromLoop = 'plugin' in e.origin && e.origin.plugin === 'ndev'
   if (!isFromLoop || now - at <= STALE_MS) return
   const pr = /PR #\d+/.exec(e.text)?.[0] ?? 'the pull request'
   const idle = `${Math.round((now - at) / 60_000)} minutes`

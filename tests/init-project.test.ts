@@ -21,7 +21,7 @@ const engine = (
   const ran: { argv: readonly string[]; cwd?: string }[] = []
   const toasts: string[] = []
   on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__neil-development__report' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   on('clock.now', () => ({ value: 0 }))
   on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -72,7 +72,7 @@ const section = async ($: Dollar) => {
     outputStyle: null,
     traits: [],
   })
-  return sections.find(s => s.id === 'neil-development:init-project')?.text
+  return sections.find(s => s.id === 'ndev:init-project')?.text
 }
 
 const builds = (ran: { argv: readonly string[]; cwd?: string }[]) => ran.filter(r => r.argv[0] === 'bash' && r.argv[1] === SCRIPT)

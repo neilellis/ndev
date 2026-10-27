@@ -91,7 +91,7 @@ export async function runSetup($: EngineInterface, loaded: LoadedConfig, all: bo
   const owner = repo ? repo.split('/')[0] : undefined
   const found: Found = owner ? await listBoards($, owner, loaded.root) : { boards: [] }
   if (found.error) {
-    $.ui.toast(`neil-development: ${found.error}. Repair: gh auth refresh -s read:project, then /dev-setup.`)
+    $.ui.toast(`ndev: ${found.error}. Repair: gh auth refresh -s read:project, then /dev-setup.`)
   }
   const shown = found.boards.slice(0, 2)
   const answer = await ask(
@@ -124,7 +124,7 @@ export async function runSetup($: EngineInterface, loaded: LoadedConfig, all: bo
 // The task for the agent that turns typed answers into the `github` key.
 export const agentPrompt = (path: string, known: Partial<GitHub>, typed: string[]) =>
   [
-    `Set the "github" key of ${path} from the user's answers to the neil-development set-up dialog.`,
+    `Set the "github" key of ${path} from the user's answers to the ndev set-up dialog.`,
     `Values already known: ${JSON.stringify(known)}.`,
     `The user typed: ${typed.join('; ')}.`,
     'Resolve each typed answer with gh: `gh repo view <name> --json nameWithOwner` for a repository, `gh project list --owner <owner> --format json` for a board (match by title or number).',
