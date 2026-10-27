@@ -1,0 +1,136 @@
+---
+name: work-light
+description: "The interactive lightweight development skill (light mode, the default). Implement fixes and features with a light solo workflow. Use for focused TDD, safe worktree isolation, and concurrent independent fixes without repeated planning, reviews, or status work."
+---
+
+# Light work
+
+One main agent owns each fix from diagnosis to PR. Small helpers keep its context focused.
+This is the everyday coding workflow. Use the `work-heavy` skill for multi-step features, cross-cutting or high-risk changes that need a plan, reviews and staged verification.
+Repository safety rules, required gates and domain rules still apply.
+Do not chain planning, TDD, review and board skills automatically. Read a specialist skill only when its rules apply.
+
+## Spend tokens on the fix
+
+- Batch independent reads and searches into one tool call. Keep dependent steps in order.
+- Use existing scripts for repeated setup, checks, reports and waits. If a repeated procedure has no helper, add a small tested script with clear results and failure exit codes, in the owning skill's `scripts/` folder. The `command-reuse` skill has the recipes.
+- Do not reread unchanged instructions or files already in context. Do not audit session history.
+- Never hide a failure inside a batch. Never lose an exit status through a pipe.
+- Keep successful output to a summary. Keep full logs in files for diagnosis.
+- In a long interactive run, put the coloured log level first. Never colour JSON or redirected logs.
+
+Never poll PR checks, deployments or local processes by hand: no loops of status calls, sleeps or log tails.
+Run the wait helper once in the foreground. Read its result when it returns. Then resume, do other useful work, or leave a pickup note.
+
+## Find the starting point
+
+1. Use the path from the error, issue, import or task note first.
+2. If the area is unknown, use the starting-point table in the project's CLAUDE.md or AGENTS.md, if it has one. Else read the project's wiki (start at its index) once and open only the relevant topic.
+3. Scope the first search to that file or package: `rg --files <dir>`, `rg -n -F <text>`.
+4. Use `ast-grep` for code structure. For callers, search both `NAME($$$)` and `$_.NAME($$$)`. Check aliases and string dispatch where the interface uses them. For an exhaustive structural search, use the `ast-grep` skill's `find.sh`.
+5. Widen to imports, callers or neighbouring packages only when a named question stays open.
+
+Keep a short path list in the task note and reuse it. If a known path is absent, make one scoped search and correct the stale map. Absence is not proof that the feature is gone.
+
+For an external API, find the installed version and the local call site before you search the web. Fetch the relevant section of the official documentation. Do not repeat a broad search.
+
+## Start once
+
+Collect the task status in one call, with `${CLAUDE_PLUGIN_ROOT}/scripts/work/work-status.sh`:
+
+```sh
+work-status.sh --repo <repo> --task <branch-slug> --fetch --json [--owned-worktree <abs-path>] [--base <branch>]
+```
+
+Use `--issue <n>`, `--pr <n>` or `--branch <name>` when you know it. The result gives matching PRs, CI state, branches, worktrees, pending changes and base freshness. Do not repeat those queries.
+
+Follow the status: `new`, `existing`, `resume`, `blocked` or `closed`. An error is not evidence of new work. A clean worktree does not prove ownership.
+Only for `new`, claim a worktree with `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh`:
+
+```sh
+worktree_claim.sh <repo> <task> origin/<base> [<worktree-parent>]
+```
+
+Pass the Orca workspace folder as `<worktree-parent>` when the project uses Orca (see the `orca-cli` skill). A claim failure stops work on that task. Never reset, remove or take over another session's worktree. Keep the base checkout untouched.
+
+Write one short task note: the symptom, the required behaviour, and `Test entry point:` (a public interface that shows the defect). Ask only about unresolved behaviour, scope or consequential design. Batch the questions.
+Write a plan only when interfaces, migrations or competing designs need a decision. Keep it to the decision, boundaries, risks and test evidence.
+If baseline health matters, check it once on the base commit. An unrelated baseline failure is recorded, not fixed, and not counted as a pass.
+
+## Fix with TDD
+
+1. Write a regression test through the chosen public interface.
+2. Run it. Confirm that the intended defect causes the failure. An import error or a missing dependency is not proof.
+3. Add the smallest fix. Run the test again.
+4. Run nearby tests after any refactor. Commit the coherent change.
+
+- Use independent expected values. Mock only external boundaries. Keep the regression test as the permanent guard.
+- Add integration or browser coverage only when it detects a different failure.
+- For an architectural guard, prove that a bad example fails and a valid example passes.
+- Documentation-only changes need validation of the artefact, not artificial failing tests.
+- Never hide a failure, weaken a rule, or add a recovery path that nobody approved.
+- Every error message prints the failed identifier and useful diagnostics. When the repair is known, the message names it.
+
+## Finish once
+
+Inspect the final diff for scope, accidental changes and missing acceptance criteria.
+For behaviour changes, get one independent review of specification and correctness. Give the reviewer the requirements, diff, constraints and test evidence, not your defence of the solution. A self-review is not an independent review; if no reviewer is available, report the review as pending.
+
+Choose the checks from the affected behaviour. Use the commands named in the project's CLAUDE.md or AGENTS.md:
+
+| Change | Evidence |
+|---|---|
+| Application code | Regression test and affected suites; lint and type checks; the repo's precheck command, if it has one. |
+| Dead code risk | The `deadcode` skill's sweep against the base. Resolve or explain each finding. |
+| Web behaviour or deployment | Build, end-to-end tests, and a smoke test of the affected behaviour on the real preview URL. |
+| Schema, auth, concurrency, external interfaces | Failure cases through the affected integration tests. |
+| Documentation or skills only | `git diff --check`; `${CLAUDE_PLUGIN_ROOT}/scripts/docs/readability.sh`; `test -f` for each changed reference; a skill validator if one is installed. A missing validator is an unrun check. |
+
+Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states.
+
+One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body: problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `r` skill before the PR leaves draft.
+
+Push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Hooks run. Never use `--no-verify` and never change the hooks path to skip them. Resolve base conflicts and commit before you continue.
+
+Wait for CI with `${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh`. Always pass `--skip-success`:
+
+```sh
+wait-for-pr-change.sh <pr> --skip-success --json
+```
+
+A change event is not a pass. Read the check conclusions for the intended commit. For a local process, use `${CLAUDE_PLUGIN_ROOT}/scripts/work/wait_for_process_end.sh <pid>`, then read the log and result. A process that ended is not a success.
+If you pause for CI, leave one pickup note: commit, completed evidence, pending checks, next action. On resume, read that note. Do not restart the workflow.
+Report done only with current evidence. Keep incomplete work in draft with a reason. A human merges. Keep the worktree while verification or revision still needs it.
+
+## Targeted helpers
+
+Claude: use Sonnet (`sonnet`). Codex: use Luna (`luna`). Use them for a tightly defined subtask that needs little judgement but fills the context with tool output. If the helper model is unavailable, say so and do the task locally. Do not silently switch to a more expensive model.
+
+The main agent owns the diagnosis, design, scope and result. Do not split each TDD step into a separate agent. Give the helper only:
+
+- the question or outcome;
+- the worktree, allowed files and input;
+- the command, the stop condition and the timeout;
+- the evidence and a short return format.
+
+| Task | Brief |
+|---|---|
+| Trace a call path | Find callers of the named interface in the named packages. Return paths, not file dumps. |
+| Diagnose a long log | Return the first causal error, its line and a short explanation. |
+| Wait for CI | Run the wait helper for the named PR and commit. Return changed check results and pending checks. |
+| Await an event | Run a bounded watcher for the named event or process exit. Return the evidence, failure or timeout. |
+| Simple refactor | Change the agreed symbol in the named files, run the named tests, return the diff summary. |
+| File cleanup | Remove only named, owned temporary outputs after proving no active task needs them. |
+
+Waiting belongs in scripts, also inside a helper. Tell an editing helper which files it owns and that other agents work nearby. Never delete another worktree, unpushed work or unknown files to make a task pass.
+
+## Several fixes at once
+
+- Give each independent fix its own worktree, branch and main agent context.
+- File separation does not prove independence. Check shared interfaces, schema, fixtures and runtime state. Keep coupled fixes together, in dependency order.
+- Use separate databases, ports and output paths. Serialise shared browsers, end-to-end runs and other exclusive resources.
+- After one fix lands, assess its effect on the others.
+- Keep unrelated discoveries out of the diff.
+- Keep the main agent on the user's chosen model. Reserve Astra (the escalation model) for an unresolved diagnosis, a consequential design decision or a risky review. Give it a bounded brief with the evidence and the decision needed.
+
+`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.

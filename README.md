@@ -1,0 +1,221 @@
+# neil-development
+
+The software factory: one place for the development procedures that repeat in every project.
+It is a Claude Code plugin. It holds the methodology, the workflow skills, the subagents and a
+knowledge base. A project enables the plugin and gets all of them.
+
+## What is in it
+
+| Path | Contents |
+|---|---|
+| `kb/` | The methodology as a knowledge base. Start at [`kb/README.md`](kb/README.md). Core beliefs are in [`kb/core-beliefs.md`](kb/core-beliefs.md). |
+| `skills/` | Workflow skills. A helper that only one skill uses stays in that skill's `scripts/` folder. |
+| `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`). See [`scripts/README.md`](scripts/README.md). |
+| `agents/` | Subagent definitions for board work, implementation, planning and review. |
+| `templates/` | A starter `CLAUDE.md` and a starter LLM wiki for a new project. |
+| `kb/hooks/` | Reusable hook scripts and a pre-push hook to copy into a project. |
+
+## Skills
+
+Each skill is `neil-development:<name>`. The table shows the first sentence of each skill's description; the skill's `SKILL.md` has the rest.
+
+| Skill | What it does |
+|---|---|
+| `adversarial-review` | Run an independent adversarial review of a pull request: a fresh agent gets only the diff and the quoted plan row, runs six checks and tries to break the… |
+| `archify` | Create polished, validated architecture, workflow, sequence, data-flow, and lifecycle/state diagrams as explorable standalone HTML with inline SVG,… |
+| `are-we-done` | Check whether the current work is actually finished. |
+| `ast-grep` | Search the codebase by parsed code shape. |
+| `clean-reader` | Review supplied documentation or video narration as a first-time reader, in a fresh Codex process that cannot read the application source. |
+| `command-reuse` | Reuse tested commands for local checks, saved logs, PR waits, and session audits. |
+| `copy` | Write or review user-visible copy: interface text, labels, errors, empty states, glossary definitions and accessible text. |
+| `cut-release` | Cut a tagged GitHub release from the default branch. |
+| `database` | Review schema changes, foreign keys, deletion behaviour and database integrity in the repository. |
+| `deadcode` | Find unused Python and TypeScript names introduced by the current branch. |
+| `dev-wiki` | Read and grow the living development wiki at ~/dev-wiki. |
+| `diagram-design` | Create architecture, architecture delta, IT current-state, flowchart, sequence, state machine, ER/data model, timeline, swimlane, quadrant, radar/spider,… |
+| `doc-coverage` | Audit gaps in project documentation by concept and audience, and refresh the project's documentation coverage report. |
+| `docs` | Locate and maintain project documentation, wiki knowledge and human-facing explainers. |
+| `docs-legibility` | Check and fix user-facing docs pages so a new reader understands them: plain English, short sentences, no unnecessary jargon, each necessary technical term… |
+| `docs-sync` | Bring user-facing docs pages back in line with code or wiki changes, using a docs map in page front matter. |
+| `docs-team` | Coordinate a hierarchy of agents (coordinator, unit leads, module writers, a diagram pass and fresh evaluators) that writes and audits a user-facing… |
+| `fix-all-prs` | Fix and merge every outstanding open pull request one at a time, oldest first, working with the agents that already worked on each pull request. |
+| `fix-ci` | Fix failed checks and merge conflicts on the associated pull request until its current revision is green and mergeable. |
+| `for-codex` | Make this plugin's skills available to the OpenAI Codex CLI in one project, with symlinks into the Codex-only folder <project>/.codex/skills/. |
+| `forget` | Remove documentation and memory claims that code proves false after a feature, path, decision or command is removed, renamed or superseded. |
+| `github` | Operate GitHub issues, pull requests, checks, milestones, Actions runs and an optional project board through compact helper scripts. |
+| `goal-work` | Work every open GitHub issue that matches a condition the user gives, through grouped, mergeable pull requests, with the user reviewing the plan and the… |
+| `green-merge-open-prs` | Green and merge each eligible open pull request in number order, one at a time, into origin/main. |
+| `harness-sync` | Compare the Claude and Codex harness trees and reconcile a difference between them, before or after any change that copies one skill tree onto the other. |
+| `hotfix` | Do the requested work directly on the main branch in the main checkout, with no worktree and no pull request, then push to origin main. |
+| `hyperfine` | Benchmark and compare command durations when a speed claim or before/after measurement is needed. |
+| `i-have-adhd` | Load before writing any reply to the user. |
+| `implement-spec` | Implement a provided specification and its linked tickets on one branch and in one pull request. |
+| `improve-agent` | Analyse an automated agent's run log and produce an evidence-based improvement plan for its prompt, skill, tools and guards. |
+| `milestone-release` | Publish a GitHub release from committed milestone release notes when the user explicitly asks to cut or publish it. |
+| `milestone-release-notes` | Produce stakeholder-facing release notes for a GitHub milestone by reading all included issues and merged PRs. |
+| `mobile-testing` | Capture and inspect the web app with Playwright mobile device emulation. |
+| `perf-review` | Review a specified file or directory for performance risks in algorithms, I/O, allocations, database access and connection use. |
+| `pick-up-prs` | Survey open pull requests, identify unfinished or blocked work, and continue each safely from its existing branch/worktree. |
+| `project-analysis` | Perform a scored, evidence-backed architecture and product health review of the repository and append the run to the project's ratings file. |
+| `r` | Alias of remember: record durable, non-obvious lessons from the session. |
+| `react-grab` | Continuously receive React Grab selections and act on their attached user instructions when a watch loop is requested. |
+| `remember` | Record durable, non-obvious lessons from the session in the correct project wiki, skill, guide or memory home. |
+| `report-work-done` | Summarize what actually shipped by reading merged pull requests in a requested time window, optionally filtered by author. |
+| `reset` | Close the current feature work, save it as a PR, remove its worktree, and freshen the base checkout; use --discard only to abandon a dead end. |
+| `resolving-merge-conflicts` | Use when you need to resolve an in-progress git merge/rebase conflict. |
+| `retro` | Review a completed coding session and identify improvements to navigation, checks, standards, instructions, information access and tool economy. |
+| `testing` | Apply the testing taxonomy and verification rules across Python and TypeScript, including guard integrity and minimal live-system tests. |
+| `ux-principles` | Apply the project's UX guidance to navigation, disclosure, touch, accessibility and feedback decisions. |
+| `video-docs` | Keep documentation videos true to the documentation they cite: trace each scene to its source pages, detect stale sources, choose the smallest rebuild,… |
+| `video-explainer` | Write and review an explainer video of 2 to 5 minutes that shows how something works and why it matters, with diagrams first. |
+| `video-finish` | Push the current video change and keep fixing its pull request until it is green and mergeable, ready for approval, with preview links to each changed scene. |
+| `video-how-to` | Write and review a how-to video that shows one task from start to a result the viewer can check, with the real product on screen. |
+| `video-images` | Find, add, credit or remove the images in a video: product assets, diagrams and Unsplash photography with its credits. |
+| `video-marketing` | Write and review a marketing film of about 60 seconds that tells a prospective client why to talk to you. |
+| `video-narration` | Write or change a video's narration, voices, pronunciation, pacing or captions, then regenerate and check the voice. |
+| `video-podcast-effect` | Explain or change the podcast effect that makes the synthetic narration sound like a person on a podcast mic: pause and pace jitter, room tone, EQ,… |
+| `video-publish` | Merge the current video change's pull request and confirm the production deployment plays the video. |
+| `video-render-review` | Render a video's stills and MP4, inspect them, show the user before-and-after comparisons and clips after each round of edits, and verify the final files. |
+| `video-scenes` | Change what a video shows: layout, on-screen text, animation, colours, word cues, or adding, removing and reordering scenes on the film page. |
+| `video-setup` | Set up the video kit in a project, start a new narrated video, update a project to the plugin's kit, or check that a project's copy of the kit is current. |
+| `video-types` | Choose the type of a narrated video (how-to, explainer or marketing) and apply the rules every type shares. |
+| `video-workflow` | Make any change to a narrated video built with the video kit, from the request to an approved pull request: classify the change, branch, edit, rebuild only… |
+| `what-do-you-need` | State exactly what input or approval you need from the user as clear, numbered questions with brief background. |
+| `wiki-lint` | Verify wiki structure, source citations and behavioural claims against the current repository, then repair documented drift. |
+| `work-heavy` | The interactive heavyweight development skill (heavy mode). |
+| `work-heavy-auto` | The non-interactive heavyweight development skill (heavy mode, auto steering). |
+| `work-interactive` | Design an underspecified feature with the user, resolve assumptions and test entry points, then implement it or publish vertical-slice issues. |
+| `work-light` | The interactive lightweight development skill (light mode, the default). |
+| `work-light-auto` | The non-interactive lightweight development skill (light mode, auto steering). |
+
+Shared scripts that the skills call are in `scripts/` (see `scripts/README.md`).
+
+## Modes: light or heavy, interactive or auto
+
+The plugin's hooks module adds two switches to each session. The status line shows them, for
+example `dev: light · interactive`. The plugin adds a short section to the system prompt, so
+Claude follows the selected workflow.
+
+| Command | Values | Default | Effect |
+|---|---|---|---|
+| `/dev-mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
+| `/dev-steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
+
+A command with no value toggles the switch.
+
+## Per-project settings: `.neil-dev.json`
+
+All the plugin's settings for a project live in one file at the project root, checked in with
+the project. Every key is optional:
+
+```json
+{
+  "mode": "light",
+  "steering": "interactive",
+  "github": { "repo": "acme/app", "board": { "owner": "acme", "number": 3 } },
+  "branding": { "site": "https://brand.example", "name": "Acme", "guide": "https://brand.example/guide" },
+  "quality": { }
+}
+```
+
+- `mode` and `steering` set the switches at session start. With no file, a session starts at
+  `light · interactive`. `/dev-mode` and `/dev-steering` write the new value back to the file;
+  commit it to share it.
+- `github` holds the project's GitHub repository and Projects v2 board, so no skill or script
+  looks them up again. `null` means "none" (`"repo": null`, or `"board": null`). When a session
+  starts in a project that has no `github` key, or no board, a set-up dialog asks for the
+  missing values. It offers the git origin and the owner's boards. Choose an option, or type an
+  answer under Other. An exact answer (`owner/name`, `3`, `owner/3`) is saved at once. A free
+  answer ("the roadmap board") goes to an agent, which finds the value with `gh` and writes the
+  key. "Ask me later" saves nothing, and the next session asks again. Run `/dev-setup` to answer
+  all the questions again. With no one to ask (a non-interactive run), a message names
+  `/dev-setup`. The scripts in `scripts/github/` and `scripts/board/` read these values. A value
+  that is already in the environment (`GH_REPO`, `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER`) wins.
+- `branding` names the brand that the docs, diagram, copy and video skills apply. With no
+  `branding`, those skills do no branding and do not mention it.
+- `quality` turns on the quality-control hooks one by one (see [`kb/hooks/README.md`](kb/hooks/README.md)).
+  A hook that is not listed does not run.
+
+The plugin checks the file at session start. A bad value or an unknown key shows a message that
+names the file and the problem, and the file then has no effect until it is fixed. The plugin
+does not write to a file that has an error.
+
+
+The two switches pick the development skill:
+
+| | interactive (a human steers) | auto (nobody steers) |
+|---|---|---|
+| **light** | `work-light` | `work-light-auto` |
+| **heavy** | `work-heavy` | `work-heavy-auto` |
+
+The `-auto` skills deliver issues from the GitHub board's Ready column (or one issue with
+`--issue <n>`) through isolated PRs, and never merge. In auto steering, a task given straight in
+the prompt with no issue follows the interactive skill's method without stopping to ask.
+Older names: `work-light` was `light-work`, `work-heavy` was `work`, `work-light-auto` was
+`work-ready-simple` and `work-heavy-auto` was `work-ready`.
+
+Run the hooks module's tests with `claude plugin test .`.
+
+## The living wiki: ~/dev-wiki
+
+The plugin learns while you use it. The first session that starts with the plugin creates
+`~/dev-wiki` from the plugin's `kb/`, as a local git repository.
+
+- At the start of development work, Claude reads the `~/dev-wiki/wiki.md` index once.
+- When Claude learns a reusable lesson, the `dev-wiki` skill records it in the page that owns the
+  topic, writes one `.log/` file and commits it. Such a lesson is a correction, a non-obvious
+  cause, a guard that lied, or a procedure written twice.
+- When a prompt looks like a correction ("no, don't…", "from now on…"), the plugin reminds Claude
+  to record the lesson.
+- `/learn` asks for a review of the whole session.
+- A lesson that holds in two or more repositories goes back into `kb/` through a PR on this
+  repository. A human merges it.
+
+A project-only fact goes to that project's wiki (the `remember` skill), not to `~/dev-wiki`.
+
+## Install in a project
+
+Add this to the project's `.claude/settings.json`. Everyone who opens the project gets a prompt to
+install the plugin.
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "neil-development": {
+      "source": { "source": "github", "repo": "neilellis/neil-development" }
+    }
+  },
+  "enabledPlugins": {
+    "neil-development@neil-development": true
+  }
+}
+```
+
+Or install it by hand:
+
+```
+/plugin marketplace add neilellis/neil-development
+/plugin install neil-development@neil-development
+```
+
+Plugin skills are namespaced, for example `/neil-development:work-light`. A project skill with the
+same name stays separate. Delete the project copy when the plugin version replaces it.
+
+The repository is private. To install it, you must have read access on GitHub and a working
+`gh auth login` or Git credential on your computer.
+
+## Companion plugins
+
+The skills refer to these. Install them as well:
+
+- `mattpocock-skills` (from `claude-plugins-official`): `tdd`, `diagnosing-bugs`, `code-review`,
+  `codebase-design`, `domain-modeling`, `grilling`, `prototype`, `research`, `pr`.
+- `simple-english`: the ASD-STE100 writing rules that all prose follows.
+- `orca-cli`: worktrees, terminals and agent handoff in Orca.
+
+## Change the factory
+
+1. Make the change on a branch and open a PR.
+2. Write project-neutral text. A fact about one project goes in that project's wiki.
+3. Bump `version` in `.claude-plugin/plugin.json`.
+4. Run `claude plugin validate .` before you push.

@@ -1,0 +1,57 @@
+# Issues, sub-issues, milestones and the board
+
+All commands are in `${CLAUDE_PLUGIN_ROOT}/scripts/github/gh.sh`. The repository comes from `GH_REPO`, else the current checkout.
+
+## Write issues
+
+- Put the real-world impact first, then the requested change and any decision needed.
+- State scope and evidence. Define terms that a reader needs. Keep useful numbers. Keep it short.
+- When an issue depends on code, link the file with a commit-pinned permalink. Quote only the relevant 5 to 15 lines, and say why they matter.
+- For a visual defect, attach or link a screenshot with alt text, or say that a screenshot is still needed.
+- Read the final body once. Fix unclear wording and claims that the evidence does not support.
+- If the project marks unclear issues with a label, list them with `gh.sh labelled <label>`. Rewrite the issue before work starts, then `gh.sh unlabel <n> <label>`.
+- If `GH_PROSE_CHECK` is set, `issue-new` and `issue-edit` run it on the body file and refuse the post when it fails.
+
+## Issue commands
+
+| Command | Does | Output |
+|---|---|---|
+| `issue-new --title <t> --body-file <f> [--label <l>]...` | File an issue. Checks the body file. | `{url}` |
+| `issue-edit <n> [--title <t>] [--body-file <f>]` | Rewrite an issue with REST. | `{number,url}` |
+| `unlabel <n> <label>` | Remove a label from an issue or PR. | confirmation line |
+| `labelled <label>` | Open issues and PRs with the label. | `{number,title,kind,url}` per line |
+| `milestones` | All milestones with exact titles. | `{title,state,open_issues,closed_issues,due_on,number}` |
+| `issues-by-milestone "<title>"` | Issues in a milestone. | `{number,title,state,milestone,labels,url}` |
+| `dump.py issue <n> [--out DIR]` | Issue, comments and images in one markdown file. | `MARKDOWN: <path>`, `IMAGES_DIR: <path>` |
+
+## Sub-issues
+
+```bash
+gh.sh subissues link <parent> <child>...
+gh.sh subissues list <parent>
+```
+
+The script finds the child database ids. Sub-issues show on the parent's checklist.
+
+## Dependencies (blocked-by)
+
+```bash
+gh.sh blocked-by add|remove <n> <blocker>...
+gh.sh blocked-by list <n>
+gh.sh blocked-by blocking <n>
+```
+
+GitHub clears a dependency when the blocker closes. Record a block only when the blocker is work that is not yours. A dependency between two issues that you do yourself is a commit order inside one PR.
+
+## Project board (optional)
+
+Set `GH_PROJECT_OWNER` (user or organisation login) and `GH_PROJECT_NUMBER`. Find them with `gh project list --owner <owner>`. Board calls need the `project` scope: run `gh auth refresh -s project`, or set `GH_USE_KEYRING=1` when the ambient token lacks it.
+
+| Command | Does |
+|---|---|
+| `board items [<column>]` | Cards, optionally in one Status column. `{number,title,status,itemId,url}` per line. |
+| `board move <itemId> <column>` | Set Status by its display name, for example `"In progress"`. |
+| `board set <itemId> <field> <option>` | Set any single-select field, for example `Priority high`. |
+| `board add <issue> [<column>]` | Add an issue. Prints `{number,itemId}`. |
+
+Field and option ids are looked up by name at run time. Card moves need the item id (`PVTI_...`), not the issue number. Get it from `board items` or `board add`.

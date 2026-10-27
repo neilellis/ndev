@@ -1,0 +1,55 @@
+# Shared scripts
+
+Helpers that two or more skills, agents or hooks call. Each one has one copy here. A helper that only one skill uses stays in that skill's `scripts/` folder.
+
+Call a script as `${CLAUDE_PLUGIN_ROOT}/scripts/<area>/<name>`. Outside Claude Code (for example Codex through the `for-codex` skill), the plugin root is two folders above a skill's folder: `<skill folder>/../../scripts/<area>/<name>`. `for-codex` also links `<project>/.codex/scripts` to this folder, so that path works when a tool shortens it as text.
+
+Scripts find their siblings from their own real path (`pwd -P`). If a sibling is missing, the script prints the missing path and the repair, then exits non-zero.
+
+Tests are in `<area>/tests/`. Run them after a change.
+
+## github/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `gh.sh` | Compact GitHub reads and writes (issues, PRs, project board), one JSON object per line. | github, goal-work, work-heavy, work-heavy-auto, work-light-auto, diagram-design, agents board-survey and issue-implementer, `board/board.sh` |
+| `lib.sh` | Shared GitHub settings (repository, retries). Source it; do not run it. | the scripts in `github/`, `work/work_status.py`, command-reuse |
+| `project-config.sh` | Sets `GH_REPO`, `GH_PROJECT_OWNER` and `GH_PROJECT_NUMBER` from `.neil-dev.json`. Source it. | `github/` scripts, `board/board.sh` |
+| `dump.py` | Dumps an issue or PR to one markdown file and downloads its images. | github, command-reuse |
+| `merge-main-into-open-prs.sh` | Merges the base branch into each open PR branch. Wrapper for `merge_main_into_open_prs.py`. | github |
+| `merge_main_into_open_prs.py` | The merge logic, one worktree for each PR. | `merge-main-into-open-prs.sh` |
+| `wait-for-pr-change.sh` | Waits until a PR's status, checks, comments or reviews change. | github, fix-ci, fix-all-prs, green-merge-open-prs, pick-up-prs, work-heavy, work-light, command-reuse, video-finish (`finish.mjs`) |
+| `wait-for-run.sh` | Waits for one GitHub Actions run to change status. | github, work-heavy, video-publish |
+
+## board/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `board.sh` | Reads and moves cards on the Ready board (`ready`, `awaiting`, `items`, `move`). Calls `github/gh.sh`. | work-light-auto, work-heavy-auto, work-heavy, goal-work, agents board-survey, issue-implementer and work-heavy-auto-orchestrator, `work/pr_feedback.sh` |
+
+## work/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `worktree_claim.sh` | Claims a worktree for one task (issue number or branch slug), and refuses one with uncommitted or unpushed work. | work-light, work-light-auto, work-heavy, work-heavy-auto, goal-work, implement-spec, github, command-reuse, agent issue-implementer |
+| `peer_activity.sh` | Tells if another live session works in an issue's worktree. | work-heavy-auto, work-light-auto |
+| `gates.sh` | Artefact gates (plan of record, pinned tests, and others) that a unit must pass before it leaves the implement loop. | work-heavy, work-heavy-auto, work-light-auto, agent plan-scout |
+| `pr_feedback.sh` | Finds new human feedback on PRs. Calls `board/board.sh`. | work-heavy, work-heavy-auto |
+| `work-status.sh` | One call for PR, branch, worktree and ownership status. Wrapper for `work_status.py`. | work-light, fix-ci, pick-up-prs, command-reuse |
+| `work_status.py` | The status logic. | `work-status.sh` |
+| `wait_for_process_end.sh` | Waits until a process exits. | work-light, fix-ci, command-reuse |
+| `tests/test_gates.sh`, `tests/test_peer_activity.sh`, `tests/test_worktree_claim.sh` | Prove `gates.sh`, `peer_activity.sh` and `worktree_claim.sh` in both directions. | work-heavy-auto (its Tests line) |
+
+## docs/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `readability.sh` | Lints prose with the House vale style in `vale/`. | docs, work-light, work-heavy, work-heavy-auto (`work_ready_workflow.js`) |
+| `md-to-pdf.sh` | Renders a markdown file to an A4 PDF. | docs |
+| `vale/test.sh` | Proves every vale rule fires on `testdata/bad.md` and none fires on `testdata/good.md`. | docs |
+
+## wiki/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `init.sh` | Creates the development wiki from this plugin's `kb/`. | dev-wiki, `hooks/register.ts` (session start) |

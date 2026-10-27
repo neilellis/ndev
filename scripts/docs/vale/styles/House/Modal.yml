@@ -1,0 +1,11 @@
+extends: existence
+message: "Unapproved modal — 'should'. Write 'must' where it is required, and delete the sentence where it is optional (ASD-STE100 Rule 3.2; the `simple-english` skill)."
+level: error
+ignorecase: true
+# ERROR level, alone among the modals, because this one changes what an agent does.
+# A model reads "should" as optional and acts accordingly, so an instruction written
+# with it is a suggestion whatever the author meant. STE's ladder: a requirement
+# becomes "must"; a recommendation is stated as a fact or removed.
+tokens:
+  - '\bshould\b'
+  - "\\bshouldn't\\b"

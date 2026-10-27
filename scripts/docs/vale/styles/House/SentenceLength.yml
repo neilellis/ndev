@@ -1,0 +1,6 @@
+extends: occurrence
+message: "Sentence is over 25 words — split it (ASD-STE100 Rule 6.3; instructions get 20)."
+level: warning
+scope: sentence
+token: '\b\w+\b'
+max: 25

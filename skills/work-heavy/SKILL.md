@@ -1,0 +1,114 @@
+---
+name: work-heavy
+description: "The interactive heavyweight development skill (heavy mode). The heavyweight staged development method for larger or riskier changes: multi-step features, cross-cutting changes, high-risk work such as schema, auth or migrations, and any change that needs a written plan, independent reviews and staged verification. Uses worktrees, a draft PR as the plan of record, TDD, a two-axis review, verification, knowledge ingest and continuation state. Use `work-light` instead for focused fixes and small features; `work-light` is the default. Load `work-heavy` when the user or an orchestrator (`work-heavy-auto`, `work-light-auto`, `goal-work`, a preloading agent) names it."
+---
+
+# Development method (staged)
+
+Use this skill for one larger or riskier development task. For a focused fix or a small feature, use
+`work-light`, which is the default. Choose `work-heavy` when the change has several steps, crosses
+modules, touches schema, auth or migrations, or needs a plan, independent reviews and staged
+verification.
+
+Read only the reference for the current fragment:
+
+| Reference | Fragments |
+|---|---|
+| `references/setup.md` | F0 resume and blockers, F0b default-branch health, F0c `incomprehensible` label, F1 worktree and draft PR |
+| `references/planning.md` | F2 plan, F2a test entry point (seam) |
+| `references/prose.md`, `references/writing.md` | F2b writing for humans, F2c readability gate |
+| `references/implement.md` | F3 TDD, F3b comments, F3b1 naming, F3b2 logging, F3c two-axis review, F3d dead-code sweep |
+| `references/verify.md` | F4 verify loop, F5 knowledge ingest |
+| `references/state.md` | F6 continuation state, F6b review feedback, F7 questions |
+| `references/prs.md` | Batching, dependent work, new work found while you work |
+| `references/guards.md` | How tests lie. Read before you write a guard. |
+| `references/verify-traps.md` | Traps that give a false green. Read before you quote a number or believe a status. |
+
+Do the fragments in this order: F0 → F1 → F2 → F3 → F4 → F5 → F6. Use F7 when you are blocked. Do
+not wait invisibly.
+
+## Find the repository and its settings
+
+```bash
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)            # owner/name
+BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name) # default branch
+```
+
+Board work needs the GitHub project board owner and number (`GH_PROJECT_OWNER`,
+`GH_PROJECT_NUMBER`) and, if they differ from the defaults, its column names
+(`WORK_READY_COL_READY`, `_PROGRESS`, `_REVIEW`, `_AWAITING`, `_DONE`). Take them from the
+arguments or from the project's `CLAUDE.md`. If neither gives them, stop and say: "Set
+GH_PROJECT_OWNER and GH_PROJECT_NUMBER, and any column names that are not Ready, In progress,
+In review, Awaiting Feedback and Done, in `CLAUDE.md` or pass them as arguments." Board moves use
+`${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh` (`board.sh ready|awaiting|items|move <itemId> <status>`,
+status `backlog|ready|progress|review|awaiting|done`). Issue operations use the `github` skill's
+`gh.sh` (`gh.sh subissues link`, `gh.sh blocked-by list|add`, `gh.sh labelled incomprehensible`). Typecheck, lint, test, build and E2E
+commands come from the project's `CLAUDE.md`. If they are not there, find them once in the
+package manifests and record them in the PR body.
+
+## Golden rules
+
+1. Work in a worktree cut from `origin/$BASE`. Never edit, commit or push in the shared checkout.
+2. Use a feature branch and one PR per unit of work. A human merges. Never push to `$BASE`.
+3. Preserve unrelated user changes. Stage files by name.
+4. The draft PR body is the plan of record. It has a `Seam:` / `Test entry point:` line and one
+   `Closes #<n>` per issue it closes.
+5. Every commit carries the commit trailer that the repository or session requires.
+6. Write the failing test first and watch it fail for the intended reason.
+7. Mock only external boundaries: third-party APIs, the clock, the network.
+8. Find the cause before you write a fix. A mechanism nobody has run is a hypothesis.
+9. Commit before you mutation-test. Prove a guard in both directions: it fails with the defect and
+   passes without it.
+10. Run every gate from inside the worktree, with an absolute path.
+11. Claim green only on fresh evidence: a run you just did, with its exit status and its log.
+12. Never weaken, skip or silence a check to make it pass.
+13. A removal is not finished until the text that describes it is gone (`forget` skill).
+14. Run the typecheck and lint first. They are fast and they name the line.
+15. Never poll. Run one blocking wait helper in the foreground and read its result.
+
+## Waiting
+
+For PR checks, run `${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh` once in the foreground. For a local
+process, wait on its PID in the foreground (for example `while kill -0 <pid> 2>/dev/null; do sleep
+30; done` inside one command). Do not poll with `ps`, read partial logs or send progress updates.
+Read the log when the wait ends. A process that ended has not necessarily succeeded: check the exit
+status and the final log.
+
+## Record every failure
+
+Every `except` and every `catch` records the failure or lets it raise. A handler that swallows a
+failure makes a broken run look clean. A check that did not run is not a check that passed.
+
+Classify by severity. An unexpected failure is ERROR. A recoverable failure is WARNING. Control
+flow is INFO.
+
+## Error reporting
+
+Every error message prints the failed identifier and useful diagnostics: the exit code and the
+command's own output. When the cause or the safe repair is known, the message names the repair
+command. Do not make an operator find a known repair in a stack trace, a log path or the source.
+
+## TTY log visibility
+
+For a long interactive run, use the project's shared log formatter. It shows the coloured log level
+first, then a coloured stable context prefix (for example `component:stage:sub-stage:`), and it
+colours changing values such as progress counts. Set the context at stage boundaries. Do not put
+ANSI codes in log messages. Redirected and JSON logs contain no terminal escape codes.
+
+## Testing and verification
+
+Use the `testing` skill's unit, integration and E2E tiers. Choose the smallest observable entry
+point, keep live resources out of unit tests, and mutation-test architectural guards. Run focused
+checks, then the project typecheck and lint, then the affected suite. A docs-only change can skip
+code checks. For a code change, the dead-code sweep is part of final verification.
+
+## PR shape
+
+Batch small dependent issues into one branch and PR, in dependency order. Keep unrelated issues and
+risky schema, auth or migration work separate. A related discovery becomes a linked sub-issue that
+this PR carries. An unrelated discovery becomes a separate issue, with no PR. Check the closing
+references again after every PR body edit. Details: `references/prs.md`.
+
+When a procedure changes, update the reference that owns it and keep this file short.
+
+`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.

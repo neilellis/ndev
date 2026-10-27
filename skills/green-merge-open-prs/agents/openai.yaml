@@ -1,0 +1,4 @@
+interface:
+  display_name: "Green and merge PRs"
+  short_description: "Green and merge eligible pull requests"
+  default_prompt: "Use $green-merge-open-prs to green and merge my eligible open pull requests."

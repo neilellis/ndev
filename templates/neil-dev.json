@@ -1,0 +1,32 @@
+{
+  "mode": "light",
+  "steering": "interactive",
+  "github": {
+    "repo": "acme/app",
+    "board": {
+      "owner": "acme",
+      "number": 3
+    }
+  },
+  "branding": {
+    "site": "https://brand.example",
+    "name": "Acme",
+    "guide": "https://brand.example/guide"
+  },
+  "quality": {
+    "editedFileGuards": {
+      "venv": ".venv"
+    },
+    "precheckReminder": {
+      "command": "./scripts/precheck.sh"
+    },
+    "subscriptionWarning": {
+      "gateVar": "ALLOW_CLAUDE_CLI"
+    },
+    "worktreeSubmodules": {
+      "paths": [
+        ".claude/agents"
+      ]
+    }
+  }
+}

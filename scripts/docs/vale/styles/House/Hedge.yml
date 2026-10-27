@@ -1,0 +1,12 @@
+extends: existence
+message: "Unapproved modal — '%s'. STE allows can, will and must. Write 'can' for possibility, or restructure the sentence (Rule 3.2)."
+level: warning
+# WARNING, not error: these often sit in honest descriptive prose about what a change
+# does to a reader ("a test on a private helper breaks on every rename"). The fix is a
+# rewrite rather than a word swap, so a hard gate here would fire faster than anyone
+# can rewrite. `ignorecase` stays OFF so the month "May" is left alone.
+tokens:
+  - '\bmay\b'
+  - '\bmight\b'
+  - '\bcould\b'
+  - '\bwould\b'
