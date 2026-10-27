@@ -6,6 +6,8 @@ import { CONFIG_FILE, loadConfig, missingGitHub, saveSetting } from './config'
 import type { Branding, GitHub, LoadedConfig } from './config'
 import { agentPrompt, runSetup } from './setup'
 import { quality } from './quality'
+import { fixAllPrs, startFixAllPrs } from './fix-all-prs'
+import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
 
 const PLUGIN = 'neil-development'
 
@@ -70,7 +72,7 @@ const choose = <T extends string>(
 const brandingText = (b: Branding | undefined) =>
   b === undefined
     ? undefined
-    : `Branding: this project's brand is ${b.name ?? b.site}, defined at ${b.site}${b.guide ? `; its brand and writing guide is ${b.guide}` : ''}. Docs, diagram, copy and video skills take colours, type, logo and voice from it.`
+    : `Branding: this project's brand is ${b.name ?? b.site}, defined at ${b.site}${b.guide ? `; its brand and writing guide is ${b.guide}` : ''}${b.path ? `; its source is ${b.path}` : ''}. Docs, diagram, copy and video skills take colours, type, logo and voice from it.`
 
 // Only a project with a GitHub repository or board gets this line, so skills skip the look-up.
 const githubText = (g: GitHub | undefined) =>
@@ -170,6 +172,7 @@ async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
 
 export const register: Register = on => {
   quality(on, () => project)
+  fixAllPrs(on)
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'dev-mode',
@@ -189,7 +192,9 @@ export const register: Register = on => {
       name: 'learn',
       description: 'Review this session for development lessons and record them in ~/dev-wiki',
     })
+    await startFixAllPrs($)
     project = await loadConfig($, e.cwd)
+    await startInitProject($, e.cwd)
     if (project.error) {
       $.ui.toast(`neil-development: ${project.path}: ${project.error}. Using light · interactive until it is fixed.`)
     }
@@ -242,6 +247,7 @@ export const register: Register = on => {
       project = await loadConfig($, project.root)
       if (missingGitHub(project.config).length === 0) reloadPending = false
     }
+    await refreshInitProject($)
     return e.command === undefined && e.isMeta !== true && CORRECTION.test(e.text)
       ? next({ ...e, context: [...(e.context ?? []), CORRECTION_TEXT] })
       : next(e)
@@ -267,6 +273,7 @@ export const register: Register = on => {
       sections: [
         ...composed.sections,
         { id: `${PLUGIN}:dev-mode`, text, scope: 'session' },
+        ...[initProjectSection()].filter(s => s !== undefined),
       ],
     }
   })

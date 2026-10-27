@@ -1,0 +1,40 @@
+export const metadata = { title: "Accessibility" };
+
+# Accessibility
+
+The website aims for WCAG 2.2 AA. The same standard applies to documents and film.
+
+## Contrast
+
+Calculated from the token values when this site is built.
+
+<ContrastTable />
+
+- Body text needs at least 4.5:1. Large text (24px, or 19px bold) needs 3:1.
+- Faint `#6b8095` is for decorative labels such as map coordinates, never for information.
+- Forest and rust pass for text on white, but always pair them with a shape or label.
+
+## Interaction
+
+- Focus is always visible: a 3px `--ring` outline with a 5px offset.
+- Every interactive element works with a keyboard. The globe supports arrow keys, Home and Escape.
+- Provide a skip link to the main content.
+- Touch targets are at least 44px. See [Input and touch](/ux/input-and-touch).
+- Use semantic HTML: real buttons, links, headings and lists.
+- Give every icon-only button an accessible name. The feedback button has `aria-label="Leave us a message"`.
+- Every gesture has a single-tap or single-click alternative.
+- No time limits. Nothing closes or moves on before the reader is ready.
+- Never use colour alone. Pair it with a word, a shape or a position.
+- Error messages say what went wrong and how to fix it. See [Feedback and performance](/ux/feedback-and-performance).
+
+## Motion
+
+- Honour `prefers-reduced-motion`: stop rotation and entrance animation.
+- Give a visible control to pause anything that moves for more than five seconds.
+
+## Images and film
+
+- Describe images in alt text. Decorative images get empty alt text.
+- Say when a screenshot shows fictional demonstration data.
+- Film has burned-in captions and must make sense with the sound off. Keep a plain-text script (`script.md`) as a transcript.
+- No flashing content. Nothing flashes more than three times a second.

@@ -1,0 +1,45 @@
+export const metadata = { title: "Film overview" };
+
+# Film
+
+The {{name}} film is a short brand film for prospective corporate clients. It is built as a web page in the brand's own fonts and colours, timed to a generated narration, and rendered frame by frame to video. Use it as the reference for any {{name}} film or AI-generated video.
+
+<StillGrid>
+  <Still src="/ds/assets/placeholder.svg" alt="Hook: London photograph under a navy scrim with the question What will AI do to the way you work?" caption="Placeholder. Was: 0 · Hook" />
+  <Still src="/ds/assets/placeholder.svg" alt="Brand: the wordmark on a navy-to-blue gradient" caption="Placeholder. Was: 2 · Brand" />
+  <Still src="/ds/assets/placeholder.svg" alt="Three white service cards: Data, AI, Transformation" caption="Placeholder. Was: 3 · Services" />
+  <Still src="/ds/assets/placeholder.svg" alt="{{product}} screenshots on a soft gradient with three principle chips" caption="Placeholder. Was: 4 · {{product}}" />
+  <Still src="/ds/assets/placeholder.svg" alt="The concept globe beside the essay series" caption="Placeholder. Was: 6 · Globe and essays" />
+  <Still src="/ds/assets/placeholder.svg" alt="End card: Book a conversation, {{domain}}, on the end-card gradient" caption="Placeholder. Was: 8 · End card" />
+</StillGrid>
+
+## The specification
+
+| | |
+|---|---|
+| Frame | 1920×1080, 30fps |
+| Length | About 64s of narration, a 30s silent end-card hold, then an 8s credits page (102.5s in the current cut) |
+| File | H.264 MP4, CRF 18, `yuv420p`, `+faststart`, AAC narration |
+| Loudness | About −16dB mean, no clipping |
+| Sound | Narration only. No music bed in the current cut |
+| Captions | Burned in. The film must work with the sound off |
+| Audience | Prospective corporate clients |
+
+## How it is made
+
+1. **Script.** One line of narration per scene in `scripts/vo.json`, with the on-screen headline and look described in `script.md`.
+2. **Voice.** Each line is spoken by OpenAI text-to-speech and transcribed by Whisper for word timings.
+3. **Timeline.** Clip lengths, a tempo adjustment and fixed gaps give every scene a start and length, every word a time and every caption a slot.
+4. **Scenes.** Each scene is an HTML section styled with the brand tokens. Elements appear when the narrator says a given word.
+5. **Render.** A headless browser seeks to each frame's time, takes a screenshot, and FFmpeg encodes the frames with the audio.
+6. **Review.** Stills at 85% of each scene, a contact sheet, then the MP4 itself. See the [review checklist](/video/review).
+
+## Sections in this guide
+
+- [Structure and pacing](/video/structure): the scene plan and timing rules.
+- [Scenes and look](/video/scenes): backgrounds, layouts and cards for each kind of scene.
+- [On-screen type and captions](/video/captions): sizes, safe areas and caption rules.
+- [Narration](/video/narration): voice, script style and pronunciation.
+- [Motion](/video/motion): what moves, how and when.
+- [Footage and credits](/video/footage): finding, licensing and crediting photography.
+- [Generation prompts](/video/prompts): ready-to-use prompts for AI video and image tools.

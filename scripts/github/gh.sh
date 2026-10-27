@@ -4,7 +4,7 @@
 # Usage:
 #   gh.sh milestones                                   # all milestones with exact titles
 #   gh.sh issues-by-milestone "<title>"                # issues in a milestone (exact title)
-#   gh.sh issue-new --title <t> --body-file <f> [--label <l>]...
+#   gh.sh issue-new --title <t> --body-file <f> [--label <l>]... [--assignee <login>]... [--milestone <n>] [--type <t>]
 #   gh.sh issue-edit <n> [--title <t>] [--body-file <f>]
 #   gh.sh pr-new --title <t> --body-file <f> [--base <b>] [--head <h>] [--ready]   # draft by default
 #   gh.sh pr-edit <n> [--title <t>] [--body <t> | --body-file <f>]               # REST edit
@@ -15,7 +15,8 @@
 #   gh.sh blocked-by add|remove <n> <blocker>... | list <n> | blocking <n>
 #   gh.sh board items [<column>]                       # needs GH_PROJECT_OWNER, GH_PROJECT_NUMBER
 #   gh.sh board move <itemId> <column>                 # column display name, e.g. "In progress"
-#   gh.sh board set <itemId> <field> <option>          # any single-select field, e.g. Priority
+#   gh.sh board fields                                 # each field: {name,type,options}
+#   gh.sh board set <itemId> <field> <value>           # single-select, iteration, number, text or date
 #   gh.sh board add <issue> [<column>]
 #   gh.sh wait-for-pr <n> [options]                    # runs wait-for-pr-change.sh
 #   gh.sh help
@@ -46,7 +47,7 @@ check_body() {
 # --- project board ---------------------------------------------------------
 board_env() {
   [ -n "${GH_PROJECT_OWNER:-}" ] && [ -n "${GH_PROJECT_NUMBER:-}" ] \
-    || die "board commands need GH_PROJECT_OWNER and GH_PROJECT_NUMBER. Find them with: gh project list --owner <owner>"
+    || die "board commands need GH_PROJECT_OWNER and GH_PROJECT_NUMBER, and .neil-dev.json names no board. Repair: run /dev-setup in Claude Code, or find them with: gh project list --owner <owner>"
 }
 
 project_id() {
@@ -56,33 +57,74 @@ project_id() {
   printf '%s\n' "$id"
 }
 
-# Print "<fieldId> <optionId>" for a single-select field and option, matched by name (case-insensitive).
-field_option() {
-  local field="$1" option="$2" json
-  json="$(GH project field-list "$GH_PROJECT_NUMBER" --owner "$GH_PROJECT_OWNER" --format json 2>&1)" \
-    || die "cannot list fields of project $GH_PROJECT_OWNER/$GH_PROJECT_NUMBER: $json" 1
-  FIELD="$field" OPTION="$option" python3 -c '
-import json, os, sys
-data = json.load(sys.stdin)
-want_field, want_option = os.environ["FIELD"], os.environ["OPTION"]
-for field in data.get("fields", []):
-    if field.get("name", "").casefold() == want_field.casefold():
-        names = [opt.get("name", "") for opt in field.get("options", [])]
-        for opt in field.get("options", []):
-            if opt.get("name", "").casefold() == want_option.casefold():
-                print(field["id"], opt["id"]); sys.exit(0)
-        sys.exit("gh.sh: field %r has no option %r. Options: %s" % (want_field, want_option, names))
-sys.exit("gh.sh: project has no single-select field %r. List fields with: gh project field-list <number> --owner <owner>" % want_field)
-' <<<"$json"
+# Every board field with its type, single-select options and iterations, as GitHub's GraphQL JSON.
+board_fields_raw() {
+  local pid="$1" json
+  json="$(GH api graphql -f query='
+    query {
+      node(id: "'"$pid"'") {
+        ... on ProjectV2 {
+          fields(first: 100) {
+            nodes {
+              ... on ProjectV2FieldCommon { id name dataType }
+              ... on ProjectV2SingleSelectField { options { id name } }
+              ... on ProjectV2IterationField { configuration { iterations { id title startDate } } }
+            }
+          }
+        }
+      }
+    }' 2>&1)" \
+    || die "cannot list fields of project $GH_PROJECT_OWNER/$GH_PROJECT_NUMBER: $json. If the token lacks the project scope, run: gh auth refresh -s project (or set GH_USE_KEYRING=1)" 1
+  printf '%s\n' "$json"
 }
 
+# One line per field: {name,type,options}. options are single-select names or iteration titles.
+board_fields() {
+  board_fields_raw "$(project_id)" | jq -c '
+    .data.node.fields.nodes[] | select(.name)
+    | {name, type: .dataType, options: (((.options // []) | map(.name)) + ((.configuration.iterations // []) | map(.title)))}'
+}
+
+# Sets one field of a card, by field name and value, for every type a board item holds itself.
+# Names match case-insensitively. A bad name or value stops before any edit, listing the choices.
 board_set() {
-  local item="$1" field="$2" option="$3" pid ids
+  local item="$1" field="$2" value="$3" pid spec
   pid="$(project_id)"
-  ids="$(field_option "$field" "$option")" || exit 2
-  GH project item-edit --id "$item" --project-id "$pid" \
-    --field-id "${ids%% *}" --single-select-option-id "${ids##* }" >/dev/null
-  echo "set $item $field -> $option"
+  spec="$(board_fields_raw "$pid" | FIELD="$field" VALUE="$value" python3 -I -c '
+import json, os, re, sys
+want, value = os.environ["FIELD"], os.environ["VALUE"]
+fields = [f for f in json.load(sys.stdin)["data"]["node"]["fields"]["nodes"] if f.get("name")]
+field = next((f for f in fields if f["name"].casefold() == want.casefold()), None)
+if field is None:
+    sys.exit("gh.sh: project has no field %r. Fields: %s" % (want, [f["name"] for f in fields]))
+kind = field.get("dataType")
+def pick(choices, key):
+    for c in choices:
+        if c[key].casefold() == value.casefold():
+            return c["id"]
+    sys.exit("gh.sh: field %r has no option %r. Options: %s" % (field["name"], value, [c[key] for c in choices]))
+if kind == "SINGLE_SELECT":
+    flag, val = "--single-select-option-id", pick(field.get("options", []), "name")
+elif kind == "ITERATION":
+    flag, val = "--iteration-id", pick(field.get("configuration", {}).get("iterations", []), "title")
+elif kind == "NUMBER":
+    try: float(value)
+    except ValueError: sys.exit("gh.sh: field %r is a number field; %r is not a number" % (field["name"], value))
+    flag, val = "--number", value
+elif kind == "DATE":
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        sys.exit("gh.sh: field %r is a date field; give YYYY-MM-DD, not %r" % (field["name"], value))
+    flag, val = "--date", value
+elif kind == "TEXT":
+    flag, val = "--text", value
+else:
+    sys.exit("gh.sh: field %r (%s) belongs to the issue, not the board card; set it on the issue (labels, assignees, milestone, title) with gh.sh issue-new or gh issue edit" % (field["name"], kind))
+print(field["id"]); print(flag); print(val)
+')" || exit 2
+  local fid flag val
+  { IFS= read -r fid; IFS= read -r flag; IFS= read -r val; } <<<"$spec"
+  GH project item-edit --id "$item" --project-id "$pid" --field-id "$fid" "$flag" "$val" >/dev/null
+  echo "set $item $field -> $value"
 }
 
 # Board cards, optionally filtered by Status column. A lean GraphQL query: it reads only Status.
@@ -128,19 +170,24 @@ case "$cmd" in
 
   issue-new)
     need_repo
-    title=""; bodyfile=""; labels=()
+    title=""; bodyfile=""; extra=()
+    usage="usage: gh.sh issue-new --title <t> --body-file <f> [--label <l>]... [--assignee <login>]... [--milestone <n>] [--type <t>]"
     while [ $# -gt 0 ]; do
       case "$1" in
         --title)     title="$2"; shift 2 ;;
         --body-file) bodyfile="$2"; shift 2 ;;
-        --label)     labels+=(-f "labels[]=$2"); shift 2 ;;
-        *) die "usage: gh.sh issue-new --title <t> --body-file <f> [--label <l>]..." ;;
+        --label)     extra+=(-f "labels[]=$2"); shift 2 ;;
+        --assignee)  extra+=(-f "assignees[]=$2"); shift 2 ;;
+        --milestone) [[ "$2" =~ ^[0-9]+$ ]] || die "issue-new: --milestone takes the milestone number (gh.sh milestones), not '$2'"
+                     extra+=(-F "milestone=$2"); shift 2 ;;
+        --type)      extra+=(-f "type=$2"); shift 2 ;;
+        *) die "$usage" ;;
       esac
     done
     [ -n "$title" ] && [ -n "$bodyfile" ] || die "issue-new: --title and --body-file are both required"
     check_body "$bodyfile"
-    url="$(GH api -X POST "repos/$REPO/issues" -f "title=$title" -F "body=@$bodyfile" ${labels[@]+"${labels[@]}"} --jq '.html_url')"
-    echo "{\"url\": \"$url\"}"
+    GH api -X POST "repos/$REPO/issues" -f "title=$title" -F "body=@$bodyfile" ${extra[@]+"${extra[@]}"} \
+      --jq '{number, url: .html_url}' | jq -c .
     ;;
 
   issue-edit)
@@ -284,7 +331,8 @@ if n == 0:
     case "$sub" in
       items) board_items "${1:-}" ;;
       move)  board_set "${1:?item id (PVTI_...) required}" Status "${2:?column name required}" ;;
-      set)   board_set "${1:?item id required}" "${2:?field name required}" "${3:?option name required}" ;;
+      set)   board_set "${1:?item id required}" "${2:?field name required}" "${3:?value required}" ;;
+      fields) board_fields ;;
       add)
         need_repo
         n="${1:?issue number required}"; column="${2:-}"
@@ -293,7 +341,7 @@ if n == 0:
         echo "{\"number\": $n, \"itemId\": \"$item\"}"
         [ -z "$column" ] || board_set "$item" Status "$column"
         ;;
-      *) die "usage: gh.sh board items [<column>] | move <itemId> <column> | set <itemId> <field> <option> | add <issue> [<column>]" ;;
+      *) die "usage: gh.sh board items [<column>] | fields | move <itemId> <column> | set <itemId> <field> <value> | add <issue> [<column>]" ;;
     esac
     ;;
 

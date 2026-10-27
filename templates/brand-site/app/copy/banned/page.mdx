@@ -1,0 +1,46 @@
+export const metadata = { title: "Banned words" };
+
+# Banned words
+
+Words, phrases and sentence patterns to keep out of {{name}} text. A word marked **Banned** has no place in plain English, so it must not appear. A word marked **Check** is an ordinary word that is often misused. Keep it when it carries a fact. A person must decide.
+
+The list is data. It is at [`/ds/copy/banned.json`](/ds/copy/banned.json), and the copy check in this repository reads it. AI tools can fetch the same file.
+
+## How the check works
+
+The copy check reads every guide page as documentation. It reads the README as technical documentation, and the agent files and the skills as agent text. A few technical terms, such as “functionality” and “framework”, are allowed in technical documentation only. It reports a **Banned** word as a failure. The build fails until the word is gone. It reports a **Check** word for a person to look at.
+
+The check reads only the text a reader sees. It does not check code, file names, link addresses, or text in curly quotation marks. So a quoted bad example, such as “leverage synergies”, is not a failure.
+
+Some checks apply only to the documentation, technical documentation and agent [registers](/copy), for example the checks on “should” and on contractions. Inside a live example (`<Demo>`) and between the markers `copy-check: marketing` and `copy-check: on`, the check uses the marketing register. Use the markers only for real source copy, such as the film script.
+
+## Add a new entry
+
+When a review finds a new word or pattern that makes {{name}} text worse, add it to the list in the same pull request.
+
+1. Open `public/ds/copy/banned.json`.
+2. For a word or phrase, add an entry to `words`. Give the `term`, the `group`, a `pattern`, the advice in `instead`, the `level` and the `source`.
+3. Use the level `ban` only for a word that has no place in plain English. If the word has an ordinary use, use `flag`. The page shows `flag` as **Check**.
+4. For a sentence pattern, add an entry to `constructions`. Give an `example` and a `fix`. Add a `pattern` only if a regular expression finds it without false alarms.
+5. Use the source `house` for an entry that a {{name}} review found.
+6. Run the checks. A new `ban` entry can find a word in existing pages. Fix those pages in the same pull request.
+
+## Words and phrases
+
+<BannedWords />
+
+## Sentence patterns
+
+These patterns are harder to find with a search. Most need a person to look for them.
+
+<BannedConstructions />
+
+## Source copy that uses a pattern
+
+The film’s opening headline uses the “It isn’t X. It’s Y.” pattern. The [Voice](/voice) page shows it as a headline example. It stays because it is approved source copy. Do not add new headlines in this form.
+
+The film also uses three short fragments: “Told. Shown. Measured.” and “Data. AI. Transformation.” These name real things, the three evidence labels and the three service areas, so they are not empty triples.
+
+## Sources
+
+<BannedSources />

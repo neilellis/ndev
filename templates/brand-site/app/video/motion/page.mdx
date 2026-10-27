@@ -1,0 +1,54 @@
+export const metadata = { title: "Motion" };
+
+# Motion
+
+Motion follows the narration. Things appear when they are mentioned, ease into place and then stay still. Nothing moves just to fill time.
+
+## Principles
+
+1. **Cue on the word.** Elements enter when the narrator says the word they illustrate.
+2. **Ease out, never bounce.** Quick start, soft landing.
+3. **One movement at a time.** Stagger entrances; do not animate everything at once.
+4. **Still is fine.** After an element arrives, it rests. Only photographs keep a slow drift.
+
+## Values
+
+| Movement | Value |
+|---|---|
+| Text entrance | Fade in and rise 42px, 0.7s, `power3.out` |
+| Image entrance | Fade in and rise 18px, 0.7s, `power3.out` |
+| Screenshot entrance | Fade in, scale 1.035 → 1, rise 24px, 0.8s, `power2.out` |
+| Principle chips | Fade in from 30px left, 0.6s, `power3.out` |
+| Essay titles | Fade in from 40px right, 0.55s, `power3.out` |
+| Progress bars | Grow to their value over 0.9s, `power2.out`, 0.15s after their cue |
+| Scene cross-fade | 0.55s, `power1.inOut` |
+| Ken Burns | Scale 1 → 1.09 across the visible scene, linear |
+| Screenshot drift | Scale 1 → 1.035 across the scene, linear |
+| Compass needle | −200° → 0° over 1.6s, `power3.out` (−120° over 1.4s on the end card) |
+| Captions | 0.12s fade, 8px rise |
+
+`power3.out` is close to CSS `cubic-bezier(0.215, 0.61, 0.355, 1)`, available as `--ease-film-enter`.
+
+## Cues
+
+Each element declares when it appears:
+
+```html
+<h2 data-in="s+0.3">…</h2>              <!-- 0.3s after the scene starts -->
+<div data-in="w:4:maps+0.2">…</div>     <!-- 0.2s after the narrator says "maps" in scene 4 -->
+<img data-kb="1,1.09" src="…">          <!-- Ken Burns from scale 1 to 1.09 -->
+```
+
+## Deterministic rendering
+
+The film is rendered by seeking to each frame’s time. Every frame must be a pure function of time:
+
+- Drive all animation from one GSAP timeline that is seeked, never played.
+- No CSS transitions or CSS animations.
+- No `Math.random()` or `Date.now()`. Use a seeded random function.
+- Canvas drawings (the network, the globe) are computed from the current time only.
+
+## The network and globe
+
+- **Network:** nodes ease in one by one, links draw from the decision point, and the hub glows briefly when the narrator says “decides”.
+- **Globe:** fades in and grows slightly over 1.2s, then rotates slowly; concepts reveal in turn, 0.16s apart.

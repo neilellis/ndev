@@ -1,0 +1,1225 @@
+{
+ "version": 1,
+ "description": "Words, phrases and constructions to keep out of {{name}} copy. Level 'ban' is for words with no place in plain English and fails the copy check. Level 'flag' is for ordinary words that are often misused: a person decides. Entries with 'registers' apply only to those registers. Entries with 'allow' do not apply in those registers.",
+ "sources": {
+  "banned-guide": "BANNED: The Definitive Guide, a personal writing style guide. Only the parts that apply to business documentation are used.",
+  "simple-english": "The simple-english skill (MIT licence), a paraphrase of ASD-STE100 Simplified Technical English.",
+  "house": "{{name}} house rules and reviews."
+ },
+ "groups": [
+  {
+   "id": "corporate",
+   "label": "Corporate and tech speak",
+   "why": "These words sound important and carry no fact. Say what the thing does, or give the number."
+  },
+  {
+   "id": "ai-vocabulary",
+   "label": "AI vocabulary",
+   "why": "Language models overuse these words. One alone is not wrong. A cluster makes text read as generated."
+  },
+  {
+   "id": "puffery",
+   "label": "Importance and legacy puffery",
+   "why": "These phrases say that something matters without showing why. Show the consequence instead."
+  },
+  {
+   "id": "promotional",
+   "label": "Brochure and hype words",
+   "why": "Advertising words tell the reader to be impressed. {{name}} is confident, not loud."
+  },
+  {
+   "id": "framing",
+   "label": "Pseudo-intellectual framing",
+   "why": "These frames perform analysis. Name the actual thing."
+  },
+  {
+   "id": "filler",
+   "label": "Filler and wordy phrases",
+   "why": "These phrases add words and no meaning. Use the short form, or delete the phrase."
+  },
+  {
+   "id": "strict",
+   "label": "Documentation, technical documentation and agent text only",
+   "why": "These registers must be clear to a reader who cannot ask a question. These words can make a rule optional or vague. Internal and marketing text can use them."
+  }
+ ],
+ "words": [
+  {
+   "term": "leverage",
+   "group": "corporate",
+   "pattern": "\\bleverage\\b",
+   "instead": "use",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "utilise",
+   "group": "corporate",
+   "pattern": "\\butilise\\b",
+   "instead": "use",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "utilize",
+   "group": "corporate",
+   "pattern": "\\butilize\\b",
+   "instead": "use",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "synergy",
+   "group": "corporate",
+   "pattern": "\\bsynergy\\b",
+   "instead": "name the shared benefit",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "synergies",
+   "group": "corporate",
+   "pattern": "\\bsynergies\\b",
+   "instead": "name the shared benefit",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "unlock",
+   "group": "corporate",
+   "pattern": "\\bunlock\\b",
+   "instead": "say what becomes possible",
+   "level": "flag",
+   "source": "house"
+  },
+  {
+   "term": "cutting-edge",
+   "group": "corporate",
+   "pattern": "\\bcutting-edge\\b",
+   "instead": "say what is new, or delete",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "best-in-class",
+   "group": "corporate",
+   "pattern": "\\bbest-in-class\\b",
+   "instead": "give the evidence, or delete",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "world-leading",
+   "group": "corporate",
+   "pattern": "\\bworld-leading\\b",
+   "instead": "give the evidence, or delete",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "game-changing",
+   "group": "corporate",
+   "pattern": "\\bgame-changing\\b",
+   "instead": "say what changes",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "game-changer",
+   "group": "corporate",
+   "pattern": "\\bgame-changer\\b",
+   "instead": "say what changes",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "revolutionary",
+   "group": "corporate",
+   "pattern": "\\brevolutionary\\b",
+   "instead": "say what changes",
+   "level": "flag",
+   "source": "house"
+  },
+  {
+   "term": "next-generation",
+   "group": "corporate",
+   "pattern": "\\bnext-generation\\b",
+   "instead": "say what is new",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "state-of-the-art",
+   "group": "corporate",
+   "pattern": "\\bstate-of-the-art\\b",
+   "instead": "give the property, or delete",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "paradigm shift",
+   "group": "corporate",
+   "pattern": "\\bparadigm shift\\b",
+   "instead": "say what changes",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "move the needle",
+   "group": "corporate",
+   "pattern": "\\bmove the needle\\b",
+   "instead": "say what improves, by how much",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "best practice",
+   "group": "corporate",
+   "pattern": "\\bbest practice\\b",
+   "instead": "name the practice",
+   "level": "flag",
+   "source": "house"
+  },
+  {
+   "term": "thought leadership",
+   "group": "corporate",
+   "pattern": "\\bthought leadership\\b",
+   "instead": "say what the work argues",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "empower",
+   "group": "corporate",
+   "pattern": "\\bempower\\b",
+   "instead": "say what people can now do",
+   "level": "flag",
+   "source": "house"
+  },
+  {
+   "term": "streamline",
+   "group": "corporate",
+   "pattern": "\\bstreamline\\b",
+   "instead": "make simpler, make faster",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "robust",
+   "group": "corporate",
+   "pattern": "\\brobust\\b",
+   "instead": "give the measurable property, or delete",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "seamless",
+   "group": "corporate",
+   "pattern": "\\bseamless\\b",
+   "instead": "say what happens",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "seamlessly",
+   "group": "corporate",
+   "pattern": "\\bseamlessly\\b",
+   "instead": "delete",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "holistic",
+   "group": "corporate",
+   "pattern": "\\bholistic\\b",
+   "instead": "say what is included",
+   "level": "flag",
+   "source": "house"
+  },
+  {
+   "term": "solutioning",
+   "group": "corporate",
+   "pattern": "\\bsolutioning\\b",
+   "instead": "designing a solution",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "deep dive",
+   "group": "corporate",
+   "pattern": "\\bdeep dive\\b",
+   "instead": "close look, review",
+   "level": "flag",
+   "source": "house"
+  },
+  {
+   "term": "circle back",
+   "group": "corporate",
+   "pattern": "\\bcircle back\\b",
+   "instead": "return to",
+   "level": "ban",
+   "source": "house"
+  },
+  {
+   "term": "functionality",
+   "group": "corporate",
+   "pattern": "\\bfunctionality\\b",
+   "instead": "function, feature",
+   "level": "flag",
+   "source": "simple-english",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "out of the box",
+   "group": "corporate",
+   "pattern": "\\bout of the box\\b",
+   "instead": "by default",
+   "level": "flag",
+   "source": "simple-english",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "under the hood",
+   "group": "corporate",
+   "pattern": "\\bunder the hood\\b",
+   "instead": "internally",
+   "level": "flag",
+   "source": "simple-english",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "transformative",
+   "group": "corporate",
+   "pattern": "\\btransformative\\b",
+   "instead": "say what changes",
+   "level": "flag",
+   "source": "house"
+  },
+  {
+   "term": "delve",
+   "group": "ai-vocabulary",
+   "pattern": "\\bdelve\\b",
+   "instead": "say the specific thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "delves",
+   "group": "ai-vocabulary",
+   "pattern": "\\bdelves\\b",
+   "instead": "say the specific thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "delving",
+   "group": "ai-vocabulary",
+   "pattern": "\\bdelving\\b",
+   "instead": "say the specific thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "tapestry",
+   "group": "ai-vocabulary",
+   "pattern": "\\btapestry\\b",
+   "instead": "say the specific thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "interplay",
+   "group": "ai-vocabulary",
+   "pattern": "\\binterplay\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "intricacies",
+   "group": "ai-vocabulary",
+   "pattern": "\\bintricacies\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "multifaceted",
+   "group": "ai-vocabulary",
+   "pattern": "\\bmultifaceted\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "foster",
+   "group": "ai-vocabulary",
+   "pattern": "\\bfoster\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "fostering",
+   "group": "ai-vocabulary",
+   "pattern": "\\bfostering\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "garner",
+   "group": "ai-vocabulary",
+   "pattern": "\\bgarner\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "garnered",
+   "group": "ai-vocabulary",
+   "pattern": "\\bgarnered\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "underscore",
+   "group": "ai-vocabulary",
+   "pattern": "\\bunderscore\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "underscores",
+   "group": "ai-vocabulary",
+   "pattern": "\\bunderscores\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "underscoring",
+   "group": "ai-vocabulary",
+   "pattern": "\\bunderscoring\\b",
+   "instead": "say the specific thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "showcase",
+   "group": "ai-vocabulary",
+   "pattern": "\\bshowcase\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "showcasing",
+   "group": "ai-vocabulary",
+   "pattern": "\\bshowcasing\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "pivotal",
+   "group": "ai-vocabulary",
+   "pattern": "\\bpivotal\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "vibrant",
+   "group": "ai-vocabulary",
+   "pattern": "\\bvibrant\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "intricate",
+   "group": "ai-vocabulary",
+   "pattern": "\\bintricate\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "undeniably",
+   "group": "ai-vocabulary",
+   "pattern": "\\bundeniably\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "unpack",
+   "group": "ai-vocabulary",
+   "pattern": "\\bunpack\\b",
+   "instead": "say the specific thing",
+   "level": "flag",
+   "source": "banned-guide",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "crucial",
+   "group": "ai-vocabulary",
+   "pattern": "\\bcrucial\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "vital",
+   "group": "ai-vocabulary",
+   "pattern": "\\bvital\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "profound",
+   "group": "ai-vocabulary",
+   "pattern": "\\bprofound\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "compelling",
+   "group": "ai-vocabulary",
+   "pattern": "\\bcompelling\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "nuanced",
+   "group": "ai-vocabulary",
+   "pattern": "\\bnuanced\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "seemingly",
+   "group": "ai-vocabulary",
+   "pattern": "\\bseemingly\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "arguably",
+   "group": "ai-vocabulary",
+   "pattern": "\\barguably\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "notably",
+   "group": "ai-vocabulary",
+   "pattern": "\\bnotably\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "importantly",
+   "group": "ai-vocabulary",
+   "pattern": "\\bimportantly\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "ultimately",
+   "group": "ai-vocabulary",
+   "pattern": "\\bultimately\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "fundamentally",
+   "group": "ai-vocabulary",
+   "pattern": "\\bfundamentally\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "inherently",
+   "group": "ai-vocabulary",
+   "pattern": "\\binherently\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "landscape",
+   "group": "ai-vocabulary",
+   "pattern": "\\blandscape\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "navigate",
+   "group": "ai-vocabulary",
+   "pattern": "\\bnavigate\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "enhance",
+   "group": "ai-vocabulary",
+   "pattern": "\\benhance\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "dynamics",
+   "group": "ai-vocabulary",
+   "pattern": "\\bdynamics\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "framework",
+   "group": "ai-vocabulary",
+   "pattern": "\\bframework\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "realm",
+   "group": "ai-vocabulary",
+   "pattern": "\\brealm\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "journey",
+   "group": "ai-vocabulary",
+   "pattern": "\\bjourney\\b",
+   "instead": "check the word carries a fact; if not, delete it",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "stands as a testament to",
+   "group": "puffery",
+   "pattern": "\\bstands as a testament to\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "a testament to",
+   "group": "puffery",
+   "pattern": "\\ba testament to\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "serves as a reminder",
+   "group": "puffery",
+   "pattern": "\\bserves as a reminder\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "enduring legacy",
+   "group": "puffery",
+   "pattern": "\\benduring legacy\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "lasting legacy",
+   "group": "puffery",
+   "pattern": "\\blasting legacy\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "indelible mark",
+   "group": "puffery",
+   "pattern": "\\bindelible mark\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "deeply rooted",
+   "group": "puffery",
+   "pattern": "\\bdeeply rooted\\b",
+   "instead": "show the consequence",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "of paramount importance",
+   "group": "puffery",
+   "pattern": "\\bof paramount importance\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "cannot be overstated",
+   "group": "puffery",
+   "pattern": "\\bcannot be overstated\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "plays a vital role",
+   "group": "puffery",
+   "pattern": "\\bplays a vital role\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "plays a pivotal role",
+   "group": "puffery",
+   "pattern": "\\bplays a pivotal role\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "plays a crucial role",
+   "group": "puffery",
+   "pattern": "\\bplays a crucial role\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "plays a key role",
+   "group": "puffery",
+   "pattern": "\\bplays a key role\\b",
+   "instead": "show the consequence",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "in the heart of",
+   "group": "promotional",
+   "pattern": "\\bin the heart of\\b",
+   "instead": "give the specific detail",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "boasts",
+   "group": "promotional",
+   "pattern": "\\bboasts\\b",
+   "instead": "give the specific detail",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "stunning",
+   "group": "promotional",
+   "pattern": "\\bstunning\\b",
+   "instead": "give the specific detail",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "rich tapestry",
+   "group": "promotional",
+   "pattern": "\\brich tapestry\\b",
+   "instead": "give the specific detail",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "the architecture of",
+   "group": "framing",
+   "pattern": "\\bthe architecture of\\b",
+   "instead": "name the actual thing",
+   "level": "flag",
+   "source": "banned-guide",
+   "allow": [
+    "technical-documentation"
+   ]
+  },
+  {
+   "term": "the geometry of",
+   "group": "framing",
+   "pattern": "\\bthe geometry of\\b",
+   "instead": "name the actual thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "the calculus of",
+   "group": "framing",
+   "pattern": "\\bthe calculus of\\b",
+   "instead": "name the actual thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "the grammar of",
+   "group": "framing",
+   "pattern": "\\bthe grammar of\\b",
+   "instead": "name the actual thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "the mathematics of",
+   "group": "framing",
+   "pattern": "\\bthe mathematics of\\b",
+   "instead": "name the actual thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "cut through the noise",
+   "group": "framing",
+   "pattern": "\\bcut through the noise\\b",
+   "instead": "name the actual thing",
+   "level": "ban",
+   "source": "banned-guide"
+  },
+  {
+   "term": "in order to",
+   "group": "filler",
+   "pattern": "\\bin order to\\b",
+   "instead": "to",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "prior to",
+   "group": "filler",
+   "pattern": "\\bprior to\\b",
+   "instead": "before",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "it is worth noting",
+   "group": "filler",
+   "pattern": "\\bit is worth noting\\b",
+   "instead": "delete; state the fact",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "it's worth noting",
+   "group": "filler",
+   "pattern": "\\bit's worth noting\\b",
+   "instead": "delete; state the fact",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "it is important to note",
+   "group": "filler",
+   "pattern": "\\bit is important to note\\b",
+   "instead": "delete; state the fact",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "needless to say",
+   "group": "filler",
+   "pattern": "\\bneedless to say\\b",
+   "instead": "delete",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "simply",
+   "group": "filler",
+   "pattern": "\\bsimply\\b",
+   "instead": "delete",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "effortlessly",
+   "group": "filler",
+   "pattern": "\\beffortlessly\\b",
+   "instead": "delete",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "enables you to",
+   "group": "filler",
+   "pattern": "\\benables you to\\b",
+   "instead": "you can",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "allows you to",
+   "group": "filler",
+   "pattern": "\\ballows you to\\b",
+   "instead": "you can",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "is designed to",
+   "group": "filler",
+   "pattern": "\\bis designed to\\b",
+   "instead": "say what it does",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "aims to",
+   "group": "filler",
+   "pattern": "\\baims to\\b",
+   "instead": "say what it does",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "facilitate",
+   "group": "filler",
+   "pattern": "\\bfacilitate\\b",
+   "instead": "help, make possible",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "dive into",
+   "group": "filler",
+   "pattern": "\\bdive into\\b",
+   "instead": "read, look at",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "when it comes to",
+   "group": "filler",
+   "pattern": "\\bwhen it comes to\\b",
+   "instead": "for",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "in the event that",
+   "group": "filler",
+   "pattern": "\\bin the event that\\b",
+   "instead": "if",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "due to the fact that",
+   "group": "filler",
+   "pattern": "\\bdue to the fact that\\b",
+   "instead": "because",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "a plethora of",
+   "group": "filler",
+   "pattern": "\\ba plethora of\\b",
+   "instead": "many",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "a myriad of",
+   "group": "filler",
+   "pattern": "\\ba myriad of\\b",
+   "instead": "many",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "at the end of the day",
+   "group": "filler",
+   "pattern": "\\bat the end of the day\\b",
+   "instead": "delete",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "going forward",
+   "group": "filler",
+   "pattern": "\\bgoing forward\\b",
+   "instead": "from now, or delete",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "changed everything",
+   "group": "filler",
+   "pattern": "\\bchanged everything\\b",
+   "instead": "say what changed",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "changes everything",
+   "group": "filler",
+   "pattern": "\\bchanges everything\\b",
+   "instead": "say what changes",
+   "level": "flag",
+   "source": "banned-guide"
+  },
+  {
+   "term": "e.g.",
+   "group": "filler",
+   "pattern": "\\be\\.g\\.",
+   "instead": "for example",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "i.e.",
+   "group": "filler",
+   "pattern": "\\bi\\.e\\.",
+   "instead": "that is",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "etc.",
+   "group": "filler",
+   "pattern": "\\betc\\.",
+   "instead": "name the items",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "and/or",
+   "group": "filler",
+   "pattern": "\\band/or\\b",
+   "instead": "pick one, or write “X, Y or both”",
+   "level": "ban",
+   "source": "simple-english"
+  },
+  {
+   "term": "just",
+   "group": "filler",
+   "pattern": "\\bjust\\b",
+   "instead": "delete it unless it means “only” or “recently”",
+   "level": "flag",
+   "source": "simple-english"
+  },
+  {
+   "term": "should",
+   "group": "strict",
+   "pattern": "\\bshould\\b",
+   "instead": "must, or state it as a fact",
+   "level": "flag",
+   "source": "simple-english",
+   "registers": [
+    "documentation",
+    "technical-documentation",
+    "agent"
+   ]
+  },
+  {
+   "term": "would",
+   "group": "strict",
+   "pattern": "\\bwould\\b",
+   "instead": "restructure: “If X, then Y”",
+   "level": "flag",
+   "source": "simple-english",
+   "registers": [
+    "documentation",
+    "technical-documentation",
+    "agent"
+   ]
+  },
+  {
+   "term": "might",
+   "group": "strict",
+   "pattern": "\\bmight\\b",
+   "instead": "can, or state the condition",
+   "level": "flag",
+   "source": "simple-english",
+   "registers": [
+    "documentation",
+    "technical-documentation",
+    "agent"
+   ]
+  },
+  {
+   "term": "could",
+   "group": "strict",
+   "pattern": "\\bcould\\b",
+   "instead": "can",
+   "level": "flag",
+   "source": "simple-english",
+   "registers": [
+    "documentation",
+    "technical-documentation",
+    "agent"
+   ]
+  },
+  {
+   "term": "may",
+   "group": "strict",
+   "pattern": "\\b(?:may|May(?!\\s+\\d))\\b",
+   "instead": "can",
+   "level": "flag",
+   "source": "simple-english",
+   "caseSensitive": true,
+   "registers": [
+    "documentation",
+    "technical-documentation",
+    "agent"
+   ]
+  },
+  {
+   "term": "contractions (isn’t, don’t, it’s, we’re…)",
+   "group": "strict",
+   "pattern": "\\b(?:[A-Za-z]+n[’']t|(?:it|that|there|here|what|who|let)[’']s|[A-Za-z]+[’'](?:re|ll|ve|d))\\b",
+   "instead": "write the full form",
+   "level": "flag",
+   "source": "simple-english",
+   "registers": [
+    "documentation",
+    "technical-documentation",
+    "agent"
+   ]
+  },
+  {
+   "term": "semicolon",
+   "group": "strict",
+   "pattern": ";(?=\\s)",
+   "instead": "write two sentences",
+   "level": "flag",
+   "source": "simple-english",
+   "registers": [
+    "documentation",
+    "technical-documentation",
+    "agent"
+   ],
+   "allow": [
+    "technical-documentation"
+   ]
+  }
+ ],
+ "constructions": [
+  {
+   "id": "negation",
+   "name": "“Not X, but Y” and “It isn’t X. It’s Y.”",
+   "source": "banned-guide",
+   "pattern": "\\bnot only\\b[^.]*\\bbut\\b|\\bit[’']?s not (?:about|just)\\b|\\bisn[’']t just\\b",
+   "example": "“It isn’t just a platform. It’s a partnership.”",
+   "fix": "State what it is. “{{product}} maps your teams, systems and AI agents together.”",
+   "note": "The film’s opening headline uses this pattern: “The risk isn’t capability. It’s coordination.” It stays as source copy. Do not add new uses."
+  },
+  {
+   "id": "triple",
+   "name": "Three fragments for effect",
+   "source": "banned-guide",
+   "example": "“Clarity. Control. Confidence.”",
+   "fix": "Say one specific thing. The house “Data · AI · Transformation” line names three real service areas, so it stays."
+  },
+  {
+   "id": "false-range",
+   "name": "False range: “from X to Y”",
+   "source": "banned-guide",
+   "example": "“From strategy to soul, from data to destiny.”",
+   "fix": "Use “from … to” only for two ends of one real scale: “from discovery to delivery”."
+  },
+  {
+   "id": "editorial-participle",
+   "name": "A trailing “-ing” clause that explains the meaning",
+   "source": "banned-guide",
+   "pattern": ",\\s+(?:highlighting|underscoring|showcasing|emphasising|emphasizing|reflecting|symbolising|symbolizing|demonstrating|illustrating)\\b",
+   "example": "“The council moved its data to one platform, highlighting its commitment to change.”",
+   "fix": "Give the fact and its result. “The council moved its data to one platform. Reports that took a week now take a day.”"
+  },
+  {
+   "id": "aphorism",
+   "name": "Poster lines",
+   "source": "banned-guide",
+   "example": "“In the end, transformation is about people.”",
+   "fix": "Cut it, or replace it with a claim the reader can test."
+  },
+  {
+   "id": "epic",
+   "name": "Epic tone for ordinary events",
+   "source": "banned-guide",
+   "example": "“A moment that changed everything for the organisation.”",
+   "fix": "Scale the words to the event, and say what changed."
+  },
+  {
+   "id": "echo",
+   "name": "Echo lines that repeat the same point",
+   "source": "banned-guide",
+   "example": "“We listen. We really listen.”",
+   "fix": "Keep the second sentence only if it adds a fact."
+  },
+  {
+   "id": "variation",
+   "name": "Different names for the same thing",
+   "source": "simple-english",
+   "example": "Calling one product “{{product}}”, “the platform”, “our tool” and “the map” on one page.",
+   "fix": "One item, one name. Repeat the name."
+  },
+  {
+   "id": "scenery",
+   "name": "Opening on scenery",
+   "source": "banned-guide",
+   "example": "“In today’s fast-moving digital landscape…”",
+   "fix": "Start with the reader’s problem or the point."
+  },
+  {
+   "id": "vague-something",
+   "name": "Vague “something” and “the weight of”",
+   "source": "banned-guide",
+   "example": "“Something shifts when teams see their data.”",
+   "fix": "Name what changes and for whom."
+  }
+ ],
+ "registers": {
+  "internal": "Notes, emails, reports and proposals inside {{name}}.",
+  "marketing": "The website, headlines, the film, articles and case studies.",
+  "documentation": "Guides, this brand guide, client documents, forms and error messages.",
+  "agent": "Agent files such as CLAUDE.md and AGENTS.md, skills and prompts.",
+  "technical-documentation": "READMEs, developer guides, runbooks, API and code documentation. Common technical terms are allowed."
+ }
+}

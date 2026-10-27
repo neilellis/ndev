@@ -1,0 +1,49 @@
+export const metadata = { title: "On-screen type & captions" };
+
+# On-screen type and captions
+
+Film type is set for a 1920×1080 frame seen on a laptop or a meeting-room screen. Captions are burned in, because most people watch with the sound off.
+
+## On-screen type
+
+| Role | Style |
+|---|---|
+| Headline | Source Sans 400, 68–132px, −0.045em, line height 1.02. Emphasis in Source Serif italic, blue (sky on dark) |
+| Eyebrow | 22px semibold capitals, +0.14em, number in blue with a 26px gap |
+| Lead paragraph | 29px, line height 1.4, `--slate-700` |
+| Body and lists | 25–32px. Never below 26px for anything the viewer must read |
+| Labels and tags | 18–20px semibold capitals, +0.08–0.14em |
+| Small print (essay dates) | 18px, muted. Decorative only |
+
+The headline repeats or sharpens the narration. It never says something different.
+
+## Captions
+
+<Demo surface="navy">
+  <span className="caption-plate">Every claim is labelled: told, shown or measured.</span>
+</Demo>
+
+| Property | Value |
+|---|---|
+| Plate | `rgba(12, 28, 48, .84)` (`--caption-plate`), 6px radius, padding 14px 30px 16px |
+| Type | Source Sans 600, 42px, line height 1.25, white, centred |
+| Position | Centred, 54px above the bottom edge, at most 1500px wide |
+| Safe area | Keep the bottom 150px of every scene clear of content |
+| Fade | 0.12s in, rising 8px; 0.12s out |
+
+## Splitting captions
+
+Captions are made from the narration’s word timings:
+
+1. Break after a full stop, colon or question mark.
+2. Break after a comma once the phrase has three or more words.
+3. Split any phrase longer than **seven words** into even parts, so no caption is left as a single word.
+4. Each caption shows from its first word until the next caption’s first word.
+
+Captions show what is written on screen, not how it is spoken: the narrator says “{{domainSpoken}}”, the caption shows **{{domain}}**.
+
+## Checks
+
+- No caption covers on-screen content.
+- Captions match the narration word for word, apart from the written forms above.
+- British spelling in every caption.

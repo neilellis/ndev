@@ -1,0 +1,41 @@
+export const metadata = { title: "Responsive design" };
+
+# Responsive design
+
+The {{name}} website is one site that adapts to the width of the screen. There is no separate mobile site. Every page uses the same tokens, type and colours at every width.
+
+<Rule>
+The values come from `{{source}}/public/styles.css`. The rules marked as a recommendation are not taken from the website.
+</Rule>
+
+## Rules
+
+1. **One site, one set of pages.** A phone gets the same pages and the same content order as a desktop. Only the layout changes.
+2. **Fluid first.** Headings scale with `clamp()`, for example the hero heading is `clamp(70px, 6.6vw, 105px)`. The content width is `min(1320px, 100% − 112px)`. Use breakpoints only for changes of structure.
+3. **Structure changes at fixed widths.** See [Breakpoints](/responsive/breakpoints).
+4. **One column at 800px.** Every grid stacks. Vertical rules between columns turn into horizontal rules above each item.
+5. **No sideways page scroll.** A row that cannot fit, such as the {{product}} tabs, scrolls inside its own container with `overflow-x: auto`.
+6. **Images keep their shape.** All images have `max-width: 100%`. Screenshots use `object-fit: contain`.
+7. **Same brand at every size.** Do not change colours, fonts or the signature move for small screens.
+
+## What changes
+
+| Element | Desktop | 800px and below |
+|---|---|---|
+| Content gutter | 56px each side | 21px each side |
+| Section padding | 90px | 58px |
+| Header | 110px high, links visible | 87px high, “Menu” button |
+| Section heading | Heading and intro side by side | Stacked, 24px gap |
+| Service columns | Three columns with vertical hairlines | One column with horizontal hairlines |
+| Section notes | Shown beside the eyebrow | Hidden |
+| Hero | Copy and globe side by side | Copy above the globe. The globe is 480px high. |
+
+## Check every change
+
+Recommendation. Check each new or changed page at these widths before you ask for approval:
+
+- 1440px, a common laptop.
+- 1100px and 800px, either side of each breakpoint.
+- 390px, a common phone.
+
+At each width, check that nothing scrolls sideways, text does not overlap, and every control is at least 44px. See [Mobile](/mobile).

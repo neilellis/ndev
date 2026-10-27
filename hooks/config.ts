@@ -19,7 +19,8 @@ export type GitHub = { repo: string | null; board?: Board | null }
 export type Board = { owner: string; number: number }
 
 // The brand that docs, diagram and video skills apply. Absent: the skills use no branding at all.
-export type Branding = { site: string; name?: string; guide?: string }
+// `path` is the brand site's source folder, relative to the project root, that /brand check reads.
+export type Branding = { site: string; name?: string; guide?: string; path?: string }
 
 export type LoadedConfig = {
   root: string
@@ -51,10 +52,11 @@ const validate = (raw: unknown): string | undefined => {
   if (value.branding !== undefined) {
     const b = value.branding as Record<string, unknown>
     if (typeof b !== 'object' || b === null || Array.isArray(b)) return '"branding" must be an object such as { "site": "https://example.com" }'
-    const extra = Object.keys(b).filter(k => !['site', 'name', 'guide'].includes(k))
-    if (extra.length > 0) return `unknown "branding" key ${extra.map(k => `"${k}"`).join(', ')}; the keys are site, name, guide`
+    const extra = Object.keys(b).filter(k => !['site', 'name', 'guide', 'path'].includes(k))
+    if (extra.length > 0) return `unknown "branding" key ${extra.map(k => `"${k}"`).join(', ')}; the keys are site, name, guide, path`
     if (typeof b.site !== 'string' || b.site.trim() === '') return '"branding.site" must be a non-empty string (the brand\'s website URL)'
-    for (const k of ['name', 'guide'] as const) if (b[k] !== undefined && typeof b[k] !== 'string') return `"branding.${k}" must be a string`
+    for (const k of ['name', 'guide', 'path'] as const) if (b[k] !== undefined && typeof b[k] !== 'string') return `"branding.${k}" must be a string`
+    if (typeof b.path === 'string' && (b.path.trim() === '' || b.path.startsWith('/'))) return `"branding.path" must be a folder relative to the project root, such as "apps/brand" or "../acme-brand"; got "${b.path}"`
   }
   if (value.github !== undefined) {
     const g = value.github as Record<string, unknown>

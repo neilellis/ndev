@@ -1,0 +1,173 @@
+export const metadata = { title: "Components" };
+
+# Components
+
+Live examples built with `/ds/components.css`. Class names match the website, so markup moves between them unchanged. Wrap examples in `.nv` for the base type.
+
+<Rule>
+The component list comes from `{{source}}/components/ui/` and `components/site/` on the branch in {{source}} pull request 37. That pull request is not yet published. If the website changes, update this page to match.
+</Rule>
+
+## Website components
+
+The website builds every page from reusable React components in the shadcn style. Each one renders the class names on this page, plus a `data-slot` attribute that names the part. Use the component on the website. Use the classes anywhere else.
+
+| Component | Renders | Options |
+|---|---|---|
+| `ButtonLink` | `.button.button-dark`, `.button.button-light` or `.text-link` | `variant`: dark, light or text. `external` opens a new tab and adds hidden text for screen readers. |
+| `Eyebrow` | `p.eyebrow` | `number` adds the `NN /` prefix. |
+| `SectionTop` | `.section-top` with an eyebrow and `.section-note` | `number`, `label`, `aside` |
+| `SectionHeading` | `.section-heading` | `as`: h2 or h1. The text beside the heading goes in `children`. |
+| `SmallLabel` | `.small-label` | `as`: span, h2 or time |
+| `ServiceColumns`, `ServiceColumn` | `.service-columns` with `.service-number` | `number`, `title`, `text`, `items` |
+| `ArticleCard`, `SeriesItem`, `ArticleMeta` | `.featured-article`, `.series-article`, `.article-meta` | An article record from the essays |
+| `PullQuote` | `blockquote` | `quote`, `name`, `role` |
+| `Tabs` | `.tour-tabs` and `.tour-panel` | `label` and a list of tabs |
+| `CaseStudyCard`, `CaseStudySection` | `.case-card`, `.case-section` | A case study record |
+| `PageIntro` | `.page-intro` | `eyebrow`, `title` |
+| `SiteHeader`, `SiteFooter`, `Brand`, `ContactSection`, `ClientLogos` | The header, footer, wordmark, contact band and logo strip | Used on every page |
+
+Rules:
+
+- Style components through their class names, not through `data-slot`. The `data-slot` names are for tests and scripts.
+- Add a new variant to the component and to `/ds/components.css` together, with the same name.
+- The feedback control uses shadcn `Button`, `Dialog` and `Input` from `components/ui/shadcn/`. Do not use those for page content.
+
+## Buttons
+
+<Demo surface="paper">
+  <div className="demo-row">
+    <a className="button button-dark" href="#buttons">Book a conversation</a>
+    <a className="text-link" href="#buttons">Read the series</a>
+  </div>
+</Demo>
+
+<Demo surface="navy">
+  <div className="demo-row">
+    <a className="button button-light" href="#buttons">Book a conversation</a>
+    <a className="text-link" href="#buttons">Explore {{product}}</a>
+  </div>
+</Demo>
+
+```html
+<a class="button button-dark" href="/contact">Book a conversation</a>
+<a class="text-link" href="/learning-hub">Read the series</a>
+```
+
+Buttons are 53px tall, near-square (2px), semibold 16px. Use one dark button per view. Secondary actions are text links with a 1px underline. On the website, use `ButtonLink` with `variant="dark"`, `"light"` or `"text"`. The website does not use the light variant yet.
+
+## Eyebrow and section top
+
+<Demo surface="paper">
+  <div className="section-top">
+    <p className="eyebrow"><span>02 /</span>Insights</p>
+    <p className="section-note">Perspectives from the people doing the work.</p>
+  </div>
+  <div className="section-heading">
+    <h2>AI, change and <em>the questions between them.</em></h2>
+    <p>From the challenge of change to the question of who counts. Read in order, or start with the question that matters to you.</p>
+  </div>
+</Demo>
+
+## Service columns
+
+<Demo surface="paper">
+  <div className="service-columns">
+    <article><span className="service-number">01</span><h3>Data</h3><p>Reliable foundations that people trust and use.</p><ul><li>Data strategy</li><li>Governance</li></ul></article>
+    <article><span className="service-number">02</span><h3>AI</h3><p>Practical strategy that earns its place.</p><ul><li>AI readiness</li><li>Agent coordination</li></ul></article>
+    <article><span className="service-number">03</span><h3>Transformation</h3><p>Ambition connected to delivery.</p><ul><li>Operating models</li><li>Change delivery</li></ul></article>
+  </div>
+</Demo>
+
+## Articles
+
+<Demo surface="paper">
+  <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.4fr)", gap: 48 }}>
+    <article className="featured-article">
+      <div className="article-meta"><span>Featured essay</span>8 min read</div>
+      <h3>The Sovereignty of Coordination</h3>
+      <p>Why coordination, not capability, decides what AI does to an organisation.</p>
+      <a className="text-link" href="#articles">Read the essay</a>
+    </article>
+    <div>
+      <div className="series-article"><span className="series-number">01</span><div><h4>The Challenge of Change</h4><p>Where transformation stalls, and why.</p></div><a className="text-link" href="#articles">Read</a></div>
+      <div className="series-article"><span className="series-number">02</span><div><h4>Search, Remember, Map</h4><p>How organisations know what they know.</p></div><a className="text-link" href="#articles">Read</a></div>
+    </div>
+  </div>
+</Demo>
+
+The service and article text above is placeholder copy for layout. Take real copy from the website.
+
+## Tabs
+
+<Demo surface="navy" label="{{product}} tour tabs">
+  <div className="tour-tabs" role="tablist" aria-label="{{product}} tour">
+    <button type="button" role="tab" aria-selected="true">The digital twin</button>
+    <button type="button" role="tab" aria-selected="false" tabIndex={-1}>Evidence & accountability</button>
+    <button type="button" role="tab" aria-selected="false" tabIndex={-1}>AI in the organisation</button>
+  </div>
+  <div className="tour-panel" role="tabpanel" style={{ paddingTop: 28 }}>
+    <h3 style={{ color: "var(--white)" }}>Connect the whole picture.</h3>
+    <p>Understand dependencies across teams, services and organisational boundaries. A shared view helps you ask better questions about how work really happens.</p>
+  </div>
+</Demo>
+
+Tabs are for the {{product}} tour on navy. This example is still. On the website:
+
+- Without JavaScript, the tab list stays hidden and every panel shows in order.
+- With JavaScript, the script shows the list and hides the other panels. ArrowLeft, ArrowRight, Home and End move between tabs.
+- Below 800px, the tab list scrolls sideways inside its own row.
+
+## Case study parts
+
+<Demo surface="paper">
+  <div className="case-section">
+    <h2><span>The challenge</span>What needed to change</h2>
+    <div className="case-section-body">
+      <ul className="case-technologies"><li>Data platform</li><li>Governance</li><li>Change delivery</li></ul>
+    </div>
+  </div>
+  <div className="case-section">
+    <h2><span>Outcomes</span>What changed</h2>
+    <ul className="case-outcomes">
+      <li><h3>A single view of the work</h3><p className="case-section-body">Teams see who owns each decision.</p></li>
+      <li><h3>Faster, clearer approvals</h3><p className="case-section-body">Decisions moved to the people closest to them.</p></li>
+    </ul>
+  </div>
+</Demo>
+
+These are layout examples, not real results. Case-study claims must come from the published case study.
+
+## Quote
+
+<Demo surface="mist">
+  <blockquote className="pull-quote">
+    <p>“Placeholder quote. Replace it with a real client quote before you publish.”</p>
+    <footer><strong>Client name</strong><span>Role, organisation</span></footer>
+  </blockquote>
+</Demo>
+
+On the website, `PullQuote` renders a plain `blockquote` styled inside the About section. Elsewhere, use the `.pull-quote` class.
+
+## Client logos
+
+<Demo surface="white">
+  <div className="client-logos">
+    <ul>
+      <li><img src="/ds/assets/placeholder.svg" alt="Placeholder client logo" /></li>
+      <li><img src="/ds/assets/placeholder.svg" alt="Placeholder client logo" /></li>
+      <li><img src="/ds/assets/placeholder.svg" alt="Placeholder client logo" /></li>
+      <li><img src="/ds/assets/placeholder.svg" alt="Placeholder client logo" /></li>
+      <li><img src="/ds/assets/placeholder.svg" alt="Placeholder client logo" /></li>
+      <li><img src="/ds/assets/placeholder.svg" alt="Placeholder client logo" /></li>
+    </ul>
+  </div>
+</Demo>
+
+Introduce logos with “Our team has worked with”. Show them at equal visual weight on white. They are grey at 65% opacity and turn to full colour on hover.
+
+## Caption plate
+
+<Demo surface="navy" label="Burned-in video caption">
+  <span className="caption-plate">{{name}} helps leaders get that right.</span>
+</Demo>

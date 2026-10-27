@@ -1,0 +1,45 @@
+export const metadata = { title: "Space & layout" };
+
+# Space and layout
+
+An editorial layout: wide margins, generous section padding, and content aligned to strong columns with hairline rules between them.
+
+## Spacing
+
+<SpacingScale />
+
+## Containers
+
+| Token | Value | Use |
+|---|---|---|
+| `--wrap-max` | 1320px | Content width. `.wrap` is `min(1320px, 100% − 112px)` |
+| `--wrap-gutter` | 56px per side | Drops to 35px at ≤1100px and 21px at ≤800px |
+| `--space-9` | 90px | Section padding, top and bottom |
+| `--space-8` | 58px | Section padding on phones |
+| `--header-h` | 110px | Site header height |
+
+## Breakpoints
+
+| Width | What changes |
+|---|---|
+| ≥1550px | More hero padding. The globe area grows. |
+| ≤1100px | Narrower gutter, tighter header links, tablet type sizes |
+| ≤800px | One column, the “Menu” button, phone type sizes. Rules turn horizontal. |
+| ≤390px | The hero heading drops to 46–58px. Hero buttons stack. |
+
+See [Breakpoints](/responsive/breakpoints) for the detail.
+
+## Shape
+
+<RadiusBox token="--radius-xs" />
+<RadiusBox token="--radius-sm" />
+<RadiusBox token="--radius-md" />
+
+Buttons, chips and the motion toggle use 2px. Screenshots use 3px. Floating panes use 5px. Film cards and caption plates use 4–6px. Nothing is pill-shaped except avatars and dots.
+
+## Grids
+
+- Two-column section headings: heading and intro at 1.2 : 1 with a 10% gap.
+- Three ruled service columns, divided by vertical hairlines.
+- Case-study sections: a 220px label column beside the body.
+- Everything stacks to one column at 800px.

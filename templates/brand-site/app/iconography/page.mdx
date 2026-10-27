@@ -1,0 +1,31 @@
+export const metadata = { title: "Iconography" };
+
+# Iconography
+
+{{name}} uses words first and icons rarely. The website uses icons only in the feedback control. Diagrams explain ideas. Icons do not. See [Diagrams and motifs](/diagrams).
+
+<Rule>
+The icon use comes from `{{source}}/components/feedback/FeedbackButton.tsx` and `components/ui/shadcn/dialog.tsx`. The rules for new icons are a recommendation.
+</Rule>
+
+## The set
+
+The website uses [Lucide](https://lucide.dev) through the `lucide-react` package.
+
+| Icon | Where | Size |
+|---|---|---|
+| `MessageSquare` | The floating “Leave us a message” button | 24px |
+| `X` | The close button in dialogs | Default |
+
+The header menu button uses the word “Menu” and the ☰ character, hidden from screen readers with `aria-hidden`.
+
+## Rules for icons
+
+1. **Lucide only.** Do not mix icon sets.
+2. **Outline style.** Keep Lucide's default 2px stroke. Do not use filled icons.
+3. **Use `currentColor`.** The icon takes the colour of the text or the button around it.
+4. **Match the text.** 20–24px beside body text.
+5. **A word beside the icon, or an accessible name.** An icon-only button must have an `aria-label`. The feedback button has `aria-label="Leave us a message"` and a visible label on hover and focus. Hide the icon itself with `aria-hidden="true"`.
+6. **No icon rows for services or values.** The website shows services as numbered, ruled columns with words. Do not add icons to them.
+7. **No emoji in the interface.**
+8. **No decorative illustration.** Use photography, diagrams or the [logo](/foundations/logo).

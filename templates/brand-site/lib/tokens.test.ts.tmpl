@@ -1,0 +1,36 @@
+import { it, expect, beforeAll, afterAll } from "vitest";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { parseTokens } from "./tokens";
+
+let dir: string;
+
+beforeAll(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), "tok-"));
+  await writeFile(path.join(dir, "colors.css"), ":root {\n  --white: #ffffff;\n  --blue-600: #2166ac;  /* BRAND */\n}\n");
+  await writeFile(path.join(dir, "spacing.css"), "/* --ignored: 1px; */\n:root {\n  --space-1: 4px;\n  --radius-xs: 2px;\n}\n");
+  await writeFile(path.join(dir, "elevation.css"), ":root {\n  --elevation-pane: 0 12px 35px #102b4a24;\n  --dur: 200ms;\n}\n");
+});
+
+afterAll(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+it("returns one group per css file, in filename order", async () => {
+  const groups = await parseTokens(dir);
+  expect(groups.map((g) => g.file)).toEqual(["colors.css", "elevation.css", "spacing.css"]);
+});
+
+it("parses name and value and assigns kind by file", async () => {
+  const colors = (await parseTokens(dir)).find((g) => g.file === "colors.css")!;
+  expect(colors.tokens).toContainEqual({ name: "--blue-600", value: "#2166ac", kind: "color", file: "colors.css" });
+});
+
+it("gives radius and motion tokens their own kinds and skips comments", async () => {
+  const groups = await parseTokens(dir);
+  const all = groups.flatMap((g) => g.tokens);
+  expect(all.find((t) => t.name === "--radius-xs")!.kind).toBe("radius");
+  expect(all.find((t) => t.name === "--dur")!.kind).toBe("motion");
+  expect(all.find((t) => t.name === "--ignored")).toBeUndefined();
+});

@@ -28,7 +28,7 @@ gh.sh issue-new | issue-edit ...         # bodies from files
 gh.sh pr-new ... | pr-edit <n> ...       # draft by default; REST edit
 gh.sh subissues list|link <parent> [child...]
 gh.sh blocked-by list|add|remove|blocking <issue> [blocker]
-gh.sh board items [<column>] | move <itemId> <column> | set <itemId> <field> <option> | add <issue> [<column>]
+gh.sh board items [<column>] | fields | move <itemId> <column> | set <itemId> <field> <value> | add <issue> [<column>]
 gh.sh unpushed                           # before you discard any branch
 dump.py issue|pr <n> [--out DIR]         # one markdown file plus images
 merge-main-into-open-prs.sh [--dry-run] [--pr <n>]

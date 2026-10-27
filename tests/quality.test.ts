@@ -29,6 +29,10 @@ const engine = async (
   // The set-up dialog is answered already (no GitHub), so it asks nothing and runs nothing here.
   config = answered(config)
   on('command.register', (_, e) => ({ value: { command: e.name } }))
+  // The fix-all-prs loop registers its tool and timer at session start.
+  on('tool.register', () => ({ value: { tool: 'mcp__neil-development__report' } }))
+  on('clock.now', () => ({ value: 0 }))
+  on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('env.get', () => ({ value: '/home/neil' }))
   on('session.cwd', () => ({ value: ROOT }))

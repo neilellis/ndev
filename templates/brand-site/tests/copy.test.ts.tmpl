@@ -1,0 +1,68 @@
+import { it, expect } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { checkText, loadRules, validateRules, type Register } from "@/scripts/copy/check-lib.mjs";
+
+const root = process.cwd();
+
+function files(dir: string, ext: RegExp): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? files(p, ext) : ext.test(e.name) ? [p] : [];
+  });
+}
+
+const checked: [string, Register][] = [
+  ...files(path.join(root, "app"), /\.mdx$/).map((f): [string, Register] => [f, "documentation"]),
+  [path.join(root, "README.md"), "technical-documentation"],
+  ...files(path.join(root, ".claude", "skills"), /\.md$/).map((f): [string, Register] => [f, "agent"]),
+  [path.join(root, "CLAUDE.md"), "agent"],
+];
+
+it("has a valid banned list", () => {
+  expect(validateRules(loadRules())).toEqual([]);
+});
+
+it("finds no banned words in the guide, the agent files or the skills", () => {
+  const bans = checked.flatMap(([file, register]) =>
+    checkText(readFileSync(file, "utf8"), { register })
+      .filter((f) => f.level === "ban")
+      .map((f) => `${path.relative(root, file)}:${f.line} “${f.match}” → ${f.instead}`),
+  );
+  expect(bans).toEqual([]);
+});
+
+it("applies the strict checks to documentation and agent text only", () => {
+  const text = "You should run it. It’s fine.";
+  for (const register of ["documentation", "technical-documentation", "agent"] as const) expect(checkText(text, { register })).toHaveLength(2);
+  for (const register of ["internal", "marketing"] as const) expect(checkText(text, { register })).toEqual([]);
+});
+
+it("allows common technical terms in technical documentation only", () => {
+  const text = "The functionality works out of the box.";
+  expect(checkText(text, { register: "technical-documentation" })).toEqual([]);
+  expect(checkText(text, { register: "documentation" }).map((f) => f.term)).toEqual(["functionality", "out of the box"]);
+});
+
+it("reports banned words and strict checks in documentation", () => {
+  const terms = checkText("We leverage data.\nYou should run it. It’s fine.").map((f) => f.term);
+  expect(terms).toContain("leverage");
+  expect(terms).toContain("should");
+  expect(terms.some((t) => t.startsWith("contractions"))).toBe(true);
+});
+
+it("ignores code, links, quoted examples and the marketing rules inside a Demo", () => {
+  const text = [
+    "Avoid “leverage”.",
+    "Run `leverage --should`.",
+    "[Read](/should/leverage)",
+    "<Demo>Let’s talk. It’s easy.</Demo>",
+    "```\nleverage\n```",
+  ].join("\n");
+  expect(checkText(text)).toEqual([]);
+  expect(checkText("<Demo>We leverage AI.</Demo>").map((f) => f.term)).toEqual(["leverage"]);
+});
+
+it("reports the line of each finding", () => {
+  expect(checkText("Fine.\n\nWe utilise data.")[0]?.line).toBe(3);
+});

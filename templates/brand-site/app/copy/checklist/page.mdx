@@ -1,0 +1,48 @@
+export const metadata = { title: "Copy checklist" };
+
+# Copy checklist
+
+Do these checks before you share any {{name}} text. Do them in order.
+
+## Every text
+
+1. **The point is first.** The first sentence gives the answer or the main idea.
+2. **No banned words.** The text has no word from the [banned words](/copy/banned) list. Each **Check** word carries a fact.
+3. **No empty patterns.** The text has no “not X but Y”, no poster lines, no empty triples and no trailing “-ing” clause that explains the meaning.
+4. **Each claim has evidence.** The website, the published essays or the client can support each claim. Numbers have their scope. Client names say “our team has worked with”.
+5. **One name for one thing.** Each product, service and concept has one name in the text.
+6. **No internal names.** The text has no code names, file names or field names, unless the reader is a developer.
+7. **Acronyms are expanded** at first use, except common forms such as AI, UK and NHS.
+8. **British English** and sentence case. Curly quotes and apostrophes.
+9. **Read it aloud.** If you run out of breath, or a sentence sounds like an advert, rewrite it.
+
+## Documentation and agent text
+
+Also check these items for documentation, technical documentation and agent text. See the [five registers](/copy).
+
+1. Each rule says “must” or “must not”. The text has no “should”, “may”, “might”, “could” or “would”.
+2. Each step is one sentence of 20 words or fewer, and starts with a verb.
+3. Each condition comes before its step. Each warning comes before its step.
+4. The text has no contractions, no semicolons and no “e.g.”, “i.e.” or “etc.”.
+5. Each error message says what went wrong and what the reader can do next.
+6. The text describes the present. It does not say what used to be true.
+
+## Run the copy check
+
+AI tools and anyone with a terminal can run the copy check on a file:
+
+```bash
+node scripts/copy/check.mjs app/copy/page.mdx
+node scripts/copy/check.mjs --register marketing draft.md
+node scripts/copy/check.mjs --register agent CLAUDE.md
+```
+
+Give the register with `--register`: `internal`, `marketing`, `documentation`, `technical-documentation` or `agent`. The default is `documentation`. The check reports each banned word with its line number and a replacement. It exits with an error when it finds a banned word. The repository tests run the same check on every guide page, the agent files and the skills.
+
+To check text in your own project, use the [Vale rules](/copy/vale).
+
+The check finds words, not meaning. A text can pass the check and still be unclear. Do the checks above as well.
+
+## When you find a new problem
+
+If a review finds a word or pattern that makes the text worse and the list does not have it, add it to the [banned words](/copy/banned) list in the same piece of work.

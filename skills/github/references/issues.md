@@ -16,7 +16,7 @@ All commands are in `${CLAUDE_PLUGIN_ROOT}/scripts/github/gh.sh`. The repository
 
 | Command | Does | Output |
 |---|---|---|
-| `issue-new --title <t> --body-file <f> [--label <l>]...` | File an issue. Checks the body file. | `{url}` |
+| `issue-new --title <t> --body-file <f> [--label <l>]... [--assignee <login>]... [--milestone <n>] [--type <t>]` | File an issue. Checks the body file. `--milestone` takes the number from `milestones`; `--type` is an organisation issue type. | `{number,url}` |
 | `issue-edit <n> [--title <t>] [--body-file <f>]` | Rewrite an issue with REST. | `{number,url}` |
 | `unlabel <n> <label>` | Remove a label from an issue or PR. | confirmation line |
 | `labelled <label>` | Open issues and PRs with the label. | `{number,title,kind,url}` per line |
@@ -51,7 +51,8 @@ Set `GH_PROJECT_OWNER` (user or organisation login) and `GH_PROJECT_NUMBER`. Fin
 |---|---|
 | `board items [<column>]` | Cards, optionally in one Status column. `{number,title,status,itemId,url}` per line. |
 | `board move <itemId> <column>` | Set Status by its display name, for example `"In progress"`. |
-| `board set <itemId> <field> <option>` | Set any single-select field, for example `Priority high`. |
+| `board fields` | Each field: `{name,type,options}`. `options` lists single-select options or iteration titles. |
+| `board set <itemId> <field> <value>` | Set a single-select option or iteration by name, or a number, text or date (`YYYY-MM-DD`) value. A wrong name or value lists the choices and edits nothing. |
 | `board add <issue> [<column>]` | Add an issue. Prints `{number,itemId}`. |
 
 Field and option ids are looked up by name at run time. Card moves need the item id (`PVTI_...`), not the issue number. Get it from `board items` or `board add`.

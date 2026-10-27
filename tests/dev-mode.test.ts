@@ -16,6 +16,10 @@ const engine = (on: On, files: Map<string, string> = new Map(), wiki = true) => 
   const toasts: string[] = []
   const runs: string[][] = []
   on('command.register', (_, e) => ({ value: { command: e.name } }))
+  // The fix-all-prs loop registers its tool and timer at session start.
+  on('tool.register', () => ({ value: { tool: 'mcp__neil-development__report' } }))
+  on('clock.now', () => ({ value: 0 }))
+  on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('prompt.compose', () => ({ sections: [] }))
   on('env.get', () => ({ value: '/home/neil' }))
@@ -195,3 +199,24 @@ test('with no branding, the prompt names no brand', async ($, on) => {
   await start($)
   expect((await section($)).toLowerCase()).not.toContain('brand')
 })
+
+test('branding may name the local folder of the brand site, which the prompt gives to brand skills', async ($, on) => {
+  const { toasts } = engine(on, new Map([[CONFIG, '{ "branding": { "site": "https://brand.example", "name": "Acme", "path": "apps/brand" } }']]))
+  await start($)
+  expect(toasts.join(' ')).not.toContain('unknown "branding" key')
+  expect(await section($)).toContain('its source is apps/brand')
+})
+
+test('a non-string branding path is refused with the key named', async ($, on) => {
+  const { toasts } = engine(on, new Map([[CONFIG, '{ "branding": { "site": "https://brand.example", "path": 3 } }']]))
+  await start($)
+  expect(toasts.join(' ')).toContain('"branding.path" must be a string')
+})
+
+for (const [label, bad] of [['an empty', '""'], ['an absolute', '"/Users/someone/acme-brand"']]) {
+  test(`${label} branding path is refused with the key named`, async ($, on) => {
+    const { toasts } = engine(on, new Map([[CONFIG, `{ "branding": { "site": "https://brand.example", "path": ${bad} } }`]]))
+    await start($)
+    expect(toasts.join(' ')).toContain('"branding.path" must be a folder relative to the project root')
+  })
+}
