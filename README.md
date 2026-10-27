@@ -12,7 +12,7 @@ knowledge base. A project enables the plugin and gets all of them.
 | `skills/` | Workflow skills. A helper that only one skill uses stays in that skill's `scripts/` folder. |
 | `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`). See [`scripts/README.md`](scripts/README.md). |
 | `agents/` | Subagent definitions for board work, implementation, planning and review. |
-| `templates/` | A starter `CLAUDE.md` and a starter LLM wiki for a new project. |
+| `templates/` | A starter `CLAUDE.md`, a starter LLM wiki, and the brand site that `/brand create` copies. |
 | `kb/hooks/` | Reusable hook scripts and a pre-push hook to copy into a project. |
 
 ## Skills
@@ -25,6 +25,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `archify` | Create polished, validated architecture, workflow, sequence, data-flow, and lifecycle/state diagrams as explorable standalone HTML with inline SVG,… |
 | `are-we-done` | Check whether the current work is actually finished. |
 | `ast-grep` | Search the codebase by parsed code shape. |
+| `brand` | `/brand create` makes a full brand guide and design system site from the project and the plugin's defaults, in `apps/brand` or as a standalone app. `/brand check` reports where the project breaks its brand. `/brand apply` fixes it. |
 | `clean-reader` | Review supplied documentation or video narration as a first-time reader, in a fresh Codex process that cannot read the application source. |
 | `command-reuse` | Reuse tested commands for local checks, saved logs, PR waits, and session audits. |
 | `copy` | Write or review user-visible copy: interface text, labels, errors, empty states, glossary definitions and accessible text. |
@@ -38,6 +39,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `docs-legibility` | Check and fix user-facing docs pages so a new reader understands them: plain English, short sentences, no unnecessary jargon, each necessary technical term… |
 | `docs-sync` | Bring user-facing docs pages back in line with code or wiki changes, using a docs map in page front matter. |
 | `docs-team` | Coordinate a hierarchy of agents (coordinator, unit leads, module writers, a diagram pass and fresh evaluators) that writes and audits a user-facing… |
+| `finish` | Push the current change in a website or app project and keep fixing its pull request until it is green and ready for approval, with preview links to each changed page. |
 | `fix-all-prs` | Fix and merge every outstanding open pull request one at a time, oldest first, working with the agents that already worked on each pull request. |
 | `fix-ci` | Fix failed checks and merge conflicts on the associated pull request until its current revision is green and mergeable. |
 | `for-codex` | Make this plugin's skills available to the OpenAI Codex CLI in one project, with symlinks into the Codex-only folder <project>/.codex/skills/. |
@@ -48,15 +50,20 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `harness-sync` | Compare the Claude and Codex harness trees and reconcile a difference between them, before or after any change that copies one skill tree onto the other. |
 | `hotfix` | Do the requested work directly on the main branch in the main checkout, with no worktree and no pull request, then push to origin main. |
 | `hyperfine` | Benchmark and compare command durations when a speed claim or before/after measurement is needed. |
+| `i` | Alias of issue: create a GitHub issue from a description and put it in Backlog on the project board with its fields filled in. |
 | `i-have-adhd` | Load before writing any reply to the user. |
 | `implement-spec` | Implement a provided specification and its linked tickets on one branch and in one pull request. |
 | `improve-agent` | Analyse an automated agent's run log and produce an evidence-based improvement plan for its prompt, skill, tools and guards. |
+| `infographic` | Create raster infographic images with bundled layout and visual-style references. |
+| `issue` | Create a GitHub issue from a short description, add it to the project board in Backlog, and fill in the issue and board fields that the description… |
 | `milestone-release` | Publish a GitHub release from committed milestone release notes when the user explicitly asks to cut or publish it. |
 | `milestone-release-notes` | Produce stakeholder-facing release notes for a GitHub milestone by reading all included issues and merged PRs. |
 | `mobile-testing` | Capture and inspect the web app with Playwright mobile device emulation. |
+| `motion` | Add animation to a React or Next.js site with the Motion library, with reduced-motion support. |
 | `perf-review` | Review a specified file or directory for performance risks in algorithms, I/O, allocations, database access and connection use. |
 | `pick-up-prs` | Survey open pull requests, identify unfinished or blocked work, and continue each safely from its existing branch/worktree. |
 | `project-analysis` | Perform a scored, evidence-backed architecture and product health review of the repository and append the run to the project's ratings file. |
+| `publish` | Merge the current change's pull request in a website or app project and confirm the live site. |
 | `r` | Alias of remember: record durable, non-obvious lessons from the session. |
 | `react-grab` | Continuously receive React Grab selections and act on their attached user instructions when a watch loop is requested. |
 | `remember` | Record durable, non-obvious lessons from the session in the correct project wiki, skill, guide or memory home. |
@@ -64,6 +71,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `reset` | Close the current feature work, save it as a PR, remove its worktree, and freshen the base checkout; use --discard only to abandon a dead end. |
 | `resolving-merge-conflicts` | Use when you need to resolve an in-progress git merge/rebase conflict. |
 | `retro` | Review a completed coding session and identify improvements to navigation, checks, standards, instructions, information access and tool economy. |
+| `site-check` | Check a local, preview or live website for broken links, missing pages, server errors and JavaScript errors. |
 | `testing` | Apply the testing taxonomy and verification rules across Python and TypeScript, including guard integrity and minimal live-system tests. |
 | `ux-principles` | Apply the project's UX guidance to navigation, disclosure, touch, accessibility and feedback decisions. |
 | `video-docs` | Keep documentation videos true to the documentation they cite: trace each scene to its source pages, detect stale sources, choose the smallest rebuild,… |
@@ -119,7 +127,7 @@ the project. Every key is optional:
   "mode": "light",
   "steering": "interactive",
   "github": { "repo": "acme/app", "board": { "owner": "acme", "number": 3 } },
-  "branding": { "site": "https://brand.example", "name": "Acme", "guide": "https://brand.example/guide" },
+  "branding": { "site": "https://brand.example", "name": "Acme", "guide": "https://brand.example/guide", "path": "apps/brand" },
   "quality": { }
 }
 ```
@@ -138,7 +146,7 @@ the project. Every key is optional:
   `/dev-setup`. The scripts in `scripts/github/` and `scripts/board/` read these values. A value
   that is already in the environment (`GH_REPO`, `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER`) wins.
 - `branding` names the brand that the docs, diagram, copy and video skills apply. With no
-  `branding`, those skills do no branding and do not mention it.
+  `branding`, those skills do no branding and do not mention it. `path` is the brand site's source folder, which `/brand check` and `/brand apply` read.
 - `quality` turns on the quality-control hooks one by one (see [`kb/hooks/README.md`](kb/hooks/README.md)).
   A hook that is not listed does not run.
 
@@ -159,6 +167,38 @@ The `-auto` skills deliver issues from the GitHub board's Ready column (or one i
 the prompt with no issue follows the interactive skill's method without stopping to ask.
 Older names: `work-light` was `light-work`, `work-heavy` was `work`, `work-light-auto` was
 `work-ready-simple` and `work-heavy-auto` was `work-ready`.
+
+## The pull request loop: /fix-prs
+
+A second hooks module, `hooks/fix-all-prs.tsx`, runs the `fix-all-prs` method as a loop. It works
+the open pull requests of the current repository one at a time, oldest first, and shows the queue
+and each pull request's checks in a pane.
+
+| Command | Effect |
+| --- | --- |
+| `/fix-prs start [--no-merge]` | Start the loop. `--no-merge` records a green pull request as ready and leaves the merge to a human. |
+| `/fix-prs status` | Show where the loop is. |
+| `/fix-prs pause`, `/fix-prs resume` | Stop and continue the loop. |
+| `/fix-prs skip <pr>`, `/fix-prs retry <pr>` | Leave out a pull request, or put a blocked one back in the queue. |
+
+The loop first asks the agent that owns a pull request to fix it. When that agent does not
+answer, the loop gives the pull request to this session's model. The model reports the result with
+the `report` tool (`mcp__ndev__report`): `pushed`, or `blocked` with the reason.
+
+## Worktree init: scripts/init-project.sh
+
+At session start, `hooks/init-project.ts` looks for `.ndev-inited` at the git root. When it is
+absent (a new worktree or clone), the hook runs `scripts/init-project.sh`, which builds the project
+from source. When the script exits 0, the hook writes `.ndev-inited`.
+
+- `.ndev-inited` must be git-ignored. If it is not, the script does not run and a toast names the
+  repair: `echo .ndev-inited >> .gitignore`.
+- If the script does not exist, the agent is told to write it, run it and commit it.
+- If the script fails, the agent gets the exit code and the last 40 lines of output, and finishes
+  with `bash scripts/init-project.sh && touch .ndev-inited`.
+- The build runs in the background for at most 10 minutes. A longer build fails with a timeout and
+  the agent must run the script.
+- Outside a git repository the hook does nothing.
 
 Run the hooks module's tests with `claude plugin test .`.
 
@@ -204,8 +244,8 @@ Or install it by hand:
 /plugin install ndev@neil-development
 ```
 
-The plugin was called `neil-development` before version 0.3.0. To move an existing install, run
-`/plugin uninstall neil-development@neil-development`, then `/plugin install ndev@neil-development`,
+The plugin was called `neil-development` before version 0.6.0. To move an existing install, run
+`/plugin uninstall ndev@neil-development`, then `/plugin install ndev@neil-development`,
 and change `enabledPlugins` in your settings to `"ndev@neil-development": true`.
 
 Plugin skills are namespaced, for example `/ndev:work-light`. A project skill with the

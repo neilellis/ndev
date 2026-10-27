@@ -1,0 +1,40 @@
+export const metadata = { title: "Logo" };
+
+# Logo
+
+The {{name}} identity has two parts: the **mark** and the **wordmark**, set in the brand sans-serif.
+
+## Lock-up
+
+<Demo surface="paper" label="Mark and wordmark, as in the website header">
+  <BrandLockup />
+</Demo>
+
+## Wordmark
+
+<Demo surface="paper" label="On paper">
+  <span className="brand" style={{ fontSize: 56 }}><Wordmark /></span>
+</Demo>
+
+<Demo surface="navy" label="On navy">
+  <span className="brand" style={{ fontSize: 56 }}><Wordmark /></span>
+</Demo>
+
+| Part | On paper | On navy |
+|---|---|---|
+| Letters | Navy `#102b4a` | White |
+| Accent | Forest `#3f7a5f` | Sky `#a7d8ff` |
+
+## Rules
+
+- Write the name as **{{name}}**, exactly, every time. Never change its case, spacing or punctuation.
+- Leave clear space around the wordmark of at least the height of its capital letters.
+- Minimum width: 96px on screen.
+- Do not stretch, outline, recolour, add effects or redraw the mark.
+- The wordmark is in `app/components/Wordmark.tsx`. The mark is `/ds/assets/mark.svg`.
+
+## In film
+
+On the brand and end-card scenes, the compass needle swings into place: from −200° to 0° over 1.6s with `power3.out`, pivoting at the centre of the “o” (SVG point 93.2, 75.5). The rest of the wordmark stays still.
+
+<Still src="/ds/assets/placeholder.svg" alt="Film frame: the wordmark on a navy-to-blue gradient with the line Strategic insight, Lasting impact" caption="Placeholder. Was: Film, scene 2 — the wordmark on the brand radial gradient." />

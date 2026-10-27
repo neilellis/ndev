@@ -1,0 +1,49 @@
+export const metadata = { title: "Scenes & look" };
+
+# Scenes and look
+
+Every scene uses one of three backgrounds: photography under a navy scrim, clean white, or a soft brand gradient. The frame has generous margins: content starts 120–140px from the left edge.
+
+## Photography under a scrim
+
+<Still src="/ds/assets/placeholder.svg" alt="London photograph with a navy scrim on the left and a large white headline" caption="Placeholder. Was: The hook. Text sits on the darkest side of the scrim." wide />
+
+- Scrim: `--scrim-photo-left`, plus `--scrim-photo-base` along the bottom so captions stay legible.
+- The headline sits on the left, about 1000px wide, starting 140px in.
+- The photograph drifts slowly (Ken Burns).
+
+## White
+
+<Still src="/ds/assets/placeholder.svg" alt="Three white cards with blue top borders for Data, AI and Transformation" caption="Placeholder. Was: Service cards on white." wide />
+
+**Film cards** are white with a 1px `--slate-200` border, a 6px blue top border, a 4px radius and `--elevation-card-film`. Inside: a 20px tracked number, a 50px title and 25px list items divided by faint rules.
+
+## Soft gradients
+
+<StillGrid>
+  <Still src="/ds/assets/placeholder.svg" alt="{{product}} screenshots on a light gradient" caption="Placeholder. Was: Paper to sky, behind product screenshots." />
+  <Still src="/ds/assets/placeholder.svg" alt="End card on a dark navy-to-blue gradient" caption="Placeholder. Was: The end-card gradient." />
+</StillGrid>
+
+<GradientTile token="--gradient-brand-radial" label="Brand radial — scene 2" />
+<GradientTile token="--gradient-end-card" label="End card — scene 8" />
+<GradientTile token="--gradient-paper-sky" label="Paper to sky — scene 4" />
+<GradientTile token="--gradient-globe-halo" label="Globe halo — scene 6" />
+
+## Product screenshots
+
+- Show the real product. {{product}} screenshots show Meridian Grid, a fictional demonstration organisation; the credits page says so.
+- An 8px radius, sand `#f4f1e9` backing and `--elevation-shot-film`.
+- A navy tag in the top-left corner names the view: 20px semibold capitals.
+- Principle chips beside the screenshot: white at 85%, a 5px blue left border, a tracked blue label and a 34px serif value.
+
+## Dark scenes
+
+Mark a dark scene with the `.dark` class. Headlines turn white, emphasis turns sky `#a7d8ff`, eyebrows turn `#c4d5e6`, and the wordmark switches to its on-navy colours.
+
+## Avoid
+
+<DoDont
+  good={<ul><li>One headline and one visual per scene.</li><li>Real product screens and real places.</li><li>Brand gradients as calm backgrounds.</li></ul>}
+  bad={<ul><li>Stock-footage montages and drone fly-throughs.</li><li>Abstract “AI” visuals: glowing networks, particles, data rain.</li><li>Text over busy photography without a scrim.</li><li>Logos or text animated in 3D.</li></ul>}
+/>

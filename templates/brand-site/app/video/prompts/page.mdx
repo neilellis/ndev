@@ -1,0 +1,102 @@
+export const metadata = { title: "Generation prompts" };
+
+# Generation prompts
+
+Ready-to-use prompts for AI video, image and voice tools. Paste the brand block first, then the shot or scene prompt. Change the bracketed parts only.
+
+<Rule>
+Generated material must still follow this guide. Review every output against [Photography](/foundations/photography) and the [review checklist](/video/review). Credit the tool on the credits page.
+</Rule>
+
+## Brand block
+
+Paste this at the start of any prompt for a generative tool.
+
+```text
+Brand: {{name}}, a UK consultancy in AI, data and organisational transformation.
+Audience: senior leaders in large organisations and the UK public sector.
+Mood: calm, confident, considered, evidence-led. Not futuristic, not hyped.
+Palette: deep navy #102b4a, ink #102846, cool paper white #f6f8fa, one accent blue #2166ac,
+sky blue #a7d8ff on dark. Cool, soft light. No neon, no purple, no saturated orange.
+Setting: real places in London and the UK; modern, uncluttered workplaces; public buildings.
+Camera: steady, slow. Locked-off or very slow push-in. Natural depth of field.
+Avoid: glowing brains, robots, humanoid AI, circuit boards, binary code, data rain,
+holograms, particle effects, lens flares, staged handshakes, people pointing at screens,
+text or logos in the image.
+```
+
+## Shot prompts
+
+**Establishing city shot (dark scene, text on the left).**
+
+```text
+Slow push-in on the City of London skyline at blue hour, seen from across the Thames.
+Calm water, soft cool light, lit office windows. Composition weighted to the right third,
+with the left half quiet and dark enough to sit under a navy gradient for a headline.
+16:9, 1920x1080, 6 seconds, no text, no people close to camera.
+```
+
+**Modern workplace (light scene).**
+
+```text
+A bright, modern open-plan office in a converted London building. Natural daylight,
+pale wood and white walls, plants. Two or three people in quiet conversation at a table,
+seen from a distance, unposed. Very slow lateral drift. Cool, neutral grade.
+Clear space in the upper left for text. 16:9, 6 seconds, no screens with readable text.
+```
+
+**Public-sector setting.**
+
+```text
+Early morning in a UK government building atrium. Stone and glass, soft daylight,
+a few people crossing in the distance. Locked-off camera, gentle movement of light.
+Calm and orderly. 16:9, 6 seconds. No flags, signage or readable text.
+```
+
+**Abstract background (instead of a gradient).**
+
+```text
+A slow, soft-focus gradient of deep navy (#0c1c2c) to mid blue (#2166ac), with a faint
+radial glow in the upper right. Barely perceptible movement, like light through frosted
+glass. No shapes, particles or patterns. Seamless loop, 16:9, 10 seconds.
+```
+
+## Still images
+
+```text
+[Subject] photographed in [real UK location], editorial documentary style,
+natural cool light, muted palette of navy, slate and off-white with a single blue accent.
+Shallow depth of field, uncluttered background, generous negative space on the [left/right]
+for a headline. No text, no logos, no AI clichés. 3:2, high resolution.
+```
+
+## Narration
+
+For OpenAI text-to-speech, use the `onyx` voice and these instructions:
+
+```text
+Speak with a natural, educated British accent (southern English, received pronunciation).
+Calm, confident, warm corporate narrator. Measured pace. Say '{{name}}' as '{{nameSpoken}}'.
+```
+
+For other voice tools, describe: “Deep male voice, educated southern English accent, calm and warm, measured pace, no dramatic emphasis.” Write numbers and web addresses as words.
+
+## A whole film, for an agent
+
+Use this when you ask an AI coding agent to build a film like the reference.
+
+```text
+Build a [length]-second {{name}} film at 1920x1080, 30fps, with burned-in captions.
+Follow the {{name}} brand guide: tokens from /ds/tokens, type Source Sans and Source Serif,
+headlines weight 400 with a serif italic emphasis in blue (sky on dark).
+Scenes alternate light and dark: photography under a navy scrim, white, or brand gradients.
+One idea per scene, one line of narration per scene, cue each element on a spoken word.
+Every frame must be a pure function of time: one seeked GSAP timeline, no CSS transitions,
+no Math.random or Date.now. Captions: max 7 words, 42px semibold white on rgba(12,28,48,.84),
+54px from the bottom; keep the bottom 150px clear.
+End on the end-card gradient with "Book a conversation" and {{domain}}, then a credits page.
+Every claim must be supported by {{domain}} or the published essays.
+Credit every photographer and disclose the generated voice.
+Script:
+[scene-by-scene lines]
+```

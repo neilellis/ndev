@@ -1,0 +1,47 @@
+export const metadata = { title: "Documentation & agents" };
+
+# Documentation and agent text
+
+Documentation and agent text use simple English. This form is based on ASD-STE100 Simplified Technical English, the standard that aircraft makers use for maintenance manuals. A reader can follow the text without the chance to ask what it means.
+
+These rules apply to three of the [five registers](/copy):
+
+- **Documentation.** Guides, this brand guide, client documents, forms and error messages.
+- **Technical documentation.** READMEs, developer guides, runbooks, API and code documentation. Common technical terms are allowed, such as API, repository, deploy, endpoint and framework. Common acronyms such as API, URL and JSON need no expansion. General business jargon is not allowed.
+- **Agent.** Agent files such as `CLAUDE.md` and `AGENTS.md`, skills and prompts. An AI tool reads each word as an instruction, so a vague word gives a vague result.
+
+They do not apply to internal or marketing text. Marketing copy follows the [Voice](/voice) page.
+
+## Two kinds of sentence
+
+| Kind | Use it for | Rules |
+|---|---|---|
+| Procedural | A step the reader does | 20 words at most. Start with a verb: “Open the file.” Put a condition first: “If the check fails, fix the cause.” |
+| Descriptive | A fact the reader needs | 25 words at most. One fact per sentence. Six sentences per paragraph at most. |
+
+## The rules
+
+1. **Say “must” for a rule.** Write “must” or “must not”. Do not write “should”, “may”, “might”, “could” or “would”. Use “can” for something that is possible. Use “will” only for a future event.
+2. **State facts as facts.** Write “The check fails”, not “The check would fail”.
+3. **Use the active voice.** Name who or what does the action.
+4. **One step per sentence.** Do not join two steps with “and”. Number the steps when the order matters.
+5. **Write the full form.** No contractions. Write “do not”, not “don’t”, and “it is”, not “it’s”.
+6. **Write two sentences, not one long one.** Do not use semicolons. Do not use “and/or”. Write “X, Y or both”.
+7. **Write the words in full.** Write “for example” and “that is”. Do not write “e.g.”, “i.e.” or “etc.”. Name the items in a list instead of ending it with “etc.”.
+8. **One word, one meaning.** Use a word with one meaning only, and use the same word every time. Do not use a verb as a noun or a noun as a verb.
+9. **No filler.** Delete “in order to”, “it is worth noting that”, “simply” and “just”. The [banned words](/copy/banned) list gives more.
+10. **Put the condition first.** Write “If the preview fails, do not merge”, not “Do not merge if the preview fails”.
+11. **Put a warning before the step.** A reader must see the risk before they act.
+
+## Before and after
+
+<DoDont
+  good={<ul><li>“Run the checks. If a check fails, fix the cause in the same pull request.”</li><li>“You must not merge before the user approves.”</li><li>“Use the tokens in the design system, for example the accent colour.”</li></ul>}
+  bad={<ul><li>“It’s worth noting that you should probably run the checks in order to ensure things work, and fix any failures etc.”</li><li>“Merging shouldn’t happen until approval has been given.”</li><li>“Leverage the tokens, e.g. the accent.”</li></ul>}
+/>
+
+## Exceptions
+
+- **Spelling.** ASD-STE100 uses American spelling. {{name}} uses British spelling.
+- **Names.** Product names, file names and quoted source copy stay as they are.
+- **Code.** Code, commands and file paths are not checked.

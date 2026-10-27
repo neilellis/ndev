@@ -1,0 +1,40 @@
+export const metadata = { title: "Depth & motion" };
+
+# Depth and motion
+
+The website is flat. Rules and tinted bands separate content. Shadows appear only on things that float above the page, and motion is short and quiet.
+
+## Elevation
+
+<ElevationCard token="--elevation-floating" />
+<ElevationCard token="--elevation-pane" />
+<ElevationCard token="--elevation-overlay" />
+<ElevationCard token="--elevation-card-film" />
+
+| Token | Use |
+|---|---|
+| `--elevation-floating` | Floating buttons and menus |
+| `--elevation-pane` | The globe's concept pane |
+| `--elevation-overlay` | Dialogs and image lightboxes |
+| `--elevation-card-film` | Service cards in the film |
+| `--elevation-shot-film` | Product screenshots in the film |
+
+## Web motion
+
+- Hover and state changes: 160–200ms, `ease-out`.
+- The globe rotates slowly and stops on hover, focus or when a concept is selected.
+- A visible motion toggle pauses movement. `prefers-reduced-motion` stops it by default.
+- No parallax, scroll-jacking or entrance animations on scroll.
+
+See [Animation principles](/animation/principles) and [Animation patterns](/animation/patterns) for the full rules.
+
+## Film motion
+
+Film motion is calmer than most corporate video. See [Motion](/video/motion) for the full rules.
+
+| Movement | Value |
+|---|---|
+| Element entrance | 0.7s, `power3.out`, rising 42px (18px for images) |
+| Scene cross-fade | 0.55s, `power1.inOut` |
+| Ken Burns on photographs | scale 1 → 1.09 across the scene, linear |
+| Compass needle | swings from −200° to 0° over 1.6s |

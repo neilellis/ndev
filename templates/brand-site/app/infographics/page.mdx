@@ -1,0 +1,37 @@
+export const metadata = { title: "Infographics" };
+
+# Infographics
+
+An infographic shows a relationship or a measure as a picture. {{name}} uses few of them. The concept globe on the website and the evidence ladder in the film are the models. See [Diagrams and motifs](/diagrams) for the drawing rules.
+
+<Rule>
+The globe details come from `{{source}}/public/globe.js` and `public/styles.css`. The rules are a recommendation. Every figure in an infographic must come from the website, the essays or the film.
+</Rule>
+
+## When to use one
+
+Use an infographic only if all of these are true:
+
+1. The reader needs to understand a relationship, not look up a value.
+2. The shape of the picture carries real information. If you remove the data and the shape stays the same, it is decoration. Cut it.
+3. The detail behind the picture exists and the reader can reach it.
+
+## Rules
+
+1. **One idea per picture.** The globe shows how two families of concepts connect. It does not try to show anything else.
+2. **Honest data only.** Every number, label and position comes from published material. Never invent a figure to make a picture work. If an example uses placeholder data, say so on the page.
+3. **Every mark leads somewhere.** Each globe concept opens a pane with its description and a link to the essay.
+4. **Colour always has a word.** Forest and rust tell the two families apart. They also have different shapes, round and diamond, and a written label.
+5. **Use the tokens.** Every fill and stroke in an SVG uses a `var(--…)` token.
+6. **Label on the picture.** Put labels next to the thing they name. Give a label that crosses the artwork a halo in the background colour. The globe labels use a paper-coloured `text-shadow`.
+7. **Place by rule, not by eye.** Compute positions so the result is the same each time and labels do not collide.
+8. **Motion adds nothing essential.** Everything must be visible and complete with reduced motion on. The globe is still and fully usable when it does not rotate.
+9. **Accessible.** Give the picture a text alternative that tells the whole point in a sentence. Make every interactive mark work with the keyboard. The globe supports the arrow keys, Home and Escape.
+10. **Small screens.** If the picture cannot shrink and stay readable, let it scroll inside its own container. The page must not scroll sideways.
+
+## Do not
+
+- Put a decorative picture beside a set of numbers.
+- Use a picture that needs a legend before it makes sense.
+- Hide the detail behind the picture so that it is slower to reach.
+- Use 3D, gradients inside shapes or drop shadows on parts of a diagram.

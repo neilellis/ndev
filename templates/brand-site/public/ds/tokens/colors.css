@@ -1,0 +1,78 @@
+/* {{name}} colour tokens.
+   Raw values come from {{source}} public/styles.css and {{filmSource}} film/index.html.
+   Reference the semantic aliases in components, not the raw ramps. */
+:root {
+  /* Navy ramp — the brand's ink and its dark bands */
+  --navy-950: #0c1c2c;  /* pressed state; darkest gradient stop */
+  --navy-900: #102846;  /* ink — headings and body ink on paper */
+  --navy-800: #102b4a;  /* navy — primary button, {{product}} band, skip link */
+  --navy-700: #163a62;  /* gradient mid-stop on brand scenes */
+  --navy-600: #1b456e;  /* gradient stop; brand hover */
+  --navy-500: #205588;  /* primary button hover */
+
+  /* Blue ramp — the single accent */
+  --blue-600: #2166ac;  /* BRAND ACCENT — eyebrow numbers, italic emphasis, links on hover */
+  --blue-500: #357bb9;  /* focus ring */
+  --blue-200: #a7d8ff;  /* sky — accent on navy */
+  --blue-100: #d4e9fb;  /* light button hover */
+  --blue-50:  #eaf2f9;  /* close-button hover, faint blue wash */
+
+  /* Slate ramp — text and rules */
+  --slate-700: #3f536a; /* body copy */
+  --slate-600: #586b80; /* muted text, notes, meta */
+  --slate-500: #6b8095; /* coordinates and faint labels */
+  --slate-400: #8096ae; /* text-link underline */
+  --slate-300: #bdcddb; /* rules on mist sections */
+  --slate-200: #d2dce5; /* hairline rules on paper */
+
+  /* Surfaces */
+  --white:     #ffffff;
+  --paper:     #f6f8fa; /* page canvas */
+  --mist:      #e8eff5; /* tinted section — experience, about */
+  --sand:      #f4f1e9; /* backing behind {{product}} screenshots */
+
+  /* On-navy text */
+  --navy-text:       #c4d5e6; /* body copy on navy */
+  --navy-text-muted: #b0c7df; /* notes and captions on navy */
+  --navy-rule:       #506985; /* rules on navy */
+
+  /* Concept families — the globe, the film's network, the wordmark accent */
+  --forest-700: #173f35; /* organisation family */
+  --forest-500: #3f7a5f; /* wordmark accent: compass needle, "-i2" */
+  --rust-600:   #a94f24; /* AI family */
+
+  /* Status */
+  --red-700: #a42b24; /* errors only */
+
+  /* ── Semantic aliases ─────────────────────────────────────────── */
+  --canvas:            var(--paper);
+  --surface-card:      var(--white);
+  --surface-tint:      var(--mist);
+  --surface-inverse:   var(--navy-800);
+  --surface-screenshot: var(--sand);
+
+  --text-heading:      var(--navy-900);
+  --text-body:         var(--slate-700);
+  --text-muted:        var(--slate-600);
+  --text-faint:        var(--slate-500);
+  --text-accent:       var(--blue-600);
+  --text-on-inverse:   var(--white);
+  --text-on-inverse-body:  var(--navy-text);
+  --text-on-inverse-muted: var(--navy-text-muted);
+  --text-accent-on-inverse: var(--blue-200);
+
+  --border-hairline:   var(--slate-200);
+  --border-on-tint:    var(--slate-300);
+  --border-on-inverse: var(--navy-rule);
+  --border-link:       var(--slate-400);
+
+  --action:            var(--navy-800);
+  --action-hover:      var(--navy-500);
+  --action-press:      var(--navy-950);
+  --ring:              var(--blue-500);
+
+  --family-organisation: var(--forest-700);
+  --family-ai:           var(--rust-600);
+  --brand-mark-accent:   var(--forest-500);
+  --error:               var(--red-700);
+}

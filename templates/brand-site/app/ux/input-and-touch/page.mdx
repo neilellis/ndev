@@ -1,0 +1,57 @@
+export const metadata = { title: "Input & touch" };
+
+# Input and touch
+
+How easily a reader can hit a target or fill in a field. Fitts's law applies to a mouse and to a thumb. See [Heuristics and laws](/ux/heuristics).
+
+<Rule>
+The measured sizes come from `{{source}}/public/styles.css`. The 44px floor comes from [Accessibility](/accessibility). The other rules are a recommendation.
+</Rule>
+
+## Target size
+
+| Standard | Minimum |
+|---|---|
+| WCAG 2.2 SC 2.5.8, level AA | 24 × 24px |
+| WCAG 2.2 SC 2.5.5, level AAA | 44 × 44px |
+| {{name}} floor | **44 × 44px** |
+
+The {{name}} floor is 44px. Never go below 24px.
+
+| Website control | Height | Meets 44px |
+|---|---|---|
+| `.button` | 53px | Yes |
+| Header links | 16px text with 13px padding above and below | Yes |
+| Menu button (800px and below) | 40px | **No** |
+| Globe motion toggle | 38px | **No** |
+| Feedback button | 56 × 56px | Yes |
+
+The menu button and the motion toggle are below the floor. Fix them on the website, then update this table.
+
+Space matters as much as size. Leave a gap between targets that sit next to each other, so a thumb does not hit the wrong one.
+
+## Touch
+
+- The website sets `touch-action: manipulation` on buttons, links and inputs. This removes the tap delay.
+- The globe uses `touch-action: pan-y`, so a reader can still scroll the page past it.
+- Fixed controls stay clear of the phone's edges. The feedback button uses `env(safe-area-inset-right)` and `env(safe-area-inset-bottom)`.
+- The bottom of the screen is the easiest place for a thumb to reach. The top corners are the hardest. Put rare actions at the top.
+
+## Pointer and hover
+
+- A hover state is extra feedback. It must never be the only way to see content. A phone has no hover.
+- Links and buttons change colour on hover. Logos in the client strip change from grey to colour. Both are decoration only.
+- Use `cursor: pointer` on things that act. The globe shows `grab` and `grabbing`.
+
+## Keyboard
+
+- Every control works with a keyboard alone. The focus order follows the reading order.
+- Focus is always visible: a 3px `--ring` outline with a 5px offset. Never remove it.
+- Tabs move with the arrow keys, Home and End. The globe supports the arrow keys, Home and Escape.
+
+## Forms
+
+- Give every field a visible label. A placeholder is not a label.
+- Use one column, with the label above the field.
+- Use the correct input type, for example `type="email"` and `autocomplete="email"`.
+- Show errors next to the problem, in plain words, with `role="alert"`. See [Feedback and performance](/ux/feedback-and-performance).

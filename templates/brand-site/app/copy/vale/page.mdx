@@ -1,0 +1,52 @@
+export const metadata = { title: "Vale rules" };
+
+# Vale rules
+
+[Vale](https://vale.sh) checks text against the {{name}} copy rules in your editor or your build. The rules come from the [banned words](/copy/banned) list. This site builds them again each time the list changes, so a project that uses them gets each new rule on its next sync.
+
+No rule stops a build. A banned word is a warning. Every other rule is a suggestion.
+
+## Downloads
+
+| File | What it is |
+| --- | --- |
+| <a href="/ds/copy/vale/vale.ini" download=".vale.ini">vale.ini</a> | The project settings. Save it as `.vale.ini` at the top of your project. |
+| <a href="/ds/copy/vale/{{style}}.zip" download>{{style}}.zip</a> | The {{style}} style. Vale downloads it for you. You do not need to download it. |
+
+## Set up a project
+
+1. Save <a href="/ds/copy/vale/vale.ini" download=".vale.ini">vale.ini</a> as `.vale.ini` at the top of your project.
+2. Change the paths in the file to match where your project keeps each type of text.
+3. Add `.vale/` to your `.gitignore` file.
+4. Run `vale sync` to download the {{style}} style.
+5. Run `vale .` to check your text.
+
+Run `vale sync` again to get the current rules. Add it before `vale` in your build so that the build always uses the current rules.
+
+## The rules
+
+| Rule | Level | What it finds | Where to turn it off |
+| --- | --- | --- | --- |
+| `{{style}}.Banned` | Warning | Words with no place in plain English | Nowhere |
+| `{{style}}.Check` | Suggestion | Ordinary words that are often misused | Nowhere |
+| `{{style}}.Jargon` | Suggestion | Common technical terms, such as “out of the box” | Technical documentation |
+| `{{style}}.Strict` | Suggestion | “Should”, “may”, “would” and contractions | Internal and marketing text |
+| `{{style}}.Formal` | Suggestion | Semicolons | Internal, marketing and technical documentation |
+| `{{style}}.Negation` | Suggestion | “Not X, but Y” patterns | Nowhere |
+| `{{style}}.EditorialParticiple` | Suggestion | A trailing “-ing” clause that explains the meaning | Nowhere |
+
+The settings file turns rules off by path. This example turns off the strict rules for marketing text:
+
+```ini
+[marketing/**]
+{{style}}.Strict = NO
+{{style}}.Formal = NO
+```
+
+See the [five registers](/copy) for which type of text gets which rules.
+
+## Limits
+
+Vale finds words, not meaning. Text can pass every rule and still be unclear. Do the [copy checklist](/copy/checklist) as well.
+
+Vale checks a whole file with one set of rules. The {{name}} copy check can also check a marketing block inside a guide page. Use the copy check for files that mix types of text.

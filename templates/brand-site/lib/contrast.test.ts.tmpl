@@ -1,0 +1,18 @@
+import { it, expect } from "vitest";
+import { contrastRatio, rate } from "./contrast";
+
+it("matches known WCAG ratios", () => {
+  expect(contrastRatio("#000", "#fff")).toBeCloseTo(21, 1);
+  expect(contrastRatio("#fff", "#fff")).toBeCloseTo(1, 5);
+});
+
+it("rates ratios against WCAG thresholds", () => {
+  expect(rate(7.1)).toBe("AAA");
+  expect(rate(4.6)).toBe("AA");
+  expect(rate(3.2)).toBe("AA large");
+  expect(rate(2)).toBe("Fail");
+});
+
+it("rejects values that are not hex colours", () => {
+  expect(() => contrastRatio("navy", "#fff")).toThrow();
+});

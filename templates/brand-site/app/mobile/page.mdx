@@ -1,0 +1,35 @@
+export const metadata = { title: "Mobile" };
+
+# Mobile
+
+The house style for phones. Phones get the same site as desktops, reflowed at the [breakpoints](/responsive/breakpoints). These rules make sure the result is easy to use with one thumb.
+
+<Rule>
+The website behaviour comes from `{{source}}/public/styles.css` and `public/script.js`. The rules marked as a recommendation are not taken from the website.
+</Rule>
+
+## House style
+
+1. **Touch targets are at least 44px.** See [Input and touch](/ux/input-and-touch). Leave space between targets that sit side by side.
+2. **One column.** Content reads from top to bottom. Do not put two columns of text side by side on a phone. Short label columns can stay, such as the 85px year column in the experience list.
+3. **Reduce, do not shrink.** Remove what the reader does not need yet. Do not make text smaller to fit more in. Body text stays 17–18px. See [Progressive disclosure](/ux/progressive-disclosure).
+4. **Same brand.** Same tokens, colours, type and voice. Only the layout changes.
+5. **The menu is one tap away.** The “Menu” button opens the links. Escape, a tap outside or a tap on a link closes it.
+6. **No hover-only content.** Anything that opens on hover must also open on tap.
+7. **Stay clear of the edges.** Fixed controls use `env(safe-area-inset-*)`, so they are not under a notch or the home bar.
+8. **Do not trap the scroll.** Interactive pictures such as the globe use `touch-action: pan-y`, so a vertical swipe still scrolls the page.
+9. **Respect the data plan.** Lazy-load images below the fold. Do not autoplay video on a phone. This is a recommendation.
+
+## Content order
+
+Keep the desktop reading order. On the hero, the copy comes first and the globe second. In two-column sections, the heading comes before the intro. The main action stays visible without opening a menu: the hero's “Discover {{product}}” button and the contact section's “Book a conversation” button.
+
+## Test on a phone
+
+Recommendation. Before you ask for approval, open each changed page on a real phone or at 390px in the browser:
+
+- Nothing scrolls sideways.
+- Every control is at least 44px and easy to tap.
+- The menu opens and closes.
+- Text is not cut off or overlapping.
+- With reduced motion on, nothing moves.

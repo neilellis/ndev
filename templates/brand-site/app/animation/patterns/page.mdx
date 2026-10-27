@@ -1,0 +1,55 @@
+export const metadata = { title: "Animation patterns" };
+
+# Animation patterns
+
+What moves on the website today, and how to animate new web work. See [Animation principles](/animation/principles) for the reasons.
+
+<Rule>
+The first table comes from `{{source}}/public/styles.css`, `public/script.js` and `public/globe.js`. The patterns for new work are a recommendation.
+</Rule>
+
+## What moves on the website
+
+| Element | Motion | Value |
+|---|---|---|
+| Buttons | Background colour on hover | 0.2s |
+| Header and text links | Underline and text turn blue on hover | No transition |
+| Feedback button | Background colour on hover. The label fades in. | `--dur-fast`, `--ease` |
+| Concept pane | Fades in and rises 5px | 0.16s, `ease-out` |
+| Globe concepts | Background and border colour | 0.15s |
+| Globe | Slow rotation. Stops on hover, focus, selection or the motion toggle. | Continuous |
+| Client logos | The strip scrolls. It pauses on hover or focus. Logos go from grey to colour on hover. | 110s per loop, `linear`. Colour change 0.3s |
+| In-page links | Smooth scroll to the anchor | `scroll-behavior: smooth` |
+
+Under reduced motion, all of these stop. The logo strip becomes a still, wrapped list.
+
+## Patterns for new work
+
+### Hover and press
+
+Change colour only. Use `--dur-fast` or `--dur` with `--ease`. Do not scale, lift or add a shadow on hover.
+
+### Open and close
+
+A pane, menu or dialog fades in and rises a few pixels, for 160–200ms. It closes faster than it opens, or at once. Escape must close it, and focus must return to the control that opened it.
+
+### Confirm an action
+
+Change the same control in place. For example, a “Send” button shows that it is busy, then the form shows the confirmation in words. Do not swap in a separate spinner that appears from nowhere.
+
+### Loading
+
+A small spinner with a text status is enough for a short wait. The feedback form uses a spinning ring beside “Capturing page… This can take a moment.” Never show a spinner without words.
+
+### Continuous motion
+
+Use it only for a feature that needs it, such as the globe. It must pause on hover and focus, have a visible pause control, and stop under reduced motion.
+
+## Implementation
+
+- Use CSS transitions and keyframes with the motion tokens. The website uses no animation library.
+- Animate only `transform`, `opacity`, `filter` and colour. Do not animate `width`, `height`, `top` or `left`. These cause layout work and are slow on phones.
+- Add `touch-action: manipulation` to buttons and links.
+- Respect `prefers-reduced-motion` in CSS and in JavaScript.
+- Do not add parallax, scroll-jacking or entrance animations on scroll.
+- If a new feature needs a library, propose it in a pull request first and say why CSS is not enough.

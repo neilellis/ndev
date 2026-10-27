@@ -1,0 +1,52 @@
+export const metadata = { title: "Animation principles" };
+
+# Animation principles
+
+Motion on {{name}} web work is short, quiet and useful. It shows that something changed. It does not decorate. The film has its own, slower rules: see [Motion](/video/motion).
+
+<Rule>
+The tokens and the reduced-motion rule come from the website. The duration bands and the other principles are a recommendation, based on Material Design 3, Apple's Human Interface Guidelines and Nielsen Norman Group research.
+</Rule>
+
+## Duration
+
+| Scope | Duration | {{name}} token |
+|---|---|---|
+| Hover, press, colour change | 150–200ms | `--dur-fast` 160ms, `--dur` 200ms |
+| Small change: a pane opens, a menu opens | 150–250ms | `--dur-fast` or `--dur` |
+| Medium: a dialog or a panel | 250–400ms | Use only when there is a reason |
+| Page transition | Not used | The website does not animate between pages |
+
+The website stays at 160–200ms for almost everything. An animation longer than 500ms feels slow for an action that people do often.
+
+## Easing
+
+- Use `--ease` (`ease-out`) for entrances, hover and press. It starts fast and lands softly.
+- Use `ease-in` only for exits.
+- Use `linear` only for continuous movement, such as the client logo strip.
+- Never use bounce, overshoot or elastic easing.
+
+## Principles
+
+1. **Feedback first.** Motion must show the result of an action: a state changed, a pane opened, a message arrived.
+2. **One movement at a time.** If everything moves, nothing stands out.
+3. **Keep the same element.** Change the button in place. Do not replace it with a new element. The reader can then follow cause and effect.
+4. **Colour, not size.** Show hover and press with a colour change. Do not scale buttons up or down.
+5. **Small distances.** The concept pane rises 5px. Large movement is for the film only.
+6. **Think about the tenth view.** A movement that pleases on the first visit becomes noise on the tenth. Ask what happens when the reader sees it again.
+7. **Never block.** The reader must be able to act during an animation.
+
+## Reduced motion
+
+The website honours `prefers-reduced-motion: reduce`. It is not optional.
+
+- A global rule stops all CSS animation and transitions, and turns off smooth scrolling.
+- The globe stops rotating.
+- The client logo strip stops and shows the logos as a still, wrapped list.
+- Content that moves for more than five seconds must also have a visible pause control. The globe has the motion toggle.
+
+A CSS override does not stop motion that JavaScript drives. Check the reduced-motion setting in script too. `globe.js` does this with `matchMedia('(prefers-reduced-motion: reduce)')`.
+
+## Sources
+
+[Material Design 3 motion](https://m3.material.io/styles/motion/overview/how-it-works), [Apple HIG motion](https://developer.apple.com/design/human-interface-guidelines/motion), [web.dev animations guide](https://web.dev/articles/animations-guide), [MDN prefers-reduced-motion](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion), [NN/g: the role of animation in UX](https://www.nngroup.com/articles/animation-purpose-ux/), [NN/g: animation duration](https://www.nngroup.com/articles/animation-duration/).

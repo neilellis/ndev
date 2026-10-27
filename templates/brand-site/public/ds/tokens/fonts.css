@@ -1,0 +1,5 @@
+/* The two Adobe Source families, self-hosted. Licences sit beside the files. */
+@font-face { font-family: "Source Sans"; src: url("../assets/fonts/SourceSans3-Regular.otf") format("opentype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Source Sans"; src: url("../assets/fonts/SourceSans3-Semibold.otf") format("opentype"); font-weight: 600 800; font-display: swap; }
+@font-face { font-family: "Source Serif"; src: url("../assets/fonts/SourceSerif4-Regular.otf") format("opentype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Source Serif"; src: url("../assets/fonts/SourceSerif4-Semibold.otf") format("opentype"); font-weight: 600 800; font-display: swap; }

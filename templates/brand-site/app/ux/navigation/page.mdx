@@ -1,0 +1,35 @@
+export const metadata = { title: "Navigation" };
+
+# Navigation
+
+Navigation tells the reader where they are, where they can go and how to get back. The website is one responsive site. The navigation reflows at narrow widths. It does not change into a different pattern.
+
+<Rule>
+The header behaviour comes from `{{source}}/components/site/SiteHeader.tsx` and `public/script.js`. The rules marked as a recommendation are not taken from the website.
+</Rule>
+
+## The header
+
+| Width | Pattern |
+|---|---|
+| Above 800px | The wordmark on the left. Text links and the “Let’s talk” button on the right, always visible. |
+| 800px and below | The wordmark and a “Menu” button. The links open below the header when the reader selects the button. |
+
+- The menu button sets `aria-expanded` and `aria-controls`.
+- Escape closes the menu and returns focus to the button.
+- A click outside the header closes the menu. A click on a link closes it too.
+- The menu closes if the window grows wider than 800px.
+- A skip link is the first item on the page.
+- Section links scroll to an anchor. `scroll-padding-top` is 30px, so the heading is not hidden.
+
+## Rules
+
+1. Keep the main links few. Put “Let’s talk” last, where the eye ends.
+2. Use the same words in the header, the footer and the page headings.
+3. Show the current page in multi-page navigation. This guide's sidebar does this.
+4. Give a way back at every depth. A case study starts with a “Case studies /” eyebrow link and ends with “Back to case studies”.
+5. Use familiar patterns. Do not invent a new menu for a solved problem.
+
+## Recommendation: no bottom tab bar
+
+Do not add a bottom tab bar on phones. The website has few destinations and one column, so the menu button is enough. A tab bar takes screen space on every page.

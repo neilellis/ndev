@@ -1,0 +1,68 @@
+export const metadata = { title: "Writing rules" };
+
+# Writing rules
+
+These rules apply to all {{name}} text: the website, the film, documents, interface labels, error messages and agent files. Read them before you write. Then check your text against the [banned words](/copy/banned) and the [copy checklist](/copy/checklist).
+
+## Five registers
+
+{{name}} text has five registers. Choose the register before you write. All five follow this page and the [banned words](/copy/banned).
+
+| Register | What it includes | Also follow |
+|---|---|---|
+| Internal | Notes, emails, reports and proposals inside {{name}} | Nothing more. Write in plain English. |
+| Marketing | The website, headlines, the film, articles and case studies | [Voice](/voice) |
+| Documentation | Guides, this brand guide, client documents, forms and error messages | [Documentation & agents](/copy/simple-english) |
+| Technical documentation | READMEs, developer guides, runbooks, API and code documentation | [Documentation & agents](/copy/simple-english). Common technical terms are allowed. |
+| Agent | Agent files such as `CLAUDE.md` and `AGENTS.md`, skills and prompts | [Documentation & agents](/copy/simple-english) |
+
+Documentation, technical documentation and agent text must be clear to a reader who cannot ask a question. An AI tool follows each word as it is written. So these three registers use a strict form of simple English. Technical documentation can also use common technical terms that its readers know, such as API, repository, deploy, endpoint and framework. Internal and marketing text can use a natural rhythm and contractions, but it must still be plain and true.
+
+## The reader
+
+Write for a busy senior person in a public body or a business. They know their own organisation well. They do not know our terms, and they will not look anything up. They can read on a phone with half their attention.
+
+## Three ways text fails
+
+Text can fail in three different ways. A fix for one does not fix the other two.
+
+| Layer | The question | Where the rule is |
+|---|---|---|
+| Legibility | Can the reader see the characters? Size, contrast, case and line length. | [Typography](/foundations/typography) and [Accessibility](/accessibility) |
+| Readability | Can the reader get through the sentence? Length, structure and voice. | This page |
+| Comprehension | Does the reader understand what it means? Jargon, acronyms and undefined terms. | This page |
+
+Most real failures are at the second and third layers. Text can be easy to see and still tell the reader nothing they can use.
+
+## The rules
+
+1. **Lead with the answer.** Put the main point in the first sentence. Put the detail after it.
+2. **One idea per sentence.** Keep most sentences under 20 words. Use a list when you have three or more items.
+3. **Use ordinary words.** Use the first word that comes to mind, not the impressive one. Use “use”, not “leverage”. The [banned words](/copy/banned) list gives the common traps.
+4. **Use the active voice.** Say who does the action. Write “We map your teams”, not “Your teams are mapped”.
+5. **One name for one thing.** When you choose a term, use it every time. Do not change the word for variety. {{product}} is always {{product}}.
+6. **Say the consequence, not the mechanism.** Tell the reader what changes for them. Leave out how the system does it unless they need that.
+7. **Give a number its scope.** Say what the number counts, over what period and from what source, in the same sentence.
+8. **Never let plainer words make a stronger claim.** A simpler sentence is the place where an overclaim can start. Keep every condition, limit and uncertainty when you shorten a claim. Say what is told, shown or measured.
+9. **No internal names.** Do not show a code name, file name, field name, branch name or internal tier in public text.
+10. **Expand acronyms.** Write the full form at first use: “artificial intelligence (AI)”. Keep the short form alone only when it is the common form, such as AI, UK or NHS.
+11. **Errors give a next action.** Say what went wrong in plain words, and what the reader can do now. Do not show a raw error.
+12. **A label names its thing.** A button or link says what it does to what: “Book a conversation”, “Read the series”. Avoid “Click here”, “Learn more” and “Submit”.
+13. **Desktop and mobile say the same thing.** If a page has a shorter mobile version, it must give the same meaning.
+14. **Describe the present.** Rules and documentation say what is true now. Do not write what used to be true or what changed. The git history holds the past.
+15. **British English.** Use the spelling and conventions on the [Voice](/voice) page.
+
+## Write like a person
+
+Many of the [banned words](/copy/banned) are words that AI tools use too much. One such word is not wrong. A cluster of them makes the text read as generated, and the reader stops trusting it.
+
+The cure is the same every time. Replace the general word with the specific fact. If you cannot find a fact, delete the sentence.
+
+<DoDont
+  good={<ul><li>“{{product}} maps your teams, systems, suppliers and AI agents together.”</li><li>“We work alongside your people to understand the challenge, find the right approach and make change happen.”</li></ul>}
+  bad={<ul><li>“In today’s fast-moving digital landscape, {{product}} empowers organisations to seamlessly navigate complexity.”</li><li>“It isn’t just a platform. It’s a partnership.”</li></ul>}
+/>
+
+## Keep the list current
+
+When a review finds a new word, phrase or pattern that makes {{name}} text worse, add it to the [banned words](/copy/banned) list. The page tells you how. Each new entry makes the next review faster.

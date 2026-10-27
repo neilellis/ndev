@@ -1,0 +1,55 @@
+export const metadata = { title: "Page sections" };
+
+# Page sections
+
+The home page is a sequence of full-width bands. Each opens with a numbered eyebrow and alternates surface so the reader feels the rhythm without boxes.
+
+| Order | Section | Surface | Pattern |
+|---|---|---|---|
+| — | Hero | Paper | Display heading, intro, one dark button, a text link, and the concept globe |
+| 01 | Introducing {{product}} | Navy | Section heading and a tabbed product tour with screenshots on sand |
+| 02 | Our services | Paper | Section heading and three ruled columns |
+| — | Experience | Mist | Dated rows and client logos |
+| 03 | Ideas & insights | Paper | Featured essay beside a numbered series list |
+| 04 | About us | Mist | Story and a serif pull quote |
+| 05 | Let’s talk | Paper | One clear action: book a conversation |
+| — | Footer | Paper | A hairline rule above the wordmark, legal line and links |
+
+## Hero
+
+<Demo surface="paper">
+  <p className="eyebrow" style={{ marginBottom: 26 }}>AI · Data · Organisational transformation</p>
+  <h1 style={{ fontSize: "clamp(44px, 5.4vw, 84px)", letterSpacing: "var(--tracking-display)", lineHeight: "var(--lh-display)", maxWidth: "11ch" }}>Complex challenges need a <em style={{ color: "var(--text-accent)" }}>clear perspective.</em></h1>
+  <p style={{ fontSize: "var(--fs-body-lg)", color: "var(--text-body)", maxWidth: 520, margin: "28px 0 32px" }}>We bring the expertise, evidence and practical experience to move your business forward.</p>
+  <div className="demo-row"><a className="button button-dark" href="#hero">Book a conversation</a><a className="text-link" href="#hero">Explore our services</a></div>
+</Demo>
+
+## Navy band
+
+Use one navy band per page for the most important product or idea. Headings turn white, emphasis turns sky, and body text uses `--navy-text`.
+
+<Demo surface="navy">
+  <div className="section-top"><p className="eyebrow"><span>01 /</span>Introducing {{product}}</p></div>
+  <div className="section-heading">
+    <h2>See the organisation. <em>Understand the work.</em></h2>
+    <p>A digital twin of your organisation, grounded in evidence. {{product}} maps your teams, systems, suppliers and AI agents together. See how work connects, what each can do, what it may do, and who answers for it.</p>
+  </div>
+</Demo>
+
+## Mist band
+
+<Demo surface="mist">
+  <div className="section-top"><p className="eyebrow"><span>02 /</span>Experience</p></div>
+  <div className="experience-list">
+    <div><span>Rail</span><h3>Data and transformation for national infrastructure</h3></div>
+    <div><span>Health</span><h3>Evidence and governance for public services</h3></div>
+  </div>
+</Demo>
+
+The row text above is placeholder copy for layout.
+
+## Rhythm
+
+- Never put two navy bands next to each other.
+- Mist bands use `--border-on-tint` rules, not the paper hairline.
+- Keep section padding at 90px (58px on phones), whatever the content.

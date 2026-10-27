@@ -1,0 +1,33 @@
+/* {{name}} type tokens. Sizes are the website's desktop values; see the
+   Typography page for the tablet and phone steps. */
+:root {
+  --font-sans:  "Source Sans", Arial, sans-serif;
+  --font-serif: "Source Serif", Georgia, serif;
+
+  --fs-display: clamp(70px, 6.6vw, 105px); /* home hero */
+  --fs-page:    clamp(44px, 5vw, 76px);    /* inner page title */
+  --fs-section: clamp(40px, 4.4vw, 65px);  /* section heading */
+  --fs-h3:      29px;  /* card and column titles */
+  --fs-h4:      23px;
+  --fs-lead:    22px;
+  --fs-body-lg: 20px;
+  --fs-body:    18px;  /* default body */
+  --fs-sm:      16px;  /* nav, buttons, text links */
+  --fs-xs:      14px;  /* meta, footer */
+  --fs-eyebrow: 13px;  /* eyebrows and small labels */
+  --fs-micro:   11px;
+
+  --fw-regular:  400;
+  --fw-semibold: 600;
+
+  --lh-display: 1.01;
+  --lh-heading: 1.12;
+  --lh-snug:    1.3;
+  --lh-body:    1.6;
+  --lh-relaxed: 1.7;
+
+  --tracking-display: -0.057em;
+  --tracking-section: -0.045em;
+  --tracking-title:   -0.025em;
+  --tracking-eyebrow: 0.11em;
+}
