@@ -181,9 +181,23 @@ and each pull request's checks in a pane.
 | `/fix-prs pause`, `/fix-prs resume` | Stop and continue the loop. |
 | `/fix-prs skip <pr>`, `/fix-prs retry <pr>` | Leave out a pull request, or put a blocked one back in the queue. |
 
-The loop first asks the agent that owns a pull request to fix it. When that agent does not
-answer, the loop gives the pull request to this session's model. The model reports the result with
-the `report` tool (`mcp__ndev__report`): `pushed`, or `blocked` with the reason.
+The loop first asks the agent that owns a pull request to fix it. It looks for the owner in this
+order:
+
+- an agent named after the pull request (`pr-<n>`, `issue-<k>`);
+- the listed session that signed its commits;
+- the listed session in an Orca workspace of the pull request.
+
+When no owner is found, or the owner is no longer listed, the loop starts a Claude agent in Orca
+with the fix brief. It uses the pull request's Orca workspace, else a new `pr-<n>` workspace. A main
+checkout is never the pull request's workspace. The loop asks the agent once its session is listed.
+When the agent is not listed within 30 minutes, or Orca cannot start an agent, the loop records the
+pull request as blocked. The record gives Orca's output and the repair.
+
+When an owner does not answer or is blocked, the loop gives the pull request to this session's
+model. When the agents cannot be listed, the model gets it too, and no agent starts in Orca. An
+owner found later then takes it over. The model reports the result with the `report` tool
+(`mcp__ndev__report`): `pushed`, or `blocked` with the reason.
 
 ## Worktree init: scripts/init-project.sh
 
