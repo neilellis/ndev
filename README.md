@@ -98,10 +98,11 @@ Claude follows the selected workflow.
 
 | Command | Values | Default | Effect |
 |---|---|---|---|
-| `/dev-mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
-| `/dev-steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
+| `/dev mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
+| `/dev steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
 
-A command with no value toggles the switch.
+A command with no value toggles the switch. The older names `/dev-mode`, `/dev-steering` and
+`/dev-setup` still work.
 
 `/dev` lists the plugin's commands and shows the project's current settings. In a project that
 has not answered the set-up questions yet, `/dev` runs the set-up dialog first. `/dev help`
@@ -124,7 +125,7 @@ the project. Every key is optional:
 ```
 
 - `mode` and `steering` set the switches at session start. With no file, a session starts at
-  `light · interactive`. `/dev-mode` and `/dev-steering` write the new value back to the file;
+  `light · interactive`. `/dev mode` and `/dev steering` write the new value back to the file;
   commit it to share it.
 - `github` holds the project's GitHub repository and Projects v2 board, so no skill or script
   looks them up again. `null` means "none" (`"repo": null`, or `"board": null`). When a session
