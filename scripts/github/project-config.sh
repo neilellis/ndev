@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Source this file; do not run it. Sets GH_REPO, GH_PROJECT_OWNER and GH_PROJECT_NUMBER from the
-# "github" key of the project's .neil-dev.json (saved by the neil-development /dev-setup dialog),
+# "github" key of the project's .neil-dev.json (saved by the ndev /dev-setup dialog),
 # so no script looks them up again. A value already in the environment wins. A file that cannot
 # be read stops the calling script, with the repair.
 

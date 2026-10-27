@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-const SECTION = 'neil-development:dev-mode'
+const SECTION = 'ndev:dev-mode'
 
 type On = Parameters<Parameters<typeof test>[1]>[1]
 
@@ -58,7 +58,7 @@ test('a session starts light and interactive', async ($, on) => {
 
   const text = await section($)
   expect(text).toContain('LIGHT')
-  expect(text).toContain('neil-development:work-light')
+  expect(text).toContain('ndev:work-light')
   expect(text).toContain('INTERACTIVE')
 })
 
@@ -68,7 +68,7 @@ test('/dev-mode toggles to heavy and back', async ($, on) => {
 
   const ran = await $.command.run({ command: 'dev-mode', args: '' })
   expect(ran.text).toContain('Development mode is now heavy.')
-  expect(await section($)).toContain('neil-development:work-heavy')
+  expect(await section($)).toContain('ndev:work-heavy')
 
   await $.command.run({ command: 'dev-mode', args: '' })
   expect(await section($)).toContain('LIGHT')
@@ -82,10 +82,10 @@ test('/dev-steering auto tells the model not to stop for questions', async ($, o
   const text = await section($)
   expect(text).toContain('AUTO')
   expect(text).not.toContain('INTERACTIVE')
-  expect(text).toContain('neil-development:work-light-auto')
+  expect(text).toContain('ndev:work-light-auto')
 
   await $.command.run({ command: 'dev-mode', args: 'heavy' })
-  expect(await section($)).toContain('neil-development:work-heavy-auto')
+  expect(await section($)).toContain('ndev:work-heavy-auto')
 })
 
 test('an unknown value is refused and changes nothing', async ($, on) => {
@@ -103,7 +103,7 @@ test('the prompt names ~/dev-wiki and the dev-wiki skill', async ($, on) => {
 
   const text = await section($)
   expect(text).toContain('~/dev-wiki')
-  expect(text).toContain('neil-development:dev-wiki')
+  expect(text).toContain('ndev:dev-wiki')
 })
 
 test('/learn hands the model the review instruction', async ($, on) => {
@@ -120,7 +120,7 @@ test('a correction gets the record-the-lesson nudge; a plain prompt does not', a
   await start($)
 
   const corrected = await $.prompt.submit({ text: "No, don't poll the CI run." })
-  expect(corrected.context?.join(' ')).toContain('neil-development:dev-wiki')
+  expect(corrected.context?.join(' ')).toContain('ndev:dev-wiki')
 
   const plain = await $.prompt.submit({ text: 'Add a date column to the table.' })
   expect(plain.context ?? []).toHaveLength(0)
@@ -144,7 +144,7 @@ test('the project file sets the mode and steering', async ($, on) => {
   const text = await section($)
   expect(text).toContain('HEAVY')
   expect(text).toContain('AUTO')
-  expect(text).toContain('neil-development:work-heavy-auto')
+  expect(text).toContain('ndev:work-heavy-auto')
 })
 
 test('/dev-mode writes the project file and keeps its other keys', async ($, on) => {
@@ -203,7 +203,7 @@ test('/dev mode toggles and sets the mode like /dev-mode', async ($, on) => {
 
   const ran = await $.command.run({ command: 'dev', args: 'mode' })
   expect(ran.text).toContain('Development mode is now heavy.')
-  expect(await section($)).toContain('neil-development:work-heavy')
+  expect(await section($)).toContain('ndev:work-heavy')
 
   await $.command.run({ command: 'dev', args: 'Mode light' })
   expect(await section($)).toContain('LIGHT')
@@ -216,7 +216,7 @@ test('/dev steering auto sets the steering like /dev-steering', async ($, on) =>
 
   const ran = await $.command.run({ command: 'dev', args: 'steering auto' })
   expect(ran.text).toContain('Steering is now auto.')
-  expect(await section($)).toContain('neil-development:work-light-auto')
+  expect(await section($)).toContain('ndev:work-light-auto')
 })
 
 test('/dev mode with an unknown value names /dev mode in the refusal', async ($, on) => {

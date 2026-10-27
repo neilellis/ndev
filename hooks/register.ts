@@ -7,11 +7,11 @@ import type { Branding, GitHub, LoadedConfig } from './config'
 import { agentPrompt, runSetup } from './setup'
 import { quality } from './quality'
 
-const PLUGIN = 'neil-development'
+const PLUGIN = 'ndev'
 
-const mode = atom({ plugin: 'neil-development', key: 'mode' } as const, 'light' as Mode)
+const mode = atom({ plugin: 'ndev', key: 'mode' } as const, 'light' as Mode)
 const steering = atom(
-  { plugin: 'neil-development', key: 'steering' } as const,
+  { plugin: 'ndev', key: 'steering' } as const,
   'interactive' as Steering,
 )
 
@@ -39,8 +39,8 @@ const MODE_TEXT: Record<Mode, string> = {
 
 const skillText = (m: Mode, s: Steering) =>
   s === 'interactive'
-    ? `For development work, load the \`neil-development:${SKILL[m].interactive}\` skill and follow it.`
-    : `To deliver issues (a board pass, or \`--issue <n>\`), load the \`neil-development:${SKILL[m].auto}\` skill and follow it. For a task given straight in the prompt with no issue, follow the \`neil-development:${SKILL[m].interactive}\` method without stopping to ask.`
+    ? `For development work, load the \`ndev:${SKILL[m].interactive}\` skill and follow it.`
+    : `To deliver issues (a board pass, or \`--issue <n>\`), load the \`ndev:${SKILL[m].auto}\` skill and follow it. For a task given straight in the prompt with no issue, follow the \`ndev:${SKILL[m].interactive}\` method without stopping to ask.`
 
 const STEERING_TEXT: Record<Steering, string> = {
   interactive:
@@ -79,13 +79,13 @@ const githubText = (g: GitHub | undefined) =>
     : undefined
 
 const WIKI_TEXT =
-  'Living development wiki: ~/dev-wiki (index `wiki.md`, rules `AGENTS.md`). At the start of development work, read the index once and open only the pages that fit. When you learn a reusable, project-neutral development lesson (a user correction, a non-obvious cause, a guard that lied or did not run, a procedure written a second time), record it with the `neil-development:dev-wiki` skill before you finish the task. A project-only fact goes to the project wiki (the `remember` skill) instead.'
+  'Living development wiki: ~/dev-wiki (index `wiki.md`, rules `AGENTS.md`). At the start of development work, read the index once and open only the pages that fit. When you learn a reusable, project-neutral development lesson (a user correction, a non-obvious cause, a guard that lied or did not run, a procedure written a second time), record it with the `ndev:dev-wiki` skill before you finish the task. A project-only fact goes to the project wiki (the `remember` skill) instead.'
 
 const LEARN_TEXT =
-  'The user ran /learn. Load the `neil-development:dev-wiki` skill and follow its /learn section: review this session for reusable development lessons, record each one in ~/dev-wiki, and report them in one line each. If there is none, say so.'
+  'The user ran /learn. Load the `ndev:dev-wiki` skill and follow its /learn section: review this session for reusable development lessons, record each one in ~/dev-wiki, and report them in one line each. If there is none, say so.'
 
 const CORRECTION_TEXT =
-  'This prompt may correct how you work. Act on it. If it carries a reusable, project-neutral development lesson, record it with the `neil-development:dev-wiki` skill; if it is project-only, use the `remember` skill; if it is neither, do nothing more.'
+  'This prompt may correct how you work. Act on it. If it carries a reusable, project-neutral development lesson, record it with the `ndev:dev-wiki` skill; if it is project-only, use the `remember` skill; if it is neither, do nothing more.'
 
 // Words a person uses to redirect the agent: at the start of the prompt, or as a standing rule.
 const CORRECTION =
@@ -194,7 +194,7 @@ async function helpText($: EngineInterface) {
     : g?.repo ? `${g.repo}, ${g.board ? `board ${g.board.owner} #${g.board.number}` : 'no project board'}`
     : 'no GitHub repository'
   return [
-    'neil-development commands:',
+    'ndev commands:',
     '  /dev                 show this help; run the set-up first if this project is not set up',
     '  /dev help            show this help',
     `  /dev setup           answer the set-up questions (GitHub repository and board) again; saved in ${CONFIG_FILE}`,
@@ -213,7 +213,7 @@ async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
   const missing = missingGitHub(project.config)
   if (missing.length === 0) return
   if (!isInteractive) {
-    $.ui.toast(`neil-development: ${project.path} has no github ${missing.join(' or ')}. Run /dev-setup in an interactive session.`)
+    $.ui.toast(`ndev: ${project.path} has no github ${missing.join(' or ')}. Run /dev-setup in an interactive session.`)
     return
   }
   $.ui.toast(await setup($, false))
@@ -224,7 +224,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'dev',
-      description: 'neil-development: help, setup, mode and steering (runs the set-up first if this project is not set up)',
+      description: 'ndev: help, setup, mode and steering (runs the set-up first if this project is not set up)',
       argumentHint: '[help|setup|mode [light|heavy]|steering [interactive|auto]]',
     })
     await $.command.register({
@@ -247,7 +247,7 @@ export const register: Register = on => {
     })
     project = await loadConfig($, e.cwd)
     if (project.error) {
-      $.ui.toast(`neil-development: ${project.path}: ${project.error}. Using light · interactive until it is fixed.`)
+      $.ui.toast(`ndev: ${project.path}: ${project.error}. Using light · interactive until it is fixed.`)
     }
     await update($, mode, () => project?.config.mode ?? 'light')
     await update($, steering, () => project?.config.steering ?? 'interactive')

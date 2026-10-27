@@ -73,7 +73,7 @@ const section = async ($: Dollar) => {
     outputStyle: null,
     traits: [],
   })
-  return sections.find(s => s.id === 'neil-development:dev-mode')?.text ?? ''
+  return sections.find(s => s.id === 'ndev:dev-mode')?.text ?? ''
 }
 
 const saved = (files: Map<string, string>) => JSON.parse(files.get(CONFIG) ?? '{}') as Record<string, unknown>

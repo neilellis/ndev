@@ -8,7 +8,7 @@ target="${1:?usage: init.sh <target-dir>}"
 plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 kb="$plugin_root/kb"
 
-[ -f "$kb/README.md" ] || { echo "dev-wiki init: $kb/README.md is missing; the plugin copy is incomplete. Repair: claude plugin update neil-development" >&2; exit 2; }
+[ -f "$kb/README.md" ] || { echo "dev-wiki init: $kb/README.md is missing; the plugin copy is incomplete. Repair: claude plugin update ndev" >&2; exit 2; }
 if [ -e "$target" ] && [ -n "$(ls -A "$target" 2>/dev/null)" ]; then
   echo "dev-wiki init: $target exists and is not empty; nothing changed. Move it away or remove it, then start a new session." >&2
   exit 3
@@ -35,17 +35,17 @@ software: process, testing, guards, CI, git, agent collaboration, docs. It grows
   source repository and session, and the pages changed.
 - Mark a guess "unverified". Give a measured fact its number and its date.
 - Commit each ingest: \`git -C ~/dev-wiki add -A && git -C ~/dev-wiki commit -m "learn: <slug>"\`.
-- The \`neil-development:dev-wiki\` skill is the procedure. Stable lessons go back to the plugin's
+- The \`ndev:dev-wiki\` skill is the procedure. Stable lessons go back to the plugin's
   \`kb/\` through a PR on the plugin repository.
 MD
 
 cat > "$target/.log/$today-init.md" <<MD
 # $today init
 
-Created from the neil-development plugin kb/ (version $version).
+Created from the ndev plugin kb/ (version $version).
 MD
 
 git -C "$target" init -q -b main
 git -C "$target" add -A
-git -C "$target" commit -q -m "init: from neil-development $version"
-echo "dev-wiki: created $target from neil-development $version"
+git -C "$target" commit -q -m "init: from ndev $version"
+echo "dev-wiki: created $target from ndev $version"

@@ -55,7 +55,7 @@ set -euo pipefail
 
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BOARD_SH="$SD/../board/board.sh"
-[ -x "$BOARD_SH" ] || { echo "pr_feedback.sh: board.sh is missing or not executable at $BOARD_SH. Repair: reinstall the plugin (claude plugin update neil-development) so scripts/board/ sits beside scripts/work/" >&2; exit 2; }
+[ -x "$BOARD_SH" ] || { echo "pr_feedback.sh: board.sh is missing or not executable at $BOARD_SH. Repair: reinstall the plugin (claude plugin update ndev) so scripts/board/ sits beside scripts/work/" >&2; exit 2; }
 GH() { if [ "${GH_USE_KEYRING:-0}" = "1" ]; then env -u GITHUB_TOKEN gh "$@"; else gh "$@"; fi; }
 for tool in gh jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "pr_feedback.sh: $tool is not on PATH. Repair: install $tool" >&2; exit 2; }

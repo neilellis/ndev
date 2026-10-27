@@ -1,4 +1,4 @@
-# Contributing to neil-development
+# Contributing to ndev (neil-development)
 
 This repository is a Claude Code plugin: the shared development methodology. Read `README.md` first.
 
