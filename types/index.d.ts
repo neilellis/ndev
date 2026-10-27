@@ -93,6 +93,8 @@ export type Loop = {
   by?: string
   // The model holds the pull request only because the agents could not be listed: an owner found later takes it over.
   isAwaitingOwner?: boolean
+  // The folder of the Orca worktree an agent was started in: in the orca step, only a session in it owns the pull request.
+  orcaPath?: string
   // Fix rounds on the current pull request; the loop blocks it past the limit.
   attempts: number
   outcomes: Record<string, Outcome>

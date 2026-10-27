@@ -356,9 +356,14 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
     // that signed it, then, on each refresh, for a listed session in an Orca worktree of it (one list call).
     const found: Record<number, { owner?: string; isFinal: boolean; via?: string }> = {}
     const known = await read($, comms)
+    // An agent started in Orca keeps its pull request: until its session is listed in its workspace, no other owner is
+    // looked for, so two agents never fix one branch.
+    const l = await read($, loop)
+    const started = l.step === 'orca' && l.orcaPath !== undefined ? rows.find(r => r.state === 'OPEN' && r.number === l.current) : undefined
+    const ownerFor = (r: PrRow, was: Comm | undefined) => (r === started ? found[r.number]?.owner : ownerOf(r, was, agents, found[r.number]))
     // A search holds until the head moves or another agent is listed: a session can sign in after it.
     const searchKey = (r: PrRow) => `${r.head} ${agents.map(a => a.name).sort().join(' ')}`
-    const unnamed = rows.filter(r => r.state === 'OPEN' && !isListed(known[r.number]?.owner, agents) && !matchOwner(r, agents))
+    const unnamed = rows.filter(r => r.state === 'OPEN' && r !== started && !isListed(known[r.number]?.owner, agents) && !matchOwner(r, agents))
     let titles: Record<string, string> = {}
     let orcaError: string | undefined
     if (agentsError === undefined && rows.some(r => r.state === 'OPEN')) {
@@ -368,18 +373,23 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
           found[r.number] = { ...(await signedOwner(run, r.number, agents, registry)), via: 'the listed session that signed its commits' }
         }
         const lost = unnamed.filter(r => !found[r.number]?.owner)
-        if (lost.length) {
+        if (lost.length || started) {
           try {
             const worktrees = await orcaWorktrees(run)
             for (const r of lost) {
               const o = orcaOwner(r, repo.nameWithOwner, worktrees, agents, registry)
               if (o) found[r.number] = { isFinal: false, ...found[r.number], owner: o.owner, via: `in Orca workspace ${o.workspace}` }
             }
+            if (started) {
+              const inside = registry.sessions.filter(x => worktreeOf(x.cwd, worktrees)?.path === l.orcaPath).map(x => x.name)
+              const owner = agents.filter(a => inside.includes(a.name)).sort((a, b) => (RANK[a.status] ?? 3) - (RANK[b.status] ?? 3))[0]
+              if (owner) found[started.number] = { isFinal: false, owner: owner.name, via: `started in ${l.by}` }
+            }
           } catch (err) {
             orcaError = err instanceof Error ? err.message : String(err) // shown in the pane; the lookup runs again next refresh
           }
         }
-        const owners = rows.filter(r => r.state === 'OPEN').map(r => ownerOf(r, known[r.number], agents, found[r.number]))
+        const owners = rows.filter(r => r.state === 'OPEN').map(r => ownerFor(r, known[r.number]))
         titles = await sessionTitles(run, registry, [...new Set(owners.filter((o): o is string => !!o))])
       } catch (err) {
         agentsError = err instanceof Error ? err.message : String(err) // shown in the pane, as a ListAgents failure is
@@ -390,14 +400,14 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
       for (const row of rows) {
         const was = copy[row.number] ?? {}
         const search = found[row.number]
-        const owner = ownerOf(row, was, agents, search)
+        const owner = ownerFor(row, was)
         const presence = agents.find(a => a.name === owner)?.status
         // A new owner starts a new conversation: what the last one was sent and said is not its own.
         const isNewOwner = was.owner !== undefined && owner !== was.owner
         copy[row.number] = {
           ...was,
           ...(isNewOwner ? { sentAt: undefined, sent: undefined, sendError: undefined, heardAt: undefined, heard: undefined, isBlocked: undefined } : {}),
-          owner, presence: owner && agentsError === undefined ? presence ?? 'gone' : was.presence,
+          owner, presence: owner === undefined ? undefined : agentsError === undefined ? presence ?? 'gone' : was.presence,
           title: owner ? titles[owner] ?? was.title : undefined,
           ...(search?.isFinal ? { searchedFor: searchKey(row) } : {}),
         }
@@ -558,7 +568,12 @@ async function startInOrca($: EngineInterface, run: Run, r: PrRow, snap: Snapsho
   const unanswered = (workspace: string) =>
     `\nOrca may still start the agent in workspace ${workspace}.\nRepair: look at Orca workspace ${workspace}; when no agent runs in it, retry #${r.number}.`
   let workspace: string
+  let path: string
   try {
+    // The owner search could not look in Orca, so a session at work in a workspace of the pull request could own it.
+    if (snap.orcaError) {
+      throw new Error(`${snap.orcaError}\nNo agent starts while a session in an Orca workspace could own it. When Orca lists its workspaces again, retry #${r.number}.`)
+    }
     const id = await $.session.id()
     const self = (await readRegistry(run)).sessions.find(s => s.sessionId === id)?.name
     if (!self) throw new Error(`this session (${id}) has no name, so the agent could not message it.\nRepair: name it with /rename, then retry #${r.number}.`)
@@ -568,6 +583,7 @@ async function startInOrca($: EngineInterface, run: Run, r: PrRow, snap: Snapsho
     const held = prWorktrees(worktrees, repo, r)[0]
     if (held) {
       workspace = held.displayName ?? held.path
+      path = held.path
       await orca(start, ['agent', 'launch', '--agent', 'claude', '--worktree', `id:${held.id}`, '--prompt', brief], unanswered(workspace))
     } else {
       const repoId = ofRepo(worktrees, repo)[0]?.repoId
@@ -579,6 +595,10 @@ async function startInOrca($: EngineInterface, run: Run, r: PrRow, snap: Snapsho
         '--comment', `Started by the fix-all-prs loop in ${self}: ${why}`,
       ], unanswered(name))) as { worktree?: OrcaWorktree }
       workspace = made.worktree?.displayName ?? name
+      if (!made.worktree?.path) {
+        throw new Error(`orca worktree create answered no folder for workspace ${workspace}, so the loop cannot tell its agent from another session.${unanswered(workspace)}`)
+      }
+      path = made.worktree.path
     }
   } catch (err) {
     const detail = (err instanceof Error ? err.message : String(err)).replace(/\.?\n/g, '. ')
@@ -586,7 +606,7 @@ async function startInOrca($: EngineInterface, run: Run, r: PrRow, snap: Snapsho
     return true
   }
   const now = await $.clock.now()
-  await update($, loop, (l): Loop => ({ ...l, step: 'orca', stepAt: now, askedHead: r.head, isRoundDone: false, by: `Orca workspace ${workspace}`, isAwaitingOwner: false }))
+  await update($, loop, (l): Loop => ({ ...l, step: 'orca', stepAt: now, askedHead: r.head, isRoundDone: false, by: `Orca workspace ${workspace}`, isAwaitingOwner: false, orcaPath: path }))
   await note($, `#${r.number}: started a Claude agent in Orca workspace ${workspace} (${why})`)
   return false
 }
@@ -614,7 +634,7 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
   if (n !== state.current) {
     await update($, loop, (l): Loop => ({
       ...l, current: n, step: undefined, stepAt: undefined, askedHead: undefined, isRoundDone: false, attempts: 0, by: undefined, isAwaitingOwner: false,
-      mergeFailures: 0, mergeRetryAt: 0, preMerge: undefined,
+      orcaPath: undefined, mergeFailures: 0, mergeRetryAt: 0, preMerge: undefined,
       // A storage wait belongs to the pull request it failed; the API quota is the whole account's.
       quota: l.quota?.kind === 'api' ? l.quota : undefined,
     }))
@@ -707,23 +727,31 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
         await handOver($, row, snap, c.sendError ? `the message to ${c.owner} was not delivered` : `${c.owner} has not pushed or answered for 30 minutes`, c)
       }
     }
-    // An agent was started in Orca: once its session is listed, or another owner is found, it is asked as an owner is.
+    // An agent was started in Orca: once its session is listed in its workspace, it is asked as an owner is.
     if (state.step === 'orca') {
       if (listed) {
         await ask($, row, snap, listed, state.attempts, `, listed since the start in ${state.by}`)
       } else if (now - (state.stepAt ?? 0) > ASK_WAIT_MS) {
         // The model does not take it: the agent may yet be working there unlisted.
+        const unread = snap.orcaError ? ` (the Orca workspaces could not be read: ${firstLine(snap.orcaError)})` : ''
         await settle($, n, {
           kind: 'blocked',
-          detail: `the agent started in ${state.by} was not listed within 30 minutes. Repair: look at ${state.by}; when no agent runs in it, retry #${n}`,
+          detail: `the agent started in ${state.by} was not listed within 30 minutes${unread}. Repair: look at ${state.by}; when no agent runs in it, retry #${n}`,
           by: state.by,
         })
         return true
       }
     }
-    // The model holds it only because the agents could not be listed, and an owner is found since: the owner takes it over.
-    if (state.step === 'model' && state.isAwaitingOwner && listed && listed.sentAt === undefined) {
+    // The model holds it only because the agents could not be listed, and an owner is listed since, though asked in an
+    // earlier round: the owner takes it over, and the model is told to stop.
+    if (state.step === 'model' && state.isAwaitingOwner && listed && (listed.sentAt === undefined || listed.sentAt < (state.stepAt ?? 0))) {
       await ask($, row, snap, listed, state.attempts, ', found since the hand-over to this session\'s model')
+      if ((await read($, loop)).step === 'asked') {
+        void $.prompt.submit({
+          text: `Stop work on pull request #${n}: its owning agent ${listed.owner} has it now. Do not push to it or call \`${REPORT_TOOL}\` for it. ` +
+            `If you changed files for it, tell ${listed.owner} what you changed with SendMessage.`,
+        })
+      }
     }
     return false // the owner or the model is still working
   }
@@ -1057,6 +1085,10 @@ export const fixAllPrs = (on: On) => {
     const l = await read($, loop)
     if (input.pr === undefined || input.pr !== l.current) {
       return { result: `Refused: the loop is on #${l.current ?? 'nothing'}, not #${input.pr}.`, isError: true as const }
+    }
+    // An owner took it over from the model: the model's report would end the owner's round.
+    if (l.step !== 'model') {
+      return { result: `Refused: #${input.pr} is not with this session's model now (${l.by ?? 'nobody'} has it). Stop work on it.`, isError: true as const }
     }
     if (input.outcome === 'blocked') {
       await settle($, input.pr, { kind: 'blocked', detail: input.reason ?? 'no reason given', by: 'this session' })

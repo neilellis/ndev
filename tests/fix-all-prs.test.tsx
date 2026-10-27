@@ -72,10 +72,11 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   const registry: string[] = [JSON.stringify({ pid: 0, name: 'queue-1e', sessionId: 'loop-session' })]
   // Orca's worktrees; `created` and `launched` keep the argv of each `orca worktree create` and `orca agent launch`;
   // `error` fails every orca call with that output; `refusal` makes Orca refuse each create with that message;
-  // `isCut` cuts the worktree list short; `isHung` leaves each create unanswered until its timeout, kept in `createTimeouts`.
+  // `isCut` cuts the worktree list short; `isHung` leaves each create unanswered until its timeout, kept in `createTimeouts`;
+  // `isListSlow` times out each worktree list given less than 120 s.
   const orca = {
     worktrees: [orcaWorktree('main', '/src/widgets', 'main', { isMainWorktree: true })],
-    created: [] as string[][], launched: [] as string[][], error: '', refusal: '', isCut: false, isHung: false,
+    created: [] as string[][], launched: [] as string[][], error: '', refusal: '', isCut: false, isHung: false, isListSlow: false,
     createTimeouts: [] as (number | undefined)[],
   }
   // Each transcript's newest title, by its path under the Claude Code folder.
@@ -87,9 +88,14 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   // `rateLimitUntil` fails every gh call before that time with GitHub's rate-limit refusal;
   // `storage` fails the checks of those pull requests on the Actions storage quota until a rerun.
   const fault = { outage: 0, mergeError: {} as Record<number, string>, rateLimitUntil: 0, storage: {} as Record<number, boolean> }
-  // Each period of `$.clock.every` waits here until the test fires the timer.
+  // Each period of `$.clock.every` waits here until the test fires the timer. A fire before the next period waits
+  // is kept for it: the engine arms that period only after it has handled the last one.
   const timers: (() => void)[] = []
-  const timer = () => timers.splice(0).forEach(fire => fire())
+  let isFireDue = false
+  const timer = () => {
+    isFireDue = timers.length === 0
+    timers.splice(0).forEach(fire => fire())
+  }
   on('command.register', () => ({ value: { command: 'fix-prs' } }))
   on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   // The plugin's session start also reads ~/dev-wiki and the project file: both are in place,
@@ -97,7 +103,14 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   on('env.get', () => ({ value: '/home/neil' }))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
   on('fs.read', () => ({ value: JSON.stringify({ github: { repo: 'acme/widgets', board: null } }) }))
-  on('clock.every', () => new Promise(resolve => { timers.push(() => resolve({ value: undefined })) }))
+  on('clock.every', () => new Promise(resolve => {
+    if (isFireDue) {
+      isFireDue = false
+      resolve({ value: undefined })
+    } else {
+      timers.push(() => resolve({ value: undefined }))
+    }
+  }))
   on('clock.now', () => ({ value: clock.now }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', (_, e) => { toasts.push(JSON.stringify(e)); return { value: undefined } })
@@ -121,6 +134,7 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
       if (orca.error) return { value: { exitCode: 1, stdout: '', stderr: orca.error, isStdoutTruncated: false, isStderrTruncated: false } }
       const flag = (name: string) => e.argv[e.argv.indexOf(name) + 1]!
       if (args.startsWith('orca worktree list')) {
+        if (orca.isListSlow && (e.init?.timeoutMs ?? 0) < 120_000) return { deny: `timed out after ${e.init?.timeoutMs} ms` }
         return ok(JSON.stringify({ id: 'o1', ok: true, result: { worktrees: orca.worktrees, totalCount: orca.isCut ? 999 : orca.worktrees.length, truncated: orca.isCut } }))
       }
       if (args.startsWith('orca worktree create')) {
@@ -370,7 +384,7 @@ test('with no agent named after it, the owner is the listed session that signed 
   await $.command.run(command('pause'))
 })
 
-test('an owner found after the hand-over to Orca takes the pull request over', async ($, on) => {
+test('an owner found while the agent started in Orca is awaited is not asked: the started agent keeps the pull request', async ($, on) => {
   const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
   const agents: { name: string; status: string }[] = []
   const w = world(on, prs, agents)
@@ -378,15 +392,23 @@ test('an owner found after the hand-over to Orca takes the pull request over', a
   await $.command.run(command('start'))
   await until(() => w.orca.created.length === 1, () => w.prompts)
 
-  // The owning session signs in later, and the next tick finds it.
+  // The session that signed the commits signs in before the started agent is listed: two agents would fix one branch.
   agents.push({ name: 'lens-7d', status: 'idle' })
   w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_0162X']
   w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_0162X' }))
   w.clock.now = 60_000
   w.timer()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(w.sent).toEqual([])
+  expect(JSON.stringify(await $.command.run(command('status')))).toMatch(/#200 waiting on the agent in Orca workspace pr-200/)
+
+  // The started agent is listed, in its workspace: it is asked.
+  agents.push({ name: 'pr-200-d4', status: 'busy' })
+  w.registry.push(JSON.stringify({ pid: 6, name: 'pr-200-d4', cwd: '/orca/pr-200' }))
+  w.clock.now = 2 * 60_000
+  w.timer()
   await until(() => w.sent.length === 1, () => w.sent)
-  expect(w.sent[0]).toEqual({ to: 'lens-7d', text: expect.stringMatching(/PR #200 .* round 1 of 3/) })
-  expect(JSON.stringify(await $.command.run(command('status')))).toMatch(/#200 waiting on its owner/)
+  expect(w.sent[0]).toEqual({ to: 'pr-200-d4', text: expect.stringMatching(/PR #200 .* round 1 of 3/) })
   expect(w.orca.created.length).toBe(1)
   expect(w.prompts).toEqual([])
   await $.command.run(command('pause'))
@@ -416,8 +438,9 @@ test('with no owning agent the loop starts a Claude agent in a new Orca workspac
   expect(w.prompts).toEqual([])
   expect(JSON.stringify(await $.command.run(command('status')))).toMatch(/#190 waiting on the agent in Orca workspace pr-190/)
 
-  // Orca names the agent's session after its workspace: the next tick finds it and asks it.
+  // The agent's session runs in its workspace: the next tick finds it and asks it.
   agents.push({ name: 'pr-190-a1', status: 'busy' })
+  w.registry.push(JSON.stringify({ pid: 6, name: 'pr-190-a1', cwd: '/orca/pr-190' }))
   w.clock.now = 60_000
   w.timer()
   await until(() => w.sent.length === 1, () => w.sent)
@@ -484,6 +507,7 @@ test('an owner that is no longer listed passes the pull request to Orca, and the
   expect(w.prompts).toEqual([])
 
   agents.push({ name: 'pr-182-b2', status: 'busy' })
+  w.registry.push(JSON.stringify({ pid: 6, name: 'pr-182-b2', cwd: '/orca/pr-182' }))
   w.clock.now = 2 * 60_000
   w.timer()
   await until(() => w.sent.length === 2, () => w.sent)
@@ -530,6 +554,12 @@ test('when the agents cannot be listed, a pull request with no known owner goes 
   await until(() => w.sent.length === 1, () => w.sent)
   expect(w.sent[0]).toEqual({ to: 'pr-190-c3', text: expect.stringMatching(/PR #190 .* round 1 of 3/) })
   expect(w.orca.created).toEqual([])
+  // The model is told to stop, and a late report from it is refused.
+  await until(() => w.prompts.length === 2, () => w.prompts)
+  expect(w.prompts[1]).toMatch(/Stop work on pull request #190: its owning agent pr-190-c3 has it now\. Do not push to it or call `mcp__ndev__report` for it/)
+  const out = await $.tool.call({ tool: 'mcp__ndev__report', pr: 190, outcome: 'pushed' } as never)
+  expect(JSON.stringify(out)).toMatch(/Refused: #190 is not with this session's model now \(pr-190-c3 has it\)/)
+  expect(JSON.stringify(await $.command.run(command('status')))).toMatch(/#190 waiting on its owner/)
   await $.command.run(command('pause'))
 })
 
@@ -585,12 +615,14 @@ test('an agent started in Orca that is not listed within 30 minutes leaves the p
   await $.command.run(command('start'))
   await until(() => w.orca.created.length === 1, () => w.prompts)
 
+  // Orca stops answering, so the agent cannot be found in its workspace either: the record says so.
+  w.orca.error = 'Error: Orca is not running'
   w.clock.now = 31 * 60_000
   w.timer()
   const status = async () => JSON.stringify(await $.command.run(command('status')))
   await until(async () => /#190 Change 190: blocked/.test(await status()), () => w.prompts)
   expect(await status()).toMatch(
-    /blocked, the agent started in Orca workspace pr-190 was not listed within 30 minutes\. Repair: look at Orca workspace pr-190; when no agent runs in it, retry #190/)
+    /blocked, the agent started in Orca workspace pr-190 was not listed within 30 minutes \(the Orca workspaces could not be read: orca worktree list exited 1: Error: Orca is not running\)\. Repair: look at Orca workspace pr-190; when no agent runs in it, retry #190/)
   expect(w.prompts).toEqual([])
   expect(w.orca.created.length).toBe(1)
 })
@@ -625,6 +657,59 @@ test('an owner that left while the checks reran goes to the model, not to Orca, 
   expect(w.orca.created).toEqual([])
   expect(w.orca.launched).toEqual([])
   await $.command.run(command('pause'))
+})
+
+test('an owner listed again after the hand-over to the model takes the pull request over, though it was asked in an earlier round', async ($, on) => {
+  const agents = [{ name: 'issue-176', status: 'idle' }]
+  const prs = [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176')]
+  const w = world(on, prs, agents)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+  await until(() => w.sent.length === 1)
+
+  // The owner pushes and leaves while the checks run.
+  Object.assign(prs[0]!, { headRefOid: 'head-182-2', statusCheckRollup: [{ name: 'tests', status: 'IN_PROGRESS', conclusion: '' }] })
+  agents.splice(0)
+  w.clock.now = 60_000
+  w.timer()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await ui.find({ type: 'Text', text: /issue-176 \(gone\)/ })) !== undefined)
+  await ui.unmount()
+
+  // The checks fail while the agents cannot be listed: round 2 goes to the model.
+  w.listing.deny = 'peer listing is off'
+  Object.assign(prs[0]!, { statusCheckRollup: [{ name: 'tests', status: 'COMPLETED', conclusion: 'FAILURE' }] })
+  w.clock.now = 2 * 60_000
+  w.timer()
+  await until(() => w.prompts.length === 1, () => w.sent)
+  expect(w.prompts[0]).toMatch(/the agents could not be listed to find its owner/)
+
+  // The list works again and shows the owner: it is asked for round 2.
+  w.listing.deny = ''
+  agents.push({ name: 'issue-176', status: 'idle' })
+  w.clock.now = 3 * 60_000
+  w.timer()
+  await until(() => w.sent.length === 2, () => w.sent)
+  expect(w.sent[1]).toEqual({ to: 'issue-176', text: expect.stringMatching(/PR #182 .* round 2 of 3/) })
+  expect(w.orca.created).toEqual([])
+  await $.command.run(command('pause'))
+})
+
+test('no agent starts in an Orca workspace the refresh could not read: a session at work in it could own the pull request', async ($, on) => {
+  const w = world(on, [pr(190, '2026-10-26T11:00:00Z', 'FAILURE')], [{ name: 'helper-9', status: 'busy' }])
+  w.orca.worktrees.push(orcaWorktree('fix-190', '/orca/fix-190', 'neil/fix-190', { linkedPR: 190 }))
+  w.registry.push(JSON.stringify({ pid: 4, name: 'helper-9', cwd: '/orca/fix-190' }))
+  // The refresh's list times out at 60 s; a list given longer answers.
+  w.orca.isListSlow = true
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+
+  const status = async () => JSON.stringify(await $.command.run(command('status')))
+  await until(async () => w.orca.launched.length > 0 || /#190 Change 190: blocked/.test(await status()))
+  expect(w.orca.launched).toEqual([])
+  expect(await status()).toMatch(
+    /Orca could not start an agent \(no agent is named.*\): orca worktree list gave no answer: .*timed out after 60000 ms\..*No agent starts while a session in an Orca workspace could own it\. When Orca lists its workspaces again, retry #190/)
+  expect(w.sent).toEqual([])
 })
 
 test('a session in a worktree nested inside the main checkout or inside a workspace of the pull request is not its owner', async ($, on) => {
@@ -669,7 +754,7 @@ test('an Orca worktree list cut short is refused, so a workspace that holds the 
   const status = async () => JSON.stringify(await $.command.run(command('status')))
   await until(async () => /#190 Change 190: blocked/.test(await status()))
   expect(await status()).toMatch(
-    /orca worktree list answered 1 of 999 worktrees, so one that holds the pull request could be missing\. Repair: archive the Orca workspaces you no longer need, then retry #190/)
+    /orca worktree list answered 1 of 999 worktrees, so one that holds the pull request could be missing\. Repair: archive the Orca workspaces you no longer need\. No agent starts while a session in an Orca workspace could own it\. When Orca lists its workspaces again, retry #190/)
   expect(w.orca.created).toEqual([])
 })
 
