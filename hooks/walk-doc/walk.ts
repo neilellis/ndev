@@ -49,7 +49,7 @@ const EXAMPLES: Record<string, unknown> = {
   tips: ['Docker is installed and running.'],
   persona: 'a developer on a Linux laptop who has never seen this project before',
   valuesFile: '.env.walk-docs',
-  machines: { guide: ['For a Linux install, make a fresh container: docker run -d --name <name> ubuntu sleep infinity.'], cleanup: 'docker ps -aq --filter name=^{prefix} | xargs -r docker rm -f' },
+  machines: { guide: ['For a Linux install, make a fresh container: docker run -d --name <name> ubuntu sleep infinity.'], cleanup: 'ids=$(docker ps -aq --filter name=^{prefix}) || exit 1; [ -z "$ids" ] || docker rm -f $ids' },
 }
 const example = (key: string) => `for example "${key}": ${JSON.stringify(EXAMPLES[key])}`
 const REQUIRED = ['devCommand', 'contentRoot', 'deny', 'finish', 'media', 'issues']
@@ -90,7 +90,12 @@ export function parseConfig(text: string, file = CONFIG_FILE): Config {
   } catch (error) {
     throw new Error(`${file} is not valid JSON: ${String(error)}. Fix the file at the project root.`)
   }
-  const o = (raw ?? {}) as Record<string, unknown>
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error(`${file} must be a JSON object with the keys ${REQUIRED.join(', ')}, for example ${exampleConfig()}.`)
+  }
+  const o = raw as Record<string, unknown>
+  const unknown = Object.keys(o).find(k => !(k in EXAMPLES))
+  if (unknown !== undefined) throw new Error(`${unknown} is not a key of ${file}. The keys are ${Object.keys(EXAMPLES).join(', ')}. Fix or remove it.`)
   const strings = (v: unknown) => Array.isArray(v) && v.every(x => typeof x === 'string')
   const missing = (key: string, what: string) => new Error(`${key} is missing in ${file}: give ${what}, ${example(key)}.`)
   const wrong = (key: string, what: string) => new Error(`${key} in ${file} must be ${what}, ${example(key)}.`)
@@ -505,7 +510,9 @@ export function answerAsk(run: Run, input: { asks?: unknown; answer?: unknown },
 
 // Tools the Walk agent never uses: delegation, messaging, the main agent's side of the walk, and skills (project knowledge).
 const WALK_DENIED_TOOLS = new Set(['Agent', 'SendMessage', 'Workflow', 'Skill', 'EnterWorktree', 'ExitWorktree', 'Artifact', 'TeamCreate', 'CronCreate', 'RemoteTrigger'])
-const MAIN_ONLY_TOOLS = new Set<string>(['walk_reply', 'walk_escalate', 'walk_finish', 'walk_status', 'walk_ask'].map(TOOL))
+// The main agent's tools, with fix-all-prs's report tool, which shares the ndev server.
+export const MAIN_ONLY = ['walk_reply', 'walk_escalate', 'walk_finish', 'walk_status', 'walk_ask', 'report'].map(TOOL)
+const MAIN_ONLY_TOOLS = new Set<string>(MAIN_ONLY)
 const SEARCH_COMMANDS = /^(rg|ag|ack|grep\s+-[a-zA-Z]*r|git\s+(grep|log|show|blame))\b/
 const PATH_TOOLS: Record<string, string> = { Read: 'file_path', Edit: 'file_path', Write: 'file_path', NotebookEdit: 'notebook_path', Grep: 'path', Glob: 'path' }
 

@@ -259,7 +259,12 @@ export const register: Register = (on, options) => {
       description: 'Review this session for development lessons and record them in ~/dev-wiki',
     })
     await startFixAllPrs($)
-    await startWalkDoc($, e.cwd)
+    // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
+    try {
+      await startWalkDoc($, e.cwd)
+    } catch (error) {
+      $.ui.toast(`walk-doc did not start: ${String(error).slice(0, 300)}. /walk-doc is not available in this session: fix the cause, then start a new session.`)
+    }
     project = await loadConfig($, e.cwd)
     await startInitProject($, e.cwd)
     if (project.error) {

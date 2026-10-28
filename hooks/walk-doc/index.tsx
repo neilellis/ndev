@@ -9,7 +9,7 @@ import type { EngineInterface, On, PluginOptions, TurnCompleteInput } from 'clau
 
 import { WALK_SYSTEM_PROMPT, walkTask } from './prompts'
 import {
-  AGENT, CONFIG_FILE, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
+  AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
   newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, exampleConfig, addTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
   walkStopped, workspaceOf,
 } from './walk'
@@ -387,7 +387,7 @@ export async function startWalkDoc($: EngineInterface, cwd: string) {
   if (found === null) return
   await $.agent.register({
     name: 'walk', description: 'The /walk-doc docs reader. Spawned only by /walk-doc.', prompt: WALK_SYSTEM_PROMPT,
-    disallowedTools: ['Agent', 'SendMessage', 'Workflow', 'Skill', 'EnterWorktree', 'ExitWorktree', 'Artifact', ...['walk_reply', 'walk_escalate', 'walk_finish', 'walk_status', 'walk_ask'].map(TOOL)],
+    disallowedTools: ['Agent', 'SendMessage', 'Workflow', 'Skill', 'EnterWorktree', 'ExitWorktree', 'Artifact', ...MAIN_ONLY],
     omitClaudeMd: true, model: 'inherit',
   })
   for (const tool of WALK_TOOLS) await $.tool.register({ ...tool, inputSchema: tool.inputSchema as unknown as Record<string, unknown>, isDeferred: false })

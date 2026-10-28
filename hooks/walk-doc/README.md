@@ -79,7 +79,7 @@ Put `.walk-doc.json` at the repository root. The walk reads it when a session st
   "valuesFile": ".env.walk-docs",
   "machines": {
     "guide": ["For a Linux install, make a fresh container: docker run -d --name <name> ubuntu sleep infinity."],
-    "cleanup": "docker ps -aq --filter name=^{prefix} | xargs -r docker rm -f"
+    "cleanup": "ids=$(docker ps -aq --filter name=^{prefix}) || exit 1; [ -z \"$ids\" ] || docker rm -f $ids"
   }
 }
 ```
@@ -95,7 +95,7 @@ Put `.walk-doc.json` at the repository root. The walk reads it when a session st
 | `tips` | No | What every reader is told when it starts, such as which services it can reach. `/walk-doc tip <text>` adds one and sends it to the running reader. |
 | `persona` | No | Who the reader is. The default is "a competent developer who has never seen this project before". |
 | `valuesFile` | No | A file name at the repository root that holds values for the reader (see below). Without it, the reader gets no values. |
-| `machines` | No | How the reader makes a machine or container for Linux or server docs. `guide` is a list of lines the reader is told. `cleanup` is a bash command that must contain `{prefix}`; `walk_finish` and `/walk-doc stop` run it with `{prefix}` replaced by `walk-<run>-`, and it must delete only the machines whose names start with that prefix. Without `machines`, the reader is told nothing about machines, and nothing is cleaned up. |
+| `machines` | No | How the reader makes a machine or container for Linux or server docs. `guide` is a list of lines the reader is told. `cleanup` is a bash command that must contain `{prefix}`; `walk_finish` and `/walk-doc stop` run it with `{prefix}` replaced by `walk-<run>-`, and it must delete only the machines whose names start with that prefix. A cleanup that fails must exit non-zero, so do not end it in a pipe that hides the exit status. Without `machines`, the reader is told nothing about machines, and nothing is cleaned up. |
 
 Add `walk-run/` and the `valuesFile` to `.gitignore`.
 

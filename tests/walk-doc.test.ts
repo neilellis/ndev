@@ -196,6 +196,12 @@ test('the guard denies the Walk agent the repo source, internal docs, the docs s
   expect(call('mcp__ndev__walk_reply', { action: 'CONTINUE' })).toMatch(/main agent/)
 })
 
+test('the guard keeps the fix-all-prs report tool from the Walk agent', () => {
+  const r = run({ agentIds: ['w'] })
+  expect(guardCall(r, config, { tool: 'mcp__ndev__report', agentId: 'w', input: { pr: 1, outcome: 'pushed' } })).toMatch(/main agent/)
+  expect(guardCall(r, config, { tool: 'mcp__ndev__report', agentId: undefined, input: { pr: 1, outcome: 'pushed' } })).toBeNull()
+})
+
 test('the guard sees through $HOME, globs, paths relative to the workspace and a Glob pattern', () => {
   const r = run({ agentIds: ['w'] })
   const call = (tool: string, input: Record<string, unknown>) => guardCall(r, config, { tool, agentId: 'w', input })
@@ -504,4 +510,13 @@ test('the configured issue command and media notes reach the main agent', () => 
   const media = '/home/n/.walk-doc/r1/attempt-1/media'
   const sent = recordMedia(run({ agentId: 'a1', agentIds: ['a1'] }), { step: 's', file: `${media}/1.jpg`, mode: 'INSERT', caption: 'c' }, config, 1, '/p')
   expect(sent.mainMessage).toContain(config.media)
+})
+
+test('a key that walk-doc does not know is refused with the file and the known keys, so a typo is not a silent default', () => {
+  expect(() => parseConfig(fixture({ machine: MACHINES }))).toThrow(/machine is not a key of \.walk-doc\.json\. The keys are devCommand, .*machines/)
+  expect(() => parseConfig(fixture({ valuefile: '.env.walk-docs' }))).toThrow(/valuefile is not a key/)
+})
+
+test('a config that is not a JSON object is refused as such, not as a missing key', () => {
+  for (const text of ['[]', 'null', '"x"']) expect(() => parseConfig(text)).toThrow(/\.walk-doc\.json must be a JSON object/)
 })

@@ -9,7 +9,7 @@ const PAGE = 'Run `./acme doctor`, then edit `config/foo.json`.'
 type Ran = { argv: string[]; cwd?: string; timeoutMs?: number }
 
 function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
-  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, envText: null as string | null, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', config: CONFIG as string | null }
+  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: null as string | null, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', config: CONFIG as string | null }
   const ran: Ran[] = []
   const written: Record<string, string> = {}
   const prompts: string[] = []
@@ -58,10 +58,16 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
     return { value: undefined } as never
   })
   on('agent.register', async (_$, e) => {
+    if (flags.agentRegisterFails) throw new Error('agent.register refused')
     agents.push(e.name)
     return { value: undefined } as never
   })
   on('ui.open', async () => ({ value: { isPlaced: true } }) as never)
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined } as never
+  })
   on('agent.spawn', async (_$, e) => {
     if (flags.spawnFails) throw new Error('agent type ndev:walk is not available')
     spawns.push({ prompt: e.prompt, cwd: e.cwd, subagentType: e.subagentType, description: e.description })
@@ -89,7 +95,7 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
     if (e.tool === 'Bash') bash.push((e as { command: string }).command)
     return { result: flags.toolResult } as never
   })
-  return { bash, ran, written, prompts, sent, spawns, clock, flags, browser, tools, agents }
+  return { bash, ran, written, prompts, sent, spawns, clock, flags, browser, tools, agents, toasts }
 }
 
 type Engine = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0]
@@ -639,4 +645,14 @@ test('a failing ndev Bash hook never lets a reader command run unguarded: it is 
   expect(h.bash.some(c => c.includes('echo one'))).toBe(false)
   await call($, { tool: 'Bash', command: 'echo main' })
   expect(h.bash).toContain('echo main')
+})
+
+test('a walk-doc failure at session start is shown and named, and the rest of ndev still starts', async ($, on) => {
+  const h = harness(on)
+  h.flags.agentRegisterFails = true
+  await start($)
+  expect(h.toasts.some(t => t.startsWith('walk-doc did not start') && t.includes('agent.register') && t.includes('new session'))).toBe(true)
+  expect(h.agents).not.toContain('walk')
+  // ndev's own start went on: the init-project hook ran after walk-doc.
+  expect(h.ran.some(r => r.argv.join(' ').includes('rev-parse'))).toBe(true)
 })
