@@ -506,6 +506,30 @@ test('once the agent started in Orca has pushed, the next round asks a listed ow
   await $.command.run(command('pause'))
 })
 
+test('an agent started in Orca that is never listed leaves the next round blocked, not with a second agent', async ($, on) => {
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
+  const w = world(on, prs, [])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+  await until(() => w.orca.created.length === 1, () => w.prompts)
+
+  // The started agent pushes without ever being listed, and the checks of the new head fail: it may still be at work.
+  Object.assign(prs[0]!, { headRefOid: 'head-200-2', statusCheckRollup: [{ name: 'tests', status: 'IN_PROGRESS', conclusion: '' }] })
+  w.clock.now = 60_000
+  w.timer()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  Object.assign(prs[0]!, { statusCheckRollup: [{ name: 'tests', status: 'COMPLETED', conclusion: 'FAILURE' }] })
+  w.clock.now = 2 * 60_000
+  w.timer()
+  const status = async () => JSON.stringify(await $.command.run(command('status')))
+  await until(async () => /#200 Change 200: blocked/.test(await status()), () => ({ launched: w.orca.launched, prompts: w.prompts }))
+  expect(await status()).toMatch(
+    /blocked, the agent started in Orca workspace pr-200 was never listed, so round 2 has no agent to ask, and no second agent starts beside it\. Repair: look at Orca workspace pr-200; when no agent runs in it, retry #200/)
+  expect(w.orca.launched).toEqual([])
+  expect(w.orca.created.length).toBe(1)
+  expect(w.prompts).toEqual([])
+})
+
 test('with no owning agent the loop starts a Claude agent in a new Orca workspace, and asks it once it is listed', async ($, on) => {
   const agents: { name: string; status: string }[] = []
   const w = world(on, [pr(190, '2026-10-26T11:00:00Z', 'FAILURE')], agents)
@@ -809,6 +833,24 @@ test('a message the model sends the owner after the hand-over does not stop the 
   expect(w.sent[1]).toEqual({ to: 'issue-176', text: expect.stringMatching(/PR #182 .* round 1 of 3/) })
   await until(() => w.prompts.length === 2, () => w.prompts)
   expect(w.prompts[1]).toMatch(/Stop work on pull request #182: its owning agent issue-176 has it now/)
+  await $.command.run(command('pause'))
+})
+
+test('an agent the model writes to while the agents still cannot be listed does not take the pull request from the model', async ($, on) => {
+  const w = world(on, [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176')], [])
+  w.listing.deny = 'peer listing is off'
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length === 1, () => w.sent)
+
+  // The model asks another agent for help; no search found it, and the list still fails.
+  w.clock.now = 60_000
+  await $.session.send({ origin: { kind: 'model' }, to: 'helper', text: 'PR #182: can you look at the failing test?' })
+  w.clock.now = 2 * 60_000
+  w.timer()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(w.sent).toEqual([{ to: 'helper', text: 'PR #182: can you look at the failing test?' }])
+  expect(w.prompts.length).toBe(1)
   await $.command.run(command('pause'))
 })
 

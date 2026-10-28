@@ -760,9 +760,10 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
         return true
       }
     }
-    // The model holds it only because the agents could not be listed, and an owner is listed since: the owner takes it
-    // over, and the model is told to stop. Neither an ask in an earlier round nor a message from the model stops that.
-    if (state.step === 'model' && state.isAwaitingOwner && listed) {
+    // The model holds it only because the agents could not be listed, and the list works again and shows an owner: the
+    // owner takes it over, and the model is told to stop. Neither an ask in an earlier round nor a message from the model
+    // stops that. While the list still fails, an agent the model wrote to is not known to be listed.
+    if (state.step === 'model' && state.isAwaitingOwner && listed && snap.agentsError === undefined) {
       await ask($, row, snap, listed, state.attempts, ', found since the hand-over to this session\'s model')
       if ((await read($, loop)).step === 'asked') {
         const unsent = (why: string) =>
@@ -795,6 +796,14 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
   } else if (snap.agentsError !== undefined) {
     // The owner search did not run, so an Orca workspace could duplicate a listed owner's work.
     await handOver($, row, snap, `the agents could not be listed to find its owner (${firstLine(snap.agentsError)})`, c, true)
+  } else if (state.step === 'orca') {
+    // The agent started in Orca was never listed, so it may still be at work there unlisted.
+    await settle($, n, {
+      kind: 'blocked',
+      detail: `the agent started in ${state.by} was never listed, so round ${round} has no agent to ask, and no second agent starts beside it. Repair: look at ${state.by}; when no agent runs in it, retry #${n}`,
+      by: state.by,
+    })
+    return true
   } else {
     return startInOrca($, run, row, snap, c?.owner ? `its owning agent ${c.owner} is no longer listed` : NO_OWNER, c)
   }
