@@ -6,8 +6,9 @@ import { CONFIG_FILE, loadConfig, missingGitHub, saveSetting } from './config'
 import type { Branding, GitHub, LoadedConfig } from './config'
 import { agentPrompt, runSetup } from './setup'
 import { quality } from './quality'
-import { fixAllPrs, startFixAllPrs } from './fix-all-prs'
+import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
+import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
 
 const PLUGIN = 'ndev'
 
@@ -221,9 +222,18 @@ async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
   $.ui.toast(await setup($, false))
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // walk-doc first: its guard is then the outer tool.call hook, so a failing quality hook cannot skip it.
+  walkDoc(on, options)
   quality(on, () => project)
   fixAllPrs(on)
+  // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    await fixAllPrsTurn($, e)
+    await walkDocTurn($, e)
+    return result
+  })
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'dev',
@@ -249,6 +259,7 @@ export const register: Register = on => {
       description: 'Review this session for development lessons and record them in ~/dev-wiki',
     })
     await startFixAllPrs($)
+    await startWalkDoc($, e.cwd)
     project = await loadConfig($, e.cwd)
     await startInitProject($, e.cwd)
     if (project.error) {
