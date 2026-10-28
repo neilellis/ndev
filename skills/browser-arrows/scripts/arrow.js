@@ -38,7 +38,8 @@
 //   borderColor, textColor, edgeColor, closeColor, closeXColor   readable defaults from color
 //   from 'auto'          the sign's side: auto, top, top-right, right, bottom-right, bottom,
 //                        bottom-left, left, top-left. Another side when it does not fit; signs
-//                        of several arrows keep out of each other's way
+//                        of several arrows keep out of each other's way and off other shafts;
+//                        with auto, the sign and shaft also keep off nearby page text and fields
 //   anchor 'center'      the spot the tip points at: center, title, top, top-right, ... top-left
 //   role ''              only match elements with this ARIA role (explicit or implicit)
 //   coords 'viewport'    'page' reads { x, y } and rects as document coordinates
@@ -465,12 +466,27 @@
     const edge = reachOut(a, f, u) + bob;
     const tip = { x: f.x + u.x * edge, y: f.y + u.y * edge };
     const M = 14;
-    const reach = { x: f.x + u.x * (edge + a.size.length), y: f.y + u.y * (edge + a.size.length) };
-    const tail = { x: clamp(reach.x, M, W - M), y: clamp(reach.y, M, H - M) };
     const sw = a.sw;
     const sh = a.sh;
     const support = Math.abs(u.x) * sw / 2 + Math.abs(u.y) * sh / 2;
     const away = support + a.o.L.tailGap + loopRoom(a);
+    // A sign that would run off the screen pulls the shaft in, down to a third of its length,
+    // rather than be pushed back over its own tip.
+    let len = a.size.length;
+    if (sw) {
+      const cx = tip.x + u.x * (len + away);
+      const cy = tip.y + u.y * (len + away);
+      const over = Math.max(
+        0,
+        u.x < -1e-6 ? (8 - (cx - sw / 2)) / -u.x : 0,
+        u.x > 1e-6 ? (cx + sw / 2 - (W - 8)) / u.x : 0,
+        u.y < -1e-6 ? (8 - (cy - sh / 2)) / -u.y : 0,
+        u.y > 1e-6 ? (cy + sh / 2 - (H - 8)) / u.y : 0,
+      );
+      len = Math.max(a.size.length / 3, len - over);
+    }
+    const reach = { x: tip.x + u.x * len, y: tip.y + u.y * len };
+    const tail = { x: clamp(reach.x, M, W - M), y: clamp(reach.y, M, H - M) };
     const sign = { x: tail.x + u.x * away - sw / 2, y: tail.y + u.y * away - sh / 2, w: sw, h: sh };
     return { tip, tail, reach, sign, pad: a.pad };
   };
@@ -487,9 +503,43 @@
 
   const inside = (p, r) => p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h;
 
+  // Lines of page text and form fields near the target, outside it: a sign placed on its own
+  // keeps off them where it can. Read again every 400 ms, not every frame.
+  const FIELDS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'IMG', 'svg']);
+  const obstaclesNear = (a, f, now) => {
+    if (a.obst && now - a.obst.at < 400) return a.obst.list;
+    const reach = a.size.length + Math.max(a.sw, a.sh) + 60;
+    const zone = { x: f.x - reach, y: f.y - reach, w: reach * 2, h: reach * 2 };
+    const own = a.src.kind === 'el' ? a.src.el : null;
+    const mark = grow(f.mark, 2);
+    const list = [];
+    // Text that only touches the target, such as the next word on its line, still counts.
+    const keep = (b) => {
+      const r = { x: b.left, y: b.top, w: b.width, h: b.height };
+      if (r.w > 1 && r.h > 1 && overlap(r, zone) && overlap(r, mark) < area(r) / 2) list.push(r);
+    };
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => {
+        if (n.nodeType === 3) return n.data.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        if (n === host || n === own) return NodeFilter.FILTER_REJECT;
+        const b = n.getBoundingClientRect();
+        if (!overlap({ x: b.left, y: b.top, w: b.width, h: b.height }, zone)) return NodeFilter.FILTER_REJECT;
+        if (FIELDS.has(n.nodeName)) { keep(b); return NodeFilter.FILTER_REJECT; }
+        return NodeFilter.FILTER_SKIP;
+      },
+    });
+    const range = document.createRange();
+    for (let n = walk.nextNode(); n && list.length < 400; n = walk.nextNode()) {
+      range.selectNodeContents(n);
+      for (const b of range.getClientRects()) keep(b);
+    }
+    a.obst = { at: now, list };
+    return list;
+  };
+
   // Picks the sign's side: the preferred side unless it does not fit, clear of the target,
-  // of the signs already placed this frame, of the other arrows' targets and shafts, and steady
-  // from frame to frame.
+  // of the signs already placed this frame, of the other arrows' targets and shafts, of open cue
+  // cards, and steady from frame to frame.
   const place = (a, f, placed) => {
     const W = window.innerWidth;
     const H = window.innerHeight;
@@ -501,6 +551,10 @@
     if (a.o.from === 'auto') candidates.unshift(['centre', { x: cx, y: cy }]);
     const inner = { x: 8, y: 8, w: W - 16, h: H - 16 };
     const others = [...arrows.values()].filter((x) => x !== a && x.markBox && x.visible);
+    const panels = [...cards.values()].map((c) => {
+      const r = c.el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height };
+    });
     let best = null;
     for (const [key, u] of candidates) {
       const g = geometry(a, f, u, 0);
@@ -508,6 +562,12 @@
       let s = a.sw ? (area(room) - overlap(room, inner)) * 50 : 0;
       if (!a.sw && (g.reach.x < 0 || g.reach.y < 0 || g.reach.x > W || g.reach.y > H)) s += 1e5;
       for (const q of placed) s += overlap(room, q) * 5;
+      for (const c of panels) {
+        s += overlap(room, c) * 5;
+        for (let k = 0.1; k < 1; k += 0.1) {
+          if (inside({ x: g.tail.x + (g.tip.x - g.tail.x) * k, y: g.tail.y + (g.tip.y - g.tail.y) * k }, c)) s += 3000;
+        }
+      }
       for (const b of others) {
         s += overlap(room, b.markBox) * 5;
         for (let k = 0.1; k < 1; k += 0.1) {
@@ -519,6 +579,27 @@
         }
       }
       s += overlap(room, grow(f.mark, g.pad)) * 5;
+      if (a.o.from === 'auto' && a.sw) {
+        // The sign by the area it covers. The shaft by a point every 6 px along the curve as drawn,
+        // each as wide as the stroke, or as the head's wings near the tip.
+        const span = Math.hypot(g.tip.x - g.tail.x, g.tip.y - g.tail.y);
+        const steps = Math.max(4, Math.ceil(span / 6));
+        const c = unit(g.tip.x - g.tail.x, g.tip.y - g.tail.y);
+        const bend = a.o.shape === 'bend' ? 0.28 : 0;
+        const q = { x: (g.tail.x + g.tip.x) / 2 + c.y * span * bend, y: (g.tail.y + g.tip.y) / 2 - c.x * span * bend };
+        const head = a.size.stroke * a.o.L.head;
+        const along = [];
+        for (let k = 1; k <= steps; k++) {
+          const t = k / steps;
+          const i = 1 - t;
+          along.push({ x: i * i * g.tail.x + 2 * i * t * q.x + t * t * g.tip.x, y: i * i * g.tail.y + 2 * i * t * q.y + t * t * g.tip.y,
+            r: (1 - t) * span < head ? head * 0.62 : a.size.stroke / 2 + 1 });
+        }
+        for (const t of obstaclesNear(a, f, performance.now())) {
+          s += overlap(room, t);
+          for (const p of along) if (inside(p, grow(t, p.r))) s += 40;
+        }
+      }
       if (a.o.from === 'auto') s -= (u.x * cx + u.y * cy) * 120 + (key === 'centre' ? 20 : 0);
       else if (key === a.o.from) s -= 400;
       if (key === a.dir) s -= 40;
@@ -668,6 +749,15 @@
     if (a.sign) a.sign.style.opacity = String(a.shownA * enter);
   };
 
+  // The sign's size. On a narrow screen it wraps onto more lines, so it can stand beside its target.
+  const measure = (a) => {
+    if (!a.sign) return;
+    const most = `${Math.round(Math.min(a.size.sign, window.innerWidth * 0.42))}px`;
+    if (a.sign.style.maxWidth !== most) a.sign.style.maxWidth = most;
+    a.sw = a.sign.offsetWidth;
+    a.sh = a.sign.offsetHeight;
+  };
+
   const draw = (a, now, placed) => {
     const W = window.innerWidth;
     const H = window.innerHeight;
@@ -682,7 +772,7 @@
       a.geo = { ...a.geo, target: r, hidden: true };
       return;
     }
-    if (a.sign) { a.sw = a.sign.offsetWidth; a.sh = a.sign.offsetHeight; }
+    measure(a);
     a.pad = padFor(a, f.mark);
     const u = place(a, f, placed);
     const mode = a.o.mode;
@@ -809,7 +899,7 @@
     }
     const a = {
       id, target, src, o, size, g, halos, paths, line, heads, sign, born: performance.now(),
-      sw: sign ? sign.offsetWidth : 0, sh: sign ? sign.offsetHeight : 0, dir: '', pad: 0, mark: null, pts: null,
+      sw: sign ? sign.offsetWidth : 0, sh: sign ? sign.offsetHeight : 0, dir: '', pad: 0, mark: null, pts: null, obst: null,
       visible: true, shownA: 0, lost: false, lastFollow: 0, timer: 0, listeners: [], geo: null,
     };
     a.pad = padFor(a, { w: 0 });
@@ -1160,6 +1250,7 @@
     const a = build(0, target, opts);
     try {
       if (a.sign) a.sign.style.visibility = 'hidden';
+      measure(a);
       const r = rectOf(a);
       const f = focusOf(a, r);
       const placed = [...arrows.values()].filter((x) => x.geo && x.geo.sign).map((x) => grow(x.geo.sign, loopRoom(x)));
