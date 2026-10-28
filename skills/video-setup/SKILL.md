@@ -18,7 +18,7 @@ Run this from the top folder of the project's repository:
 node "${CLAUDE_PLUGIN_ROOT}/skills/video-setup/scripts/sync.mjs" .
 ```
 
-Outside Claude Code, use a local clone of the plugin in place of `${CLAUDE_PLUGIN_ROOT}`. The project check finds the plugin through `VIDEO_KIT_SOURCE` (the path of `skills/video-setup/scripts`), then the installed `neil-development` plugin.
+Outside Claude Code, use a local clone of the plugin in place of `${CLAUDE_PLUGIN_ROOT}`. The project check finds the plugin through `VIDEO_KIT_SOURCE` (the path of `skills/video-setup/scripts`), then the installed `ndev` plugin.
 
 The sync refuses to replace a kit file that was edited in the project. Move that change into the plugin first. Use `--discard-local-edits` only when the user agrees to lose the edit. Commit the synced files in the project's pull request for the change.
 
@@ -73,8 +73,8 @@ Run `node scripts/video-kit/check.mjs` (or `npm run check`) in the video's folde
 
    ```json
    {
-     "extraKnownMarketplaces": { "neil-development": { "source": { "source": "github", "repo": "neilellis/neil-development" } } },
-     "enabledPlugins": { "neil-development@neil-development": true }
+     "extraKnownMarketplaces": { "ndev": { "source": { "source": "github", "repo": "neilellis/ndev" } } },
+     "enabledPlugins": { "ndev@ndev": true }
    }
    ```
 

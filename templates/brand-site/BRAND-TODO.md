@@ -1,6 +1,6 @@
 # Brand worklist
 
-`/brand create` made this site from the neil-development brand template. The template's defaults came from a real brand guide. Work through this list and replace each default with the project's own values. Delete each line when it is done, and delete this file when the list is empty. `/brand check` reports this file while it exists.
+`/brand create` made this site from the ndev brand template. The template's defaults came from a real brand guide. Work through this list and replace each default with the project's own values. Delete each line when it is done, and delete this file when the list is empty. `/brand check` reports this file while it exists.
 
 ## Values, from the project's source
 

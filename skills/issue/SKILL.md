@@ -83,7 +83,7 @@ Give the result in at most five lines:
 Load the `orca-cli` skill for the Orca executable and the guide. Then create a top-level workspace, linked to the issue, from the repository's default base, with a Claude agent in it that starts on the issue:
 
 ```bash
-ORCA worktree create --name issue-<number>-<slug> --no-parent --issue <number> --agent claude --prompt "Use the neil-development plugin to work on issue #<number>" --activate --json
+ORCA worktree create --name issue-<number>-<slug> --no-parent --issue <number> --agent claude --prompt "Use the ndev plugin to work on issue #<number>" --activate --json
 ```
 
 - `<slug>` is two to four words from the title, in kebab case.

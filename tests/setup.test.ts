@@ -23,7 +23,7 @@ const engine = (
   const spawned: string[] = []
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   // The fix-all-prs loop registers its tool and timer at session start.
-  on('tool.register', () => ({ value: { tool: 'mcp__neil-development__report' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   on('clock.now', () => ({ value: 0 }))
   on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -77,7 +77,7 @@ const section = async ($: Dollar) => {
     outputStyle: null,
     traits: [],
   })
-  return sections.find(s => s.id === 'neil-development:dev-mode')?.text ?? ''
+  return sections.find(s => s.id === 'ndev:dev-mode')?.text ?? ''
 }
 
 const saved = (files: Map<string, string>) => JSON.parse(files.get(CONFIG) ?? '{}') as Record<string, unknown>

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 const PANE = {
-  plugin: 'neil-development',
+  plugin: 'ndev',
   component: 'Pane',
   requestId: 'fix-all-prs',
   props: {
@@ -75,7 +75,7 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   const timers: (() => void)[] = []
   const timer = () => timers.splice(0).forEach(fire => fire())
   on('command.register', () => ({ value: { command: 'fix-prs' } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__neil-development__report' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   // The plugin's session start also reads ~/dev-wiki and the project file: both are in place,
   // so it runs no set-up and no wiki script, and every process call below is the loop's.
   on('env.get', () => ({ value: '/home/neil' }))
@@ -237,7 +237,7 @@ test('start --no-merge fixes each pull request until it is green, then leaves th
   expect(w.prompts[0]).toMatch(/A human merges it/)
   expect(w.prompts[0]).not.toMatch(/the mod does both/)
   Object.assign(prs[2]!, { headRefOid: 'head-190-2', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ name: 'tests', status: 'COMPLETED', conclusion: 'SUCCESS' }] })
-  await $.tool.call({ tool: 'mcp__neil-development__report', pr: 190, outcome: 'pushed' } as never)
+  await $.tool.call({ tool: 'mcp__ndev__report', pr: 190, outcome: 'pushed' } as never)
 
   ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await until(async () => (await ui.find({ type: 'Text', text: /^Finished/ })) !== undefined)
@@ -352,9 +352,9 @@ test('with no owning agent the loop hands the pull request to the model, which c
   await until(() => w.prompts.length === 1)
   expect(w.prompts[0]).toMatch(/# Fix pull request #190/)
   expect(w.prompts[0]).toMatch(/no agent is named after it and no listed session signed its commits/)
-  expect(w.prompts[0]).toMatch(/mcp__neil-development__report/)
+  expect(w.prompts[0]).toMatch(/mcp__ndev__report/)
 
-  const out = await $.tool.call({ tool: 'mcp__neil-development__report', pr: 190, outcome: 'blocked', reason: 'needs a product decision' } as never)
+  const out = await $.tool.call({ tool: 'mcp__ndev__report', pr: 190, outcome: 'blocked', reason: 'needs a product decision' } as never)
   expect(JSON.stringify(out)).toMatch(/Recorded #190 as blocked/)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -524,7 +524,7 @@ test('a message from the loop compacts its owning session first when the session
   const compacts: (string | undefined)[] = []
   on('session.compact', (_$, e) => { compacts.push(e.instructions); return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const fromLoop = { origin: { kind: 'peer', plugin: 'neil-development' }, text: 'PR #200 needs work: the checks fail.' } as const
+  const fromLoop = { origin: { kind: 'peer', plugin: 'ndev' }, text: 'PR #200 needs work: the checks fail.' } as const
 
   w.clock.now = 49 * 60_000
   expect(await $.session.receive(fromLoop)).toEqual({ text: fromLoop.text })

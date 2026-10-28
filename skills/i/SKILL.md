@@ -4,4 +4,4 @@ description: "Alias of issue: create a GitHub issue from a description and put i
 argument-hint: "[--orca] <description of the issue>"
 ---
 
-Load the `neil-development:issue` skill and follow it. The description is: $ARGUMENTS
+Load the `ndev:issue` skill and follow it. The description is: $ARGUMENTS

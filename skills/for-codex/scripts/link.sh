@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
     --dry-run) dry_run=1 ;;
     --remove) remove=1 ;;
     --source)
-      [ $# -ge 2 ] || die "--source needs a path. Example: --source ~/dev/neil-development"
+      [ $# -ge 2 ] || die "--source needs a path. Example: --source ~/dev/ndev"
       source_root="$2"
       shift
       ;;
@@ -44,7 +44,7 @@ done
 # from Claude's plugin cache, else the plugin that holds this script.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 own_root="$(cd "$script_dir/../../.." && pwd -P)"
-working_copy="$HOME/dev/neil-development"
+working_copy="$HOME/dev/ndev"
 
 if [ -n "$source_root" ]; then
   [ -d "$source_root/skills" ] ||
@@ -61,7 +61,7 @@ else
   fi
 fi
 [ -d "$plugin_root/skills" ] || die "plugin root '$plugin_root' has no skills/ folder. Pass --source <plugin-root>."
-[ -d "$plugin_root/scripts" ] || die "plugin root '$plugin_root' has no scripts/ folder, which the skills call. Repair: update the plugin copy (git pull in $plugin_root, or claude plugin update neil-development), or pass --source <plugin-root>."
+[ -d "$plugin_root/scripts" ] || die "plugin root '$plugin_root' has no scripts/ folder, which the skills call. Repair: update the plugin copy (git pull in $plugin_root, or claude plugin update ndev), or pass --source <plugin-root>."
 
 if [ -z "$project" ]; then
   project="$(git rev-parse --show-toplevel 2>/dev/null)" ||
@@ -90,14 +90,14 @@ points_into_plugin() {
   local dest
   dest="$(readlink "$1")"
   [[ "$dest" == "$plugin_root/skills/"* ]] ||
-    [[ "$dest" == */.claude/plugins/cache/*/neil-development/*/skills/* ]] ||
+    [[ "$dest" == */.claude/plugins/cache/*/ndev/*/skills/* ]] ||
     [[ "$dest" == "$own_root/skills/"* ]]
 }
 points_to_plugin_scripts() {
   local dest
   dest="$(readlink "$1")"
   [[ "$dest" == "$plugin_root/scripts" ]] ||
-    [[ "$dest" == */.claude/plugins/cache/*/neil-development/*/scripts ]] ||
+    [[ "$dest" == */.claude/plugins/cache/*/ndev/*/scripts ]] ||
     [[ "$dest" == "$own_root/scripts" ]]
 }
 scripts_link="$project/.codex/scripts"

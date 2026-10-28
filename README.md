@@ -1,4 +1,4 @@
-# neil-development
+# ndev
 
 The software factory: one place for the development procedures that repeat in every project.
 It is a Claude Code plugin. It holds the methodology, the workflow skills, the subagents and a
@@ -17,7 +17,7 @@ knowledge base. A project enables the plugin and gets all of them.
 
 ## Skills
 
-Each skill is `neil-development:<name>`. The table shows the first sentence of each skill's description; the skill's `SKILL.md` has the rest.
+Each skill is `ndev:<name>`. The table shows the first sentence of each skill's description; the skill's `SKILL.md` has the rest.
 
 | Skill | What it does |
 |---|---|
@@ -177,7 +177,7 @@ and each pull request's checks in a pane.
 
 The loop first asks the agent that owns a pull request to fix it. When that agent does not
 answer, the loop gives the pull request to this session's model. The model reports the result with
-the `report` tool (`mcp__neil-development__report`): `pushed`, or `blocked` with the reason.
+the `report` tool (`mcp__ndev__report`): `pushed`, or `blocked` with the reason.
 
 ## Worktree init: scripts/init-project.sh
 
@@ -221,12 +221,12 @@ install the plugin.
 ```json
 {
   "extraKnownMarketplaces": {
-    "neil-development": {
-      "source": { "source": "github", "repo": "neilellis/neil-development" }
+    "ndev": {
+      "source": { "source": "github", "repo": "neilellis/ndev" }
     }
   },
   "enabledPlugins": {
-    "neil-development@neil-development": true
+    "ndev@ndev": true
   }
 }
 ```
@@ -234,11 +234,11 @@ install the plugin.
 Or install it by hand:
 
 ```
-/plugin marketplace add neilellis/neil-development
-/plugin install neil-development@neil-development
+/plugin marketplace add neilellis/ndev
+/plugin install ndev@ndev
 ```
 
-Plugin skills are namespaced, for example `/neil-development:work-light`. A project skill with the
+Plugin skills are namespaced, for example `/ndev:work-light`. A project skill with the
 same name stays separate. Delete the project copy when the plugin version replaces it.
 
 The repository is private. To install it, you must have read access on GitHub and a working

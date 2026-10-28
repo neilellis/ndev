@@ -116,7 +116,7 @@ describe("kit sync", () => {
   it("fails when Claude Code lists the plugin but its install is missing", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "kit-home-"));
     fs.mkdirSync(path.join(home, ".claude/plugins"), { recursive: true });
-    fs.writeFileSync(path.join(home, ".claude/plugins/installed_plugins.json"), JSON.stringify({ plugins: { ["neil-development@neil-development"]: [{ scope: "user", installPath: path.join(home, "gone"), version: "0.1.0" }] } }));
+    fs.writeFileSync(path.join(home, ".claude/plugins/installed_plugins.json"), JSON.stringify({ plugins: { ["ndev@ndev"]: [{ scope: "user", installPath: path.join(home, "gone"), version: "0.1.0" }] } }));
     const r = spawnSync(process.execPath, ["-e", `import("${path.join(plugin, "engine/kit.mjs")}").then((k) => k.findSource("${project}"))`], { env: { ...process.env, HOME: home, VIDEO_KIT_SOURCE: "" }, encoding: "utf8" });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /installed at .*gone.*which is missing/);
