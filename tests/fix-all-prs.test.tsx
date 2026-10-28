@@ -86,8 +86,9 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   const commitReads = { count: 0 }
   // `outage` fails that many gh calls with a server error; `mergeError` makes GitHub refuse each merge;
   // `rateLimitUntil` fails every gh call before that time with GitHub's rate-limit refusal;
-  // `storage` fails the checks of those pull requests on the Actions storage quota until a rerun.
-  const fault = { outage: 0, mergeError: {} as Record<number, string>, rateLimitUntil: 0, storage: {} as Record<number, boolean> }
+  // `storage` fails the checks of those pull requests on the Actions storage quota until a rerun;
+  // `registry` fails each read of the session registry with that output.
+  const fault = { outage: 0, mergeError: {} as Record<number, string>, rateLimitUntil: 0, storage: {} as Record<number, boolean>, registry: '' }
   // Each period of `$.clock.every` waits here until the test fires the timer. A fire before the next period waits
   // is kept for it: the engine arms that period only after it has handled the last one.
   const timers: (() => void)[] = []
@@ -125,7 +126,10 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   on('process.run', (_, e) => {
     if (isGhBroken) return { value: { exitCode: 1, stdout: '', stderr: 'fatal: not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
     const args = e.argv.join(' ')
-    if (e.argv[0] === 'sh' && args.includes('/sessions/')) return ok(registry.map(line => `${line}\n`).join(''))
+    if (e.argv[0] === 'sh' && args.includes('/sessions/')) {
+      if (fault.registry) return { value: { exitCode: 1, stdout: '', stderr: fault.registry, isStdoutTruncated: false, isStderrTruncated: false } }
+      return ok(registry.map(line => `${line}\n`).join(''))
+    }
     if (e.argv[0] === 'sh' && args.includes('aiTitle')) {
       const files = e.argv.slice(4)
       return ok(files.map(f => `${f}\t${titles[f] ? `"aiTitle":${JSON.stringify(titles[f])}` : ''}\n`).join(''))
@@ -380,6 +384,42 @@ test('with no agent named after it, the owner is the listed session that signed 
   expect((await ui.find({ type: 'Text', text: /signed its commits/ }))?.text).toMatch(/#200: owner lens-7d, the listed session that signed its commits/)
   // The owning session's title, beside its name.
   await until(async () => (await ui.find({ type: 'Text', text: /Restarting "lens" after stop/ })) !== undefined)
+  await ui.unmount()
+  await $.command.run(command('pause'))
+})
+
+test('a message to the owner by its socket address keeps the owner by name, so it is not taken as gone', async ($, on) => {
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
+  const w = world(on, prs, [{ name: 'lens-7d', status: 'idle' }])
+  w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_7d']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', messagingSocketPath: '/tmp/cc-socks/3.sock', bridgeSessionId: 'session_7d' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+  await until(() => w.sent.length === 1, () => w.prompts)
+
+  // The model writes to the owner at the address its reply came from.
+  w.clock.now = 60_000
+  await $.session.send({ origin: { kind: 'model' }, to: 'uds:/tmp/cc-socks/3.sock', text: 'PR #200 failed again on the fresh run.' })
+  w.clock.now = 31 * 60_000
+  w.timer()
+  await until(() => w.prompts.length === 1, () => ({ prompts: w.prompts, created: w.orca.created }))
+  expect(w.prompts[0]).toMatch(/lens-7d has not pushed or answered for 30 minutes/)
+  expect(w.orca.created).toEqual([])
+  await $.command.run(command('pause'))
+})
+
+test('a socket address whose session cannot be named is recorded as given, and the log says why', async ($, on) => {
+  const w = world(on, [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176')], [{ name: 'issue-176', status: 'idle' }])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+  await until(() => w.sent.length === 1)
+
+  w.fault.registry = 'cat: /home/neil/.claude/sessions/9.json: Permission denied'
+  await $.session.send({ origin: { kind: 'model' }, to: 'uds:/tmp/cc-socks/9.sock', text: 'PR #182 failed again on the fresh run.' })
+  w.fault.registry = ''
+  const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 300 }, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /could not be named/ }))?.text).toMatch(
+    /uds:\/tmp\/cc-socks\/9\.sock: its session could not be named, so the message is recorded under the address: reading the Claude Code session registry exited 1: cat: .*Permission denied/)
   await ui.unmount()
   await $.command.run(command('pause'))
 })

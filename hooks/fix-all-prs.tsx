@@ -183,7 +183,7 @@ const REGISTRY_SCRIPT =
   'for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json; do [ -f "$f" ] || continue; cat "$f" || exit $?; echo; done'
 const SESSION_TRAILER = /^Claude-Session:.*\b(session_\w+)/gm
 
-type Session = { name?: string; sessionId?: string; cwd?: string; bridgeSessionId?: string; updatedAt?: number }
+type Session = { name?: string; sessionId?: string; cwd?: string; bridgeSessionId?: string; messagingSocketPath?: string; updatedAt?: number }
 type Registry = { sessions: Session[]; isPartial: boolean }
 
 // The local sessions in Claude Code's session registry.
@@ -455,6 +455,15 @@ async function note($: EngineInterface, text: string): Promise<void> {
 async function settle($: EngineInterface, n: number, outcome: Outcome): Promise<void> {
   await update($, loop, (l): Loop => ({ ...l, outcomes: { ...l.outcomes, [n]: outcome }, step: undefined, stepAt: undefined, askedHead: undefined }))
   await note($, `#${n} ${outcome.kind}: ${outcome.detail}`)
+}
+
+// The name of the session at a socket address (`uds:<path>`), as ListAgents lists it; any other recipient as given.
+// An owner recorded under its address would never be listed, so it would be taken as gone.
+async function nameAt($: EngineInterface, to: string): Promise<string> {
+  const path = /^uds:(.+)$/.exec(to)?.[1]
+  if (path === undefined) return to
+  const { sessions } = await readRegistry(argv => $.process.run(argv, { timeoutMs: 60_000 }))
+  return sessions.find(x => x.messagingSocketPath === path)?.name ?? to
 }
 
 // Notes a message to an agent against the pull requests it is about.
@@ -1103,7 +1112,12 @@ export const fixAllPrs = (on: On) => {
   // Every message to another agent: the model's SendMessage and this mod's own.
   on('session.send', async ($, e, next) => {
     const sent = await next(e)
-    await recordSent($, e.to.replace(/\s*\[[^\]]*\]$/, ''), e.text, sent.isDelivered ? undefined : sent.reason)
+    const to = e.to.replace(/\s*\[[^\]]*\]$/, '')
+    const name = await nameAt($, to).catch(async (err: unknown) => {
+      await note($, `${to}: its session could not be named, so the message is recorded under the address: ${err instanceof Error ? err.message : String(err)}`)
+      return to
+    })
+    await recordSent($, name, e.text, sent.isDelivered ? undefined : sent.reason)
     return sent
   })
 
