@@ -9,6 +9,15 @@ Movement must feel calm and professional. Use `work-light` for the change and `t
 
 If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`) before you add movement. Follow its motion pages: durations, easing, and what can move. Where they differ from the rules below, the guide wins. Otherwise skip this section.
 
+## Animation references
+
+Before designing animation, review [Aceternity UI](https://ui.aceternity.com/) for interaction ideas and [Motion](https://motion.dev/docs) for implementation guidance.
+
+- Use Aceternity examples to study purpose, timing and state changes. Adapt them to the project’s brand and content.
+- Use Motion’s official docs to check supported APIs, accessibility and performance. Check the installed version before adopting an API.
+- For glass effects, read [Liquid Glass](https://ui.aceternity.com/components/liquid-glass). Check browser support, text contrast and reduced transparency.
+- Record the chosen pattern, its trigger and its reduced-motion behaviour in the project’s brand guide when it has one.
+
 ## Set up
 
 - Import from `motion/react`. Never import from `framer-motion` directly.
