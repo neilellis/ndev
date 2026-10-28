@@ -356,10 +356,13 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
     // that signed it, then, on each refresh, for a listed session in an Orca worktree of it (one list call).
     const found: Record<number, { owner?: string; isFinal: boolean; via?: string }> = {}
     const known = await read($, comms)
-    // An agent started in Orca keeps its pull request: until its session is listed in its workspace, no other owner is
-    // looked for, so two agents never fix one branch.
+    // An agent started in Orca keeps its pull request while the loop waits for it: until its session is listed in its
+    // workspace, no other owner is looked for, so two agents never fix one branch. Once the head moves, the round is done
+    // and the owner is looked for as for any pull request.
     const l = await read($, loop)
-    const started = l.step === 'orca' && l.orcaPath !== undefined ? rows.find(r => r.state === 'OPEN' && r.number === l.current) : undefined
+    const started = l.step === 'orca' && l.orcaPath !== undefined && !l.isRoundDone
+      ? rows.find(r => r.state === 'OPEN' && r.number === l.current && r.head === l.askedHead)
+      : undefined
     const ownerFor = (r: PrRow, was: Comm | undefined) => (r === started ? found[r.number]?.owner : ownerOf(r, was, agents, found[r.number]))
     // A search holds until the head moves or another agent is listed: a session can sign in after it.
     const searchKey = (r: PrRow) => `${r.head} ${agents.map(a => a.name).sort().join(' ')}`
@@ -462,8 +465,14 @@ async function settle($: EngineInterface, n: number, outcome: Outcome): Promise<
 async function nameAt($: EngineInterface, to: string): Promise<string> {
   const path = /^uds:(.+)$/.exec(to)?.[1]
   if (path === undefined) return to
-  const { sessions } = await readRegistry(argv => $.process.run(argv, { timeoutMs: 60_000 }))
-  return sessions.find(x => x.messagingSocketPath === path)?.name ?? to
+  const { sessions, isPartial } = await readRegistry(argv => $.process.run(argv, { timeoutMs: 60_000 }))
+  const name = sessions.find(x => x.messagingSocketPath === path)?.name
+  if (name === undefined) {
+    const partial = isPartial ? ', and a registry file did not parse (a session may have been writing it)' : ''
+    await note($, `${to}: no named session in the Claude Code session registry has this socket${partial}, so the message is recorded under the address. Repair: message the owner by the name ListAgents shows.`)
+    return to
+  }
+  return name
 }
 
 // Notes a message to an agent against the pull requests it is about.
@@ -751,15 +760,20 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
         return true
       }
     }
-    // The model holds it only because the agents could not be listed, and an owner is listed since, though asked in an
-    // earlier round: the owner takes it over, and the model is told to stop.
-    if (state.step === 'model' && state.isAwaitingOwner && listed && (listed.sentAt === undefined || listed.sentAt < (state.stepAt ?? 0))) {
+    // The model holds it only because the agents could not be listed, and an owner is listed since: the owner takes it
+    // over, and the model is told to stop. Neither an ask in an earlier round nor a message from the model stops that.
+    if (state.step === 'model' && state.isAwaitingOwner && listed) {
       await ask($, row, snap, listed, state.attempts, ', found since the hand-over to this session\'s model')
       if ((await read($, loop)).step === 'asked') {
+        const unsent = (why: string) =>
+          note($, `#${n}: the model could not be told to stop: ${why}. Repair: tell this session's model to stop work on #${n}; ${listed.owner} has it.`)
         void $.prompt.submit({
           text: `Stop work on pull request #${n}: its owning agent ${listed.owner} has it now. Do not push to it or call \`${REPORT_TOOL}\` for it. ` +
             `If you changed files for it, tell ${listed.owner} what you changed with SendMessage.`,
-        })
+        }).then(
+          r => (r.drop !== undefined ? unsent(`the prompt was dropped (${r.drop})`) : undefined),
+          (err: unknown) => unsent(err instanceof Error ? err.message : String(err)),
+        )
       }
     }
     return false // the owner or the model is still working
@@ -1114,7 +1128,7 @@ export const fixAllPrs = (on: On) => {
     const sent = await next(e)
     const to = e.to.replace(/\s*\[[^\]]*\]$/, '')
     const name = await nameAt($, to).catch(async (err: unknown) => {
-      await note($, `${to}: its session could not be named, so the message is recorded under the address: ${err instanceof Error ? err.message : String(err)}`)
+      await note($, `${to}: its session could not be named, so the message is recorded under the address: ${err instanceof Error ? err.message : String(err)}. Repair: message the owner by the name ListAgents shows.`)
       return to
     })
     await recordSent($, name, e.text, sent.isDelivered ? undefined : sent.reason)
