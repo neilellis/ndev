@@ -1,11 +1,40 @@
 {
   "name": "ndev",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Neil's software factory: the development methodology, workflow skills, subagents and knowledge base reused across projects.",
   "author": {
     "name": "Neil Ellis"
   },
   "repository": "https://github.com/neilellis/neil-development",
   "license": "UNLICENSED",
+  "userConfig": {
+    "textTo": {
+      "type": "string",
+      "title": "Text a /walk-doc escalation to",
+      "description": "The phone number or iMessage address that gets a text through Messages when the main agent escalates a walk, and when a walk ends. Empty sends no text, and the notice says so.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.83",
+        "--headless",
+        "--isolated",
+        "--viewport-size",
+        "1028x768",
+        "--caps",
+        "devtools",
+        "--init-script",
+        "${CLAUDE_PLUGIN_ROOT}/skills/browser-arrows/scripts/cursor.js",
+        "${CLAUDE_PLUGIN_ROOT}/skills/browser-arrows/scripts/arrow.js",
+        "--output-dir",
+        "${HOME}/.walk-doc"
+      ]
+    }
+  },
   "types": "./types/index.d.ts"
 }

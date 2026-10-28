@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, On } from 'claude-code'
+import type { EngineInterface, On, TurnCompleteInput } from 'claude-code'
 
 import type { Comm, Loop, Outcome, PrRow, Quota, Snapshot } from '../types'
 
@@ -820,16 +820,16 @@ export async function startFixAllPrs($: EngineInterface) {
   $.clock.every(TICK_MS, () => tickLater($))
 }
 
+// A main-agent turn ended: the loop reads this as the session's last activity.
+// register.ts calls it from the plugin's one turn.complete hook.
+export async function fixAllPrsTurn($: EngineInterface, e: TurnCompleteInput) {
+  if (e.agentId !== undefined) return
+  const now = await $.clock.now()
+  await update($, activity, () => ({ at: now }))
+}
+
 // The fix-all-prs loop's other hooks: the /fix-prs command, its report tool and the PR queue pane.
 export const fixAllPrs = (on: On) => {
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) {
-      const now = await $.clock.now()
-      await update($, activity, () => ({ at: now }))
-    }
-    return next(e)
-  })
-
   // Answers at once: the work runs detached, since a slow gh would outlast the hook's budget.
   on('command.run', { command: 'fix-prs' }, async ($, e) => {
     const words = e.args.trim().split(/\s+/).filter(Boolean)
@@ -857,8 +857,8 @@ export const fixAllPrs = (on: On) => {
   }))
 
   // The model reports a fix pushed, or a block that needs the user.
-  on('tool.call', async ($, e, next) => {
-    if ((e.tool as string) !== REPORT_TOOL) return next(e)
+  // Matched on the tool: the walk-doc guard is the plugin's one tool.call hook that sees every call.
+  on('tool.call', { tool: REPORT_TOOL }, async ($, e) => {
     // The engine passes the tool's arguments on the event itself, beside `tool`.
     const input = e as unknown as { pr?: number; outcome?: string; reason?: string }
     const l = await read($, loop)

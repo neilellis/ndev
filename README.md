@@ -10,7 +10,7 @@ knowledge base. A project enables the plugin and gets all of them.
 |---|---|
 | `kb/` | The methodology as a knowledge base. Start at [`kb/README.md`](kb/README.md). Core beliefs are in [`kb/core-beliefs.md`](kb/core-beliefs.md). |
 | `skills/` | Workflow skills. A helper that only one skill uses stays in that skill's `scripts/` folder. |
-| `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`). See [`scripts/README.md`](scripts/README.md). |
+| `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`, `walk-doc/`). See [`scripts/README.md`](scripts/README.md). |
 | `agents/` | Subagent definitions for board work, implementation, planning and review. |
 | `templates/` | A starter `CLAUDE.md`, a starter LLM wiki, and the brand site that `/brand create` copies. |
 | `kb/hooks/` | Reusable hook scripts and a pre-push hook to copy into a project. |
@@ -201,6 +201,20 @@ from source. When the script exits 0, the hook writes `.ndev-inited`.
 - Outside a git repository the hook does nothing.
 
 Run the hooks module's tests with `claude plugin test .`.
+
+## Docs walk-through: /walk-doc
+
+A third hooks module, `hooks/walk-doc/`, tests a set of docs by using them. `/walk-doc <page>`
+starts the docs dev server and a fresh reader agent (`ndev:walk`). The reader follows each step
+on the rendered pages and records each command and browser step. When it gets stuck, it reports
+an `OMISSION`, `BUG`, `INCORRECT` or `BLOCKED` finding to the main agent. The main agent fixes the
+docs or the product on the current branch, then tells the reader to continue or start again.
+
+A project turns it on with `.walk-doc.json` at the repository root. The file names the dev server
+command, the content folder, the paths the reader may not read, the finish commands, how the docs
+embed media and how to file an issue. Without the file, `/walk-doc` does nothing and tells you what
+to write. A missing required key stops the walk and names the key, the file and an example value.
+The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.md).
 
 ## The living wiki: ~/dev-wiki
 

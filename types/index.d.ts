@@ -117,6 +117,59 @@ declare module 'claude-code' {
       comms: Shaped<Record<string, Comm>>
       loop: Shaped<Loop>
       activity: Shaped<{ at?: number }>
+      // The /walk-doc run (hooks/walk-doc/).
+      walkRun: Shaped<WalkRun | null>
     }
   }
+}
+
+// The /walk-doc state (hooks/walk-doc/): one run, kept in $.state and mirrored to walk-run/<runId>/run.json.
+export type WalkFinding = {
+  n: number
+  code: 'OMISSION' | 'BUG' | 'INCORRECT' | 'BLOCKED' | 'ENHANCE' | 'RECORD'
+  step: string
+  expected: string
+  actual: string
+  evidence: string
+  attempt: number
+  at: number
+  resolution: { action: 'CONTINUE' | 'RESTART' | 'ESCALATED' | 'NOTED'; note: string; changed: string[]; at: number } | null
+}
+
+// A question the main agent sent the Walk agent with walk_ask, and the reader's walk_answer.
+export type WalkAsk = { n: number; question: string; at: number; answer: { text: string; at: number } | null }
+
+export type WalkRun = {
+  runId: string
+  phase: 'walking' | 'awaiting' | 'escalated' | 'done' | 'finished'
+  target: string
+  startUrls: string[]
+  persona: string
+  root: string
+  home: string
+  port: number
+  pid: number
+  // The attempt that runs now, from 1; restarts so far are attempt - 1.
+  attempt: number
+  agentId: string | null
+  // Every Walk agent of this run, so the guard covers a resumed or replaced one.
+  agentIds: string[]
+  stepBlocks: Record<string, number>
+  // Blocking reports, ENHANCE notes and RECORD requests, numbered in the order they came.
+  findings: WalkFinding[]
+  denials: { tool: string; detail: string; at: number }[]
+  // Repo-relative or ~ paths the docs tell the reader to open or edit.
+  allowedPaths: string[]
+  startedAt: number
+  summary: string | null
+  // Times the current Walk agent ended its turn without a report and was told to carry on.
+  nudges: number
+  // /walk-doc --re-record: every reader records each recording on the page again. Absent in runs from before the flag.
+  reRecord?: boolean
+  // Walk Bash commands recorded so far; each one's cast is numbered from this. Absent in runs from before recording.
+  recorded?: number
+  // Files Claude Code saved a Walk agent's own oversized tool output to; the guard opens exactly these under ~/.claude.
+  savedOutputs?: string[]
+  // Questions the main agent asked the reader, numbered in the order sent. Absent in runs from before walk_ask.
+  asks?: WalkAsk[]
 }
