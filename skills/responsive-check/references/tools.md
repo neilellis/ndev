@@ -32,12 +32,18 @@ The steps that work:
 1. Boot a device and open the page: `xcrun simctl boot <udid>`, then `xcrun simctl openurl <udid> http://localhost:3000/`. The simulator reaches the Mac's `localhost`. The first `openurl` after a boot can time out while Safari starts; run it again.
 2. Attach by UDID: `orca emulator attach <udid> --json`. A name such as "iPhone SE (3rd generation)" can match a device in each installed iOS runtime. Orca can then choose a device that is not booted and fail with `serve-sim command failed`. Get the UDID from `xcrun simctl list devices booted`.
 3. Read the result's `ok` field, not the exit code: a failed `attach` returns `"ok": false` with exit code 0.
-4. Read the tree: `orca emulator ax --json`. It lists the page's own links and buttons with their labels, so you can find a control by its label. If it returns `noFrontmostApplication`, bring Safari to the front (`xcrun simctl launch <udid> com.apple.mobilesafari`) and try again.
-5. Tap at the centre of the element's frame: `orca emulator tap <x + width/2> <y + height/2> --json`. The coordinates are 0..1, not pixels.
-6. Take the screenshot with `xcrun simctl io <udid> screenshot <file>.png`, and look at it.
-7. Stop the helper when you are done: `orca emulator kill --json`.
+4. Wait until the page is ready. Use a marker that the app sets after its scripts start, or run `ax` until the label you need appears. A button can show its pressed style before its click handler exists: the first tap then does nothing.
+5. Read the tree: `orca emulator ax --json`. It lists the page's own links and buttons with their labels and frames, so you can find a control by its label. Orca finds web elements with a hit-test grid of one probe every 32 points, so a small element between two probes can be missing.
+   - If it returns `noFrontmostApplication`, bring Safari to the front (`xcrun simctl launch <udid> com.apple.mobilesafari`) and try again.
+   - If the root node has a zero frame or no children, the tree is not ready, although `ok` is `true`. Wait 1 to 2 s and run `ax` again, up to 3 times.
+6. Tap at the centre of the element's frame: `orca emulator tap <x + width/2> <y + height/2> --json`. The coordinates are 0..1, not pixels. A tap is a touch-down and a touch-up 40 ms apart. It has no duration option.
+7. Check the result: run `ax` again (for example, the label changes from "Switch to dark mode" to "Switch to light mode") or take a screenshot. `ok: true` means only that the touch was sent.
+8. Take the screenshot with `xcrun simctl io <udid> screenshot <file>.png`, and look at it.
+9. Stop the helper when you are done: `orca emulator kill --json`.
 
 - `xcrun simctl ui <udid> appearance dark` sets the system scheme only. A site that stores its own theme choice does not follow it: press the site's toggle instead.
+- Do not terminate Safari between steps (`simctl terminate`). On a loaded Mac, the next `simctl launch` can hang for minutes and leave Safari on a black screen. Then shut the device down (`xcrun simctl shutdown <udid>`) and boot it again.
+- Not tested yet: Orca's serve-sim runtime includes `inspect-webkit`, a bridge to Safari's Web Inspector in the simulator. It could give exact element boxes (`DOM.getBoxModel`), but you must map them to screen coordinates yourself. `safaridriver` with `safari:useSimulator` needs `safaridriver --enable` first, which the user must authorise.
 - The iPhone SE (3rd generation) is 375 px wide. The matrix's 320 px row has no current simulator, so check 320 px with the script.
 
 ## Browser extensions
