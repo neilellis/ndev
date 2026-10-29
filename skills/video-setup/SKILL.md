@@ -79,7 +79,7 @@ Run `node scripts/video-kit/check.mjs` (or `npm run check`) in the video's folde
    ```
 
 8. Point the project's instructions (`CLAUDE.md` and `AGENTS.md`) at the `video-*` skills, and keep only project facts there: the type, the voices, the sources of assets and claims, the close, and any scene-specific code.
-9. Set the keys in the agent's environment, never in the repository: `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`) for speech, `OPENAI_API_KEY` for word timings and `UNSPLASH_ACCESS_KEY` for photography.
+9. Put the keys in the project's `.neil-dev.env`, never in a committed file: `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`) for speech, `OPENAI_API_KEY` for word timings and `UNSPLASH_ACCESS_KEY` for photography. Ask the user first, then run `node ${CLAUDE_PLUGIN_ROOT}/scripts/env/neil-dev-env.mjs init`. It creates the git-ignored file from the exports in `~/.zshrc` and lists the keys that are missing. Run a command that needs a key through `neil-dev-env.mjs run --need <KEY,KEY> -- <command>`.
 
 ## Branding
 

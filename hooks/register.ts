@@ -8,6 +8,7 @@ import { agentPrompt, runSetup } from './setup'
 import { quality } from './quality'
 import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
+import { askCredentials, credentialsSection, startCredentials } from './credentials'
 import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
 import { learnAfterPush } from './learn'
 
@@ -269,6 +270,7 @@ export const register: Register = (on, options) => {
     }
     project = await loadConfig($, e.cwd)
     await startInitProject($, e.cwd)
+    await startCredentials($, e.cwd)
     if (project.error) {
       $.ui.toast(`ndev: ${project.path}: ${project.error}. Using light · interactive until it is fixed.`)
     }
@@ -276,7 +278,8 @@ export const register: Register = (on, options) => {
     await update($, steering, () => project?.config.steering ?? 'interactive')
     await showStatus($)
     void initWiki($)
-    void setupIfMissing($, e.isInteractive)
+    // One dialog at a time: the GitHub set-up first, then the credentials file.
+    void setupIfMissing($, e.isInteractive).then(() => askCredentials($, e.isInteractive))
 
     return next(e)
   })
@@ -337,7 +340,7 @@ export const register: Register = (on, options) => {
       sections: [
         ...composed.sections,
         { id: `${PLUGIN}:dev-mode`, text, scope: 'session' },
-        ...[initProjectSection()].filter(s => s !== undefined),
+        ...[initProjectSection(), credentialsSection()].filter(s => s !== undefined),
       ],
     }
   })

@@ -21,6 +21,12 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `wait-for-pr-change.sh` | Waits until a PR's status, checks, comments or reviews change. | github, fix-ci, fix-all-prs, green-merge-open-prs, pick-up-prs, work-heavy, work-light, command-reuse, video-finish (`finish.mjs`) |
 | `wait-for-run.sh` | Waits for one GitHub Actions run to change status. | github, work-heavy, video-publish |
 
+## env/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `neil-dev-env.mjs` | Finds the project's git-ignored `.neil-dev.env` (copies the main checkout's file into a worktree), creates it from the exports in `~/.zshrc` (`init`), reports key names (`status`, `check`) and runs a command with its keys (`run --need`). It never prints a value. | `hooks/credentials.ts`, video-narration, video-setup, video-images, site-check |
+
 ## board/
 
 | Script | What it does | Used by |

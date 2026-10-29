@@ -168,6 +168,27 @@ the prompt with no issue follows the interactive skill's method without stopping
 Older names: `work-light` was `light-work`, `work-heavy` was `work`, `work-light-auto` was
 `work-ready-simple` and `work-heavy-auto` was `work-ready`.
 
+## Private credentials: `.neil-dev.env`
+
+The private keys for ndev skills go in `.neil-dev.env` at the project root. The file is git-ignored and has mode 600, with one `KEY=VALUE` on each line.
+
+| Key | Used for |
+|---|---|
+| `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`) | Speech for narration (video-narration, video-setup) |
+| `OPENAI_API_KEY` | Word timings for narration (video-narration, video-setup) |
+| `UNSPLASH_ACCESS_KEY` | Photographs (video-images, video-setup) |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | Protected Vercel previews (site-check) |
+
+`scripts/env/neil-dev-env.mjs` owns the file:
+
+- `init [--key NAME]...` creates the file, or adds to it. It reads the exports in `~/.zshrc` as text and never runs it. It keeps the values already in the file and lists the keys that are missing.
+- `status [--json]` and `check NAME...` report key names, never values.
+- `run --need A,B -- <command>` runs the command with the file's keys in its environment.
+
+The file belongs to the main checkout. In a worktree, the first look for the file copies it from the main checkout, but only when git ignores the name there. A project that does not ignore `.neil-dev.env` gets no file: add the name to `.gitignore`, or to `info/exclude` in the git common folder.
+
+At session start the plugin looks for the file and tells the agent where it is and which key names it sets. If the project has no file, the plugin asks once whether to create it from `~/.zshrc`. The agent never prints, reads or searches for a key.
+
 ## The pull request loop: /fix-prs
 
 A second hooks module, `hooks/fix-all-prs.tsx`, runs the `fix-all-prs` method as a loop. It works

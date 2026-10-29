@@ -10,7 +10,7 @@ description: "Find, add, credit or remove the images in a video: product assets,
 - **Product assets.** Logos, client logos, product screenshots and wordmarks come from the project's own website or product repositories, as the project's instructions name them. Copy them into the video project's `assets/`. Never change the source repository from a video project.
 - **Diagrams.** Use the project's diagram tool, or the `diagram-design` skill. Keep diagrams as files in the project.
 - **Essay or article imagery.** Use the header image of the published piece the scene cites. Keep the piece's source text in the project (for example `research/`), so the claims can be checked.
-- **Photography.** Photos come from Unsplash, through an Unsplash tool if your harness has one, or through the Unsplash API with `UNSPLASH_ACCESS_KEY` from the environment. Never print the key or ask for it in chat.
+- **Photography.** Photos come from Unsplash, through an Unsplash tool if your harness has one, or through the Unsplash API with `UNSPLASH_ACCESS_KEY` from the project's `.neil-dev.env`: run the download through `node ${CLAUDE_PLUGIN_ROOT}/scripts/env/neil-dev-env.mjs run --need UNSPLASH_ACCESS_KEY -- <command>`. Never print the key or ask for it in chat.
   - Before you download a photo, call the photo's `download_location` endpoint. Unsplash's API terms require it.
   - Download at `w=2400`.
   - Save as `assets/photos/u-<photo id>.jpg`.
