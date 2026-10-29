@@ -24,16 +24,19 @@ version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$plugin_root/.claude-plu
 cat > "$target/AGENTS.md" <<MD
 # dev-wiki: rules for agents
 
-This is the living development wiki. It holds project-neutral lessons about how to develop
-software: process, testing, guards, CI, git, agent collaboration, docs. It grows while you work.
+This is the living development wiki. It holds lessons that travel between projects: how to
+develop software (process, testing, guards, CI, git, agent collaboration), how to design it, and
+how to write its copy and docs. It grows while you work.
 
 - Start at \`wiki.md\`. Follow links down. Read only the page that fits the question.
-- A fact about one project goes in that project's wiki, not here. Routing test: is it still true
-  in a different repository? Yes: here. No: the project wiki.
+- A fact about one project or one business domain goes in that project's wiki, not here. Routing
+  test: is it still true in a different repository and a different domain? Yes: here. No: the
+  project wiki.
 - Pages describe the present. Correct a wrong fact in place. Git holds the history.
 - Each ingest writes one file \`.log/YYYY-MM-DD-<slug>.md\`: what was learnt, the evidence, the
   source repository and session, and the pages changed.
 - Mark a guess "unverified". Give a measured fact its number and its date.
+- Ingest after each push: the plugin asks for it once a push lands.
 - Commit each ingest: \`git -C ~/dev-wiki add -A && git -C ~/dev-wiki commit -m "learn: <slug>"\`.
 - The \`ndev:dev-wiki\` skill is the procedure. Stable lessons go back to the plugin's
   \`kb/\` through a PR on the plugin repository.

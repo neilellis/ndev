@@ -27,12 +27,16 @@ export type Snapshot = {
   mergeMethod?: 'merge' | 'squash' | 'rebase'
   isBusy?: boolean
   agentsError?: string
+  // Why the Orca worktrees could not be read to find an owner.
+  orcaError?: string
   error?: string
 }
 
 // What passed between this session and one pull request's owning agent.
 export type Comm = {
   owner?: string
+  // How the owner was found, when a search found it ("the listed session that signed its commits").
+  via?: string
   presence?: string
   // The newest title of the owning session's transcript.
   title?: string
@@ -50,9 +54,10 @@ export type Comm = {
 
 // Who is working on the current pull request, and since when.
 //   asked:  its owning agent was messaged and has not answered
+//   orca:   a Claude agent was started in an Orca workspace and its session is not listed yet
 //   model:  this session's model was handed the pull request
 //   merging: the merge was requested and GitHub has not reported it yet
-export type Step = 'asked' | 'model' | 'merging'
+export type Step = 'asked' | 'orca' | 'model' | 'merging'
 
 export type Outcome = {
   // ready: green, and left for a human to merge (a --no-merge run)
@@ -88,6 +93,10 @@ export type Loop = {
   // The model reported a push through the report tool.
   isRoundDone?: boolean
   by?: string
+  // The model holds the pull request only because the agents could not be listed: an owner found later takes it over.
+  isAwaitingOwner?: boolean
+  // The folder of the Orca worktree an agent was started in: in the orca step, only a session in it owns the pull request.
+  orcaPath?: string
   // Fix rounds on the current pull request; the loop blocks it past the limit.
   attempts: number
   outcomes: Record<string, Outcome>
@@ -117,6 +126,111 @@ declare module 'claude-code' {
       comms: Shaped<Record<string, Comm>>
       loop: Shaped<Loop>
       activity: Shaped<{ at?: number }>
+      // The /walk-doc run (hooks/walk-doc/).
+      walkRun: Shaped<WalkRun | null>
+      // The responsive-check matrix pane (hooks/responsive-check.tsx).
+      responsiveView: Shaped<ResponsiveView>
     }
   }
+}
+
+// The /walk-doc state (hooks/walk-doc/): one run, kept in $.state and mirrored to walk-run/<runId>/run.json.
+export type WalkFinding = {
+  n: number
+  code: 'OMISSION' | 'BUG' | 'INCORRECT' | 'BLOCKED' | 'ENHANCE' | 'RECORD'
+  step: string
+  expected: string
+  actual: string
+  evidence: string
+  attempt: number
+  at: number
+  resolution: { action: 'CONTINUE' | 'RESTART' | 'ESCALATED' | 'NOTED'; note: string; changed: string[]; at: number } | null
+}
+
+// A question the main agent sent the Walk agent with walk_ask, and the reader's walk_answer.
+export type WalkAsk = { n: number; question: string; at: number; answer: { text: string; at: number } | null }
+
+export type WalkRun = {
+  runId: string
+  phase: 'walking' | 'awaiting' | 'escalated' | 'done' | 'finished'
+  target: string
+  startUrls: string[]
+  persona: string
+  root: string
+  home: string
+  port: number
+  pid: number
+  // The attempt that runs now, from 1; restarts so far are attempt - 1.
+  attempt: number
+  agentId: string | null
+  // Every Walk agent of this run, so the guard covers a resumed or replaced one.
+  agentIds: string[]
+  stepBlocks: Record<string, number>
+  // Blocking reports, ENHANCE notes and RECORD requests, numbered in the order they came.
+  findings: WalkFinding[]
+  denials: { tool: string; detail: string; at: number }[]
+  // Repo-relative or ~ paths the docs tell the reader to open or edit.
+  allowedPaths: string[]
+  startedAt: number
+  summary: string | null
+  // Times the current Walk agent ended its turn without a report and was told to carry on.
+  nudges: number
+  // /walk-doc --re-record: every reader records each recording on the page again. Absent in runs from before the flag.
+  reRecord?: boolean
+  // Walk Bash commands recorded so far; each one's cast is numbered from this. Absent in runs from before recording.
+  recorded?: number
+  // Files Claude Code saved a Walk agent's own oversized tool output to; the guard opens exactly these under ~/.claude.
+  savedOutputs?: string[]
+  // Questions the main agent asked the reader, numbered in the order sent. Absent in runs from before walk_ask.
+  asks?: WalkAsk[]
+  // A walkArrow.point with untilClick is up, so the reader's next browser_click may go ahead. Absent in runs from before the rule.
+  arrowArmed?: boolean
+  // When that arrow went up (ms) and how long its caption needs before the click is allowed (ms).
+  arrowArmedAt?: number
+  arrowDwellMs?: number
+}
+
+// The responsive-check matrix pane (hooks/responsive-check.tsx). The skill's runner
+// (skills/responsive-check/scripts/responsive-check.mjs) writes RcProgress to <out>/progress.json
+// and points ~/.cache/ndev/responsive-check/latest.json at it; the pane reads both.
+export type RcStatus = 'pending' | 'running' | 'ok' | 'warn' | 'error' | 'failed'
+
+export type RcCell = {
+  route: string
+  viewport: string
+  scheme: 'light' | 'dark'
+  status: RcStatus
+  errors: number
+  warnings: number
+  top?: string
+  error?: string
+}
+
+export type RcProgress = {
+  state: 'running' | 'done' | 'failed'
+  startedAt: number
+  updatedAt: number
+  base: string
+  out: string
+  routes: string[]
+  viewports: { name: string; short: string; width: number; height: number; engine: string }[]
+  schemes: ('light' | 'dark')[]
+  cells: RcCell[]
+  summary?: { cells: number; failed: number; errors: number; warnings: number }
+  report?: string
+  error?: string
+}
+
+// One finding, grouped across the cells it shows in.
+export type RcTop = { check: string; severity: 'error' | 'warning'; selector: string; detail: string; cells: number }
+
+export type ResponsiveView = {
+  progress?: RcProgress
+  top?: RcTop[]
+  // Why the newest run could not be read.
+  error?: string
+  // Counts the polls, so a running cell's spinner moves.
+  frame: number
+  // When a Bash call started the runner: until its run appears, older runs are not shown.
+  since?: number
 }

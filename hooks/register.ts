@@ -6,8 +6,12 @@ import { CONFIG_FILE, loadConfig, missingGitHub, saveSetting } from './config'
 import type { Branding, GitHub, LoadedConfig } from './config'
 import { agentPrompt, runSetup } from './setup'
 import { quality } from './quality'
-import { fixAllPrs, startFixAllPrs } from './fix-all-prs'
+import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
+import { askCredentials, credentialsSection, startCredentials } from './credentials'
+import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
+import { learnAfterPush } from './learn'
+import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 
 const PLUGIN = 'ndev'
 
@@ -81,13 +85,13 @@ const githubText = (g: GitHub | undefined) =>
     : undefined
 
 const WIKI_TEXT =
-  'Living development wiki: ~/dev-wiki (index `wiki.md`, rules `AGENTS.md`). At the start of development work, read the index once and open only the pages that fit. When you learn a reusable, project-neutral development lesson (a user correction, a non-obvious cause, a guard that lied or did not run, a procedure written a second time), record it with the `ndev:dev-wiki` skill before you finish the task. A project-only fact goes to the project wiki (the `remember` skill) instead.'
+  'Living development wiki: ~/dev-wiki (index `wiki.md`, rules `AGENTS.md`). At the start of development work, read the index once and open only the pages that fit. When you learn a reusable development, design or copywriting lesson that holds outside this project and its domain (a user correction, a non-obvious cause, a guard that lied or did not run, a procedure written a second time), record it with the `ndev:dev-wiki` skill before you finish the task; after each push the plugin also asks for the ingest. A project or domain fact goes to the project wiki (the `remember` skill) instead.'
 
 const LEARN_TEXT =
-  'The user ran /learn. Load the `ndev:dev-wiki` skill and follow its /learn section: review this session for reusable development lessons, record each one in ~/dev-wiki, and report them in one line each. If there is none, say so.'
+  'The user ran /learn. Load the `ndev:dev-wiki` skill and follow its /learn section: review this session for reusable development, design and copywriting lessons, record each one in ~/dev-wiki, and report them in one line each. If there is none, say so.'
 
 const CORRECTION_TEXT =
-  'This prompt may correct how you work. Act on it. If it carries a reusable, project-neutral development lesson, record it with the `ndev:dev-wiki` skill; if it is project-only, use the `remember` skill; if it is neither, do nothing more.'
+  'This prompt may correct how you work. Act on it. If it carries a reusable development, design or copywriting lesson that holds outside this project and its domain, record it with the `ndev:dev-wiki` skill; if it is a project or domain fact, use the `remember` skill; if it is neither, do nothing more.'
 
 // Words a person uses to redirect the agent: at the start of the prompt, or as a standing rule.
 const CORRECTION =
@@ -221,9 +225,20 @@ async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
   $.ui.toast(await setup($, false))
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // walk-doc first: its guard is then the outer tool.call hook, so a failing quality hook cannot skip it.
+  walkDoc(on, options)
   quality(on, () => project)
+  learnAfterPush(on)
   fixAllPrs(on)
+  responsiveCheck(on)
+  // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    await fixAllPrsTurn($, e)
+    await walkDocTurn($, e)
+    return result
+  })
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'dev',
@@ -249,8 +264,16 @@ export const register: Register = on => {
       description: 'Review this session for development lessons and record them in ~/dev-wiki',
     })
     await startFixAllPrs($)
+    await startResponsiveCheck($)
+    // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
+    try {
+      await startWalkDoc($, e.cwd)
+    } catch (error) {
+      $.ui.toast(`walk-doc did not start: ${String(error).slice(0, 300)}. /walk-doc is not available in this session: fix the cause, then start a new session.`)
+    }
     project = await loadConfig($, e.cwd)
     await startInitProject($, e.cwd)
+    await startCredentials($, e.cwd)
     if (project.error) {
       $.ui.toast(`ndev: ${project.path}: ${project.error}. Using light · interactive until it is fixed.`)
     }
@@ -258,7 +281,11 @@ export const register: Register = on => {
     await update($, steering, () => project?.config.steering ?? 'interactive')
     await showStatus($)
     void initWiki($)
+    // One dialog at a time: the GitHub set-up first, then the credentials file.
+    // A failed set-up is shown, and the credentials question still comes.
     void setupIfMissing($, e.isInteractive)
+      .catch(error => $.ui.toast(`ndev: the GitHub set-up failed: ${String(error instanceof Error ? error.message : error).slice(0, 200)}. Run /dev-setup to try again.`))
+      .then(() => askCredentials($, e.isInteractive))
 
     return next(e)
   })
@@ -319,7 +346,7 @@ export const register: Register = on => {
       sections: [
         ...composed.sections,
         { id: `${PLUGIN}:dev-mode`, text, scope: 'session' },
-        ...[initProjectSection()].filter(s => s !== undefined),
+        ...[initProjectSection(), credentialsSection()].filter(s => s !== undefined),
       ],
     }
   })

@@ -1,0 +1,4 @@
+# This plugin has no package manifest or dependency installation step.
+setupAgentStartupPolicy: wait-for-setup
+defaultTabs:
+  - title: Shell

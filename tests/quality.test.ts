@@ -48,6 +48,11 @@ const engine = async (
     if (e.argv[0] === 'gh') {
       return { value: { exitCode: 1, stdout: '', stderr: 'no repo', isStdoutTruncated: false, isStderrTruncated: false } }
     }
+    // The credentials check at session start is no hook script either.
+    if (e.argv[0] === 'node' && String(e.argv[1]).endsWith('/scripts/env/neil-dev-env.mjs')) {
+      const status = { file: `${ROOT}/.neil-dev.env`, copiedFrom: null, root: ROOT, main: ROOT, ignored: true, keys: [], missing: [] }
+      return { value: { exitCode: 0, stdout: JSON.stringify(status), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     if (e.argv[0] === 'git') {
       return { value: { exitCode: 0, stdout: `${ROOT}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }

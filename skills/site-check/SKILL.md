@@ -47,7 +47,7 @@ The project owns its wiring. A usual set-up:
 ## Other targets
 
 - **Live site:** pass the live address. Run both checks after publishing.
-- **Vercel preview:** previews are often protected. The checks send the bypass header only when `VERCEL_AUTOMATION_BYPASS_SECRET` is already set in the environment, and send it only to the site under test. Without it, open the preview with the Vercel CLI (`vercel curl`), or run the checks against a local build of the pull request's commit. Never ask the user for the secret.
+- **Vercel preview:** previews are often protected. The checks send the bypass header only when `VERCEL_AUTOMATION_BYPASS_SECRET` is set, and send it only to the site under test. Keep the secret in the project's `.neil-dev.env` and run the checks through `node ${CLAUDE_PLUGIN_ROOT}/scripts/env/neil-dev-env.mjs run --need VERCEL_AUTOMATION_BYPASS_SECRET -- <check command>`. Without it, open the preview with the Vercel CLI (`vercel curl`), or run the checks against a local build of the pull request's commit. Never ask the user for the secret.
 
 ## Page text
 

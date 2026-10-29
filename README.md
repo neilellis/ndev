@@ -1,4 +1,4 @@
-# ndev (neil-development)
+# ndev
 
 The software factory: one place for the development procedures that repeat in every project.
 It is a Claude Code plugin. It holds the methodology, the workflow skills, the subagents and a
@@ -10,7 +10,7 @@ knowledge base. A project enables the plugin and gets all of them.
 |---|---|
 | `kb/` | The methodology as a knowledge base. Start at [`kb/README.md`](kb/README.md). Core beliefs are in [`kb/core-beliefs.md`](kb/core-beliefs.md). |
 | `skills/` | Workflow skills. A helper that only one skill uses stays in that skill's `scripts/` folder. |
-| `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`). See [`scripts/README.md`](scripts/README.md). |
+| `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`, `walk-doc/`). See [`scripts/README.md`](scripts/README.md). |
 | `agents/` | Subagent definitions for board work, implementation, planning and review. |
 | `templates/` | A starter `CLAUDE.md`, a starter LLM wiki, and the brand site that `/brand create` copies. |
 | `kb/hooks/` | Reusable hook scripts and a pre-push hook to copy into a project. |
@@ -70,6 +70,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `report-work-done` | Summarize what actually shipped by reading merged pull requests in a requested time window, optionally filtered by author. |
 | `reset` | Close the current feature work, save it as a PR, remove its worktree, and freshen the base checkout; use --discard only to abandon a dead end. |
 | `resolving-merge-conflicts` | Use when you need to resolve an in-progress git merge/rebase conflict. |
+| `responsive-check` | Check a website's layout on phones, tablets and desktops, in light and dark mode, and report each defect with its element. Also maintains the breakpoint and layout rules on the brand site. |
 | `retro` | Review a completed coding session and identify improvements to navigation, checks, standards, instructions, information access and tool economy. |
 | `site-check` | Check a local, preview or live website for broken links, missing pages, server errors and JavaScript errors. |
 | `testing` | Apply the testing taxonomy and verification rules across Python and TypeScript, including guard integrity and minimal live-system tests. |
@@ -168,6 +169,27 @@ the prompt with no issue follows the interactive skill's method without stopping
 Older names: `work-light` was `light-work`, `work-heavy` was `work`, `work-light-auto` was
 `work-ready-simple` and `work-heavy-auto` was `work-ready`.
 
+## Private credentials: `.neil-dev.env`
+
+The private keys for ndev skills go in `.neil-dev.env` at the project root. The file is git-ignored and has mode 600, with one `KEY=VALUE` on each line. A file that other users can read is refused.
+
+| Key | Used for |
+|---|---|
+| `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`) | Speech for narration (video-narration, video-setup) |
+| `OPENAI_API_KEY` | Word timings for narration (video-narration, video-setup) |
+| `UNSPLASH_ACCESS_KEY` | Photographs (video-images, video-setup) |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | Protected Vercel previews (site-check) |
+
+`scripts/env/neil-dev-env.mjs` owns the file:
+
+- `init [--key NAME]...` creates the file, or adds to it. It reads the exports in `~/.zshrc` as text and never runs it. It keeps the values already in the file and lists the keys that are missing.
+- `status [--json]` and `check NAME...` report key names, never values.
+- `run --need A,B -- <command>` runs the command with the file's keys in its environment.
+
+The file belongs to the main checkout. In a worktree, the first look for the file copies it from the main checkout, but only when git ignores the name there. `init` in a worktree first moves keys added to the copy into the main checkout file. It refuses when a key has a different value in the two files. A project that does not ignore `.neil-dev.env` gets no file: add the name to `.gitignore`, or to `info/exclude` in the git common folder.
+
+At session start the plugin looks for the file and tells the agent where it is and which key names it sets. If the project has no file, the plugin asks once whether to create it from `~/.zshrc`. The agent never prints, reads or searches for a key.
+
 ## The pull request loop: /fix-prs
 
 A second hooks module, `hooks/fix-all-prs.tsx`, runs the `fix-all-prs` method as a loop. It works
@@ -181,9 +203,26 @@ and each pull request's checks in a pane.
 | `/fix-prs pause`, `/fix-prs resume` | Stop and continue the loop. |
 | `/fix-prs skip <pr>`, `/fix-prs retry <pr>` | Leave out a pull request, or put a blocked one back in the queue. |
 
-The loop first asks the agent that owns a pull request to fix it. When that agent does not
-answer, the loop gives the pull request to this session's model. The model reports the result with
-the `report` tool (`mcp__ndev__report`): `pushed`, or `blocked` with the reason.
+The loop first asks the agent that owns a pull request to fix it. It looks for the owner in this
+order:
+
+- an agent named after the pull request (`pr-<n>`, `issue-<k>`);
+- the listed session that signed its commits;
+- the listed session in an Orca workspace of the pull request.
+
+When no owner is found, or the owner is no longer listed, the loop starts a Claude agent in Orca
+with the fix brief. It uses the pull request's Orca workspace, else a new `pr-<n>` workspace. A main
+checkout is never the pull request's workspace. The loop asks the agent once a listed session runs
+in that workspace. Until then it asks no other owner, so two agents never fix one branch. When the
+agent is not listed within 30 minutes, or Orca cannot start an agent, the loop records the pull
+request as blocked. The record gives Orca's output and the repair. When Orca cannot list its
+workspaces, no agent starts: a session in one of them can own the pull request.
+
+When an owner does not answer or is blocked, the loop gives the pull request to this session's
+model. When the agents cannot be listed, the model gets it too, and no agent starts in Orca. An
+owner found later then takes it over, and the loop tells the model to stop. The model reports the
+result with the `report` tool (`mcp__ndev__report`): `pushed`, or `blocked` with the reason. The
+tool refuses a report when the pull request is not with the model.
 
 ## Worktree init: scripts/init-project.sh
 
@@ -202,6 +241,33 @@ from source. When the script exits 0, the hook writes `.ndev-inited`.
 
 Run the hooks module's tests with `claude plugin test .`.
 
+## Docs walk-through: /walk-doc
+
+A third hooks module, `hooks/walk-doc/`, tests a set of docs by using them. `/walk-doc <page>`
+starts the docs dev server and a fresh reader agent (`ndev:walk`). The reader follows each step
+on the rendered pages and records each command and browser step. When it gets stuck, it reports
+an `OMISSION`, `BUG`, `INCORRECT` or `BLOCKED` finding to the main agent. The main agent fixes the
+docs or the product on the current branch, then tells the reader to continue or start again.
+
+A project turns it on with `.walk-doc.json` at the repository root. The file names the dev server
+command, the content folder, the paths the reader may not read, the finish commands, how the docs
+embed media and how to file an issue. Without the file, `/walk-doc` does nothing and tells you what
+to write. A missing required key stops the walk and names the key, the file and an example value.
+The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.md).
+
+## Responsive matrix: /responsive-matrix
+
+A fourth hooks module, `hooks/responsive-check.tsx`, shows the `responsive-check` skill's run in a
+pane. When a Bash call runs `responsive-check.mjs`, the pane opens and follows the run: a progress
+bar, the counts, the cell in progress, and a grid with one row for each viewport and a light and a
+dark cell for each route. When the run ends, it shows the verdict and the findings that occur in the
+most cells. `/responsive-matrix` opens the pane again with the newest run. `o` opens the screenshot
+folder.
+
+The runner writes `progress.json` in its `--out` folder and a pointer to it in
+`~/.cache/ndev/responsive-check/latest.json`. The pane reads these two files. It does not show a
+run that started before the Bash call.
+
 ## The living wiki: ~/dev-wiki
 
 The plugin learns while you use it. The first session that starts with the plugin creates
@@ -213,11 +279,14 @@ The plugin learns while you use it. The first session that starts with the plugi
   cause, a guard that lied, or a procedure written twice.
 - When a prompt looks like a correction ("no, don't…", "from now on…"), the plugin reminds Claude
   to record the lesson.
+- After each push that lands, a hook asks Claude for the ingest: it reviews the session since the
+  last ingest and records each development, design or copywriting lesson that holds outside the
+  project and its domain.
 - `/learn` asks for a review of the whole session.
 - A lesson that holds in two or more repositories goes back into `kb/` through a PR on this
   repository. A human merges it.
 
-A project-only fact goes to that project's wiki (the `remember` skill), not to `~/dev-wiki`.
+A project or domain fact goes to that project's wiki (the `remember` skill), not to `~/dev-wiki`.
 
 ## Install in a project
 
@@ -227,12 +296,12 @@ install the plugin.
 ```json
 {
   "extraKnownMarketplaces": {
-    "neil-development": {
-      "source": { "source": "github", "repo": "neilellis/neil-development" }
+    "ndev": {
+      "source": { "source": "github", "repo": "neilellis/ndev" }
     }
   },
   "enabledPlugins": {
-    "ndev@neil-development": true
+    "ndev@ndev": true
   }
 }
 ```
@@ -240,13 +309,14 @@ install the plugin.
 Or install it by hand:
 
 ```
-/plugin marketplace add neilellis/neil-development
-/plugin install ndev@neil-development
+/plugin marketplace add neilellis/ndev
+/plugin install ndev@ndev
 ```
 
-The plugin was called `neil-development` before version 0.6.0. To move an existing install, run
-`/plugin uninstall ndev@neil-development`, then `/plugin install ndev@neil-development`,
-and change `enabledPlugins` in your settings to `"ndev@neil-development": true`.
+The plugin was called `neil-development` before version 0.6.0, and its marketplace was called
+`neil-development` before version 0.7.1. To move an existing install, run
+`/plugin uninstall ndev@neil-development` (or `neil-development@neil-development`), then the two
+commands above, and change `enabledPlugins` in your settings to `"ndev@ndev": true`.
 
 Plugin skills are namespaced, for example `/ndev:work-light`. A project skill with the
 same name stays separate. Delete the project copy when the plugin version replaces it.
