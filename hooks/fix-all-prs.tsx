@@ -412,6 +412,7 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
           ...(isNewOwner ? { sentAt: undefined, sent: undefined, sendError: undefined, heardAt: undefined, heard: undefined, isBlocked: undefined } : {}),
           owner, presence: owner === undefined ? undefined : agentsError === undefined ? presence ?? 'gone' : was.presence,
           title: owner ? titles[owner] ?? was.title : undefined,
+          via: search?.owner !== undefined && search.owner === owner ? search.via : owner === was.owner ? was.via : undefined,
           ...(search?.isFinal ? { searchedFor: searchKey(row) } : {}),
         }
       }
@@ -430,7 +431,7 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
     }
     await update($, snapshot, () => fresh)
     for (const [n, f] of Object.entries(found)) {
-      if (f.owner) await note($, `#${n}: owner ${f.owner}, ${f.via}`)
+      if (f.owner) await noteOnce($, `#${n}: owner ${f.owner}, ${f.via}`)
     }
     const { phase } = await read($, loop)
     $.ui.status(rows.length ? `PRs ${rows.filter(r => r.state !== 'OPEN').length}/${rows.length} done · ${phase}` : undefined)
@@ -453,6 +454,12 @@ function refreshLater($: EngineInterface, isQuiet: boolean): void {
 async function note($: EngineInterface, text: string): Promise<void> {
   const at = await $.clock.now()
   await update($, loop, (l): Loop => ({ ...l, log: [...l.log, { at, text }].slice(-30) }))
+}
+
+// Adds a line the log does not hold already.
+async function noteOnce($: EngineInterface, text: string): Promise<void> {
+  const at = await $.clock.now()
+  await update($, loop, (l): Loop => (l.log.some(x => x.text === text) ? l : { ...l, log: [...l.log, { at, text }].slice(-30) }))
 }
 
 async function settle($: EngineInterface, n: number, outcome: Outcome): Promise<void> {
@@ -908,9 +915,17 @@ function tickLater($: EngineInterface, isForced = false): void {
 
 // `isNoMerge`: fix each pull request until it is green, and leave the merge to a human.
 async function start($: EngineInterface, isNoMerge = false): Promise<void> {
-  await update($, snapshot, () => ({ queue: [], rows: [], checkedAt: 0 }))
   await update($, loop, (): Loop => ({ phase: 'running', attempts: 0, outcomes: {}, log: [], isNoMerge }))
   await note($, isNoMerge ? 'Started the queue without merging' : 'Started the queue')
+  // The new log starts empty: it says again how an owner found before the start was found. A refresh still
+  // running writes its owners, then its rows, then its notes, so one of the two notes each owner, once.
+  const open = (await read($, snapshot)).rows.filter(r => r.state === 'OPEN').map(r => r.number)
+  const known = await read($, comms)
+  for (const n of open) {
+    const c = known[n]
+    if (c?.owner && c.via) await noteOnce($, `#${n}: owner ${c.owner}, ${c.via}`)
+  }
+  await update($, snapshot, () => ({ queue: [], rows: [], checkedAt: 0 }))
   tickLater($, true)
 }
 

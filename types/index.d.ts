@@ -35,6 +35,8 @@ export type Snapshot = {
 // What passed between this session and one pull request's owning agent.
 export type Comm = {
   owner?: string
+  // How the owner was found, when a search found it ("the listed session that signed its commits").
+  via?: string
   presence?: string
   // The newest title of the owning session's transcript.
   title?: string

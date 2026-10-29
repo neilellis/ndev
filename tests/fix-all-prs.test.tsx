@@ -165,6 +165,8 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
     }
     // The plugin's session start finds the project root; it is no GitHub call.
     if (args === 'git rev-parse --show-toplevel') return ok('/\n')
+    // The credentials check finds .neil-dev.env at session start; it is no GitHub call.
+    if (args.includes('/scripts/env/neil-dev-env.mjs status')) return ok(JSON.stringify({ file: '/.neil-dev.env', copiedFrom: null, root: '/', main: '/', ignored: true, keys: [], missing: [] }))
     if (args === 'gh api rate_limit') {
       const reset = Math.ceil(fault.rateLimitUntil / 1000)
       return ok(JSON.stringify({ resources: { core: { limit: 5000, remaining: 4800, reset: 60 }, graphql: { limit: 5000, remaining: 0, reset } } }))
@@ -388,6 +390,25 @@ test('with no agent named after it, the owner is the listed session that signed 
   expect((await ui.find({ type: 'Text', text: /signed its commits/ }))?.text).toMatch(/#200: owner lens-7d, the listed session that signed its commits/)
   // The owning session's title, beside its name.
   await until(async () => (await ui.find({ type: 'Text', text: /Restarting "lens" after stop/ })) !== undefined)
+  await ui.unmount()
+  await $.command.run(command('pause'))
+})
+
+test('an owner found by the session-start refresh is noted again when the queue starts', async ($, on) => {
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
+  const w = world(on, prs, [{ name: 'lens-7d', status: 'idle' }])
+  w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_7d']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_7d' }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  // The refresh that session start begins finds the owner before /fix-prs start.
+  const before = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await before.find({ type: 'Text', text: /lens-7d/ })) !== undefined, () => 'the session-start refresh named no owner')
+  await before.unmount()
+  await $.command.run(command('start'))
+
+  await until(() => w.sent.length === 1, () => w.prompts)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await ui.find({ type: 'Text', text: /#200: owner lens-7d, the listed session that signed its commits/ })) !== undefined, () => 'the activity log does not say how the owner was found')
   await ui.unmount()
   await $.command.run(command('pause'))
 })
