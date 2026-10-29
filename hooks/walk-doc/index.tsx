@@ -97,6 +97,9 @@ async function findRoot($: EngineInterface, cwd: string): Promise<string | null>
   return null
 }
 
+// During a walk the main agent repairs the values file; the run waits for the retried call.
+const MID_WALK_RETRY = 'The main agent restores it. Then retry the call.'
+
 async function git($: EngineInterface, at: string, args: string[]): Promise<string> {
   const ran = await $.process.run(['git', '-C', at, ...args], { timeoutMs: 10_000 })
   if (ran.exitCode !== 0) throw new Error(`git ${args.join(' ')} failed in ${at} (exit ${ran.exitCode}): ${(ran.stderr || ran.stdout).trim()}`)
@@ -105,33 +108,42 @@ async function git($: EngineInterface, at: string, args: string[]): Promise<stri
 
 // The config's valuesFile, at the root of this checkout or else of the main project checkout, which every worktree shares.
 // The values file is git-ignored, so a new worktree has none: the walk refuses rather than start a reader without them.
-async function findValues($: EngineInterface, at: string, config: Config): Promise<{ file: string; place: string } | null> {
+// git worktree list names the main checkout first, symlinks resolved, in any layout (worktree, submodule, separate git dir).
+async function findValues($: EngineInterface, at: string, config: Config, retry = 'Then run /walk-doc again.'): Promise<{ file: string; place: string } | null> {
   if (config.valuesFile === null) return null
   const name = config.valuesFile
-  const main = (await git($, at, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).replace(/\/\.git$/, '')
+  const worktrees = (await git($, at, ['worktree', 'list', '--porcelain'])).split(/\n\s*\n/).map(block => block.split('\n'))
+  const first = worktrees[0] ?? []
+  const firstPath = (first.find(l => l.startsWith('worktree ')) ?? '').slice('worktree '.length)
+  const main = first.includes('bare') ? null : firstPath
   if (await $.fs.exists(`${at}/${name}`)) {
-    return { file: `${at}/${name}`, place: at === main ? 'in the main project checkout' : `in this worktree, not in the main project checkout ${main}` }
+    const here = await git($, at, ['rev-parse', '--show-toplevel'])
+    const place = here === main ? 'in the main project checkout' : main === null ? `in this worktree of the bare repository ${firstPath}` : `in this worktree, not in the main project checkout ${main}`
+    return { file: `${at}/${name}`, place }
   }
+  if (main === null) throw new Error(`the values file ${name} is not in ${at}, and the bare repository ${firstPath} has no main project checkout. Create ${at}/${name} with one KEY=VALUE per line (# comments allowed), or remove valuesFile from ${CONFIG_FILE}. ${retry}`)
   if (await $.fs.exists(`${main}/${name}`)) return { file: `${main}/${name}`, place: 'in the main project checkout' }
-  const worktrees = (await git($, at, ['worktree', 'list', '--porcelain'])).split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice('worktree '.length))
   let copy: string | null = null
-  for (const w of worktrees) if (copy === null && await $.fs.exists(`${w}/${name}`)) copy = `${w}/${name}`
+  for (const block of worktrees.slice(1)) {
+    const w = (block.find(l => l.startsWith('worktree ')) ?? '').slice('worktree '.length)
+    if (copy === null && w !== '' && await $.fs.exists(`${w}/${name}`)) copy = `${w}/${name}`
+  }
   const repair = copy === null
     ? `Create ${main}/${name} with one KEY=VALUE per line (# comments allowed), or remove valuesFile from ${CONFIG_FILE}.`
     : `Copy the one in another worktree to the main project checkout, where every worktree finds it: cp ${shellQuote([copy, `${main}/${name}`])}.`
-  throw new Error(`the values file ${name} is in neither ${at} nor the main project checkout ${main}. ${repair} Then run /walk-doc again.`)
+  throw new Error(`the values file ${name} is in neither ${at} nor the main project checkout ${main}. ${repair} ${retry}`)
 }
 
 // The values the person keeps for walks, with where they came from, for the reader.
-async function loadValues($: EngineInterface, at: string, config: Config): Promise<string> {
-  const found = await findValues($, at, config)
+async function loadValues($: EngineInterface, at: string, config: Config, retry?: string): Promise<string> {
+  const found = await findValues($, at, config, retry)
   if (found === null) return ''
   return valuesNote(parseEnvFile(await $.fs.read(found.file), found.file), `${found.file}, ${found.place}`)
 }
 
 // The valuesFile values as [key, value] pairs, so walk_record can refuse a recording that shows one.
 async function loadSecrets($: EngineInterface, at: string, config: Config): Promise<[string, string][]> {
-  const found = await findValues($, at, config)
+  const found = await findValues($, at, config, MID_WALK_RETRY)
   if (found === null) return []
   return Object.entries(parseEnvFile(await $.fs.read(found.file), found.file))
 }
@@ -597,7 +609,12 @@ export const walkDoc = (on: On, options: PluginOptions) => {
       return answer(`NOTED: the answer to #${String(input.answers)} is in the walk pane. The reader was not stopped.`)
     }
     if (r.effect === 'send') {
-      const values = await loadValues($, run.root, await loadConfig($, run.root))
+      let values: string
+      try {
+        values = await loadValues($, run.root, await loadConfig($, run.root), MID_WALK_RETRY)
+      } catch (error) {
+        return refuse(error instanceof Error ? error.message : String(error))
+      }
       const sent = await $.session.send({ to: { agentId: r.to }, text: [r.text, values].filter(Boolean).join('\n\n') })
       if (!sent.isDelivered) return refuse(`CONTINUE did not reach the Walk agent ${r.to}: ${sent.reason}. RESTART starts a fresh reader.`)
       await save($, r.run)

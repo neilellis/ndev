@@ -9,7 +9,7 @@ const PAGE = 'Run `./acme doctor`, then edit `config/foo.json`.'
 type Ran = { argv: string[]; cwd?: string; timeoutMs?: number }
 
 function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
-  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: '' as string | null, commonDir: `${opts.root ?? '/repo'}/.git`, worktreeList: '', spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', browser: { isConnected: true } as Record<string, unknown>, config: CONFIG as string | null }
+  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: '' as string | null, toplevel: opts.root ?? '/repo', worktreeList: `worktree ${opts.root ?? '/repo'}\nHEAD 1\n`, gitFails: false, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', browser: { isConnected: true } as Record<string, unknown>, config: CONFIG as string | null }
   const ran: Ran[] = []
   const written: Record<string, string> = {}
   const prompts: string[] = []
@@ -23,8 +23,8 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
     ran.push({ argv: [...e.argv], cwd: e.init?.cwd, timeoutMs: e.init?.timeoutMs })
     const line = e.argv.join(' ')
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: exitCode === 0 ? '' : 'boom', isStdoutTruncated: false, isStderrTruncated: false } })
-    if (line.includes('--git-common-dir')) return out(`${flags.commonDir}\n`)
-    if (line.includes('worktree list --porcelain')) return out(flags.worktreeList)
+    if (line.includes('--show-toplevel')) return out(`${flags.toplevel}\n`, flags.gitFails ? 128 : 0)
+    if (line.includes('worktree list --porcelain')) return out(flags.worktreeList, flags.gitFails ? 128 : 0)
     if (line === 'asciinema --version') return out('asciinema 3.2.1\n', flags.asciinemaExit)
     if (line.includes('socket.socket')) return out('4000\n')
     if (line.includes('nohup')) return out('4242\n')
@@ -386,6 +386,59 @@ test('values in .walk-values reach the reader when it starts and with each CONTI
   h.flags.envText = 'DOWNLOAD_USER=download\nDOWNLOAD_PASSWORD=pw2\n'
   await call($, { tool: 'mcp__ndev__walk_reply', action: 'CONTINUE', note: 'Added the login' })
   expect(h.sent[0]!.text).toContain('DOWNLOAD_PASSWORD=pw2')
+  expect(h.sent[0]!.text).toContain('(from /repo/.walk-values, in the main project checkout)')
+})
+
+test('a values file removed during a walk refuses CONTINUE with the repair for the main agent, and the run waits', async ($, on) => {
+  const h = harness(on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, { ...REPORT, agentId: 'a1' })
+  h.flags.envText = null
+  const text = await call($, { tool: 'mcp__ndev__walk_reply', action: 'CONTINUE', note: 'Added the login' })
+  expect(text).toContain('the values file .walk-values is in neither /repo nor the main project checkout /repo')
+  expect(text).toContain('Then retry the call.')
+  expect(text).not.toContain('run /walk-doc again')
+  expect(h.sent).toHaveLength(0)
+})
+
+test('a project root reached through a symlink is still the main project checkout', async ($, on) => {
+  const h = harness(on, { root: '/link' })
+  h.flags.toplevel = '/real'
+  h.flags.worktreeList = 'worktree /real\nHEAD 1\n'
+  await start($, '/link')
+  const text = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(text).toContain('Values: /link/.walk-values, in the main project checkout.')
+})
+
+test('a worktree of a bare repository has no main project checkout, and the walk says so', async ($, on) => {
+  const h = harness(on, { root: '/wt' })
+  h.flags.envText = null
+  h.flags.toplevel = '/wt'
+  h.flags.worktreeList = 'worktree /x/bare.git\nbare\n\nworktree /wt\nHEAD 2\n'
+  await start($, '/wt')
+  const text = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(text).toContain('the values file .walk-values is not in /wt, and the bare repository /x/bare.git has no main project checkout')
+  expect(text).toContain('Create /wt/.walk-values')
+  expect(h.spawns).toHaveLength(0)
+})
+
+test('a git failure while looking for the values file names the command and its output', async ($, on) => {
+  const h = harness(on)
+  h.flags.gitFails = true
+  await start($)
+  const text = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(text).toContain('git worktree list --porcelain failed in /repo (exit 128): boom')
+  expect(h.spawns).toHaveLength(0)
+})
+
+test('a config without valuesFile asks git nothing and sends no values', async ($, on) => {
+  const h = harness(on)
+  h.flags.config = fixture()
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(h.ran.some(r => r.argv.join(' ').includes('worktree list'))).toBe(false)
+  expect(h.spawns[0]!.prompt).not.toContain('Values the person has given you')
 })
 
 test('a walk refuses to start when the values file is nowhere, and says how to create it', async ($, on) => {
@@ -402,7 +455,7 @@ test('a walk refuses to start when the values file is nowhere, and says how to c
 test('a walk from a worktree refuses when neither it nor the main project checkout has the values file, and names a copy in another worktree', async ($, on) => {
   const h = harness(on, { root: '/wt' })
   h.flags.envText = null
-  h.flags.commonDir = '/main/.git'
+  h.flags.toplevel = '/wt'
   h.flags.worktreeList = 'worktree /main\nHEAD 1\n\nworktree /wt\nHEAD 2\n\nworktree /other\nHEAD 3\n'
   h.flags.files.add('/other/.walk-values')
   await start($, '/wt')
@@ -415,7 +468,8 @@ test('a walk from a worktree refuses when neither it nor the main project checko
 test('a walk from a worktree takes the values file from the main project checkout, shows where it is and tells the reader', async ($, on) => {
   const h = harness(on, { root: '/wt' })
   h.flags.envText = null
-  h.flags.commonDir = '/main/.git'
+  h.flags.toplevel = '/wt'
+  h.flags.worktreeList = 'worktree /main\nHEAD 1\n\nworktree /wt\nHEAD 2\n'
   h.flags.files.add('/main/.walk-values')
   h.flags.contents.set('/main/.walk-values', 'DOWNLOAD_USER=download\n')
   await start($, '/wt')
@@ -427,7 +481,8 @@ test('a walk from a worktree takes the values file from the main project checkou
 
 test('a values file in the worktree is used, and the reader is told it is not the main project checkout', async ($, on) => {
   const h = harness(on, { root: '/wt' })
-  h.flags.commonDir = '/main/.git'
+  h.flags.toplevel = '/wt'
+  h.flags.worktreeList = 'worktree /main\nHEAD 1\n\nworktree /wt\nHEAD 2\n'
   h.flags.envText = 'DOWNLOAD_USER=download\n'
   await start($, '/wt')
   const text = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
