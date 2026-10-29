@@ -79,6 +79,13 @@ test('a blocking report waits for the main agent and counts blocks per step', ()
   expect(first.mainMessage).toMatch(/walk_reply/)
 })
 
+test('a report asks the main agent to see a docs fix served before it replies', () => {
+  // a dev server's file watcher can drop an edit, and the reader then sees the old page
+  const { mainMessage } = recordReport(run(), report, 10)
+  expect(mainMessage).toMatch(/fetch each changed page from the docs server/)
+  expect(mainMessage).toMatch(/touch the file/)
+})
+
 test('a report is refused when a field is missing or the code is unknown, and nothing is recorded', () => {
   expect(() => recordReport(run(), { ...report, code: 'ENHANCE' }, 1)).toThrow(/walk_enhance/)
   expect(() => recordReport(run(), { ...report, code: 'NOPE' }, 1)).toThrow(/OMISSION, BUG, INCORRECT, BLOCKED/)
