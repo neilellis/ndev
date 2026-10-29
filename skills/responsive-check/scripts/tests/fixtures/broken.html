@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Broken</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #ffffff; color: #1a1a1a; }
+  @media (prefers-color-scheme: dark) { body { background: #111111; } .faint { color: #222222; } }
+  #wide { width: 600px; height: 40px; background: #cccccc; }
+  #tiny, #tiny-2 { width: 16px; height: 16px; padding: 0; margin: 0; }
+  #small-input { font-size: 12px; }
+  .hero { height: 100vh; }
+</style>
+</head>
+<body>
+  <div id="wide">Fixed width</div>
+  <p><button id="tiny" type="button">x</button><button id="tiny-2" type="button">y</button></p>
+  <input id="small-input" type="text">
+  <p class="faint">Hard to read in dark mode</p>
+  <section class="hero">Hero</section>
+</body>
+</html>

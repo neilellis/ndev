@@ -126,6 +126,8 @@ declare module 'claude-code' {
       activity: Shaped<{ at?: number }>
       // The /walk-doc run (hooks/walk-doc/).
       walkRun: Shaped<WalkRun | null>
+      // The responsive-check matrix pane (hooks/responsive-check.tsx).
+      responsiveView: Shaped<ResponsiveView>
     }
   }
 }
@@ -184,4 +186,49 @@ export type WalkRun = {
   // When that arrow went up (ms) and how long its caption needs before the click is allowed (ms).
   arrowArmedAt?: number
   arrowDwellMs?: number
+}
+
+// The responsive-check matrix pane (hooks/responsive-check.tsx). The skill's runner
+// (skills/responsive-check/scripts/responsive-check.mjs) writes RcProgress to <out>/progress.json
+// and points ~/.cache/ndev/responsive-check/latest.json at it; the pane reads both.
+export type RcStatus = 'pending' | 'running' | 'ok' | 'warn' | 'error' | 'failed'
+
+export type RcCell = {
+  route: string
+  viewport: string
+  scheme: 'light' | 'dark'
+  status: RcStatus
+  errors: number
+  warnings: number
+  top?: string
+  error?: string
+}
+
+export type RcProgress = {
+  state: 'running' | 'done' | 'failed'
+  startedAt: number
+  updatedAt: number
+  base: string
+  out: string
+  routes: string[]
+  viewports: { name: string; short: string; width: number; height: number; engine: string }[]
+  schemes: ('light' | 'dark')[]
+  cells: RcCell[]
+  summary?: { cells: number; failed: number; errors: number; warnings: number }
+  report?: string
+  error?: string
+}
+
+// One finding, grouped across the cells it shows in.
+export type RcTop = { check: string; severity: 'error' | 'warning'; selector: string; detail: string; cells: number }
+
+export type ResponsiveView = {
+  progress?: RcProgress
+  top?: RcTop[]
+  // Why the newest run could not be read.
+  error?: string
+  // Counts the polls, so a running cell's spinner moves.
+  frame: number
+  // When a Bash call started the runner: until its run appears, older runs are not shown.
+  since?: number
 }

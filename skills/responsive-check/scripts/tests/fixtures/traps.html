@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traps</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #ffffff; color: #1a1a1a; }
+  /* A skip link waits off screen until it has focus. It is not a visible target. */
+  .skip { position: absolute; left: -9999px; font-size: 12px; }
+  /* Small links with room around them pass WCAG 2.5.8 by its spacing exception. */
+  .spaced { list-style: none; margin: 0; padding: 0; }
+  .spaced li { margin-block: 14px; }
+  .spaced a { font-size: 14px; line-height: 20px; color: #1a1a1a; }
+  /* #edge widens the page by 10px. Its child is wider still, but #edge clips it. */
+  #edge { position: relative; width: 330px; overflow-x: clip; }
+  #edge-inner { width: 500px; }
+</style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <main id="main">
+    <ul class="spaced">
+      <li><a id="spaced-1" href="#one">One</a></li>
+      <li><a id="spaced-2" href="#two">Two</a></li>
+    </ul>
+    <div id="edge"><div id="edge-inner">Clipped</div></div>
+  </main>
+</body>
+</html>
