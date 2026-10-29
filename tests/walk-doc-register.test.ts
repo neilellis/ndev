@@ -9,7 +9,7 @@ const PAGE = 'Run `./acme doctor`, then edit `config/foo.json`.'
 type Ran = { argv: string[]; cwd?: string; timeoutMs?: number }
 
 function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
-  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: '' as string | null, toplevel: opts.root ?? '/repo', worktreeList: `worktree ${opts.root ?? '/repo'}\nHEAD 1\n`, gitFails: false, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', browser: { isConnected: true } as Record<string, unknown>, config: CONFIG as string | null }
+  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: '' as string | null, toplevel: opts.root ?? '/repo', worktreeList: `worktree ${opts.root ?? '/repo'}\nHEAD 1\n`, gitFails: false, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolError: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', browser: { isConnected: true } as Record<string, unknown>, config: CONFIG as string | null }
   const ran: Ran[] = []
   const written: Record<string, string> = {}
   const prompts: string[] = []
@@ -99,7 +99,7 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
   on('session.end', async (_$, e) => ({ sessionId: e.sessionId }))
   on('tool.call', async (_$, e) => {
     if (e.tool === 'Bash') bash.push((e as { command: string }).command)
-    return { result: flags.toolResult } as never
+    return (flags.toolError ? { result: 'Error: NOT_FOUND', isError: true } : { result: flags.toolResult }) as never
   })
   return { bash, ran, written, prompts, sent, spawns, clock, flags, browser, tools, agents, toasts }
 }
@@ -632,6 +632,33 @@ test('/walk-doc checks the overlay in the browser before the reader starts', asy
   await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
   expect(h.browser.map(c => c.tool)).toEqual(['browser_navigate', 'browser_evaluate'])
   expect(h.spawns).toHaveLength(1)
+})
+
+test('a reader click needs a walkArrow pointing at it first, and each arrow covers one click', async ($, on) => {
+  const h = harness(on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  const browser = (name: string) => `mcp__plugin_ndev_playwright__${name}`
+  const click = (agentId?: string) => call($, { tool: browser('browser_click'), element: 'Sign in button', ref: 'e5', ...(agentId ? { agentId } : {}) })
+  const evaluate = (fn: string) => call($, { tool: browser('browser_evaluate'), function: fn, agentId: 'a1' })
+  const point = "() => walkArrow.point('text=Sign in', { text: 'Click Sign in', untilClick: true })"
+  expect(await click('a1')).toContain('walkArrow.point')
+  await evaluate(point)
+  expect(await click('a1')).not.toContain('deny')
+  expect(await click('a1')).toContain('deny')
+  await evaluate("() => walkArrow.point('text=Sign in', { text: 'Signed in', duration: 3000 })")
+  expect(await click('a1')).toContain('deny')
+  await evaluate(point)
+  await evaluate('() => walkArrow.stop()')
+  expect(await click('a1')).toContain('deny')
+  await evaluate(point)
+  await call($, { tool: browser('browser_navigate'), url: 'http://localhost:4000/', agentId: 'a1' })
+  expect(await click('a1')).toContain('deny')
+  h.flags.toolError = true
+  await evaluate(point)
+  h.flags.toolError = false
+  expect(await click('a1')).toContain('deny')
+  expect(await click()).not.toContain('deny')
 })
 
 test('walk_ask sends the main agent\'s question to the reader, and walk_answer brings the answer back to the main agent and the pane', async ($, on) => {

@@ -179,4 +179,6 @@ export type WalkRun = {
   savedOutputs?: string[]
   // Questions the main agent asked the reader, numbered in the order sent. Absent in runs from before walk_ask.
   asks?: WalkAsk[]
+  // A walkArrow.point with untilClick is up, so the reader's next browser_click may go ahead. Absent in runs from before the rule.
+  arrowArmed?: boolean
 }
