@@ -43,13 +43,23 @@ await page.goto("file://" + path.join(config.root, config.page) + (voice === con
 await page.evaluate(() => window.ready);
 if (errors.length) throw new Error("Page errors:\n" + errors.join("\n"));
 
+// arrow.js draws on with requestAnimationFrame and performance.now. For a film with arrow cues the
+// page runs on Playwright's clock instead, moved on by one frame after each seek, so every render
+// draws the same frames. The runtime draws an arrow on only when the film plays through its cue.
+const arrows = await page.evaluate(() => window.Film?.arrows?.length ?? 0);
+if (arrows) await page.clock.install();
+async function frame(t, step = Math.round(1000 / FPS)) {
+  await page.evaluate((t) => window.seek(t), t);
+  if (arrows) await page.clock.runFor(step);
+}
+
 const outDir = path.join(config.root, "out");
 fs.mkdirSync(path.join(outDir, "stills"), { recursive: true });
 
 if (stills) {
   const files = [];
   for (const { t, name } of stills) {
-    await page.evaluate((t) => window.seek(t), t);
+    await frame(t);
     const file = path.join(outDir, "stills", `${name}.png`);
     await page.screenshot({ path: file });
     files.push(file);
@@ -75,7 +85,7 @@ if (stills) {
   ], { stdio: ["pipe", "inherit", "inherit"] });
   const done = new Promise((res, rej) => enc.on("close", (c) => (c === 0 ? res() : rej(new Error(`ffmpeg exited ${c} while encoding ${path.relative(config.root, out)}`)))));
   for (let f = 0; f < frames; f++) {
-    await page.evaluate((t) => window.seek(t), f / FPS);
+    await frame(f / FPS, Math.round(((f + 1) * 1000) / FPS) - Math.round((f * 1000) / FPS));
     const buf = await page.screenshot({ type: "jpeg", quality: 95 });
     if (!enc.stdin.write(buf)) await new Promise((r) => enc.stdin.once("drain", r));
     if (f % 150 === 0) console.log(`frame ${f}/${frames}`);

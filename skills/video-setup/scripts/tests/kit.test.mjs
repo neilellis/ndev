@@ -11,11 +11,15 @@ const plugin = path.resolve(import.meta.dirname, "..");
 const sync = (...args) => spawnSync(process.execPath, [path.join(plugin, "sync.mjs"), ...args], { encoding: "utf8" });
 let project;
 
-// A copy of the plugin's source that a test can change, to stand for a newer plugin.
+// A copy of the plugin's source that a test can change, to stand for a newer plugin. It keeps the
+// plugin's layout, because the kit takes arrow.js from the browser-arrows skill beside it.
 function sourceCopy() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kit-source-"));
+  const top = fs.mkdtempSync(path.join(os.tmpdir(), "kit-source-"));
+  const dir = path.join(top, "skills/video-setup/scripts");
   fs.cpSync(path.join(plugin, "engine"), path.join(dir, "engine"), { recursive: true });
   fs.copyFileSync(path.join(plugin, "kit.json"), path.join(dir, "kit.json"));
+  fs.mkdirSync(path.join(top, "skills/browser-arrows/scripts"), { recursive: true });
+  fs.copyFileSync(path.join(plugin, "../../browser-arrows/scripts/arrow.js"), path.join(top, "skills/browser-arrows/scripts/arrow.js"));
   return dir;
 }
 
@@ -33,6 +37,18 @@ describe("kit sync", () => {
     assert.ok(fs.existsSync(path.join(project, "scripts/video-kit/timeline.mjs")));
     assert.ok([...want.keys()].every((f) => f.startsWith("scripts/video-kit/")));
     assert.equal(JSON.parse(fs.readFileSync(path.join(project, LOCK), "utf8")).plugin, PLUGIN);
+  });
+
+  it("ships the browser-arrows skill's arrow.js, which films use for arrow cues", () => {
+    const arrow = fs.readFileSync(path.join(plugin, "../../browser-arrows/scripts/arrow.js"));
+    assert.ok(expected(plugin).get("scripts/video-kit/arrow.js")?.equals(arrow), "the kit has no copy of arrow.js, or an old one");
+    assert.ok(fs.readFileSync(path.join(project, "scripts/video-kit/arrow.js")).equals(arrow));
+  });
+
+  it("reports a plugin whose arrow.js changed as newer than the copy", () => {
+    const newer = sourceCopy();
+    fs.appendFileSync(path.join(newer, "../../browser-arrows/scripts/arrow.js"), "\n// newer\n");
+    assert.ok(staleness(project, newer).some((e) => /arrow\.js differs from the plugin/.test(e)));
   });
 
   it("passes the check when nothing changed", () => {

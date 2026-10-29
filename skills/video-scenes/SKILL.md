@@ -35,8 +35,22 @@ The template's runtime reads these attributes:
 | `data-kb="1.04 1.12"` | A slow zoom on a photo, from the first scale to the second, over the scene. |
 | `data-shot="w:4:what"` | Crossfades in a screenshot. |
 | `data-bar="w:5:shown 0.67"` | Grows a bar to 67 % width on that word. |
+| `data-arrow="w:4:settings"` with `data-sign="Open Settings"` | Points an arrow at the element on that word, with the sign beside it. |
 
 A word cue is the spoken word in lower case, with only letters, digits and hyphens.
+
+### Arrow cues
+
+An arrow cue draws a `browser-arrows` arrow (`arrow.js`, calm look, size L, a box round the target). The kit ships `arrow.js` as `scripts/video-kit/arrow.js`, and the template loads it before `runtime.js`. To point at a control in a screenshot, put a box over it: `<span class="spot" style="left: 62%; top: 8%; width: 6%; height: 4%" data-arrow="w:4:settings" data-sign="Open Settings"></span>` inside the screenshot's positioned frame.
+
+- Cue the arrow on the word that names the control, so it appears as the viewer hears it.
+- The arrow holds until the next arrow in its scene, or until the next scene starts.
+- Write the sign as an instruction or a name: 3 to 6 words, 1 to 40 characters.
+- Leave at least 1.8 s from one arrow to the next, and from an arrow to the scene's end. The arrow draws on in 0.6 s and pulses twice; the render refuses a cue with less time.
+- Keep the target and the sign clear of the title and of the captions band.
+- The arrow draws on when the film plays through its cue. A still or a `?t=` preview that jumps past the cue shows it drawn, so a still depends only on its time.
+- The renderer drives `arrow.js` with Playwright's clock, so every render draws the same frames.
+- The render refuses a cue whose element has no size, or whose sign `arrow.js` cannot draw, before it starts.
 
 ## Look and text
 

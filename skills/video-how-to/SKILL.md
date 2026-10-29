@@ -34,7 +34,7 @@ A how-to video shows one task, from its start to a result the viewer can check. 
 - Show the real product: screenshots or a terminal. The kit's page cannot play video yet, so show a screen recording as a sequence of stills. Use diagrams only to show where a step fits.
 - Use real but non-sensitive values. Never show real keys, passwords, tokens or personal data. Blur or replace them.
 - Label example and demonstration data as such.
-- Keep the pointer, highlight or zoom on the control the narration names. In a browser recording, the `browser-arrows` skill draws the pointer, the arrow and the zoom. Hold each result on screen long enough to read: at least two seconds after the narration ends.
+- Point at the control the narration names. In a kit film, cue an arrow on the word that names it, with a short sign (the `video-scenes` skill, "Arrow cues"). In a live browser recording, the `browser-arrows` skill draws the pointer, the arrow and the zoom. Hold each result on screen long enough to read: at least two seconds after the narration ends.
 - Set long commands in a monospace font, and make them fit the frame. Break them on the screen only where the shell allows it.
 - No photography, unless the task happens in a physical place.
 

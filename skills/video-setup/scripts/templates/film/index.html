@@ -30,6 +30,7 @@ p { font-size: 30px; color: var(--body); margin-top: 28px; max-width: 900px; }
 .picture { position: absolute; right: 120px; top: 200px; width: 620px; height: 560px; border-radius: 8px; background: linear-gradient(135deg, var(--sky), var(--blue)); }
 
 /* Captions: keep the bottom 150 px clear for them. */
+.spot { position: absolute; pointer-events: none; } /* the box an arrow cue points at */
 #captions { position: absolute; left: 0; right: 0; bottom: 54px; display: flex; justify-content: center; z-index: 50; pointer-events: none; }
 .cap { position: absolute; bottom: 0; max-width: 1500px; padding: 14px 30px 16px; border-radius: 6px;
   background: rgba(20, 20, 24, .84); color: #fff; font: 600 42px/1.25 var(--sans); text-align: center; opacity: 0; }
@@ -81,6 +82,7 @@ p { font-size: 30px; color: var(--body); margin-top: 28px; max-width: 900px; }
   document.write(`<script src="timeline${voice ? "-" + voice : ""}.js" onerror="throw new Error('No timeline for voice ${voice}')"><\/script>`);
 }
 </script>
+<script src="../scripts/video-kit/arrow.js"></script>
 <script src="runtime.js"></script>
 <script src="film.js"></script>
 </body>

@@ -26,10 +26,16 @@ function walk(dir, base = dir) {
   });
 }
 
+// The browser-arrows skill's arrow.js, beside this skill in the plugin. Films load the kit's copy for arrow cues.
+export const ARROW = "../../browser-arrows/scripts/arrow.js";
+
 // Every file the kit puts in a project, as project path → content, built from the kit's source.
 export function expected(source) {
   const out = new Map();
   for (const f of walk(path.join(source, "engine"))) out.set(`${ENGINE_DIR}/${f}`, fs.readFileSync(path.join(source, "engine", f)));
+  const arrow = path.join(source, ARROW);
+  if (!fs.existsSync(arrow)) throw new Error(`${arrow} is missing. The kit's source must be the ${SKILL_PATH} folder of a whole ${PLUGIN_ID} plugin, with skills/browser-arrows beside it.`);
+  out.set(`${ENGINE_DIR}/arrow.js`, fs.readFileSync(arrow));
   return out;
 }
 

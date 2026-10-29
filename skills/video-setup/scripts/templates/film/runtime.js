@@ -27,6 +27,7 @@
   }
 
   const tl = gsap.timeline({ paused: true });
+  const renderers = [];
   const scenes = $$(".scene");
   if (scenes.length !== T.scenes.length) throw new Error(`The page has ${scenes.length} scenes but the timeline has ${T.scenes.length}`);
   const post = $("#credits");
@@ -71,6 +72,52 @@
     });
   }
 
+  // Arrow cues: an element with data-arrow="w:4:settings" and data-sign="Open Settings" gets an
+  // arrow.js arrow when the narrator says the word. The arrow holds until the next arrow in its
+  // scene, or until the next scene starts. It draws on when the film plays through its cue (frames
+  // less than 0.1 s apart); a seek that jumps past the cue shows it drawn, so a still depends only on t.
+  const DRAW = 1.8; // the calm look draws on and pulses twice in 1.68 s
+  const LOOK = { look: "calm", size: "L", highlight: "box", hideCovered: false };
+  const arrows = scenes.flatMap((el, i) => {
+    const until = i < scenes.length - 1 ? T.scenes[i + 1].start : end;
+    const cues = $$("[data-arrow]", el)
+      .map((node) => ({ node, time: at(node.dataset.arrow, i), text: node.dataset.sign ?? "", name: `scene ${i} arrow "${node.dataset.arrow}"` }))
+      .sort((a, b) => a.time - b.time);
+    cues.forEach((c, k) => {
+      if (c.text.length < 1 || c.text.length > 40) throw new Error(`${c.name} needs a sign of 1 to 40 characters in data-sign; it has ${c.text.length}`);
+      c.end = k < cues.length - 1 ? cues[k + 1].time : until;
+      if (c.end - c.time < DRAW) throw new Error(`${c.name} at ${c.time.toFixed(2)} s has ${(c.end - c.time).toFixed(2)} s before ${k < cues.length - 1 ? "the next arrow" : "its scene ends"}; it needs ${DRAW} s to draw. Cue it on an earlier word.`);
+    });
+    return cues;
+  });
+  if (arrows.length) {
+    if (window.walkArrow?.version !== 2) throw new Error('The page has arrow cues but no arrow.js. Add <script src="../scripts/video-kit/arrow.js"></script> before runtime.js, and sync the kit (video-setup skill).');
+    // arrow.js fades a stopped arrow with a CSS transition, which runs on the wall clock. Without
+    // the transition, the old arrow leaves on the same frame in every render.
+    document.head.append(Object.assign(document.createElement("style"), { textContent: 'html > div[role="presentation"] * { transition: none !important; }' }));
+    // Refuse a bad cue before the render starts, not minutes into it.
+    for (const c of arrows) {
+      const r = c.node.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) throw new Error(`${c.name} points at an element with no size. Give the .spot a width and height over the control.`);
+      try {
+        window.walkArrow.plan(c.node, { text: c.text, ...LOOK });
+      } catch (e) {
+        throw new Error(`${c.name} cannot be drawn: ${e.message}`);
+      }
+    }
+    let shown = null, id = null, last = null;
+    renderers.push((t) => {
+      const cue = arrows.find((c) => t >= c.time && t < c.end) ?? null;
+      const prev = last;
+      last = t;
+      if (cue === shown) return;
+      if (id !== null) window.walkArrow.stop(id);
+      shown = cue;
+      const played = cue && prev !== null && prev < cue.time && t - prev < 0.1;
+      id = cue ? window.walkArrow.point(cue.node, { text: cue.text, ...LOOK, animate: played }) : null;
+    });
+  }
+
   const capBox = $("#captions");
   if (!capBox) throw new Error('The page needs a <div id="captions"> for the burned-in captions');
   T.captions.forEach((c) => {
@@ -82,8 +129,7 @@
     tl.to(d, { opacity: 0, duration: 0.12 }, c.end - 0.04);
   });
 
-  const renderers = [];
-  window.Film = { T, tl, at, $, $$, clamp, ease, renderers };
+  window.Film = { T, tl, at, $, $$, clamp, ease, renderers, arrows };
   window.seek = (t) => {
     tl.time(t, false);
     for (const r of renderers) r(t);

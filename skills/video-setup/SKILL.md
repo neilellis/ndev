@@ -50,7 +50,7 @@ Run `node scripts/video-kit/check.mjs` (or `npm run check`) in the video's folde
    ```
 
    Optional keys: `"model"` (the speech model), `"timing"` (overrides of the type's pacing), `"captions"."maxWords"` (7 by default) and `"review"` (`"base"`, the approved branch, and `"font"`, a font file for review labels).
-3. Copy `${CLAUDE_PLUGIN_ROOT}/skills/video-setup/scripts/templates/film/` to the page's folder. The template uses neutral tokens on `:root` and system fonts. Set them for the project before the first render.
+3. Copy `${CLAUDE_PLUGIN_ROOT}/skills/video-setup/scripts/templates/film/` to the page's folder. The template uses neutral tokens on `:root` and system fonts. Set them for the project before the first render. It loads the kit's `scripts/video-kit/arrow.js` for arrow cues.
 4. Add `gsap`, `ffmpeg-static`, `ffprobe-static` and `playwright-core` to the project's dependencies, and `"engines": { "node": ">=22" }`.
 5. Add npm scripts that call the engine:
 
