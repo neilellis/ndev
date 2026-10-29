@@ -77,7 +77,7 @@ export function parseArgs(args: string): { target: string; persona: string | nul
   const flag = /(^|\s)--re-record(?=\s|$)/
   const reRecord = flag.test(args)
   const m = /^\s*(\S+)(?:\s+--persona\s+(?:"([^"]*)"|'([^']*)'|(.+?)))?\s*$/.exec(args.replace(flag, ' '))
-  if (m === null || m[1]!.startsWith('--')) return { error: 'Usage: /walk-doc <path|url> [--persona "who the reader is"] [--re-record]. Give a docs content file or folder, or a docs URL.' }
+  if (m === null || m[1]!.startsWith('--')) return { error: 'Usage: /walk-doc <path|url> [--persona "who the reader is"] [--re-record]. Give a docs content file or folder, or a docs URL. During a walk: /walk-doc ask <question>, /walk-doc restart [note], /walk-doc tip <text> or /walk-doc stop.' }
   const persona = m[2] ?? m[3] ?? m[4] ?? null
   return { target: m[1]!, persona: persona === null || persona.trim() === '' ? null : persona.trim(), reRecord }
 }
@@ -139,7 +139,8 @@ export function parseConfig(text: string, file = CONFIG_FILE): Config {
 
 // /walk-doc tip: the config text with one more tip, for the file at the repo root.
 export function addTip(text: string, tip: string): string {
-  const t = tip.trim()
+  // A tip typed in quotes, as for a shell, is kept without them.
+  const t = tip.trim().replace(/^"([^"]*)"$|^'([^']*)'$/, '$1$2').trim()
   if (t === '') throw new Error('Usage: /walk-doc tip <text>. Say what every reader should know.')
   const config = parseConfig(text)
   if (config.tips.includes(t)) throw new Error(`that tip is already in ${CONFIG_FILE}: ${t}`)

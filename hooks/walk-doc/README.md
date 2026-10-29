@@ -107,7 +107,7 @@ To get a text message when a walk escalates or finishes, set the ndev plugin opt
 
 ## Install
 
-`/walk-doc` is part of the ndev plugin. Enable ndev in the project and add `.walk-doc.json`. The Walk agent is `ndev:walk`, and its tools are `mcp__ndev__walk_*`. The walk needs `asciinema` (`brew install asciinema` on a Mac) and Node for the Playwright MCP server.
+`/walk-doc` is part of the ndev plugin. Enable ndev in the project and add `.walk-doc.json`. The Walk agent is `ndev:walk`, and its tools are `mcp__ndev__walk_*`. The walk needs `asciinema` (`brew install asciinema` on a Mac) and Node for the Playwright MCP server. `/walk-doc` checks that the Playwright server (`plugin:ndev:playwright`) is connected before it starts the docs dev server. Claude Code connects it once, at session start. If its first `npx` start passes the 30-second connect limit, it stays unconnected: reconnect it in `/mcp`, or start Claude Code with `MCP_TIMEOUT=120000`.
 
 ## Develop
 

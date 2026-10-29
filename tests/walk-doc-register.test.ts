@@ -9,7 +9,7 @@ const PAGE = 'Run `./acme doctor`, then edit `config/foo.json`.'
 type Ran = { argv: string[]; cwd?: string; timeoutMs?: number }
 
 function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
-  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: null as string | null, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', config: CONFIG as string | null }
+  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: null as string | null, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', browser: { isConnected: true } as Record<string, unknown>, config: CONFIG as string | null }
   const ran: Ran[] = []
   const written: Record<string, string> = {}
   const prompts: string[] = []
@@ -46,7 +46,7 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
   })
   on('env.get', async () => ({ value: '/home/n' }) as never)
   const browser: { tool: string; args: Record<string, unknown> }[] = []
-  on('mcp.connect', async (_$, e) => ({ value: { isConnected: true, server: `plugin:ndev:${e.server}` } }) as never)
+  on('mcp.connect', async (_$, e) => ({ value: flags.browser.isConnected === true ? { isConnected: true, server: `plugin:ndev:${e.server}` } : flags.browser }) as never)
   on('mcp.call', async (_$, e) => {
     browser.push({ tool: e.tool, args: e.args })
     const text = e.tool === 'browser_evaluate' ? `### Result\n"${flags.overlay}"` : '### Ran'
@@ -489,6 +489,20 @@ test('/walk-doc refuses to start when the browser lacks the cursor and arrow ove
   expect(out).toContain('overlay:undefined/false')
   expect(h.spawns).toHaveLength(0)
   expect(h.ran.some(r => r.argv.join(' ').includes('kill -TERM -- -4242'))).toBe(true)
+})
+
+test('/walk-doc refuses before the dev server starts when the Playwright server is not connected, with the host\'s reason and the /mcp repair', async ($, on) => {
+  const h = harness(on)
+  h.flags.browser = { isConnected: false, reason: 'failed', message: 'The MCP server "plugin:ndev:playwright" did not connect: connection timed out after 30000ms.' }
+  await start($)
+  const out = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(out).toContain('plugin:ndev:playwright is not connected (failed)')
+  expect(out).toContain('connection timed out after 30000ms')
+  expect(out).toContain('Run /mcp, reconnect plugin:ndev:playwright')
+  expect(out).not.toContain('lacks the cursor')
+  expect(h.ran.some(r => r.argv.join(' ').includes('nohup'))).toBe(false)
+  expect(h.browser).toHaveLength(0)
+  expect(h.spawns).toHaveLength(0)
 })
 
 test('/walk-doc checks the overlay in the browser before the reader starts', async ($, on) => {
