@@ -116,6 +116,59 @@ export type Loop = {
   isNoMerge?: boolean
 }
 
+// The /triage run (hooks/triage.tsx): this session's model groups the open issues, and each group becomes
+// one Orca Task with a supervised Claude worker that opens one draft pull request.
+export type TriageComplexity = 'very-complex' | 'complex' | 'average' | 'simple' | 'very-simple'
+
+export type TriageIssue = { number: number; title: string; url: string }
+
+export type TriageGroup = {
+  // The lowest issue number: it names the Task, the workspace and the branch.
+  lead: number
+  issues: number[]
+  title: string
+  complexity: TriageComplexity
+  model: string
+  effort: string
+  hint: string
+  implemented: boolean
+  evidence?: string
+  // The leads of the groups whose workers must succeed first.
+  after: number[]
+  // Orca's ids for the group, as Orca reported them.
+  taskId?: string
+  worktree?: string
+  dispatchId?: string
+  terminal?: string
+  // The model and effort Orca says it started, which can differ from the ones asked for.
+  effective?: string
+  // Orca's own state, read back from Orca on each refresh: the Task status, the worker's liveness,
+  // the workspace's board status and the pull request linked to the workspace.
+  task?: string
+  liveness?: string
+  workspaceStatus?: string
+  pr?: number
+  // The worker's open question, sent to this session's model to answer.
+  question?: { id: string; text: string }
+  error?: string
+  // The lead of the failed or blocked group this one waits for; it never starts.
+  blockedBy?: number
+  summary?: string
+}
+
+export type TriageView = {
+  repo?: string
+  phase: 'idle' | 'grouping' | 'planned' | 'running' | 'done'
+  isDryRun?: boolean
+  runId?: string
+  // The issues the model is grouping.
+  issues: TriageIssue[]
+  groups: TriageGroup[]
+  log: { at: number; text: string }[]
+  error?: string
+  checkedAt?: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'ndev': {
@@ -130,6 +183,8 @@ declare module 'claude-code' {
       walkRun: Shaped<WalkRun | null>
       // The responsive-check matrix pane (hooks/responsive-check.tsx).
       responsiveView: Shaped<ResponsiveView>
+      // The /triage run (hooks/triage.tsx).
+      triage: Shaped<TriageView>
     }
   }
 }

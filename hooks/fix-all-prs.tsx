@@ -85,9 +85,9 @@ function toRow(pr: GhPr): PrRow {
   }
 }
 
-type Run = (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+export type Run = (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 
-async function gh(run: Run, args: string[], isJson = true): Promise<unknown> {
+export async function gh(run: Run, args: string[], isJson = true): Promise<unknown> {
   const out = await run(['gh', ...args])
   if (out.exitCode !== 0) {
     const detail = out.stderr.trim() || out.stdout.trim()
@@ -246,7 +246,7 @@ async function signedOwner(run: Run, n: number, agents: Agent[], registry: Regis
   return { owner, isFinal: owner !== undefined || !registry.isPartial }
 }
 
-type OrcaWorktree = {
+export type OrcaWorktree = {
   id: string
   repoId: string
   projectId?: string
@@ -261,12 +261,12 @@ type OrcaWorktree = {
 
 type OrcaReply = { ok?: boolean; result?: unknown; error?: { code?: string; message?: string; data?: { nextSteps?: unknown } } }
 
-const START_ORCA = '\nRepair: start the Orca app (`orca open`) and check it with `orca status`.'
+export const START_ORCA = '\nRepair: start the Orca app (`orca open`) and check it with `orca status`.'
 
 // Runs an Orca CLI command with --json and answers its result. A failure names the command and Orca's own error, with
 // Orca's next steps as the repair, else the advice to start Orca. `noAnswer` is the repair when the command can have
 // gone ahead without answering.
-async function orca(run: Run, args: string[], noAnswer = START_ORCA): Promise<unknown> {
+export async function orca(run: Run, args: string[], noAnswer = START_ORCA): Promise<unknown> {
   const what = `orca ${args.slice(0, 2).join(' ')}`
   const out = await run(['orca', ...args, '--json']).catch((err: unknown) => {
     throw new Error(`${what} gave no answer: ${firstLine(err instanceof Error ? err.message : String(err)).replace(/\.$/, '')}.${noAnswer}`)
@@ -291,7 +291,7 @@ async function orca(run: Run, args: string[], noAnswer = START_ORCA): Promise<un
 
 // Every Orca worktree, of every repository, since one can sit inside another's folder. A list cut short is refused:
 // the worktree missing from it could hold the pull request. `retry` ends the repair.
-async function orcaWorktrees(run: Run, retry = ''): Promise<OrcaWorktree[]> {
+export async function orcaWorktrees(run: Run, retry = ''): Promise<OrcaWorktree[]> {
   const listed = (await orca(run, ['worktree', 'list', '--limit', '1000'])) as { worktrees: OrcaWorktree[]; totalCount?: number; truncated?: boolean }
   if (listed.truncated) {
     throw new Error(`orca worktree list answered ${listed.worktrees.length} of ${listed.totalCount ?? 'more'} worktrees, so one that holds the pull request could be missing.\nRepair: archive the Orca workspaces you no longer need${retry}.`)
@@ -299,7 +299,7 @@ async function orcaWorktrees(run: Run, retry = ''): Promise<OrcaWorktree[]> {
   return listed.worktrees
 }
 
-const ofRepo = (worktrees: OrcaWorktree[], repo: string) => worktrees.filter(w => w.projectId === `github:${repo.toLowerCase()}`)
+export const ofRepo = (worktrees: OrcaWorktree[], repo: string) => worktrees.filter(w => w.projectId === `github:${repo.toLowerCase()}`)
 
 // The repository's Orca worktrees that hold a pull request: linked to it, or on its head branch. A main checkout
 // never does, since agents do not work in it.
@@ -971,7 +971,7 @@ function prsOf(text: string, to: string, queue: number[], all: Record<string, Co
   return hits.length ? [...new Set(hits)] : queue.filter(n => all[n]?.owner === to)
 }
 
-const firstLine = (text: string) =>
+export const firstLine = (text: string) =>
   text.split('\n').map(l => l.replace(/<[^>]+>/g, '').trim()).find(l => l.length > 0)?.slice(0, 160) ?? ''
 
 function ago(now: number, at: number): string {
