@@ -315,7 +315,9 @@ async function startWalk($: EngineInterface, args: string): Promise<string> {
   const logFile = `${runDir}/devserver.log`
   const command = shellQuote(config.devCommand.map(a => a.replaceAll('{port}', String(portNo))))
   // set -m gives the server its own process group, so a stop ends pnpm, next and every child under them.
-  const started = await sh($, `set -m; mkdir -p ${shellQuote([runDir])} && nohup ${command} > ${shellQuote([logFile])} 2>&1 < /dev/null & echo $!`)
+  // Polling, because a machine running many dev servers runs out of file-event watchers: the server then
+  // never sees an edit, keeps serving stale pages, and only a restart clears it.
+  const started = await sh($, `set -m; mkdir -p ${shellQuote([runDir])} && nohup env WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=1 ${command} >${shellQuote([logFile])} 2>&1 < /dev/null & echo $!`)
   const pid = Number(started.stdout.trim())
   if (started.exitCode !== 0 || !Number.isInteger(pid) || pid <= 0) {
     throw new Error(`the docs dev server did not start (exit ${started.exitCode}): ${started.stderr.trim()}. Command: ${command}`)

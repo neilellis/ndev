@@ -115,7 +115,7 @@ test('/walk-doc starts the dev server on a free port and a hidden Walk agent in 
   await start($)
   const text = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
   expect(text).toContain('http://localhost:4000/installation/quick-start/')
-  expect(h.ran.some(r => r.argv.join(' ').includes("nohup 'pnpm' '--dir' 'apps/docs' 'dev' '-p' '4000'"))).toBe(true)
+  expect(h.ran.some(r => r.argv.join(' ').includes("'pnpm' '--dir' 'apps/docs' 'dev' '-p' '4000'"))).toBe(true)
   expect(h.spawns).toHaveLength(1)
   expect(h.spawns[0]!.cwd).toMatch(/^\/home\/n\/\.walk-doc\/[^/]+\/attempt-1$/)
   expect(h.spawns[0]!.prompt).toContain('http://localhost:4000/installation/quick-start/')
@@ -146,6 +146,14 @@ test('the readiness check bounds each probe, so a slow first compile meets its o
   expect(check.timeoutMs!).toBeLessThanOrEqual(600_000)
   expect(text).toContain(`did not answer within ${deadline} s`)
   expect(text).toContain('load averages: 196.39')
+})
+
+test('the dev server polls for file changes, so a machine out of file-event watchers still rebuilds edited pages', async ($, on) => {
+  const h = harness(on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  const line = h.ran.find(r => r.argv.join(' ').includes('nohup'))!.argv.join(' ')
+  expect(line).toContain("nohup env WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=1 'pnpm' '--dir' 'apps/docs' 'dev' '-p' '4000'")
 })
 
 test('the dev server runs in its own process group, so stop and an interrupted start end every process in it', async ($, on) => {
