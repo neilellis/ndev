@@ -551,10 +551,10 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const v = await read($, view)
     const columns = e.props.bodyColumns
-    const width = Math.max(20, columns - 2 - 9 - 6 - 22)
+    const width = Math.max(20, columns - 4 - 2 - 9 - 6 - 22)
     const fit = (s: string, w = width) => (s.length > w ? `${s.slice(0, w - 1)}…` : s)
     const pad = '             '
-    const under = Math.max(20, columns - pad.length - 1)
+    const under = Math.max(20, columns - 4 - pad.length - 1)
     const done = v.groups.filter(g => g.task === 'completed').length
     const word = (g: TriageGroup): { word: string; color: string } =>
       g.error ? { word: 'failed', color: 'error' }
@@ -568,6 +568,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
       : v.phase === 'planned' ? `${v.groups.length} groups planned, nothing started${v.isDryRun ? ' (dry run)' : ''}`
         : v.phase === 'running' ? `Orca Run ${v.runId}` : v.phase === 'done' ? `done · Orca Run ${v.runId}` : 'not started'
     const url = (n: number) => v.issues.find(i => i.number === n)?.url ?? `https://github.com/${v.repo}/issues/${n}`
+    const titled = (n: number) => v.issues.find(i => i.number === n)?.title ?? ''
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -589,13 +590,14 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         </Box>
         {v.error && v.error.split('\n').map((line, i) => <Text key={`error-${i}`} color="error">{line}</Text>)}
         {v.phase === 'idle' && !v.error && <Text color="subtle">Start reads the open issues, has this session group them, and works each group in its own Orca workspace.</Text>}
-        <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column">
           {v.groups.map(g => {
             const m = word(g)
-            const facts = [g.issues.map(n => `#${n}`).join(' '), g.effective ?? `${g.model} · ${g.effort}`, g.workspaceStatus, g.pr ? `PR #${g.pr}` : undefined, g.liveness]
+            const facts = [g.effective ?? `${g.model} · ${g.effort}`, g.workspaceStatus, g.pr ? `PR #${g.pr}` : undefined, g.liveness]
               .filter(Boolean).join(' · ')
             return (
-              <Box key={`group-${g.lead}`} flexDirection="column">
+              // Each group is a box that lists its issues, so the grouping reads at a glance.
+              <Box key={`group-${g.lead}`} flexDirection="column" borderStyle="round" borderColor={m.color} paddingX={1}>
                 <Box justifyContent="space-between">
                   <Text>
                     <Text color={m.color}>{m.word.padEnd(9)}</Text>
@@ -610,6 +612,9 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
                   </Box>
                 </Box>
                 <Text color="subtle">{pad}{fit(facts, under)}</Text>
+                {g.issues.map(n => (
+                  <Text key={`member-${g.lead}-${n}`}>{pad}<Text color="suggestion">#{n}</Text> {fit(titled(n), under - String(n).length - 2)}</Text>
+                ))}
                 {g.question && <Text color="warning">{pad}{fit(`asks: ${g.question.text}`, under)}</Text>}
                 {g.summary && <Text color="subtle">{pad}{fit(g.summary, under)}</Text>}
                 {g.blockedBy !== undefined && <Text color="warning">{pad}{fit(`waits for #${g.blockedBy}, which failed`, under)}</Text>}

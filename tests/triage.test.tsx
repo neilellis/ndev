@@ -343,6 +343,29 @@ test('the pane lists each group, and Jump switches Orca to the worker\'s termina
   await ui.unmount()
 })
 
+test('the pane draws each group in its own box, listing each of its issues by number and title', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4), issue(9)] })
+  await started($)
+  await $.command.run(command('start --dry-run'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([4, 3], 'simple'), group([9], 'average')] } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const box = async (lead: number) => {
+    const found = await ui.find({ type: 'Box', key: `group-${lead}` })
+    expect(found?.props.borderStyle).toBeDefined()
+    return JSON.stringify(found?.children)
+  }
+  const first = await box(3)
+  expect(first).toContain('Issue 3')
+  expect(first).toContain('Issue 4')
+  expect(first).not.toContain('Issue 9')
+  expect(first.indexOf('Issue 3')).toBeLessThan(first.indexOf('Issue 4'))
+  const second = await box(9)
+  expect(second).toContain('Issue 9')
+  expect(second).not.toContain('Issue 3')
+  await ui.unmount()
+})
+
 test('/orca-triage start --dry-run shows the groups and starts nothing in Orca', async ($, on) => {
   const w = world(on, { issues: [issue(3)] })
   await started($)
