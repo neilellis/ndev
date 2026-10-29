@@ -46,7 +46,10 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
   })
   on('env.get', async () => ({ value: '/home/n' }) as never)
   const browser: { tool: string; args: Record<string, unknown> }[] = []
-  on('mcp.connect', async (_$, e) => ({ value: flags.browser.isConnected === true ? { isConnected: true, server: `plugin:ndev:${e.server}` } : flags.browser }) as never)
+  on('mcp.connect', async (_$, e) => {
+    if (flags.browser.throws !== undefined) throw new Error(String(flags.browser.throws))
+    return ({ value: flags.browser.isConnected === true ? { isConnected: true, server: `plugin:ndev:${e.server}` } : flags.browser }) as never
+  })
   on('mcp.call', async (_$, e) => {
     browser.push({ tool: e.tool, args: e.args })
     const text = e.tool === 'browser_evaluate' ? `### Result\n"${flags.overlay}"` : '### Ran'
@@ -503,6 +506,25 @@ test('/walk-doc refuses before the dev server starts when the Playwright server 
   expect(h.ran.some(r => r.argv.join(' ').includes('nohup'))).toBe(false)
   expect(h.browser).toHaveLength(0)
   expect(h.spawns).toHaveLength(0)
+})
+
+test('/walk-doc names the walk browser and the /mcp repair when connecting it throws', async ($, on) => {
+  const h = harness(on)
+  h.flags.browser = { throws: 'spawn npx ENOENT' }
+  await start($)
+  const out = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(out).toContain('the walk browser plugin:ndev:playwright did not connect: ')
+  expect(out).toContain('Run /mcp, reconnect plugin:ndev:playwright')
+  expect(h.ran.some(r => r.argv.join(' ').includes('nohup'))).toBe(false)
+})
+
+test('/walk-doc tip "text" sends the running reader the tip it saved, without the quotes', async ($, on) => {
+  const h = harness(on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(await walkDoc($, 'tip "Use the staging URL"')).toContain('Sent to the reader')
+  expect(JSON.parse(h.written['/repo/.walk-doc.json']!).tips).toEqual(['Use the staging URL'])
+  expect(h.sent.at(-1)!.text).toContain('TIP from the person who runs this walk: Use the staging URL\n')
 })
 
 test('/walk-doc checks the overlay in the browser before the reader starts', async ($, on) => {

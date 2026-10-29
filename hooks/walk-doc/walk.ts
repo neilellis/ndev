@@ -137,10 +137,12 @@ export function parseConfig(text: string, file = CONFIG_FILE): Config {
   }
 }
 
+// A tip typed in quotes, as for a shell, is kept without them.
+export const cleanTip = (tip: string) => tip.trim().replace(/^"([^"]*)"$|^'([^']*)'$/, '$1$2').trim()
+
 // /walk-doc tip: the config text with one more tip, for the file at the repo root.
 export function addTip(text: string, tip: string): string {
-  // A tip typed in quotes, as for a shell, is kept without them.
-  const t = tip.trim().replace(/^"([^"]*)"$|^'([^']*)'$/, '$1$2').trim()
+  const t = cleanTip(tip)
   if (t === '') throw new Error('Usage: /walk-doc tip <text>. Say what every reader should know.')
   const config = parseConfig(text)
   if (config.tips.includes(t)) throw new Error(`that tip is already in ${CONFIG_FILE}: ${t}`)

@@ -10,7 +10,7 @@ import type { EngineInterface, On, PluginOptions, TurnCompleteInput } from 'clau
 import { WALK_SYSTEM_PROMPT, walkTask } from './prompts'
 import {
   AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
-  newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, exampleConfig, addTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
+  newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, exampleConfig, addTip, cleanTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
   walkStopped, workspaceOf,
 } from './walk'
 import type { Config, Run } from './walk'
@@ -216,9 +216,15 @@ async function requireAsciinema($: EngineInterface): Promise<void> {
 // The reader drives the plugin's Playwright server. The host connects it at session start and keeps the
 // result, so a server that failed then (a slow npx start past the host's connect limit) stays failed.
 async function requireBrowser($: EngineInterface): Promise<string> {
-  const browser = await $.mcp.connect('playwright')
+  const repair = `Run /mcp, reconnect plugin:${PLUGIN}:playwright, then run /walk-doc again. If the reconnect times out, start Claude Code with MCP_TIMEOUT=120000 so its first npx start has time.`
+  let browser: Awaited<ReturnType<EngineInterface['mcp']['connect']>>
+  try {
+    browser = await $.mcp.connect('playwright')
+  } catch (error) {
+    throw new Error(`the walk browser plugin:${PLUGIN}:playwright did not connect: ${error instanceof Error ? error.message : String(error)}. ${repair}`)
+  }
   if (browser.isConnected) return browser.server
-  throw new Error(`the walk browser plugin:${PLUGIN}:playwright is not connected (${browser.reason}): ${browser.message} Run /mcp, reconnect plugin:${PLUGIN}:playwright, then run /walk-doc again. If the reconnect times out, start Claude Code with MCP_TIMEOUT=120000 so its first npx start has time.`)
+  throw new Error(`the walk browser plugin:${PLUGIN}:playwright is not connected (${browser.reason}): ${browser.message} ${repair}`)
 }
 
 // The reader's recordings need the red cursor and walkArrow, which the Playwright server loads as
@@ -331,7 +337,7 @@ async function addWalkTip($: EngineInterface, tip: string): Promise<string> {
   await $.fs.write(file, text)
   const saved = `Saved the tip in ${file}; every new reader is told it.`
   if (!isActive(run) || run.agentId === null) return `${saved} No walk is running, so no reader was sent it.`
-  const sent = await $.session.send({ to: { agentId: run.agentId }, text: `TIP from the person who runs this walk: ${tip.trim()}\nUse it from now on, and carry on with what you were doing.` })
+  const sent = await $.session.send({ to: { agentId: run.agentId }, text: `TIP from the person who runs this walk: ${cleanTip(tip)}\nUse it from now on, and carry on with what you were doing.` })
   return sent.isDelivered ? `${saved} Sent to the reader.` : `${saved} It did not reach the reader ${run.agentId} (${sent.reason}); send it with walk_ask.`
 }
 
