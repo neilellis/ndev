@@ -28,6 +28,8 @@ Do not inject them after the page loads: a navigation removes them.
 2. Before a click, point at the control with the label the documentation uses:
    `walkArrow.point('text=Save', { text: 'Save the record', untilClick: true })`.
    The arrow goes away when the control is clicked.
+   Wait before you click so the viewer can read the sign: 2 seconds plus 0.05 second for each character of the sign, at most 5 seconds (Playwright `browser_wait_for` with `time`). The walk-doc guard refuses an early click.
+   After each click, navigation, typed entry or selection, wait about 1.5 seconds while recording, so the result is visible before the next arrow.
 3. Before you type in a field, magnify it: `walkArrow.magnify('#email', { untilBlur: true })`. The viewer can read each keystroke. A password field shows dots.
 4. To show a result, point at it for a set time: `walkArrow.point('text=Saved', { text: 'The record is saved', duration: 3000 })`.
 5. Call `walkArrow.stop()` before the step ends and before each screenshot. A screenshot shows the product alone.

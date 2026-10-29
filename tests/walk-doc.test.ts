@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
-  MAX_RESTARTS, SAME_STEP_LIMIT, applyReply, savedOutputs, escalate, walkStopped, docsNamedPaths, guardCall, imessageArgv, newRun, pageUrl, parseArgs,
+  MAX_RESTARTS, SAME_STEP_LIMIT, applyReply, savedOutputs, escalate, walkStopped, docsNamedPaths, guardCall, arrowDwell, arrowDwellOf, imessageArgv, newRun, pageUrl, parseArgs,
   castProblems, parseConfig, recordEnhance, recordMedia, recordedBash, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, reportMarkdown, shellQuote, ancestorsOf, addTip, tipsNote,
 } from '../hooks/walk-doc/walk'
 import type { Config, Run } from '../hooks/walk-doc/walk'
@@ -195,6 +195,25 @@ test('the guard denies the Walk agent the repo source, internal docs, the docs s
   expect(call('Bash', { command: 'sudo rm -rf /' })).toMatch(/sudo/)
   expect(call('Agent', { prompt: 'x' })).toMatch(/Agent/)
   expect(call('mcp__ndev__walk_reply', { action: 'CONTINUE' })).toMatch(/main agent/)
+})
+
+test('the click dwell is 2000 ms plus 50 ms per caption character, at most 5000 ms', () => {
+  const click = { tool: 'mcp__plugin_ndev_playwright__browser_click', agentId: 'w', input: {} }
+  const armed = (len: number) => run({ agentIds: ['w'], arrowArmed: true, arrowArmedAt: 1000, arrowDwellMs: arrowDwell(len) })
+  expect(arrowDwell(0)).toBe(2000)
+  expect(arrowDwell(13)).toBe(2650)
+  expect(arrowDwell(60)).toBe(5000)
+  expect(arrowDwell(500)).toBe(5000)
+  expect(arrowDwellOf("() => walkArrow.point('text=Go', { text: 'Click Sign in', untilClick: true })")).toBe(2650)
+  expect(arrowDwellOf("() => walkArrow.point('text=Go', { untilClick: true })")).toBe(2000)
+  expect(arrowDwellOf("() => walkArrow.point('text=Go', { text: 'Seen', duration: 3000 })")).toBeNull()
+  const early = guardCall(armed(13), config, click, 2000)!
+  expect(early).toMatch(/1650 ms/)
+  expect(early).toContain('browser_wait_for')
+  expect(guardCall(armed(13), config, click, 3649)).toMatch(/1 ms/)
+  expect(guardCall(armed(13), config, click, 3650)).toBeNull()
+  expect(guardCall(armed(100), config, click, 5999)).toMatch(/1 ms/)
+  expect(guardCall(armed(100), config, click, 6000)).toBeNull()
 })
 
 test('the guard keeps the fix-all-prs report tool from the Walk agent', () => {

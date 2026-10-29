@@ -283,7 +283,7 @@ export function recordMedia(run: Run, input: RecordInput, config: Config, now: n
         ? `A terminal recording of a single or simple command: do not embed the recording. Put the command and its output in one fenced text code block, the command first as $ <command>, with the text from asciinema convert -f txt ${file} -. Leave out lines the reader did not type (the reader's own checks) and replace personal paths. Use a recording player only for a lot of scrolling output, a wizard, several commands or TUI effects (progress bars, spinners, redrawn screens, colour), and then publish its text too: asciinema convert -f txt ${file} <name>.txt. A wizard is a player even when the cast holds only part of it. Before publishing a cast, remove the reader's personal paths, its own markers and keypresses such as Ctrl+C, and the recording command in its header, and check it holds no secret. A cast with one output event cannot animate, as a pipe in the reader's command held the output back: place it, then ask the reader with walk_ask for an unfiltered recording.`
         : '',
       file.endsWith('.webm')
-        ? `A browser video from Playwright: make it a GIF for the page with bash ${pluginRoot}/scripts/walk-doc/video-to-gif.sh ${file} <name>.gif. The reader's thinking time between actions records as minutes of still screen; the script caps each still stretch at one second (--hold) and ignores a blinking text caret, so the GIF keeps every action and arrow. Look at the result before placing it.`
+        ? `A browser video from Playwright: make it a GIF for the page with bash ${pluginRoot}/scripts/walk-doc/video-to-gif.sh ${file} <name>.gif. The reader's thinking time between actions records as minutes of still screen; the script caps each still stretch at 2.5 seconds (--hold), which keeps the reader's deliberate pauses and ignores a blinking text caret, so the GIF keeps every action and arrow. Look at the result before placing it.`
         : '',
       config.media,
       `Commit it in one commit that starts "walk-doc RECORD:". Then call walk_reply with action NOTED, answers: ${finding.n}, a note (what you placed where, or why not) and changed: the pages you changed. The answer shows in the walk pane; the reader is not stopped.`,
@@ -526,6 +526,16 @@ const BROWSER = (name: string) => `mcp__plugin_${PLUGIN}_playwright__${name}`
 const CLICK = BROWSER('browser_click')
 const CLICK_NEEDS_ARROW = "walk-doc: point at the target before you click it, so the recording shows where the click goes. Call browser_evaluate with walkArrow.point('<target>', { text: '<what to do>', untilClick: true }), then click."
 
+// How long the arrow's caption needs to be read before the reader clicks: 2000 ms plus 50 ms a character, at most 5000 ms.
+export const arrowDwell = (captionLength: number): number => Math.min(5000, 2000 + 50 * captionLength)
+
+// The dwell an arming call sets (a walkArrow.point with untilClick), from the length of its text; null for any other call.
+export function arrowDwellOf(fn: string): number | null {
+  if (!/\bwalkArrow\.point\(/.test(fn) || !/\buntilClick\s*:\s*true\b/.test(fn)) return null
+  const caption = /\btext\s*:\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/.exec(fn)
+  return arrowDwell(caption === null ? 0 : caption[2]!.length)
+}
+
 // Whether a walkArrow stays up for the reader's next click, after a call that did or did not succeed.
 // A pointing arrow with untilClick arms it; a click, a new page, walkArrow.stop() or another arrow uses it up.
 export function arrowAfter(armed: boolean, call: { tool: string; input: Record<string, unknown> }, succeeded: boolean): boolean {
@@ -538,11 +548,15 @@ export function arrowAfter(armed: boolean, call: { tool: string; input: Record<s
 }
 
 // null lets the call through; a string is the denial, naming what was refused and why.
-export function guardCall(run: Run, config: Config, call: GuardCall): string | null {
+export function guardCall(run: Run, config: Config, call: GuardCall, now: number = Date.now()): string | null {
   if (call.agentId === undefined || !run.agentIds.includes(call.agentId)) return null
   if (WALK_DENIED_TOOLS.has(call.tool)) return `walk-doc: the Walk agent works alone; ${call.tool} is denied. Report with walk_report or walk_enhance.`
   if (MAIN_ONLY_TOOLS.has(call.tool)) return `walk-doc: ${call.tool} belongs to the main agent. Report with walk_report and end your turn.`
   if (call.tool === CLICK && run.arrowArmed !== true) return CLICK_NEEDS_ARROW
+  if (call.tool === CLICK) {
+    const remaining = (run.arrowArmedAt ?? 0) + (run.arrowDwellMs ?? 0) - now
+    if (remaining > 0) return `walk-doc: the arrow's caption needs time to be read; ${remaining} ms of its dwell remain. Call browser_wait_for with time=${Math.ceil(remaining / 1000)} so the reader can read the arrow's caption, then click.`
+  }
   const field = PATH_TOOLS[call.tool]
   if (field !== undefined) {
     const p = call.input[field]

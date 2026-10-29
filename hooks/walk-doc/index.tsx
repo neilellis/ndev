@@ -9,7 +9,7 @@ import type { EngineInterface, On, PluginOptions, TurnCompleteInput } from 'clau
 
 import { WALK_SYSTEM_PROMPT, walkTask } from './prompts'
 import {
-  AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, arrowAfter, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
+  AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, arrowAfter, arrowDwellOf, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
   newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, exampleConfig, addTip, cleanTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
   walkStopped, workspaceOf,
 } from './walk'
@@ -488,7 +488,7 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     if (!isActive(run)) return next(e)
     const config = await loadConfig($, run.root)
     const { tool, tool_use_id: _id, agentId, ...input } = e as unknown as Record<string, unknown> & { tool: string; agentId?: string }
-    const denial = guardCall(run, config, { tool, agentId, input })
+    const denial = guardCall(run, config, { tool, agentId, input }, await $.clock.now())
     const isWalk = agentId !== undefined && run.agentIds.includes(agentId)
     if (isWalk && run.agentId !== null && agentId !== run.agentId) return { deny: `You were replaced: a fresh reader took over this walk (attempt ${run.attempt}). End your turn now; run nothing more.` }
     // An output too long to show is saved under ~/.claude; the Walk agent may read back only its own.
@@ -511,7 +511,11 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     if (denial === null && isWalk) {
       const result = await next(e)
       const armed = arrowAfter(run.arrowArmed === true, { tool, input }, result.deny === undefined && result.isError !== true)
-      if (armed !== (run.arrowArmed === true)) await update($, runAtom, r => (r === null ? r : { ...r, arrowArmed: armed }))
+      const dwell = tool === `mcp__plugin_${PLUGIN}_playwright__browser_evaluate` && typeof input.function === 'string' ? arrowDwellOf(input.function) : null
+      if (armed && dwell !== null) {
+        const armedAt = await $.clock.now()
+        await update($, runAtom, r => (r === null ? r : { ...r, arrowArmed: true, arrowArmedAt: armedAt, arrowDwellMs: dwell }))
+      } else if (armed !== (run.arrowArmed === true)) await update($, runAtom, r => (r === null ? r : { ...r, arrowArmed: armed }))
       return keepSaved(result)
     }
     if (denial === null) return next(e)

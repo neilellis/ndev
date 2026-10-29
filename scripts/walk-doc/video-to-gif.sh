@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Turn a Playwright browser video into a docs GIF.
 # A reader's thinking time between actions records as minutes of still screen, so every
-# still stretch is capped at --hold seconds; motion plays at its own speed.
-# usage: video-to-gif.sh <in.webm> <out.gif> [--hold 1] [--fps 12] [--width 1028]
+# still stretch is capped at --hold seconds (default 2.5, so the reader's deliberate pauses stay); motion plays at its own speed.
+# usage: video-to-gif.sh <in.webm> <out.gif> [--hold 2.5] [--fps 12] [--width 1028]
 set -euo pipefail
 
-usage() { echo "usage: video-to-gif.sh <in.webm> <out.gif> [--hold seconds] [--fps n] [--width px]" >&2; exit 2; }
+usage() { echo "usage: video-to-gif.sh <in.webm> <out.gif> [--hold seconds, default 2.5] [--fps n] [--width px]" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 in=$1 out=$2; shift 2
-hold=1 fps=12 width=
+hold=2.5 fps=12 width=
 while [ $# -gt 0 ]; do
   case $1 in
     --hold) hold=$2; shift 2 ;;

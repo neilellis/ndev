@@ -644,20 +644,41 @@ test('a reader click needs a walkArrow pointing at it first, and each arrow cove
   const point = "() => walkArrow.point('text=Sign in', { text: 'Click Sign in', untilClick: true })"
   expect(await click('a1')).toContain('walkArrow.point')
   await evaluate(point)
+  await h.clock.advance(3000)
   expect(await click('a1')).not.toContain('deny')
   expect(await click('a1')).toContain('deny')
   await evaluate("() => walkArrow.point('text=Sign in', { text: 'Signed in', duration: 3000 })")
   expect(await click('a1')).toContain('deny')
   await evaluate(point)
+  await h.clock.advance(3000)
   await evaluate('() => walkArrow.stop()')
   expect(await click('a1')).toContain('deny')
   await evaluate(point)
+  await h.clock.advance(3000)
   await call($, { tool: browser('browser_navigate'), url: 'http://localhost:4000/', agentId: 'a1' })
   expect(await click('a1')).toContain('deny')
   h.flags.toolError = true
   await evaluate(point)
   h.flags.toolError = false
+  await h.clock.advance(3000)
   expect(await click('a1')).toContain('deny')
+  expect(await click()).not.toContain('deny')
+})
+
+test('a reader click waits for the arrow caption to be readable', async ($, on) => {
+  const h = harness(on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  const browser = (name: string) => `mcp__plugin_ndev_playwright__${name}`
+  const click = () => call($, { tool: browser('browser_click'), element: 'Sign in button', ref: 'e5', agentId: 'a1' })
+  await call($, { tool: browser('browser_evaluate'), function: "() => walkArrow.point('text=Sign in', { text: 'Click Sign in', untilClick: true })", agentId: 'a1' })
+  const early = await click()
+  expect(early).toContain('deny')
+  expect(early).toContain('browser_wait_for')
+  expect(early).toMatch(/2650 ms/)
+  await h.clock.advance(2000)
+  expect(await click()).toMatch(/650 ms/)
+  await h.clock.advance(650)
   expect(await click()).not.toContain('deny')
 })
 

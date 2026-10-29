@@ -181,4 +181,7 @@ export type WalkRun = {
   asks?: WalkAsk[]
   // A walkArrow.point with untilClick is up, so the reader's next browser_click may go ahead. Absent in runs from before the rule.
   arrowArmed?: boolean
+  // When that arrow went up (ms) and how long its caption needs before the click is allowed (ms).
+  arrowArmedAt?: number
+  arrowDwellMs?: number
 }
