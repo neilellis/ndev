@@ -229,7 +229,7 @@ function mainMessage(run: Run, f: Finding, issues: string): string {
   if (f.code === 'INCORRECT') lines.push('Decide which side is wrong. If you cannot tell whether the docs or the product is right, that is the person\'s product decision: call walk_escalate.')
   if (blocks >= SAME_STEP_LIMIT) lines.push(`This step has blocked ${blocks} times. Change approach: RESTART with a fresh reader, or diagnose with a helper and CONTINUE with new_approach saying what changed. Escalate only if it blocks again after that.`)
   // a dev server's file watcher can drop an edit; the reader then retries against the old page
-  lines.push('', 'Before you reply, fetch each changed page from the docs server and confirm it serves your change. If it does not, touch the file and fetch again.')
+  lines.push('', 'Before you reply, fetch each changed page from the docs server and confirm it serves your change. If it does not, touch the file and fetch again. A long page can take a minute or more to rebuild: a Next dev server writes an emit event to .next/trace when a rebuild finishes, so look for one after your touch before you call the change unserved.')
   lines.push('Then call walk_reply with action CONTINUE (the same reader retries the step) or RESTART (a fresh reader and a fresh environment from step 1), a note, and changed: the pages you changed.')
   return lines.join('\n')
 }

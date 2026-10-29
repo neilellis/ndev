@@ -84,6 +84,8 @@ test('a report asks the main agent to see a docs fix served before it replies', 
   const { mainMessage } = recordReport(run(), report, 10)
   expect(mainMessage).toMatch(/fetch each changed page from the docs server/)
   expect(mainMessage).toMatch(/touch the file/)
+  // a long page rebuilds for a minute or more, so quick refetches miss a change that is on its way
+  expect(mainMessage).toMatch(/\.next\/trace/)
 })
 
 test('a report is refused when a field is missing or the code is unknown, and nothing is recorded', () => {
