@@ -11,6 +11,7 @@ import { initProjectSection, refreshInitProject, startInitProject } from './init
 import { askCredentials, credentialsSection, startCredentials } from './credentials'
 import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
 import { learnAfterPush } from './learn'
+import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 
 const PLUGIN = 'ndev'
 
@@ -230,6 +231,7 @@ export const register: Register = (on, options) => {
   quality(on, () => project)
   learnAfterPush(on)
   fixAllPrs(on)
+  responsiveCheck(on)
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
@@ -262,6 +264,7 @@ export const register: Register = (on, options) => {
       description: 'Review this session for development lessons and record them in ~/dev-wiki',
     })
     await startFixAllPrs($)
+    await startResponsiveCheck($)
     // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
     try {
       await startWalkDoc($, e.cwd)

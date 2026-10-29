@@ -12,12 +12,12 @@ Find the project's UX pages from its wiki index file (usually under a `visual/` 
 | Usability and priority | Apply standard usability heuristics. Make the most important item the most visible. |
 | What to show | Use progressive disclosure: show the summary first, and the detail on request. |
 | Navigation | A reader always knows where they are and how to go back. |
-| Touch and input | Touch targets are at least 44 by 44 CSS pixels. Every action works from the keyboard. Forms say what is wrong and how to fix it. |
+| Touch and input | Touch targets are at least 24 by 24 CSS pixels (WCAG 2.5.8), and 44 by 44 on touch layouts. Every action works from the keyboard. Forms say what is wrong and how to fix it. |
 | Accessibility | Meet WCAG 2.2 AA: contrast, labels, focus order, and no meaning carried by colour alone. |
 | Feedback and performance | Show that work has started. Show progress for slow work. An error names the next action. |
 
 - Use the project's design system for the actual tokens and components.
-- Check desktop reflow and the mobile layout. Use `mobile-testing` for mobile screenshots.
+- Check desktop reflow and the mobile layout. Use `responsive-check` for the matrix of viewports and colour schemes, and `mobile-testing` for quick mobile screenshots.
 - Use `copy` for the words.
 
 Record a durable UX decision in the project's wiki, with the LLM-wiki ingest steps (the plugin's `kb/llm-wiki.md`). Do not copy project guidance into this skill.
