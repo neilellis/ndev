@@ -42,7 +42,10 @@ The steps that work:
 9. Stop the helper when you are done: `orca emulator kill --json`.
 
 - `xcrun simctl ui <udid> appearance dark` sets the system scheme only. A site that stores its own theme choice does not follow it: press the site's toggle instead.
-- Do not terminate Safari between steps (`simctl terminate`). On a loaded Mac, the next `simctl launch` can hang for minutes and leave Safari on a black screen. Then shut the device down (`xcrun simctl shutdown <udid>`) and boot it again.
+- Do not terminate Safari between steps (`simctl terminate`). On a loaded Mac, the next `simctl launch` can hang for minutes and leave Safari on a black screen.
+- If `simctl launch` or `openurl` hangs, read the simulator log before you retry:
+  `xcrun simctl spawn <udid> log show --last 5m --style compact --predicate 'eventMessage CONTAINS[c] "mobilesafari"'`.
+  The line "did not return a process handle nor launch error" means that the simulator could not start Safari. Every later `openurl` then fails with "Operation timed out" (code 60). Do not retry: shut the device down (`xcrun simctl shutdown <udid>`) and boot it again.
 - Not tested yet: Orca's serve-sim runtime includes `inspect-webkit`, a bridge to Safari's Web Inspector in the simulator. It could give exact element boxes (`DOM.getBoxModel`), but you must map them to screen coordinates yourself. `safaridriver` with `safari:useSimulator` needs `safaridriver --enable` first, which the user must authorise.
 - The iPhone SE (3rd generation) is 375 px wide. The matrix's 320 px row has no current simulator, so check 320 px with the script.
 
