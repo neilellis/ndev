@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
     --dry-run) dry_run=1 ;;
     --remove) remove=1 ;;
     --source)
-      [ $# -ge 2 ] || die "--source needs a path. Example: --source ~/dev/neil-development"
+      [ $# -ge 2 ] || die "--source needs a path. Example: --source ~/dev/ndev"
       source_root="$2"
       shift
       ;;
@@ -44,7 +44,7 @@ done
 # from Claude's plugin cache, else the plugin that holds this script.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 own_root="$(cd "$script_dir/../../.." && pwd -P)"
-working_copy="$HOME/dev/neil-development"
+working_copy="$HOME/dev/ndev"
 
 if [ -n "$source_root" ]; then
   [ -d "$source_root/skills" ] ||

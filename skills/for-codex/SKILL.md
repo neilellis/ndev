@@ -44,7 +44,7 @@ This removes only symlinks that point into this plugin, and the `.codex/scripts`
 
 Claude Code runs an installed plugin from its cache, `~/.claude/plugins/cache/<marketplace>/ndev/<version>/`. A plugin update changes that path and breaks links to it. So:
 
-1. If the script runs from the cache and `~/dev/neil-development` exists, it links to that working copy.
+1. If the script runs from the cache and `~/dev/ndev` exists, it links to that working copy.
 2. If no working copy exists, it links to the cache and prints a warning. Run it again after each plugin update.
 3. To use some other copy, give `--source <plugin-root>`.
 

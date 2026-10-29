@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 
 export const PLUGIN = "video-kit";
 export const PLUGIN_ID = "ndev";
-export const MARKETPLACE = "neil-development";
+export const MARKETPLACE = "ndev";
 export const SKILL_PATH = "skills/video-setup/scripts";
 export const ENV = "VIDEO_KIT_SOURCE";
 export const ENGINE_DIR = "scripts/video-kit";

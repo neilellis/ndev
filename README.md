@@ -1,4 +1,4 @@
-# ndev (neil-development)
+# ndev
 
 The software factory: one place for the development procedures that repeat in every project.
 It is a Claude Code plugin. It holds the methodology, the workflow skills, the subagents and a
@@ -241,12 +241,12 @@ install the plugin.
 ```json
 {
   "extraKnownMarketplaces": {
-    "neil-development": {
-      "source": { "source": "github", "repo": "neilellis/neil-development" }
+    "ndev": {
+      "source": { "source": "github", "repo": "neilellis/ndev" }
     }
   },
   "enabledPlugins": {
-    "ndev@neil-development": true
+    "ndev@ndev": true
   }
 }
 ```
@@ -254,13 +254,14 @@ install the plugin.
 Or install it by hand:
 
 ```
-/plugin marketplace add neilellis/neil-development
-/plugin install ndev@neil-development
+/plugin marketplace add neilellis/ndev
+/plugin install ndev@ndev
 ```
 
-The plugin was called `neil-development` before version 0.6.0. To move an existing install, run
-`/plugin uninstall ndev@neil-development`, then `/plugin install ndev@neil-development`,
-and change `enabledPlugins` in your settings to `"ndev@neil-development": true`.
+The plugin was called `neil-development` before version 0.6.0, and its marketplace was called
+`neil-development` before version 0.7.1. To move an existing install, run
+`/plugin uninstall ndev@neil-development` (or `neil-development@neil-development`), then the two
+commands above, and change `enabledPlugins` in your settings to `"ndev@ndev": true`.
 
 Plugin skills are namespaced, for example `/ndev:work-light`. A project skill with the
 same name stays separate. Delete the project copy when the plugin version replaces it.

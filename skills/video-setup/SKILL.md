@@ -73,8 +73,8 @@ Run `node scripts/video-kit/check.mjs` (or `npm run check`) in the video's folde
 
    ```json
    {
-     "extraKnownMarketplaces": { "neil-development": { "source": { "source": "github", "repo": "neilellis/neil-development" } } },
-     "enabledPlugins": { "ndev@neil-development": true }
+     "extraKnownMarketplaces": { "ndev": { "source": { "source": "github", "repo": "neilellis/ndev" } } },
+     "enabledPlugins": { "ndev@ndev": true }
    }
    ```
 
