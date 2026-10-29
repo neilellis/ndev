@@ -12,6 +12,7 @@ import { askCredentials, credentialsSection, startCredentials } from './credenti
 import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
 import { learnAfterPush } from './learn'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
+import { startTriage, triage } from './triage'
 
 const PLUGIN = 'ndev'
 
@@ -207,6 +208,7 @@ async function helpText($: EngineInterface) {
     '  /dev mode [light|heavy]             switch development mode (no value toggles)',
     '  /dev steering [interactive|auto]    switch steering (no value toggles)',
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
+    '  /triage start [--dry-run]   group the open issues and work each group in its own Orca workspace (Triage pane)',
     '  /dev-mode, /dev-steering and /dev-setup still work as before.',
     '',
     `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
@@ -232,6 +234,7 @@ export const register: Register = (on, options) => {
   learnAfterPush(on)
   fixAllPrs(on)
   responsiveCheck(on)
+  triage(on, () => project)
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
@@ -265,6 +268,7 @@ export const register: Register = (on, options) => {
     })
     await startFixAllPrs($)
     await startResponsiveCheck($)
+    await startTriage($)
     // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
     try {
       await startWalkDoc($, e.cwd)
@@ -337,7 +341,7 @@ export const register: Register = (on, options) => {
       brandingText(project?.config.branding),
       githubText(project?.config.github),
       WIKI_TEXT,
-      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), and asks for a lesson review with /learn.',
+      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /triage start.',
     ]
       .filter(Boolean)
       .join('\n\n')
