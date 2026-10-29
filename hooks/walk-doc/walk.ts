@@ -33,6 +33,8 @@ export type Config = {
   persona: string
   // The project-root file of KEY=VALUE pairs the reader may use (passwords the docs say to ask for); null: none.
   valuesFile: string | null
+  // The valuesFile keys the reader gets, when the file also holds keys it must not see (an API key); null: every key.
+  valueKeys: string[] | null
   // How the reader gets a fresh Linux machine or container, and the bash that deletes a walk's machines by
   // name prefix ({prefix}); null: the reader works on this computer only.
   machines: { guide: string[]; cleanup: string } | null
@@ -48,7 +50,8 @@ const EXAMPLES: Record<string, unknown> = {
   issues: 'gh issue create --title <title> --body-file <file>',
   tips: ['Docker is installed and running.'],
   persona: 'a developer on a Linux laptop who has never seen this project before',
-  valuesFile: '.env.walk-docs',
+  valuesFile: '.neil-dev.env',
+  valueKeys: ['DOWNLOAD_USER', 'DOWNLOAD_PASSWORD'],
   machines: { guide: ['For a Linux install, make a fresh container: docker run -d --name <name> ubuntu sleep infinity.'], cleanup: 'ids=$(docker ps -aq --filter name=^{prefix}) || exit 1; [ -z "$ids" ] || docker rm -f $ids' },
 }
 const example = (key: string) => `for example "${key}": ${JSON.stringify(EXAMPLES[key])}`
@@ -116,6 +119,8 @@ export function parseConfig(text: string, file = CONFIG_FILE): Config {
   if (o.tips !== undefined && !strings(o.tips)) throw wrong('tips', 'a list of strings: what every reader is told')
   if (o.persona !== undefined && (typeof o.persona !== 'string' || o.persona.trim() === '')) throw wrong('persona', 'a non-empty string: who the reader is')
   if (o.valuesFile !== undefined && (typeof o.valuesFile !== 'string' || o.valuesFile === '' || o.valuesFile.includes('/'))) throw wrong('valuesFile', 'a file name at the project root')
+  if (o.valueKeys !== undefined && (!strings(o.valueKeys) || !(o.valueKeys as string[]).every(k => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)))) throw wrong('valueKeys', 'a list of KEY names from the valuesFile')
+  if (o.valueKeys !== undefined && o.valuesFile === undefined) throw new Error(`valueKeys in ${file} needs valuesFile: it names keys of that file, ${example('valuesFile')}.`)
   const m = o.machines as { guide?: unknown; cleanup?: unknown } | undefined
   if (m !== undefined && (typeof m !== 'object' || m === null || !strings(m.guide) || typeof m.cleanup !== 'string')) {
     throw wrong('machines', 'an object with guide (a list of lines for the reader) and cleanup (bash)')
@@ -133,6 +138,7 @@ export function parseConfig(text: string, file = CONFIG_FILE): Config {
     tips: (o.tips as string[] | undefined) ?? [],
     persona: (o.persona as string | undefined)?.trim() ?? DEFAULT_PERSONA,
     valuesFile: (o.valuesFile as string | undefined) ?? null,
+    valueKeys: (o.valueKeys as string[] | undefined) ?? null,
     machines: m === undefined ? null : { guide: m.guide as string[], cleanup: m.cleanup as string },
   }
 }
@@ -582,6 +588,8 @@ export function guardCall(run: Run, config: Config, call: GuardCall, now: number
     const tokens = command.split(/[\s;&|<>()'"=]+/).map(t => expandHome(run, t)).filter(t => t !== '' && !/^[a-z]+:\/\//.test(t))
     const intoRoot = tokens.some((t, i) => tokens[i - 1] === 'cd' && normalise(t.startsWith('/') ? t : `${run.root}/${t}`) === normalise(run.root))
     for (const token of tokens) {
+      const values = deniedValues(config, token)
+      if (values !== null) return values
       if (!token.includes('/') && !intoRoot) continue
       const bases = token.startsWith('/') ? [''] : token.includes('/') ? [`${run.root}/`, `${workspaceOf(run)}/`] : [`${run.root}/`]
       for (const base of bases) {
@@ -611,6 +619,24 @@ function expandHome(run: Run, token: string): string {
   return token.replace(/^(\$\{HOME\}|\$HOME|~)(?=\/|$)/, run.home)
 }
 
+// The files of private values. The reader gets only the valueKeys, in its prompt, and never reads the file:
+// ndev's credentials file and the config's valuesFile, by name, in any checkout.
+const CREDENTIALS_FILE = '.neil-dev.env'
+const valuesNames = (config: Config) => [...new Set([CREDENTIALS_FILE, ...(config.valuesFile === null ? [] : [config.valuesFile.split('/').pop()!])])]
+
+// A shell glob over one path part; a dotfile matches only a pattern that starts with a dot, as in the shell.
+function globMatches(pattern: string, name: string): boolean {
+  if (name.startsWith('.') && !pattern.startsWith('.')) return false
+  const source = pattern.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*+/g, '[^/]*').replace(/\?/g, '[^/]')
+  return new RegExp(`^${source}$`).test(name)
+}
+
+function deniedValues(config: Config, given: string, raw = given): string | null {
+  const last = given.replace(/\/+$/, '').split('/').pop() ?? ''
+  const hit = valuesNames(config).find(n => (/[*?[]/.test(last) ? globMatches(last, n) : last === n))
+  return hit === undefined ? null : `walk-doc: ${raw} could be ${hit}, the file of private values, which is denied to the Walk agent. The values the docs need are in your prompt.`
+}
+
 // The directories the Walk agent may not read.
 function deniedDirs(run: Run, config: Config): string[] {
   return [`${run.home}/.claude`, `${run.root}/${config.contentRoot}`, ...config.deny.map(d => `${run.root}/${d}`)].map(normalise)
@@ -618,6 +644,8 @@ function deniedDirs(run: Run, config: Config): string[] {
 
 // A glob is denied when anything it could match is: its fixed part leads into, or lies under, a denied directory.
 function deniedGlob(run: Run, config: Config, pattern: string): string | null {
+  const values = deniedValues(config, pattern)
+  if (values !== null) return values
   const fixed = pattern.slice(0, pattern.search(/[*?[]|$/))
   const prefix = fixed.endsWith('/') ? `${normalise(fixed)}/`.replace(/^\/\/$/, '/') : normalise(fixed)
   const hit = deniedDirs(run, config).find(d => d.startsWith(prefix) || prefix.startsWith(`${d}/`))
@@ -627,6 +655,8 @@ function deniedGlob(run: Run, config: Config, pattern: string): string | null {
 function deniedPath(run: Run, config: Config, given: string, raw = given): string | null {
   const abs = given.startsWith('~/') ? `${run.home}${given.slice(1)}` : given.startsWith('/') ? given : `${run.root}/${given}`
   const path = normalise(abs)
+  const values = deniedValues(config, path, raw)
+  if (values !== null) return values
   const allowed = run.allowedPaths.map(p => normalise(p.startsWith('~/') ? `${run.home}${p.slice(1)}` : `${run.root}/${p}`))
   if (allowed.includes(path) || (run.savedOutputs ?? []).includes(path)) return null
   const under = (dir: string) => path === dir || path.startsWith(`${dir}/`)
@@ -732,11 +762,20 @@ export function parseEnvFile(text: string, file: string): Record<string, string>
     const line = raw.trim()
     if (line === '' || line.startsWith('#')) return
     const m = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
-    if (m === null) throw new Error(`${file} line ${i + 1} is not KEY=VALUE: ${JSON.stringify(raw)}. Fix or remove that line.`)
+    if (m === null) throw new Error(`${file} line ${i + 1} is not KEY=VALUE (the line is not shown: it can hold a private value). Fix or remove that line.`)
     const value = m[2]!
     values[m[1]!] = /^(["']).*\1$/.test(value) ? value.slice(1, -1) : value
   })
   return values
+}
+
+// The values the reader may see: only the valueKeys when the config names them. A named key the file does not set
+// is refused, so a walk never starts without a value the docs ask for. The refusal never shows a value.
+export function readerValues(values: Record<string, string>, keys: string[] | null, file: string): Record<string, string> {
+  if (keys === null) return values
+  const missing = keys.filter(k => !values[k])
+  if (missing.length > 0) throw new Error(`${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set in ${file}, and valueKeys names ${missing.length === 1 ? 'it' : 'them'}. Add ${missing.map(k => `${k}=<value>`).join(' and ')} to that file (never in chat), or remove ${missing.length === 1 ? 'it' : 'them'} from valueKeys.`)
+  return Object.fromEntries(keys.map(k => [k, values[k]!]))
 }
 
 // What the reader is told about the values the person put in the values file.

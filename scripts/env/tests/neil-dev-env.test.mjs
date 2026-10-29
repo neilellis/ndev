@@ -227,3 +227,40 @@ test('init reads only plain values: a shell operator, a quote in the value or a 
   assert.match(r.out, /OPENROUTER_API_KEY.*not a plain value/)
   assert.match(r.out, /UNSPLASH_ACCESS_KEY.*not a plain value/)
 })
+
+test('import merges another KEY=VALUE file into the main checkout file and the worktree copy, without printing a value', () => {
+  const p = project()
+  assert.equal(run(p, p.main, 'init').status, 0)
+  const old = join(p.base, 'walk.env')
+  writeFileSync(old, '# walk values\nDOWNLOAD_USER=not-asked-for\nOPENAI_API_KEY=sk-oa-xyz789\n', { mode: 0o644 })
+  const r = run(p, p.worktree, 'import', old)
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.out, /added: DOWNLOAD_USER/)
+  assert.match(r.out, /already set to the same value: OPENAI_API_KEY/)
+  for (const file of [join(p.main, '.neil-dev.env'), join(p.worktree, '.neil-dev.env')]) {
+    assert.equal(values(file).DOWNLOAD_USER, 'not-asked-for')
+    assert.equal(values(file).OPENAI_API_KEY, 'sk-oa-xyz789')
+    assert.equal(statSync(file).mode & 0o777, 0o600)
+  }
+  assert.ok(existsSync(old), 'import removed the file it read')
+})
+
+test('import refuses a key whose value differs, names the key, and writes nothing', () => {
+  const p = project()
+  assert.equal(run(p, p.main, 'init').status, 0)
+  const before = readFileSync(join(p.main, '.neil-dev.env'), 'utf8')
+  const old = join(p.base, 'walk.env')
+  writeFileSync(old, 'DOWNLOAD_USER=not-asked-for\nOPENAI_API_KEY=other-value\n')
+  const r = run(p, p.main, 'import', old)
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /OPENAI_API_KEY/)
+  assert.ok(!r.out.includes('other-value'))
+  assert.equal(readFileSync(join(p.main, '.neil-dev.env'), 'utf8'), before)
+})
+
+test('import of a file that does not exist names it and exits 1', () => {
+  const p = project()
+  const r = run(p, p.main, 'import', join(p.base, 'absent.env'))
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /absent\.env/)
+})

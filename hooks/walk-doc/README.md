@@ -76,7 +76,8 @@ Put `.walk-doc.json` at the repository root. The walk reads it when a session st
   "media": "Copy media into public/media/ and embed a screenshot as ![caption](/media/name.jpg).",
   "issues": "gh issue create --title <title> --body-file <file>",
   "persona": "a developer on a Linux laptop who has never seen this project before",
-  "valuesFile": ".env.walk-docs",
+  "valuesFile": ".neil-dev.env",
+  "valueKeys": ["DOWNLOAD_USER", "DOWNLOAD_PASSWORD"],
   "machines": {
     "guide": ["For a Linux install, make a fresh container: docker run -d --name <name> ubuntu sleep infinity."],
     "cleanup": "ids=$(docker ps -aq --filter name=^{prefix}) || exit 1; [ -z \"$ids\" ] || docker rm -f $ids"
@@ -95,13 +96,14 @@ Put `.walk-doc.json` at the repository root. The walk reads it when a session st
 | `tips` | No | What every reader is told when it starts, such as which services it can reach. `/walk-doc tip <text>` adds one and sends it to the running reader. |
 | `persona` | No | Who the reader is. The default is "a competent developer who has never seen this project before". |
 | `valuesFile` | No | A file name at the repository root that holds values for the reader (see below). Without this key, the reader gets no values. |
+| `valueKeys` | No | The keys of the `valuesFile` that the reader gets. Without it, the reader gets every key. Set it when the file also holds keys the reader must not see, such as the API keys in `.neil-dev.env`. A named key the file does not set stops the walk. |
 | `machines` | No | How the reader makes a machine or container for Linux or server docs. `guide` is a list of lines the reader is told. `cleanup` is a bash command that must contain `{prefix}`; `walk_finish` and `/walk-doc stop` run it with `{prefix}` replaced by `walk-<run>-`, and it must delete only the machines whose names start with that prefix. A cleanup that fails must exit non-zero, so do not end it in a pipe that hides the exit status. Without `machines`, the reader is told nothing about machines, and nothing is cleaned up. |
 
 Add `walk-run/` and the `valuesFile` to `.gitignore`.
 
 ### Values for the reader
 
-Some docs say "ask us for the login". Put such values in the `valuesFile`, one `KEY=VALUE` per line (`#` comments allowed). The walk passes them to the Walk agent when it starts and again with each `CONTINUE`, so a value added during a walk reaches the reader on the next reply. The walk looks for the file at the root of the checkout it runs in. Then it looks at the root of the main project checkout, which every worktree shares. The start message and the reader's values note give the file's path and say whether it is in the main project checkout. When neither has it, the walk refuses to start. The refusal names a copy in another worktree and the `cp` command that puts it in the main project checkout, or says how to create the file. Keep the file out of git.
+Some docs say "ask us for the login". Put such values in the `valuesFile`, one `KEY=VALUE` per line (`#` comments allowed). Use `.neil-dev.env`, the project's credentials file for ndev skills, and name the reader's keys in `valueKeys`. To move an older values file into it, run `node <ndev>/scripts/env/neil-dev-env.mjs import <file>`: it adds the keys without printing a value and refuses a key that already has another value. `walk_record` refuses a recording that shows any value in the file, not only the `valueKeys`. The Walk agent cannot read the file itself: the guard refuses `.neil-dev.env` and the `valuesFile` by name, in any folder and through a matching glob. A line that is not `KEY=VALUE` is named by its number, never shown. A `valueKeys` key that the file does not set stops the walk before the dev server starts. The walk passes them to the Walk agent when it starts and again with each `CONTINUE`, so a value added during a walk reaches the reader on the next reply. The walk looks for the file at the root of the checkout it runs in. Then it looks at the root of the main project checkout, which every worktree shares. The start message and the reader's values note give the file's path and say whether it is in the main project checkout. When neither has it, the walk refuses to start. The refusal names a copy in another worktree and the `cp` command that puts it in the main project checkout, or says how to create the file. Keep the file out of git.
 
 To get a text message when a walk escalates or finishes, set the ndev plugin option `textTo` to a phone number or Apple ID. Texts are sent with Messages through `osascript`, so they work only on a Mac. With `textTo` empty, no text is sent and the tool says so.
 

@@ -6,6 +6,8 @@
 //   neil-dev-env.mjs status [--json]           where the file is, and which key names it sets
 //   neil-dev-env.mjs init [--from <file>] [--key NAME]...
 //                                              create or extend the file from the exports in ~/.zshrc
+//   neil-dev-env.mjs import <file>             merge the KEY=VALUE lines of another file, such as a
+//                                              skill's old credentials file, into this one
 //   neil-dev-env.mjs check NAME...             exit 1 when a named key is not set in the file
 //   neil-dev-env.mjs run [--need NAME[,NAME]] -- <command> [args...]
 //                                              run a command with the file's keys in its environment
@@ -223,6 +225,44 @@ function init(loc, from, extra) {
   return report.join('\n')
 }
 
+// Merges the KEY=VALUE lines of another file into the main checkout file, then refreshes this
+// worktree's copy. A key already set to another value is refused by name, and nothing is written.
+function importFrom(loc, from) {
+  if (!existsSync(from)) throw new Refusal(`import: ${from} does not exist. Give the path of the KEY=VALUE file to merge into ${FILE}.`)
+  const target = loc.main ?? loc.root
+  if (!ignored(target)) throw new Refusal(ignoreRepair(target))
+  const file = join(target, FILE)
+  const existed = existsSync(file)
+  let text = existed ? readFileSync(file, 'utf8') : `# Private credentials for ndev skills. Git-ignored; keep it mode 600.\n# One KEY=VALUE per line. Never commit, print or paste these values.\n`
+  const have = existed ? parse(text, file) : {}
+  const copy = loc.root !== target ? join(loc.root, FILE) : null
+  if (copy !== null && existsSync(copy)) {
+    const local = parse(readFileSync(copy, 'utf8'), copy)
+    const apart = Object.keys(local).filter(k => have[k] !== local[k])
+    if (apart.length > 0) throw new Refusal(`${apart.join(', ')} in ${copy} ${apart.length === 1 ? 'is' : 'are'} not in ${file} with the same value. Run ${INIT} in this worktree first, so import does not overwrite the worktree copy.`)
+  }
+  const incoming = parse(readFileSync(from, 'utf8'), from)
+  const differ = Object.keys(incoming).filter(k => have[k] !== undefined && have[k] !== incoming[k])
+  if (differ.length > 0) {
+    throw new Refusal(`${differ.join(', ')} ${differ.length === 1 ? 'has' : 'have'} one value in ${from} and another in ${file}. Keep the right value in both files by hand, then run import again. Nothing was written.`)
+  }
+  const added = Object.keys(incoming).filter(k => have[k] === undefined)
+  const same = Object.keys(incoming).filter(k => have[k] !== undefined)
+  const lines = added.map(k => line(k, incoming[k]))
+  if (lines.length > 0) text = `${text.endsWith('\n') || text === '' ? text : `${text}\n`}# from ${from}\n${lines.join('\n')}\n`
+  writeFileSync(file, text, { mode: 0o600 })
+  chmodSync(file, 0o600)
+  const copied = copy !== null && ignored(loc.root)
+  if (copied) copyTo(file, copy)
+  return [
+    `${existed ? 'Updated' : 'Created'} ${file} (mode 600)${copied ? `, and copied it to ${copy}` : ''}.`,
+    ...(copy !== null && !copied ? [`${copy} was not updated: git does not ignore ${FILE} in ${loc.root}. Add it to .gitignore, then run ${INIT} there.`] : []),
+    `added: ${added.join(', ') || 'none'}`,
+    `already set to the same value: ${same.join(', ') || 'none'}`,
+    `${from} is unchanged. Delete it once nothing reads it any more.`,
+  ].join('\n')
+}
+
 function main(argv) {
   const [command, ...args] = argv
   const loc = locate(process.cwd())
@@ -245,6 +285,10 @@ function main(argv) {
       else throw new Refusal(`init: "${args[i]}" is not an option. Use --from <file> or --key NAME.`)
     }
     return console.log(init(loc, from, extra))
+  }
+  if (command === 'import') {
+    if (args.length !== 1) throw new Refusal('import: give one file, such as: import .env.walk-docs')
+    return console.log(importFrom(loc, args[0]))
   }
   if (command === 'check') {
     if (args.length === 0) throw new Refusal('check: name at least one key, such as: check OPENAI_API_KEY')
@@ -280,7 +324,7 @@ function main(argv) {
     process.exitCode = r.status ?? 1
     return
   }
-  throw new Refusal(`"${command ?? ''}" is not a command. Use status, init, check or run (see the top of ${SELF}).`)
+  throw new Refusal(`"${command ?? ''}" is not a command. Use status, init, import, check or run (see the top of ${SELF}).`)
 }
 
 try {

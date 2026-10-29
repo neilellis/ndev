@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   MAX_RESTARTS, SAME_STEP_LIMIT, applyReply, savedOutputs, escalate, walkStopped, docsNamedPaths, guardCall, arrowDwell, arrowDwellOf, imessageArgv, newRun, pageUrl, parseArgs,
-  castProblems, parseConfig, recordEnhance, recordMedia, recordedBash, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, reportMarkdown, shellQuote, ancestorsOf, addTip, tipsNote,
+  castProblems, parseConfig, recordEnhance, recordMedia, recordedBash, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, readerValues, reportMarkdown, shellQuote, ancestorsOf, addTip, tipsNote,
 } from '../hooks/walk-doc/walk'
 import type { Config, Run } from '../hooks/walk-doc/walk'
 import { WALK_SYSTEM_PROMPT, walkTask } from '../hooks/walk-doc/prompts'
@@ -206,6 +206,22 @@ test('the guard denies the Walk agent the repo source, internal docs, the docs s
   expect(call('mcp__ndev__walk_reply', { action: 'CONTINUE' })).toMatch(/main agent/)
 })
 
+test('the guard denies the Walk agent the private values file, by name, in every checkout and through a glob', () => {
+  const r = run({ agentIds: ['w'] })
+  const withValues = { ...config, valuesFile: '.env.walk-docs' }
+  const call = (tool: string, input: Record<string, unknown>) => guardCall(r, withValues, { tool, agentId: 'w', input })
+  for (const file of ['/repo/.neil-dev.env', '/main/lens/.neil-dev.env', '.neil-dev.env', '/repo/.env.walk-docs', '~/dev/lens/.env.walk-docs']) {
+    expect(call('Read', { file_path: file })).toMatch(/private values/)
+  }
+  for (const command of ['cat /repo/.neil-dev.env', 'cat .neil-dev.env', 'head -1 ~/dev/lens/.neil-dev.env', 'cat /repo/.neil*', 'cat $HOME/x/.env.walk-*']) {
+    expect(call('Bash', { command })).toMatch(/private values/)
+  }
+  expect(call('Glob', { pattern: '**/.neil-dev.*', path: '/home/n/.walk-doc/r1/attempt-1' })).toMatch(/private values/)
+  // A wildcard that does not start with a dot does not match a dotfile, as in the shell.
+  expect(call('Bash', { command: 'ls /home/n/.walk-doc/r1/attempt-1/*' })).toBeNull()
+  expect(call('Glob', { pattern: '**/*.cast', path: '/home/n/.walk-doc/r1/attempt-1' })).toBeNull()
+})
+
 test('the click dwell is 2000 ms plus 50 ms per caption character, at most 5000 ms', () => {
   const click = { tool: 'mcp__plugin_ndev_playwright__browser_click', agentId: 'w', input: {} }
   const armed = (len: number) => run({ agentIds: ['w'], arrowArmed: true, arrowArmedAt: 1000, arrowDwellMs: arrowDwell(len) })
@@ -352,6 +368,17 @@ test('parseEnvFile reads KEY=VALUE lines, skips comments and blanks, and strips 
 
 test('parseEnvFile refuses a line that is not KEY=VALUE, naming the file and the line', () => {
   expect(() => parseEnvFile('GOOD=1\nnot a pair\n', '/repo/.env.walk-docs')).toThrow(/\/repo\/\.env\.walk-docs line 2/)
+  // The line can be a pasted key, so the refusal never shows it.
+  expect(() => parseEnvFile('sk-proj-secret\n', '/repo/.neil-dev.env')).toThrow(/line 1 is not KEY=VALUE/)
+  expect(() => parseEnvFile('sk-proj-secret\n', '/repo/.neil-dev.env')).not.toThrow(/sk-proj-secret/)
+})
+
+test('readerValues keeps only the valueKeys, and refuses one the file does not set, naming the key, the file and the repair', () => {
+  const values = { DOWNLOAD_USER: 'download', OPENAI_API_KEY: 'sk-x' }
+  expect(readerValues(values, null, '/repo/.neil-dev.env')).toEqual(values)
+  expect(readerValues(values, ['DOWNLOAD_USER'], '/repo/.neil-dev.env')).toEqual({ DOWNLOAD_USER: 'download' })
+  expect(() => readerValues(values, ['DOWNLOAD_USER', 'DEMO_PASSWORD'], '/repo/.neil-dev.env')).toThrow(/DEMO_PASSWORD is not set in \/repo\/\.neil-dev\.env[^\n]*DEMO_PASSWORD=<value>/)
+  expect(() => readerValues(values, ['DEMO_PASSWORD'], '/repo/.neil-dev.env')).not.toThrow(/sk-x/)
 })
 
 test('valuesNote hands the values to the reader, and says nothing when there are none', () => {
@@ -511,6 +538,10 @@ test('the optional keys default to project-neutral values, and a bad value is re
   expect(c.machines).toBeNull()
   expect(parseConfig(fixture({ persona: 'an SRE on Linux', valuesFile: '.walk-values', machines: MACHINES }))).toMatchObject({ persona: 'an SRE on Linux', valuesFile: '.walk-values', machines: MACHINES })
   expect(() => parseConfig(fixture({ persona: '' }))).toThrow(/persona in \.walk-doc\.json[^\n]*for example "persona": /)
+  expect(c.valueKeys).toBeNull()
+  expect(parseConfig(fixture({ valuesFile: '.neil-dev.env', valueKeys: ['DOWNLOAD_USER'] })).valueKeys).toEqual(['DOWNLOAD_USER'])
+  expect(() => parseConfig(fixture({ valueKeys: ['DOWNLOAD_USER'] }))).toThrow(/valueKeys in \.walk-doc\.json needs valuesFile/)
+  expect(() => parseConfig(fixture({ valuesFile: '.neil-dev.env', valueKeys: ['bad key'] }))).toThrow(/valueKeys in \.walk-doc\.json[^\n]*for example "valueKeys": /)
   expect(() => parseConfig(fixture({ valuesFile: 3 }))).toThrow(/valuesFile in \.walk-doc\.json[^\n]*for example "valuesFile": /)
   expect(() => parseConfig(fixture({ machines: { guide: 'x', cleanup: 'y {prefix}' } }))).toThrow(/machines in \.walk-doc\.json[^\n]*for example "machines": /)
   expect(() => parseConfig(fixture({ machines: { guide: ['x'], cleanup: 'vm delete' } }))).toThrow(/machines\.cleanup[^\n]*\{prefix\}/)

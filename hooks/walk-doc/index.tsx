@@ -10,7 +10,7 @@ import type { EngineInterface, On, PluginOptions, TurnCompleteInput } from 'clau
 import { WALK_SYSTEM_PROMPT, walkTask } from './prompts'
 import {
   AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, arrowAfter, arrowDwellOf, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
-  newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, exampleConfig, addTip, cleanTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
+  newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, readerValues, valuesNote, exampleConfig, addTip, cleanTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
   walkStopped, workspaceOf,
 } from './walk'
 import type { Config, Run } from './walk'
@@ -138,7 +138,7 @@ async function findValues($: EngineInterface, at: string, config: Config, retry 
 async function loadValues($: EngineInterface, at: string, config: Config, retry?: string): Promise<string> {
   const found = await findValues($, at, config, retry)
   if (found === null) return ''
-  return valuesNote(parseEnvFile(await $.fs.read(found.file), found.file), `${found.file}, ${found.place}`)
+  return valuesNote(readerValues(parseEnvFile(await $.fs.read(found.file), found.file), config.valueKeys, found.file), `${found.file}, ${found.place}`)
 }
 
 // The valuesFile values as [key, value] pairs, so walk_record can refuse a recording that shows one.
@@ -287,6 +287,8 @@ async function startWalk($: EngineInterface, args: string): Promise<string> {
   // Before the dev server: its first compile can take minutes, and a walk without its browser cannot start.
   const browser = await requireBrowser($)
   const values = await findValues($, root, config)
+  // A valueKeys key the file lacks is refused here, not after the dev server's first compile.
+  if (values !== null) readerValues(parseEnvFile(await $.fs.read(values.file), values.file), config.valueKeys, values.file)
   let target = parsed.target.replace(/^\.\//, '')
   if (target.startsWith('/') && !target.startsWith(`${root}/`)) {
     // A docs-site path such as /manuals/operations-manual/ names a page or a section under the content root.

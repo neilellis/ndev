@@ -178,11 +178,13 @@ The private keys for ndev skills go in `.neil-dev.env` at the project root. The 
 | `OPENAI_API_KEY` | Word timings for narration (video-narration, video-setup) |
 | `UNSPLASH_ACCESS_KEY` | Photographs (video-images, video-setup) |
 | `VERCEL_AUTOMATION_BYPASS_SECRET` | Protected Vercel previews (site-check) |
+| Any key a project adds | For example the logins a walk-doc reader may use (walk-doc's `valuesFile` and `valueKeys`) |
 
 `scripts/env/neil-dev-env.mjs` owns the file:
 
 - `init [--key NAME]...` creates the file, or adds to it. It reads the exports in `~/.zshrc` as text and never runs it. It keeps the values already in the file and lists the keys that are missing.
 - `status [--json]` and `check NAME...` report key names, never values.
+- `import <file>` adds the `KEY=VALUE` lines of another file, such as a skill's older credentials file, without printing a value. It refuses a key that already has another value, and leaves the other file in place.
 - `run --need A,B -- <command>` runs the command with the file's keys in its environment.
 
 The file belongs to the main checkout. In a worktree, the first look for the file copies it from the main checkout, but only when git ignores the name there. `init` in a worktree first moves keys added to the copy into the main checkout file. It refuses when a key has a different value in the two files. A project that does not ignore `.neil-dev.env` gets no file: add the name to `.gitignore`, or to `info/exclude` in the git common folder.

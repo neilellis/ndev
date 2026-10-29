@@ -397,6 +397,29 @@ test('values in .walk-values reach the reader when it starts and with each CONTI
   expect(h.sent[0]!.text).toContain('(from /repo/.walk-values, in the main project checkout)')
 })
 
+test('with valueKeys, the reader gets only those keys and never sees another key of the file', async ($, on) => {
+  const h = harness(on)
+  h.flags.config = fixture({ valuesFile: '.walk-values', valueKeys: ['DOWNLOAD_USER'] })
+  h.flags.envText = 'DOWNLOAD_USER=download\nOPENAI_API_KEY=sk-secret-1234\n'
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(h.spawns[0]!.prompt).toContain('DOWNLOAD_USER=download')
+  expect(h.spawns[0]!.prompt).not.toContain('sk-secret-1234')
+  expect(h.spawns[0]!.prompt).not.toContain('OPENAI_API_KEY')
+})
+
+test('a valueKeys key the file does not set refuses the walk before the dev server starts, naming the key and the repair', async ($, on) => {
+  const h = harness(on)
+  h.flags.config = fixture({ valuesFile: '.walk-values', valueKeys: ['DOWNLOAD_USER', 'DEMO_PASSWORD'] })
+  h.flags.envText = 'DOWNLOAD_USER=download\n'
+  await start($)
+  const out = await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  expect(out).toContain('DEMO_PASSWORD is not set in /repo/.walk-values')
+  expect(out).not.toContain('download\n')
+  expect(h.ran.some(r => r.argv.join(' ').includes('nohup'))).toBe(false)
+  expect(h.spawns).toHaveLength(0)
+})
+
 test('a values file removed during a walk refuses CONTINUE with the repair for the main agent, and the run waits', async ($, on) => {
   const h = harness(on)
   await start($)
