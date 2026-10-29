@@ -41,3 +41,7 @@ node $S/audit.mjs --brand <brand folder> --fix <project>                        
 ```
 
 The template is `${CLAUDE_PLUGIN_ROOT}/templates/brand-site`. Its defaults come from a real brand guide. `create` replaces them with the project's own values.
+
+## UI component foundation
+
+For React projects, use shadcn/ui as the default source of owned UI primitives. Preserve its accessible interactions and basic component conventions, then map colour, typography, spacing and radii to the project brand. Apply the same foundation to public forms, admin and interview/workflow tools. Custom cinematic scenes and brand illustrations remain custom. Respect an existing Base UI or Radix choice and verify focus, keyboard operation, validation and saved state when replacing controls.
