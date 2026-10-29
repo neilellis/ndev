@@ -1,0 +1,29 @@
+// After each push that lands, asks for the dev-wiki ingest: the session's reusable development,
+// design and copywriting lessons go to ~/dev-wiki, the way a project wiki ingests on completion.
+import type { Register } from 'claude-code'
+
+type On = Parameters<Register>[0]
+
+// `git push` (with options such as -C before it) or a push wrapper script such as push-checked.sh.
+const PUSH = /\bgit(?:\s+-[Cc]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+push\b|\bpush[\w-]*\.sh\b/
+const DRY_RUN = /\s--dry-run\b/
+
+const INGEST =
+  'run the dev-wiki ingest: load the `ndev:dev-wiki` skill and follow its "Ingest after a push" section. Review this session since the last ingest for development, design and copywriting lessons that hold outside this project and its domain, and record each one in ~/dev-wiki. A project or domain fact goes to the project wiki (the `remember` skill) instead. If there is no new lesson, say so in one line.'
+
+export const ingestText = (background: boolean) =>
+  background
+    ? `A push is running in the background. When it finishes with exit 0, ${INGEST}`
+    : `A push just landed. Before you go on, ${INGEST}`
+
+export const isPush = (command: string) => PUSH.test(command) && !DRY_RUN.test(command)
+
+export const learnAfterPush = (on: On) => {
+  on('tool.call', { tool: 'Bash' }, async (_$, e, next) => {
+    const ran = await next(e)
+    const command = String((e as { command?: unknown }).command ?? '')
+    if (ran.deny !== undefined || ran.isError === true || !isPush(command)) return ran
+    const background = (e as { run_in_background?: unknown }).run_in_background === true
+    return { ...ran, context: [...(ran.context ?? []), ingestText(background)] }
+  })
+}
