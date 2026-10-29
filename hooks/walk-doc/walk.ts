@@ -532,7 +532,7 @@ export type GuardCall = { tool: string; agentId: string | undefined; input: Reco
 // The walk browser's tools, as the plugin's Playwright server names them.
 const BROWSER = (name: string) => `mcp__plugin_${PLUGIN}_playwright__${name}`
 const CLICK = BROWSER('browser_click')
-const CLICK_NEEDS_ARROW = "walk-doc: point at the target before you click it, so the recording shows where the click goes. Call browser_evaluate with walkArrow.point('<target>', { text: '<what to do>', untilClick: true }), then click."
+const CLICK_NEEDS_ARROW = "walk-doc: point at the target before you click it, so the recording shows where the click goes. Call browser_evaluate with walkArrow.point('<target>', { text: '<what to do>', untilClick: true, untilAnyClick: true }), then click."
 
 // How long the arrow's caption needs to be read before the reader clicks: 2000 ms plus 50 ms a character, at most 5000 ms.
 export const arrowDwell = (captionLength: number): number => Math.min(5000, 2000 + 50 * captionLength)

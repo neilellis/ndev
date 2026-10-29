@@ -452,6 +452,7 @@ test('the reader drives a 1028x768 Playwright browser and records with its video
 
 test('the reader points, magnifies and clears with walkArrow', () => {
   expect(WALK_SYSTEM_PROMPT).toMatch(/browser_evaluate[^\n]*walkArrow\.point\([^\n]*untilClick: true/)
+  expect(WALK_SYSTEM_PROMPT).toMatch(/walkArrow\.point\([^\n]*untilClick: true, untilAnyClick: true/)
   expect(WALK_SYSTEM_PROMPT).toMatch(/walkArrow\.magnify\([^\n]*untilBlur: true/)
   expect(WALK_SYSTEM_PROMPT).toMatch(/keeps its magnifier[^\n]*walkArrow\.stop\(\) before the next arrow/)
   expect(WALK_SYSTEM_PROMPT).toMatch(/walkArrow\.stop\(\)[^\n]*browser_take_screenshot/)

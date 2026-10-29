@@ -26,7 +26,7 @@ Do not inject them after the page loads: a navigation removes them.
 
 1. Load the page. Wait 8 seconds, so fonts and data settle, then start the video.
 2. Before a click, point at the control with the label the documentation uses:
-   `walkArrow.point('text=Save', { text: 'Save the record', untilClick: true })`.
+   `walkArrow.point('text=Save', { text: 'Save the record', untilClick: true, untilAnyClick: true })`. untilClick alone ends only on a click inside the element it found; when a label matches two elements or the page re-renders, the click can miss it and the sign stays up. untilAnyClick ends it on the click anyway.
    The arrow goes away when the control is clicked.
    Wait before you click so the viewer can read the sign: 2 seconds plus 0.05 second for each character of the sign, at most 5 seconds (Playwright `browser_wait_for` with `time`). The walk-doc guard refuses an early click.
    After each click, navigation, typed entry or selection, wait about 1.5 seconds while recording, so the result is visible before the next arrow.
