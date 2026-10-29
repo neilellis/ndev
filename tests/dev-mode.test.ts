@@ -11,11 +11,14 @@ const ran = (stdout = '') => ({
 })
 
 // A fake engine: the project is a git repository at /proj, ~/dev-wiki exists, and `files`
-// holds the project's files; `wiki` false leaves ~/dev-wiki missing. Returns the toasts shown and the commands run.
-const engine = (on: On, files: Map<string, string> = new Map(), wiki = true) => {
+// holds the project's files; `wiki` false leaves ~/dev-wiki missing; `refused` names a command the engine refuses. Returns the toasts shown and the commands run.
+const engine = (on: On, files: Map<string, string> = new Map(), wiki = true, refused?: string) => {
   const toasts: string[] = []
   const runs: string[][] = []
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('command.register', (_, e) => {
+    if (e.name === refused) throw new Error(`/${e.name} is taken`)
+    return { value: { command: e.name } }
+  })
   // The fix-all-prs loop registers its tool and timer at session start.
   on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   on('clock.now', () => ({ value: 0 }))
@@ -261,4 +264,14 @@ test('the /dev help lists /dev mode and /dev steering', async ($, on) => {
   const ran = await $.command.run({ command: 'dev', args: 'help' })
   expect(ran.text).toContain('/dev mode [light|heavy]')
   expect(ran.text).toContain('/dev steering [interactive|auto]')
+})
+
+test('a command the engine refuses stops only its own feature: the toast names it, and the rest of the start goes on', async ($, on) => {
+  const { toasts } = engine(on, new Map([[CONFIG, '{ "mode": "heavy" }']]), true, 'orca-triage')
+  await start($)
+
+  expect(await section($)).toContain('HEAVY')
+  expect(toasts.join(' ')).toMatch(/ndev: orca-triage did not start: \S.*\/reload-plugins/)
+  const ran = await $.command.run({ command: 'dev-mode', args: '' })
+  expect(ran.text).toContain('Development mode is now light.')
 })

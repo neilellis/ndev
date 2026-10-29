@@ -148,7 +148,7 @@ function world(on: On, opts: { board?: { owner: string; number: number }; issues
   return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash }
 }
 
-const command = (args: string) => ({ command: 'triage', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const)
+const command = (args: string) => ({ command: 'orca-triage', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const)
 
 const group = (issues: number[], complexity: string, more: Record<string, unknown> = {}) =>
   ({ issues, title: `Fix ${issues.map(n => `#${n}`).join(' ')}`, complexity, hint: `Look at area ${issues[0]}`, ...more })
@@ -157,7 +157,7 @@ async function started($: Parameters<Extract<Parameters<typeof test>[1], (...arg
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true } as never)
 }
 
-test('with no board, /triage start asks the model to group the open issues with no PR that no Orca workspace links', async ($, on) => {
+test('with no board, /orca-triage start asks the model to group the open issues with no PR that no Orca workspace links', async ($, on) => {
   const w = world(on, {
     issues: [issue(3), issue(7), issue(9)],
     worktrees: [{ id: 'repo-1::/w/seven', projectId: 'github:acme/widgets', path: '/w/seven', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
@@ -175,7 +175,7 @@ test('with no board, /triage start asks the model to group the open issues with 
   expect(w.prompts[0]).toMatch(new RegExp(TOOL))
 })
 
-test('with a board, /triage start takes the issues in Ready and In progress', async ($, on) => {
+test('with a board, /orca-triage start takes the issues in Ready and In progress', async ($, on) => {
   const card = (n: number, status: string, kind = 'issues') =>
     ({ number: n, title: `Card ${n}`, status, itemId: `PVTI_${n}`, url: `https://github.com/acme/widgets/${kind}/${n}` })
   const w = world(on, { board: { owner: 'acme', number: 4 }, cards: [card(3, 'Ready'), card(4, 'Done'), card(6, 'In progress'), card(8, 'Ready', 'pull'),
@@ -328,7 +328,7 @@ test('the pane lists each group, and Jump switches Orca to the worker\'s termina
   await ui.unmount()
 })
 
-test('/triage start --dry-run shows the groups and starts nothing in Orca', async ($, on) => {
+test('/orca-triage start --dry-run shows the groups and starts nothing in Orca', async ($, on) => {
   const w = world(on, { issues: [issue(3)] })
   await started($)
   await $.command.run(command('start --dry-run'))
@@ -341,7 +341,7 @@ test('/triage start --dry-run shows the groups and starts nothing in Orca', asyn
   expect(w.orcaRan('orchestration run-create')).toHaveLength(0)
 })
 
-test('a failed group blocks the groups after it; the triage then ends, and /triage start begins a new one', async ($, on) => {
+test('a failed group blocks the groups after it; the triage then ends, and /orca-triage start begins a new one', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)], startFails: true })
   await started($)
   await $.command.run(command('start'))
@@ -373,7 +373,7 @@ test('a bad inbox message is logged, the rest of the delivery is still handled, 
   expect(w.ran.filter(a => a.includes('--ack') && a.includes('delivery_1'))).toHaveLength(1)
 })
 
-test('a launch that fails part way names /triage reset, which clears the triage', async ($, on) => {
+test('a launch that fails part way names /orca-triage reset, which clears the triage', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)], taskCreateFails: true })
   await started($)
   await $.command.run(command('start'))
@@ -381,7 +381,7 @@ test('a launch that fails part way names /triage reset, which clears the triage'
   await $.tool.call({ tool: TOOL, groups: [group([3], 'average'), group([9], 'simple')] } as never)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await until(async () => (await ui.find({ type: 'Text', text: /runtime_unavailable/ })) !== undefined, () => w.ran)
-  expect((await ui.find({ type: 'Text', text: /\/triage reset/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /\/orca-triage reset/ }))?.text).toBeDefined()
   await ui.unmount()
   await $.command.run(command('reset'))
   expect((await $.command.run(command(''))).text).toMatch(/No triage yet/)

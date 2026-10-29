@@ -208,7 +208,7 @@ async function helpText($: EngineInterface) {
     '  /dev mode [light|heavy]             switch development mode (no value toggles)',
     '  /dev steering [interactive|auto]    switch steering (no value toggles)',
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
-    '  /triage start [--dry-run]   group the open issues and work each group in its own Orca workspace (Triage pane)',
+    '  /orca-triage start [--dry-run]      group the open issues and work each group in its own Orca workspace (Triage pane)',
     '  /dev-mode, /dev-steering and /dev-setup still work as before.',
     '',
     `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
@@ -225,6 +225,14 @@ async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
     return
   }
   $.ui.toast(await setup($, false))
+}
+
+async function startFeature($: EngineInterface, name: string, start: () => Promise<void>) {
+  try {
+    await start()
+  } catch (error) {
+    $.ui.toast(`ndev: ${name} did not start: ${String(error).slice(0, 300)}. Its command is not available in this session: fix the cause, then /reload-plugins.`)
+  }
 }
 
 export const register: Register = (on, options) => {
@@ -266,9 +274,11 @@ export const register: Register = (on, options) => {
       name: 'learn',
       description: 'Review this session for development lessons and record them in ~/dev-wiki',
     })
-    await startFixAllPrs($)
-    await startResponsiveCheck($)
-    await startTriage($)
+    // A feature that fails to start (a refused command name, say) must not stop the others or the
+    // project set-up below: the toast names it and the reason.
+    await startFeature($, 'fix-all-prs', () => startFixAllPrs($))
+    await startFeature($, 'responsive-check', () => startResponsiveCheck($))
+    await startFeature($, 'orca-triage', () => startTriage($))
     // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
     try {
       await startWalkDoc($, e.cwd)
@@ -341,7 +351,7 @@ export const register: Register = (on, options) => {
       brandingText(project?.config.branding),
       githubText(project?.config.github),
       WIKI_TEXT,
-      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /triage start.',
+      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /orca-triage start.',
     ]
       .filter(Boolean)
       .join('\n\n')

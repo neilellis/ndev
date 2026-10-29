@@ -5,7 +5,7 @@ import type { LoadedConfig } from './config'
 import { firstLine, gh, ofRepo, orca, orcaWorktrees, START_ORCA, type Run } from './fix-all-prs'
 import type { TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
-// /triage: this session's model groups the open issues, and Orca does the work. Each group becomes one Task of one
+// /orca-triage: this session's model groups the open issues, and Orca does the work. Each group becomes one Task of one
 // Orca Run; Orca makes the workspace, linked to the group's issues, and starts a supervised Claude worker in it that
 // opens one draft pull request. The mod keeps only the plan and reads the rest back from Orca.
 const PANE = 'triage'
@@ -46,7 +46,7 @@ async function note($: EngineInterface, text: string): Promise<void> {
 // Sends a prompt to this session's model; a prompt the engine drops is shown, never lost.
 function ask($: EngineInterface, what: string, text: string): void {
   void $.prompt.submit({ text }).catch((err: unknown) => {
-    $.ui.toast(`/triage could not send ${what} to the model: ${message(err)}`)
+    $.ui.toast(`/orca-triage could not send ${what} to the model: ${message(err)}`)
     return update($, view, v => ({ ...v, error: `${what} was not sent to the model: ${message(err)}` }))
   })
 }
@@ -60,7 +60,7 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, is
   const g = project?.config.github
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
   const repo = g.repo
-  if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /triage refresh reads it again.`
+  if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /orca-triage refresh reads it again.`
   await update($, view, () => ({ ...EMPTY, repo, isDryRun }))
   const run = runner($, 120_000)
   let issues: TriageIssue[]
@@ -78,10 +78,10 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, is
   } else {
     issues = (await gh(run, ['issue', 'list', '--repo', repo, '--state', 'open', '--search', '-linked:pr', '--limit', String(LIMIT + 1), '--json', 'number,title,url'])) as TriageIssue[]
     if (issues.length > LIMIT) {
-      throw new Error(`${repo} has more than ${LIMIT} open issues with no pull request, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /triage start again.`)
+      throw new Error(`${repo} has more than ${LIMIT} open issues with no pull request, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /orca-triage start again.`)
     }
   }
-  const linked = new Set(ofRepo(await orcaWorktrees(run, ', then run /triage start again'), repo).filter(w => !w.isArchived)
+  const linked = new Set(ofRepo(await orcaWorktrees(run, ', then run /orca-triage start again'), repo).filter(w => !w.isArchived)
     .flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number))
   const left = issues.filter(i => !linked.has(i.number)).sort((a, b) => a.number - b.number)
   const skipped = issues.length - left.length
@@ -201,13 +201,13 @@ async function launch($: EngineInterface): Promise<void> {
     v = x
     return x.phase === 'planned' && x.repo ? { ...x, phase: 'running' } : x
   })
-  if (v?.phase !== 'planned' || !v.repo) throw new Error(`there is no plan to launch (the triage is ${v?.phase}).\nRepair: run /triage start.`)
+  if (v?.phase !== 'planned' || !v.repo) throw new Error(`there is no plan to launch (the triage is ${v?.phase}).\nRepair: run /orca-triage start.`)
   try {
     await create($, v)
   } catch (err) {
     const runId = (await read($, view)).runId
     await update($, view, (x): TriageView => ({ ...x, phase: 'done' }))
-    throw new Error(`the launch stopped part way: ${message(err)}\n${runId ? `Orca Run ${runId} keeps the Tasks it made. ` : ''}Repair: /triage reset clears this triage, then /triage start begins again.`)
+    throw new Error(`the launch stopped part way: ${message(err)}\n${runId ? `Orca Run ${runId} keeps the Tasks it made. ` : ''}Repair: /orca-triage reset clears this triage, then /orca-triage start begins again.`)
   }
   await startReady($)
   waitLater($)
@@ -321,7 +321,7 @@ async function startWorker($: EngineInterface, runId: string, g: TriageGroup, wo
     throw new Error(`orca orchestration worker-start for #${g.lead} exited ${out.exitCode} and printed no JSON: ${(out.stderr.trim() || out.stdout.trim()).slice(0, 300)}${START_ORCA}`)
   }
   if (!reply?.ok || !reply.result) {
-    throw new Error(`orca orchestration worker-start for #${g.lead} refused: ${reply?.error?.code ?? ''}: ${reply?.error?.message ?? JSON.stringify(reply).slice(0, 300)}\nRepair: fix what Orca names, then /triage reset and /triage start again; \`orca orchestration task-list --run ${runId} --json\` shows the Task.`)
+    throw new Error(`orca orchestration worker-start for #${g.lead} refused: ${reply?.error?.code ?? ''}: ${reply?.error?.message ?? JSON.stringify(reply).slice(0, 300)}\nRepair: fix what Orca names, then /orca-triage reset and /orca-triage start again; \`orca orchestration task-list --run ${runId} --json\` shows the Task.`)
   }
   const r = reply.result
   const terminal = r.effects?.find(x => x.kind === 'terminal' && x.role === 'agent')?.id
@@ -393,7 +393,7 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
   } else if (m.type === 'escalation') {
     if (g) await setGroup($, g.lead, { error: `escalated: ${m.body}` })
     await note($, `${who} escalated: ${firstLine(m.body)}`)
-    $.ui.toast(`/triage: ${who} escalated: ${firstLine(m.body)}`)
+    $.ui.toast(`/orca-triage: ${who} escalated: ${firstLine(m.body)}`)
   }
 }
 
@@ -446,20 +446,20 @@ async function jump($: EngineInterface, g: TriageGroup): Promise<void> {
 }
 
 const fail = ($: EngineInterface, what: string) => (err: unknown) => {
-  $.ui.toast(`/triage ${what} failed: ${message(err)}`)
+  $.ui.toast(`/orca-triage ${what} failed: ${message(err)}`)
   return update($, view, v => ({ ...v, error: message(err) }))
 }
 
 export async function startTriage($: EngineInterface) {
   await $.command.register({
-    name: 'triage',
+    name: 'orca-triage',
     description: 'Group the open issues with this session\'s model and work each group in its own Orca workspace, one draft pull request per group',
     argumentHint: '[start [--dry-run]|launch|refresh|reset]',
   })
   await $.tool.register({
     name: 'triage_groups',
     description:
-      'Report the /triage groups: each open issue in exactly one group, with its complexity, a hint for the worker and, ' +
+      'Report the /orca-triage groups: each open issue in exactly one group, with its complexity, a hint for the worker and, ' +
       'when needed, the leads of the groups it must follow. The mod then starts one Orca worker per group.',
     inputSchema: {
       type: 'object',
@@ -490,11 +490,11 @@ export async function startTriage($: EngineInterface) {
 
 export const triage = (on: On, project: () => LoadedConfig | undefined) => {
   // Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
-  on('command.run', { command: 'triage' }, async ($, e) => {
+  on('command.run', { command: 'orca-triage' }, async ($, e) => {
     const words = e.args.trim().split(/\s+/).filter(Boolean)
     const [verb = 'status'] = words.filter(w => !w.startsWith('--'))
     const unknown = words.find(w => w.startsWith('--') && (w !== '--dry-run' || verb !== 'start'))
-    if (unknown) return { text: `/triage ${verb} does not know "${unknown}". The one option is /triage start --dry-run.` }
+    if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The one option is /orca-triage start --dry-run.` }
     void openPane($)
     if (verb === 'start') {
       void collect($, project(), words.includes('--dry-run'))
@@ -508,25 +508,25 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
       await update($, view, () => EMPTY)
       return { text: v.runId ? `Triage cleared. Orca Run ${v.runId} and its workspaces stay in Orca.` : 'Triage cleared.' }
     }
-    if (verb !== 'status') return { text: `/triage does not know "${verb}". Use start [--dry-run], launch, refresh or reset.` }
+    if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run], launch, refresh or reset.` }
     const v = await read($, view)
-    return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups.` : 'No triage yet. /triage start reads the issues.' }
+    return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups.` : 'No triage yet. /orca-triage start reads the issues.' }
   }).catch(($, e, next) => ({
-    text: `/triage ${e.args} failed (${next.error.kind} after ${next.error.budget} ms): ${next.error.message ?? 'no message'}`,
+    text: `/orca-triage ${e.args} failed (${next.error.kind} after ${next.error.budget} ms): ${next.error.message ?? 'no message'}`,
   }))
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
     // The engine passes the tool's arguments on the event itself, beside `tool`.
     const input = e as unknown as { groups?: Proposed[] }
     const v = await read($, view)
-    if (v.phase !== 'grouping') return { result: `Refused: /triage is not waiting for groups (it is ${v.phase}). /triage start begins one.`, isError: true as const }
+    if (v.phase !== 'grouping') return { result: `Refused: /orca-triage is not waiting for groups (it is ${v.phase}). /orca-triage start begins one.`, isError: true as const }
     const groups = Array.isArray(input.groups) ? input.groups : []
     const wrong = problems(v.issues, groups)
     if (wrong.length) return { result: `Refused, nothing recorded:\n- ${wrong.join('\n- ')}\nFix these and call ${TOOL} again.`, isError: true as const }
     const planned = groups.map(toGroup)
     await update($, view, (x): TriageView => ({ ...x, phase: 'planned', groups: planned }))
     await note($, `the model made ${planned.length} groups`)
-    if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /triage launch starts them.` }
+    if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /orca-triage launch starts them.` }
     void launch($).catch(fail($, 'launch'))
     return { result: `Recorded ${planned.length} groups. The mod creates the Orca Run and starts the workers; the Triage pane shows them. Wait for worker questions, which the mod sends you.` }
   })
