@@ -70,6 +70,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `report-work-done` | Summarize what actually shipped by reading merged pull requests in a requested time window, optionally filtered by author. |
 | `reset` | Close the current feature work, save it as a PR, remove its worktree, and freshen the base checkout; use --discard only to abandon a dead end. |
 | `resolving-merge-conflicts` | Use when you need to resolve an in-progress git merge/rebase conflict. |
+| `responsive-check` | Check a website's layout on phones, tablets and desktops, in light and dark mode, and report each defect with its element. Also maintains the breakpoint and layout rules on the brand site. |
 | `retro` | Review a completed coding session and identify improvements to navigation, checks, standards, instructions, information access and tool economy. |
 | `site-check` | Check a local, preview or live website for broken links, missing pages, server errors and JavaScript errors. |
 | `testing` | Apply the testing taxonomy and verification rules across Python and TypeScript, including guard integrity and minimal live-system tests. |
@@ -255,6 +256,19 @@ command, the content folder, the paths the reader may not read, the finish comma
 embed media and how to file an issue. Without the file, `/walk-doc` does nothing and tells you what
 to write. A missing required key stops the walk and names the key, the file and an example value.
 The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.md).
+
+## Responsive matrix: /responsive-matrix
+
+A fourth hooks module, `hooks/responsive-check.tsx`, shows the `responsive-check` skill's run in a
+pane. When a Bash call runs `responsive-check.mjs`, the pane opens and follows the run: a progress
+bar, the counts, the cell in progress, and a grid with one row for each viewport and a light and a
+dark cell for each route. When the run ends, it shows the verdict and the findings that occur in the
+most cells. `/responsive-matrix` opens the pane again with the newest run. `o` opens the screenshot
+folder.
+
+The runner writes `progress.json` in its `--out` folder and a pointer to it in
+`~/.cache/ndev/responsive-check/latest.json`. The pane reads these two files. It does not show a
+run that started before the Bash call.
 
 ## The living wiki: ~/dev-wiki
 
