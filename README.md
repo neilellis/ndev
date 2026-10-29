@@ -244,11 +244,14 @@ The plugin learns while you use it. The first session that starts with the plugi
   cause, a guard that lied, or a procedure written twice.
 - When a prompt looks like a correction ("no, don't…", "from now on…"), the plugin reminds Claude
   to record the lesson.
+- After each push that lands, a hook asks Claude for the ingest: it reviews the session since the
+  last ingest and records each development, design or copywriting lesson that holds outside the
+  project and its domain.
 - `/learn` asks for a review of the whole session.
 - A lesson that holds in two or more repositories goes back into `kb/` through a PR on this
   repository. A human merges it.
 
-A project-only fact goes to that project's wiki (the `remember` skill), not to `~/dev-wiki`.
+A project or domain fact goes to that project's wiki (the `remember` skill), not to `~/dev-wiki`.
 
 ## Install in a project
 

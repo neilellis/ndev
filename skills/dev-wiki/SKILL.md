@@ -1,6 +1,6 @@
 ---
 name: dev-wiki
-description: "Read and grow the living development wiki at ~/dev-wiki. Use at the start of development work to find lessons that apply, when you learn a reusable development lesson (a user correction, a non-obvious cause, a guard that lied, a repeated procedure), when the user runs /learn, or to promote a stable lesson into the plugin's kb/."
+description: "Read and grow the living development wiki at ~/dev-wiki. Use at the start of development work to find lessons that apply, when you learn a reusable development, design or copywriting lesson (a user correction, a non-obvious cause, a guard that lied, a repeated procedure), after each push (the ingest), when the user runs /learn, or to promote a stable lesson into the plugin's kb/."
 ---
 
 # dev-wiki
@@ -15,7 +15,8 @@ the task. Do not read the wiki again for each step.
 
 ## Learn
 
-Record a lesson when one of these happens:
+A lesson is about development, design or copywriting: how to build, test, ship, lay out or word
+something. Record it when one of these happens:
 
 - The user corrects how you work, or confirms a non-obvious approach.
 - A cause was not obvious, and the next person would dig for it again.
@@ -24,9 +25,9 @@ Record a lesson when one of these happens:
 
 Do these steps:
 
-1. Apply the routing test: is the lesson true in a different repository? If no, it belongs to the
-   project. Use the `remember` skill. Stop here.
-2. Write the lesson in one or two sentences, project-neutral. Add the reason, and the evidence:
+1. Apply the routing test: is the lesson true in a different repository and a different business
+   domain? If no, it is a project or domain fact. Use the `remember` skill. Stop here.
+2. Write the lesson in one or two sentences, free of project and domain names. Add the reason, and the evidence:
    a number with its date, a command and its output, or a file path. Mark a guess "unverified".
 3. Find the page that owns the topic (`wiki.md` lists them). Change that page in place. Correct a
    wrong fact. Do not append a contradiction. Make a new page only for a new topic, and link it
@@ -38,6 +39,20 @@ Do these steps:
 
 In interactive steering, record the lesson and tell the user. Do not ask first: the wiki is local
 and git can undo it. In auto steering, do the same and name the lesson in the PR description.
+
+## Ingest after a push
+
+The plugin asks for this after each push that lands. It works like a project wiki's ingest on
+completion, for the lessons that travel.
+
+1. Review the session since the last ingest (or since it started): corrections, causes found,
+   guards that lied, procedures repeated, and design or wording choices the user confirmed or
+   changed.
+2. Keep only the lessons that pass the routing test above. Record each one with the steps above,
+   one `.log/` file and one commit per lesson.
+3. Reconcile: when a lesson contradicts a page, correct the page. Do not keep both.
+4. Tell the user in one line per lesson, or one line saying there was no new lesson. Do not invent
+   a lesson to fill the ingest.
 
 ## /learn
 

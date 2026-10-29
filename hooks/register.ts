@@ -9,6 +9,7 @@ import { quality } from './quality'
 import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
 import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
+import { learnAfterPush } from './learn'
 
 const PLUGIN = 'ndev'
 
@@ -82,13 +83,13 @@ const githubText = (g: GitHub | undefined) =>
     : undefined
 
 const WIKI_TEXT =
-  'Living development wiki: ~/dev-wiki (index `wiki.md`, rules `AGENTS.md`). At the start of development work, read the index once and open only the pages that fit. When you learn a reusable, project-neutral development lesson (a user correction, a non-obvious cause, a guard that lied or did not run, a procedure written a second time), record it with the `ndev:dev-wiki` skill before you finish the task. A project-only fact goes to the project wiki (the `remember` skill) instead.'
+  'Living development wiki: ~/dev-wiki (index `wiki.md`, rules `AGENTS.md`). At the start of development work, read the index once and open only the pages that fit. When you learn a reusable development, design or copywriting lesson that holds outside this project and its domain (a user correction, a non-obvious cause, a guard that lied or did not run, a procedure written a second time), record it with the `ndev:dev-wiki` skill before you finish the task; after each push the plugin also asks for the ingest. A project or domain fact goes to the project wiki (the `remember` skill) instead.'
 
 const LEARN_TEXT =
-  'The user ran /learn. Load the `ndev:dev-wiki` skill and follow its /learn section: review this session for reusable development lessons, record each one in ~/dev-wiki, and report them in one line each. If there is none, say so.'
+  'The user ran /learn. Load the `ndev:dev-wiki` skill and follow its /learn section: review this session for reusable development, design and copywriting lessons, record each one in ~/dev-wiki, and report them in one line each. If there is none, say so.'
 
 const CORRECTION_TEXT =
-  'This prompt may correct how you work. Act on it. If it carries a reusable, project-neutral development lesson, record it with the `ndev:dev-wiki` skill; if it is project-only, use the `remember` skill; if it is neither, do nothing more.'
+  'This prompt may correct how you work. Act on it. If it carries a reusable development, design or copywriting lesson that holds outside this project and its domain, record it with the `ndev:dev-wiki` skill; if it is a project or domain fact, use the `remember` skill; if it is neither, do nothing more.'
 
 // Words a person uses to redirect the agent: at the start of the prompt, or as a standing rule.
 const CORRECTION =
@@ -226,6 +227,7 @@ export const register: Register = (on, options) => {
   // walk-doc first: its guard is then the outer tool.call hook, so a failing quality hook cannot skip it.
   walkDoc(on, options)
   quality(on, () => project)
+  learnAfterPush(on)
   fixAllPrs(on)
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
   on('turn.complete', async ($, e, next) => {
