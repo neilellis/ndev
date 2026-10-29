@@ -51,6 +51,8 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
   const toasts: string[] = []
   const tasks: { id: string; deps: string[]; status: string; title: string }[] = []
   const worktrees: Worktree[] = [...(opts.worktrees ?? [])]
+  // Each pull request's head branch, by number, as `gh pr view --json headRefName` answers it.
+  const prHeads = new Map<number, number>()
   // Deliveries the fake inbox hands out, one per blocking check; a check waits until one is queued.
   const inbox: { deliveryId: string; messages: unknown[] }[] = []
   let wake: (() => void) | undefined
@@ -80,6 +82,7 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     ran.push(a)
     if (a[0] === 'gh' && a[1] === 'issue' && a[2] === 'list') return ok(JSON.stringify(opts.issues ?? []))
     if (args.includes('gh.sh board items')) return ok((opts.cards ?? []).map(c => `${JSON.stringify(c)}\n`).join(''))
+    if (a[0] === 'gh' && a[1] === 'pr' && a[2] === 'view' && a.includes('headRefName')) return ok(JSON.stringify({ headRefName: `claude/issue-${a.length > 3 ? prHeads.get(Number(a[3])) : ''}` }))
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
     if (args.startsWith('orca worktree list')) return reply({ worktrees, totalCount: worktrees.length, truncated: false })
     if (args.startsWith('orca worktree create')) {
@@ -144,7 +147,7 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
   })
   const orcaRan = (verb: string) => ran.filter(a => a[0] === 'orca' && a.slice(1, 3).join(' ') === verb)
   // What the worker does after it opens its pull request: link it to the workspace and move the card to review.
-  const linkPr = (path: string, pr: number) => { const wt = worktrees.find(x => x.path === path)!; wt.linkedPR = pr; wt.workspaceStatus = 'in-review' }
+  const linkPr = (path: string, pr: number) => { const wt = worktrees.find(x => x.path === path)!; wt.linkedPR = pr; wt.workspaceStatus = 'in-review'; prHeads.set(pr, Number(path.split('-').pop())) }
   return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash }
 }
 
@@ -268,6 +271,45 @@ test('a repository saved in mixed case makes its Orca workspace under the lower-
   const made = w.ran.filter(a => a.slice(0, 3).join(' ') === 'orca worktree create')
   expect(made).toHaveLength(1)
   expect(made[0]).toEqual(expect.arrayContaining(['--project', 'github:acme/widgets']))
+})
+
+// A group that follows another starts from that group's branch, so its pull request carries the change it needs and the
+// two never edit the same lines from different bases.
+test('a group that follows another branches from that group\'s branch and targets its pull request', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9), issue(12)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).toMatch(/same files/)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple', { after: [3] }), group([12], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration task-create').length === 3, () => w.ran)
+  const specs = w.orcaRan('orchestration task-create').map(a => a[a.indexOf('--spec') + 1]!)
+  const follower = specs.find(x => x.includes('#9 ('))!
+  expect(follower).toMatch(/follows #3/)
+  expect(follower).toMatch(/--base <that branch>/)
+  const alone = specs.find(x => x.includes('#12 ('))!
+  expect(alone).toMatch(/from the default branch/)
+  expect(alone).not.toMatch(/--base/)
+  // The first workspaces start from the default branch; the follower's waits for #3 and starts from its branch.
+  const creates = () => w.orcaRan('worktree create')
+  await until(() => creates().length === 2, () => w.ran)
+  for (const c of creates()) expect(c).not.toContain('--base-branch')
+  w.linkPr('/w/issue-3', 41)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'Opened #41.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => creates().length === 3, () => w.ran)
+  expect(creates()[2]).toEqual(expect.arrayContaining(['--name', 'issue-9', '--base-branch', 'origin/claude/issue-3']))
+})
+
+test('a group whose predecessor opened no pull request starts from the default branch', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple', { after: [3] })] } as never)
+  await until(() => w.orcaRan('worktree create').length === 1, () => w.ran)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'Already done; no change.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.orcaRan('worktree create').length === 2, () => w.ran)
+  expect(w.orcaRan('worktree create')[1]).not.toContain('--base-branch')
 })
 
 test('a question goes to the model with the reply command; worker_done retains the worker and starts the Task it unblocked', async ($, on) => {

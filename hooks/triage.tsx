@@ -109,7 +109,7 @@ function brief(repo: string, issues: TriageIssue[]): string {
     `- complexity sets the worker's model:\n${sizes}`,
     '- hint: where the worker starts: the files, the cause, the approach.',
     '- implemented: true when the code already does what the issues ask, with evidence (file and line, or the commit).',
-    '- after: the leads of groups that must finish first, only when this group needs their change.',
+    '- after: the leads of groups that must finish first: when this group needs their change, or when both change the same files, so the two never edit the same lines at once. Groups with no after run in parallel.',
     '',
     `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }] }.`,
     'If it refuses, fix what it names and call it again. Start no work on the issues yourself.',
@@ -180,8 +180,10 @@ function spec(repo: string, g: TriageGroup, issues: TriageIssue[]): string {
     `Change: ${g.implemented ? `The code may already do this: ${g.evidence}. Confirm it with a test that proves the behaviour; change code only where it falls short. ` : ''}${g.hint}`,
     'Constraints:',
     '- Read each issue with `gh issue view` first. Work test first: a failing regression test through a public interface, then the smallest fix.',
-    `- Work on branch ${branch} from the default branch. Never push to the default branch and never merge.`,
-    `- At your first push, open a draft pull request with \`gh pr create --draft --title "${g.title.replace(/"/g, "'")}"\`. Its body ends with:`,
+    ...(g.after.length
+      ? [`- This group follows ${g.after.map(a => `#${a}`).join(', ')}. Your workspace starts from the branch of the first of their pull requests, or from the default branch when none opened one. Work on branch ${branch} from there${g.after.length > 1 ? ', and merge the branches of the other pull requests into it first' : ''}. Never push to the default branch and never merge a pull request.`]
+      : [`- Work on branch ${branch} from the default branch. Never push to the default branch and never merge.`]),
+    `- At your first push, open a draft pull request with \`gh pr create --draft --title "${g.title.replace(/"/g, "'")}"${g.after.length ? ' --base <that branch>' : ''}\`${g.after.length ? ', where <that branch> is the branch your workspace started from (the default branch when it started there), so the pull request shows only this group\'s change' : ''}. Its body ends with:`,
     ...g.issues.map(n => `  Closes #${n}`),
     `  Model: ${g.model}`,
     `  Effort: ${g.effort}`,
@@ -293,14 +295,33 @@ async function settle($: EngineInterface): Promise<void> {
 // Orca makes the workspace from the default branch and links the group's issues to it before setup runs.
 async function makeWorkspace($: EngineInterface, repo: string, g: TriageGroup, issues: TriageIssue[]): Promise<string> {
   const refs = g.issues.flatMap(n => ['--reference', issues.find(i => i.number === n)?.url ?? `https://github.com/${repo}/issues/${n}`])
+  const base = await baseOf($, repo, g)
   const made = (await orca(runner($, 600_000), [
     'worktree', 'create', '--project', orcaProject(repo), '--name', `issue-${g.lead}`, '--no-parent', '--setup', 'run', '--comment', g.title, ...refs,
+    ...(base ? ['--base-branch', `origin/${base}`] : []),
   ])) as { worktree?: { id?: string } }
   const id = made.worktree?.id
   if (!id) throw new Error(`orca worktree create for #${g.lead} answered no worktree id: ${JSON.stringify(made).slice(0, 300)}${START_ORCA}`)
   await setGroup($, g.lead, { worktree: id })
   await note($, `#${g.lead}: Orca made workspace issue-${g.lead}`)
   return id
+}
+
+// A group that follows others starts from the head branch of the first of their pull requests, so it carries the
+// change it waits for and its own pull request stacks on that one. Undefined when none opened a pull request.
+async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise<string | undefined> {
+  if (!g.after.length) return undefined
+  const groups = (await read($, view)).groups
+  const worktrees = await orcaWorktrees(runner($, 60_000))
+  for (const a of g.after) {
+    const before = groups.find(x => x.lead === a)
+    const pr = worktrees.find(w => w.id === before?.worktree)?.linkedPR ?? before?.pr
+    if (!pr) continue
+    const { headRefName } = (await gh(runner($, 60_000), ['pr', 'view', String(pr), '--repo', repo, '--json', 'headRefName'])) as { headRefName?: string }
+    if (!headRefName) throw new Error(`gh pr view ${pr} --repo ${repo} answered no head branch, so the branch #${g.lead} follows is unknown`)
+    return headRefName
+  }
+  return undefined
 }
 
 type StartReceipt = {
