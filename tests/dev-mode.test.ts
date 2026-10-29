@@ -220,3 +220,45 @@ for (const [label, bad] of [['an empty', '""'], ['an absolute', '"/Users/someone
     expect(toasts.join(' ')).toContain('"branding.path" must be a folder relative to the project root')
   })
 }
+
+test('/dev mode toggles and sets the mode like /dev-mode', async ($, on) => {
+  const files = new Map<string, string>()
+  engine(on, files)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'mode' })
+  expect(ran.text).toContain('Development mode is now heavy.')
+  expect(await section($)).toContain('ndev:work-heavy')
+
+  await $.command.run({ command: 'dev', args: 'Mode light' })
+  expect(await section($)).toContain('LIGHT')
+  expect(JSON.parse(files.get(CONFIG) ?? '{}').mode).toBe('light')
+})
+
+test('/dev steering auto sets the steering like /dev-steering', async ($, on) => {
+  engine(on)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'steering auto' })
+  expect(ran.text).toContain('Steering is now auto.')
+  expect(await section($)).toContain('ndev:work-light-auto')
+})
+
+test('/dev mode with an unknown value names /dev mode in the refusal', async ($, on) => {
+  engine(on)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'mode medium' })
+  expect(ran.text).toContain('"medium" is not a mode')
+  expect(ran.text).toContain('/dev mode heavy')
+  expect(await section($)).toContain('LIGHT')
+})
+
+test('the /dev help lists /dev mode and /dev steering', async ($, on) => {
+  engine(on)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'help' })
+  expect(ran.text).toContain('/dev mode [light|heavy]')
+  expect(ran.text).toContain('/dev steering [interactive|auto]')
+})

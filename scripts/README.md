@@ -53,3 +53,9 @@ Tests are in `<area>/tests/`. Run them after a change.
 | Script | What it does | Used by |
 |---|---|---|
 | `init.sh` | Creates the development wiki from this plugin's `kb/`. | dev-wiki, `hooks/register.ts` (session start) |
+
+## walk-doc/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `video-to-gif.sh` | Turns a reader's browser video into a GIF. It keeps only the frames that change and caps each still stretch (`--hold`). | `hooks/walk-doc/` (the main agent, when it places a `RECORD`) |

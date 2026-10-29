@@ -10,7 +10,7 @@ knowledge base. A project enables the plugin and gets all of them.
 |---|---|
 | `kb/` | The methodology as a knowledge base. Start at [`kb/README.md`](kb/README.md). Core beliefs are in [`kb/core-beliefs.md`](kb/core-beliefs.md). |
 | `skills/` | Workflow skills. A helper that only one skill uses stays in that skill's `scripts/` folder. |
-| `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`). See [`scripts/README.md`](scripts/README.md). |
+| `scripts/` | Shared helper scripts that skills, agents and hooks call, grouped by area (`github/`, `board/`, `work/`, `docs/`, `wiki/`, `walk-doc/`). See [`scripts/README.md`](scripts/README.md). |
 | `agents/` | Subagent definitions for board work, implementation, planning and review. |
 | `templates/` | A starter `CLAUDE.md`, a starter LLM wiki, and the brand site that `/brand create` copies. |
 | `kb/hooks/` | Reusable hook scripts and a pre-push hook to copy into a project. |
@@ -106,10 +106,16 @@ Claude follows the selected workflow.
 
 | Command | Values | Default | Effect |
 |---|---|---|---|
-| `/dev-mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
-| `/dev-steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
+| `/dev mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
+| `/dev steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
 
-A command with no value toggles the switch.
+A command with no value toggles the switch. The older names `/dev-mode`, `/dev-steering` and
+`/dev-setup` still work.
+
+`/dev` lists the plugin's commands and shows the project's current settings. In a project that
+has not answered the set-up questions yet, `/dev` runs the set-up dialog first. `/dev help`
+always shows the help. `/dev setup` asks all the set-up questions again (the same as
+`/dev-setup`).
 
 ## Per-project settings: `.neil-dev.json`
 
@@ -127,7 +133,7 @@ the project. Every key is optional:
 ```
 
 - `mode` and `steering` set the switches at session start. With no file, a session starts at
-  `light · interactive`. `/dev-mode` and `/dev-steering` write the new value back to the file;
+  `light · interactive`. `/dev mode` and `/dev steering` write the new value back to the file;
   commit it to share it.
 - `github` holds the project's GitHub repository and Projects v2 board, so no skill or script
   looks them up again. `null` means "none" (`"repo": null`, or `"board": null`). When a session
@@ -135,7 +141,7 @@ the project. Every key is optional:
   missing values. It offers the git origin and the owner's boards. Choose an option, or type an
   answer under Other. An exact answer (`owner/name`, `3`, `owner/3`) is saved at once. A free
   answer ("the roadmap board") goes to an agent, which finds the value with `gh` and writes the
-  key. "Ask me later" saves nothing, and the next session asks again. Run `/dev-setup` to answer
+  key. "Ask me later" saves nothing, and the next session asks again. Run `/dev setup` (or `/dev-setup`) to answer
   all the questions again. With no one to ask (a non-interactive run), a message names
   `/dev-setup`. The scripts in `scripts/github/` and `scripts/board/` read these values. A value
   that is already in the environment (`GH_REPO`, `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER`) wins.
@@ -196,6 +202,20 @@ from source. When the script exits 0, the hook writes `.ndev-inited`.
 
 Run the hooks module's tests with `claude plugin test .`.
 
+## Docs walk-through: /walk-doc
+
+A third hooks module, `hooks/walk-doc/`, tests a set of docs by using them. `/walk-doc <page>`
+starts the docs dev server and a fresh reader agent (`ndev:walk`). The reader follows each step
+on the rendered pages and records each command and browser step. When it gets stuck, it reports
+an `OMISSION`, `BUG`, `INCORRECT` or `BLOCKED` finding to the main agent. The main agent fixes the
+docs or the product on the current branch, then tells the reader to continue or start again.
+
+A project turns it on with `.walk-doc.json` at the repository root. The file names the dev server
+command, the content folder, the paths the reader may not read, the finish commands, how the docs
+embed media and how to file an issue. Without the file, `/walk-doc` does nothing and tells you what
+to write. A missing required key stops the walk and names the key, the file and an example value.
+The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.md).
+
 ## The living wiki: ~/dev-wiki
 
 The plugin learns while you use it. The first session that starts with the plugin creates
@@ -237,6 +257,11 @@ Or install it by hand:
 /plugin marketplace add neilellis/ndev
 /plugin install ndev@ndev
 ```
+
+The plugin was called `neil-development` before version 0.6.0, and its marketplace was called
+`neil-development` before version 0.7.1. To move an existing install, run
+`/plugin uninstall ndev@neil-development` (or `neil-development@neil-development`), then the two
+commands above, and change `enabledPlugins` in your settings to `"ndev@ndev": true`.
 
 Plugin skills are namespaced, for example `/ndev:work-light`. A project skill with the
 same name stays separate. Delete the project copy when the plugin version replaces it.

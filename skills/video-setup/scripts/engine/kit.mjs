@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 
 export const PLUGIN = "video-kit";
 export const PLUGIN_ID = "ndev";
+export const MARKETPLACE = "ndev";
 export const SKILL_PATH = "skills/video-setup/scripts";
 export const ENV = "VIDEO_KIT_SOURCE";
 export const ENGINE_DIR = "scripts/video-kit";
@@ -99,7 +100,7 @@ export function findSource(root) {
       return { dir, via: `Claude Code plugin ${pick.version} at ${pick.installPath}` };
     }
   }
-  const clone = path.join(plugins, "marketplaces", PLUGIN_ID, SKILL_PATH);
+  const clone = path.join(plugins, "marketplaces", MARKETPLACE, SKILL_PATH);
   if (looks(clone)) return { dir: clone, via: "Claude Code marketplace clone" };
   return null;
 }

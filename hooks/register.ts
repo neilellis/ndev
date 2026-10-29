@@ -6,8 +6,9 @@ import { CONFIG_FILE, loadConfig, missingGitHub, saveSetting } from './config'
 import type { Branding, GitHub, LoadedConfig } from './config'
 import { agentPrompt, runSetup } from './setup'
 import { quality } from './quality'
-import { fixAllPrs, startFixAllPrs } from './fix-all-prs'
+import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
+import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
 
 const PLUGIN = 'ndev'
 
@@ -34,7 +35,7 @@ const SKILL: Record<Mode, Record<Steering, string>> = {
 
 const MODE_TEXT: Record<Mode, string> = {
   light:
-    'Development mode: LIGHT. One owner from diagnosis to PR, test first, a worktree, one PR, small helpers only for bounded tool-heavy subtasks. Do not chain planning, review and board skills automatically. If the change turns out to be multi-step, cross-cutting or high-risk, say so and suggest `/dev-mode heavy`; do not switch by yourself.',
+    'Development mode: LIGHT. One owner from diagnosis to PR, test first, a worktree, one PR, small helpers only for bounded tool-heavy subtasks. Do not chain planning, review and board skills automatically. If the change turns out to be multi-step, cross-cutting or high-risk, say so and suggest `/dev mode heavy`; do not switch by yourself.',
   heavy:
     'Development mode: HEAVY. A written plan, test-first implementation in stages, an independent review and staged verification before the PR leaves draft. Use it for multi-step features and cross-cutting or high-risk changes.',
 }
@@ -158,6 +159,57 @@ async function setup($: EngineInterface, all: boolean) {
   return `Set-up: an agent is resolving ${result.typed.join('; ')} and will write ${CONFIG_FILE}.`
 }
 
+async function switchMode($: EngineInterface, args: string) {
+  const next = choose(args, MODES, await read($, mode))
+  if (next === undefined) {
+    return { text: `dev mode: "${args.trim()}" is not a mode. Use /dev mode light or /dev mode heavy.` }
+  }
+  await update($, mode, () => next)
+  await showStatus($)
+
+  return {
+    text: `Development mode is now ${next}.${await persist($, 'mode', next)}`,
+    context: [MODE_TEXT[next], skillText(next, await read($, steering))],
+  }
+}
+
+async function switchSteering($: EngineInterface, args: string) {
+  const next = choose(args, STEERINGS, await read($, steering))
+  if (next === undefined) {
+    return { text: `dev steering: "${args.trim()}" is not a steering. Use /dev steering interactive or /dev steering auto.` }
+  }
+  await update($, steering, () => next)
+  await showStatus($)
+
+  return {
+    text: `Steering is now ${next}.${await persist($, 'steering', next)}`,
+    context: [STEERING_TEXT[next], skillText(await read($, mode), next)],
+  }
+}
+
+// What /dev shows: the commands, and this project's current settings.
+async function helpText($: EngineInterface) {
+  const g = project?.config.github
+  const github =
+    project === undefined ? 'project folder not known yet'
+    : project.error ? `${project.path} has an error (${project.error})`
+    : missingGitHub(project.config).length > 0 ? 'not set up; run /dev setup'
+    : g?.repo ? `${g.repo}, ${g.board ? `board ${g.board.owner} #${g.board.number}` : 'no project board'}`
+    : 'no GitHub repository'
+  return [
+    'ndev commands:',
+    '  /dev                 show this help; run the set-up first if this project is not set up',
+    '  /dev help            show this help',
+    `  /dev setup           answer the set-up questions (GitHub repository and board) again; saved in ${CONFIG_FILE}`,
+    '  /dev mode [light|heavy]             switch development mode (no value toggles)',
+    '  /dev steering [interactive|auto]    switch steering (no value toggles)',
+    '  /learn               review this session for lessons and record them in ~/dev-wiki',
+    '  /dev-mode, /dev-steering and /dev-setup still work as before.',
+    '',
+    `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
+  ].join('\n')
+}
+
 // Asks at session start when a value is missing. With no one to ask, says how to answer later.
 async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
   if (project === undefined || project.error) return
@@ -170,29 +222,49 @@ async function setupIfMissing($: EngineInterface, isInteractive: boolean) {
   $.ui.toast(await setup($, false))
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // walk-doc first: its guard is then the outer tool.call hook, so a failing quality hook cannot skip it.
+  walkDoc(on, options)
   quality(on, () => project)
   fixAllPrs(on)
+  // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    await fixAllPrsTurn($, e)
+    await walkDocTurn($, e)
+    return result
+  })
   on('session.start', async ($, e, next) => {
     await $.command.register({
+      name: 'dev',
+      description: 'ndev: help, setup, mode and steering (runs the set-up first if this project is not set up)',
+      argumentHint: '[help|setup|mode [light|heavy]|steering [interactive|auto]]',
+    })
+    await $.command.register({
       name: 'dev-mode',
-      description: 'Switch development mode: light (work-light) or heavy (work-heavy)',
+      description: 'Switch development mode: light (work-light) or heavy (work-heavy). Same as /dev mode',
       argumentHint: '[light|heavy]',
     })
     await $.command.register({
       name: 'dev-steering',
-      description: 'Switch steering: interactive (human steers) or auto',
+      description: 'Switch steering: interactive (human steers) or auto. Same as /dev steering',
       argumentHint: '[interactive|auto]',
     })
     await $.command.register({
       name: 'dev-setup',
-      description: `Answer the project set-up questions (GitHub repository and board) and save them in ${CONFIG_FILE}`,
+      description: `Answer the project set-up questions (GitHub repository and board) and save them in ${CONFIG_FILE}. Same as /dev setup`,
     })
     await $.command.register({
       name: 'learn',
       description: 'Review this session for development lessons and record them in ~/dev-wiki',
     })
     await startFixAllPrs($)
+    // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
+    try {
+      await startWalkDoc($, e.cwd)
+    } catch (error) {
+      $.ui.toast(`walk-doc did not start: ${String(error).slice(0, 300)}. /walk-doc is not available in this session: fix the cause, then start a new session.`)
+    }
     project = await loadConfig($, e.cwd)
     await startInitProject($, e.cwd)
     if (project.error) {
@@ -207,32 +279,22 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'dev-mode' }, async ($, e) => {
-    const next = choose(e.args, MODES, await read($, mode))
-    if (next === undefined) {
-      return { text: `dev-mode: "${e.args.trim()}" is not a mode. Use /dev-mode light or /dev-mode heavy.` }
-    }
-    await update($, mode, () => next)
-    await showStatus($)
+  on('command.run', { command: 'dev-mode' }, async ($, e) => switchMode($, e.args))
+  on('command.run', { command: 'dev-steering' }, async ($, e) => switchSteering($, e.args))
 
-    return {
-      text: `Development mode is now ${next}.${await persist($, 'mode', next)}`,
-      context: [MODE_TEXT[next], skillText(next, await read($, steering))],
-    }
-  })
-
-  on('command.run', { command: 'dev-steering' }, async ($, e) => {
-    const next = choose(e.args, STEERINGS, await read($, steering))
-    if (next === undefined) {
-      return { text: `dev-steering: "${e.args.trim()}" is not a steering. Use /dev-steering interactive or /dev-steering auto.` }
-    }
-    await update($, steering, () => next)
-    await showStatus($)
-
-    return {
-      text: `Steering is now ${next}.${await persist($, 'steering', next)}`,
-      context: [STEERING_TEXT[next], skillText(await read($, mode), next)],
-    }
+  // '' shows the help, or runs the set-up when this project has never answered it.
+  // The first word picks the subcommand; the rest is its argument.
+  on('command.run', { command: 'dev' }, async ($, e) => {
+    const [first = '', ...rest] = e.args.trim().split(/\s+/)
+    const word = first.toLowerCase()
+    const args = rest.join(' ')
+    if (word === 'mode') return switchMode($, args)
+    if (word === 'steering') return switchSteering($, args)
+    if (word === 'setup') return { text: await setup($, true) }
+    if (word === 'help') return { text: await helpText($) }
+    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode or /dev steering.` }
+    if (project !== undefined && !project.error && missingGitHub(project.config).length > 0) return { text: await setup($, false) }
+    return { text: await helpText($) }
   })
 
   on('command.run', { command: 'dev-setup' }, async $ => ({ text: await setup($, true) }))
@@ -264,7 +326,7 @@ export const register: Register = on => {
       brandingText(project?.config.branding),
       githubText(project?.config.github),
       WIKI_TEXT,
-      'The human switches these with /dev-mode and /dev-steering, sets the GitHub repository and board with /dev-setup, and asks for a lesson review with /learn.',
+      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), and asks for a lesson review with /learn.',
     ]
       .filter(Boolean)
       .join('\n\n')
