@@ -79,6 +79,9 @@
 
     const onMove = (e) => addMove(e.clientX, e.clientY);
     const opts = { capture: true, passive: true };
+    // A scroll moves the page under the last point, so a trail from it would cross content the
+    // cursor never passed. A click on a target out of view scrolls first, then jumps the mouse.
+    window.addEventListener('scroll', () => { last = null; }, opts);
     window.addEventListener('mousemove', onMove, opts);
     window.addEventListener('pointermove', onMove, opts);
     window.addEventListener('mousedown', (e) => {
