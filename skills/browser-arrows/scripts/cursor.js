@@ -84,6 +84,16 @@
     window.addEventListener('scroll', () => { last = null; }, opts);
     window.addEventListener('mousemove', onMove, opts);
     window.addEventListener('pointermove', onMove, opts);
+    // A still shows the product alone: park() hides the pointer and its marks over the content
+    // until the mouse moves again.
+    window.walkCursor = {
+      park() {
+        last = null;
+        trail.length = 0;
+        pulses.length = 0;
+        svg.style.display = 'none';
+      },
+    };
     window.addEventListener('mousedown', (e) => {
       addMove(e.clientX, e.clientY);
       pulses.push({ x: e.clientX, y: e.clientY, t: performance.now() });

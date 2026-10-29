@@ -7,7 +7,7 @@ description: "Show the viewer of a browser screen recording where to look: a cal
 
 Two scripts draw into the page that a browser records. They do not change the page.
 
-- `scripts/cursor.js` draws a large red cursor, a fading trail and a click pulse of 1400 ms, so the viewer sees each move and click. A scroll starts a new trail, so a click on a target out of view draws no line across the screen. It starts by itself.
+- `scripts/cursor.js` draws a large red cursor, a fading trail and a click pulse of 300 ms, so the viewer sees each move and click. A scroll starts a new trail, so a click on a target out of view draws no line across the screen. Before a still, call `walkCursor.park()`: it hides the pointer and its marks until the mouse moves again. It starts by itself.
 - `scripts/arrow.js` adds `window.walkArrow`. It draws nothing until you call it.
 
 Both overlays ignore pointer events, take no focus and are hidden from assistive technology. A click, an accessibility snapshot and a test see the page as it is.

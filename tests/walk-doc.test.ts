@@ -454,6 +454,7 @@ test('the reader points, magnifies and clears with walkArrow', () => {
   expect(WALK_SYSTEM_PROMPT).toMatch(/browser_evaluate[^\n]*walkArrow\.point\([^\n]*untilClick: true/)
   expect(WALK_SYSTEM_PROMPT).toMatch(/walkArrow\.magnify\([^\n]*untilBlur: true/)
   expect(WALK_SYSTEM_PROMPT).toMatch(/walkArrow\.stop\(\)[^\n]*browser_take_screenshot/)
+  expect(WALK_SYSTEM_PROMPT).toMatch(/walkCursor\.park\(\)[^\n]*browser_take_screenshot/)
   expect(WALK_SYSTEM_PROMPT).toMatch(/walkArrow[^\n]*NOT_FOUND[^\n]*INCORRECT/)
 })
 
