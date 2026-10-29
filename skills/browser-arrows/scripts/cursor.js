@@ -7,7 +7,7 @@
   window.__walkCursor = true;
   const RED = '#ff1a1a';
   const TRAIL_MS = 600;
-  const PULSE_MS = 1400; // long enough to read in a recording
+  const PULSE_MS = 300; // a brief mark; the walkArrow before the click shows where it goes
   const PULSE_KEY = '__walkCursorPulse';
   const STEP_PX = 6;
   const TOP = '2147483647';

@@ -521,11 +521,28 @@ const PATH_TOOLS: Record<string, string> = { Read: 'file_path', Edit: 'file_path
 
 export type GuardCall = { tool: string; agentId: string | undefined; input: Record<string, unknown> }
 
+// The walk browser's tools, as the plugin's Playwright server names them.
+const BROWSER = (name: string) => `mcp__plugin_${PLUGIN}_playwright__${name}`
+const CLICK = BROWSER('browser_click')
+const CLICK_NEEDS_ARROW = "walk-doc: point at the target before you click it, so the recording shows where the click goes. Call browser_evaluate with walkArrow.point('<target>', { text: '<what to do>', untilClick: true }), then click."
+
+// Whether a walkArrow stays up for the reader's next click, after a call that did or did not succeed.
+// A pointing arrow with untilClick arms it; a click, a new page, walkArrow.stop() or another arrow uses it up.
+export function arrowAfter(armed: boolean, call: { tool: string; input: Record<string, unknown> }, succeeded: boolean): boolean {
+  if (call.tool === BROWSER('browser_navigate') || call.tool === BROWSER('browser_navigate_back')) return false
+  if (call.tool === CLICK) return succeeded ? false : armed
+  if (call.tool !== BROWSER('browser_evaluate')) return armed
+  const fn = typeof call.input.function === 'string' ? call.input.function : ''
+  if (!/\bwalkArrow\.\w+\(/.test(fn)) return armed
+  return succeeded && /\bwalkArrow\.point\(/.test(fn) && /\buntilClick\s*:\s*true\b/.test(fn) && !/\bwalkArrow\.stop\(/.test(fn)
+}
+
 // null lets the call through; a string is the denial, naming what was refused and why.
 export function guardCall(run: Run, config: Config, call: GuardCall): string | null {
   if (call.agentId === undefined || !run.agentIds.includes(call.agentId)) return null
   if (WALK_DENIED_TOOLS.has(call.tool)) return `walk-doc: the Walk agent works alone; ${call.tool} is denied. Report with walk_report or walk_enhance.`
   if (MAIN_ONLY_TOOLS.has(call.tool)) return `walk-doc: ${call.tool} belongs to the main agent. Report with walk_report and end your turn.`
+  if (call.tool === CLICK && run.arrowArmed !== true) return CLICK_NEEDS_ARROW
   const field = PATH_TOOLS[call.tool]
   if (field !== undefined) {
     const p = call.input[field]

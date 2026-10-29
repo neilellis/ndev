@@ -9,7 +9,7 @@ import type { EngineInterface, On, PluginOptions, TurnCompleteInput } from 'clau
 
 import { WALK_SYSTEM_PROMPT, walkTask } from './prompts'
 import {
-  AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
+  AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, arrowAfter, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
   newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, valuesNote, exampleConfig, addTip, cleanTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
   walkStopped, workspaceOf,
 } from './walk'
@@ -471,7 +471,13 @@ export const walkDoc = (on: On, options: PluginOptions) => {
       if (seq === 0) throw new Error('the walk ended while the command was being recorded')
       return keepSaved(await next({ ...e, command: recordedBash(run, input.command, seq).command } as typeof e))
     }
-    if (denial === null) return isWalk ? keepSaved(await next(e)) : next(e)
+    if (denial === null && isWalk) {
+      const result = await next(e)
+      const armed = arrowAfter(run.arrowArmed === true, { tool, input }, result.deny === undefined && result.isError !== true)
+      if (armed !== (run.arrowArmed === true)) await update($, runAtom, r => (r === null ? r : { ...r, arrowArmed: armed }))
+      return keepSaved(result)
+    }
+    if (denial === null) return next(e)
     await update($, runAtom, r => (r === null ? r : { ...r, denials: [...r.denials, { tool, detail: denial, at: Date.now() }] }))
     return { deny: denial }
   }).catch(($, e, next) => {
