@@ -176,3 +176,54 @@ test('status --json with no file anywhere says so', () => {
   assert.equal(s.file, null)
   assert.equal(s.main, p.main)
 })
+
+test('init in a worktree keeps a key added to the worktree copy, in the main checkout file too', () => {
+  const p = project()
+  assert.equal(run(p, p.main, 'init').status, 0)
+  assert.equal(run(p, p.worktree, 'status').status, 0)
+  writeFileSync(join(p.worktree, '.neil-dev.env'), `${readFileSync(join(p.worktree, '.neil-dev.env'), 'utf8')}PROJECT_KEY=keepme\n`)
+  const r = run(p, p.worktree, 'init')
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.out, /PROJECT_KEY/)
+  assert.equal(values(join(p.main, '.neil-dev.env')).PROJECT_KEY, 'keepme')
+  assert.equal(values(join(p.worktree, '.neil-dev.env')).PROJECT_KEY, 'keepme')
+})
+
+test('init in a worktree refuses when a key differs between the worktree copy and the main checkout file', () => {
+  const p = project()
+  writeFileSync(join(p.main, '.neil-dev.env'), 'OPENAI_API_KEY=sk-oa-xyz789\n', { mode: 0o600 })
+  writeFileSync(join(p.worktree, '.neil-dev.env'), 'OPENAI_API_KEY=other-value\n', { mode: 0o600 })
+  const r = run(p, p.worktree, 'init')
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /OPENAI_API_KEY/)
+  assert.ok(!r.out.includes('other-value'))
+  assert.equal(values(join(p.worktree, '.neil-dev.env')).OPENAI_API_KEY, 'other-value')
+})
+
+test('a file that other users can read is refused, and the repair is chmod 600', () => {
+  const p = project()
+  writeFileSync(join(p.main, '.neil-dev.env'), 'OPENAI_API_KEY=sk-oa-xyz789\n', { mode: 0o644 })
+  const r = run(p, p.main, 'status', '--json')
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /chmod 600/)
+})
+
+test('init reads only plain values: a shell operator, a quote in the value or a one-command prefix is not a value', () => {
+  const p = project({
+    zshrc: [
+      'export OPENROUTER_API_KEY=sk-or-abc123;',
+      'export OPENAI_API_KEY=sk-oa-xyz789',
+      'OPENAI_API_KEY=dummy npm test',
+      `export UNSPLASH_ACCESS_KEY="un'quote"`,
+      '',
+    ].join('\n'),
+  })
+  const r = run(p, p.main, 'init')
+  assert.equal(r.status, 0, r.out)
+  const v = values(join(p.main, '.neil-dev.env'))
+  assert.equal(v.OPENROUTER_API_KEY, undefined)
+  assert.equal(v.OPENAI_API_KEY, 'sk-oa-xyz789')
+  assert.equal(v.UNSPLASH_ACCESS_KEY, undefined)
+  assert.match(r.out, /OPENROUTER_API_KEY.*not a plain value/)
+  assert.match(r.out, /UNSPLASH_ACCESS_KEY.*not a plain value/)
+})

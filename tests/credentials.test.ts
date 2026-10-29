@@ -14,7 +14,7 @@ const status = (s: Partial<Status>): Status => ({ file: null, copiedFrom: null, 
 
 // A fake engine: a git repository at /proj. `statuses` are what neil-dev-env.mjs status --json
 // prints, in order (the last one repeats); `answers` are the dialog answers, then dismissal.
-const engine = (on: On, opts: { statuses: (Status | { exitCode: number; stderr: string })[]; answers?: string[]; initOutput?: string }) => {
+const engine = (on: On, opts: { statuses: (Status | { exitCode: number; stderr: string })[]; answers?: string[]; initOutput?: string; ghThrows?: boolean }) => {
   const ran: string[][] = []
   const toasts: string[] = []
   const asked: string[] = []
@@ -45,7 +45,10 @@ const engine = (on: On, opts: { statuses: (Status | { exitCode: number; stderr: 
       const s = opts.statuses[Math.min(next++, opts.statuses.length - 1)]!
       return 'exitCode' in s ? ok('', s.exitCode, s.stderr) : ok(JSON.stringify(s))
     }
-    if (e.argv[0] === 'gh') return ok('', 1, 'no gh here')
+    if (e.argv[0] === 'gh') {
+      if (opts.ghThrows) throw new Error('gh did not start')
+      return ok('', 1, 'no gh here')
+    }
     return ok()
   })
   on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
@@ -143,4 +146,12 @@ test('a status that fails: the toast and the agent get the exit code and the out
   const text = (await section($)) ?? ''
   expect(text).toContain('exited 1')
   expect(text).toContain('line 3 is not KEY=VALUE')
+})
+
+test('a GitHub set-up that throws: the failure is shown, and the credentials question is still asked', async ($, on) => {
+  const { asked, toasts } = engine(on, { statuses: [status({})], ghThrows: true })
+  await start($, true)
+
+  expect(toasts.join(' ')).toContain('the GitHub set-up failed')
+  expect(credentialQuestions(asked)).toHaveLength(1)
 })

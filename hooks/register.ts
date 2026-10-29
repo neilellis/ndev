@@ -279,7 +279,10 @@ export const register: Register = (on, options) => {
     await showStatus($)
     void initWiki($)
     // One dialog at a time: the GitHub set-up first, then the credentials file.
-    void setupIfMissing($, e.isInteractive).then(() => askCredentials($, e.isInteractive))
+    // A failed set-up is shown, and the credentials question still comes.
+    void setupIfMissing($, e.isInteractive)
+      .catch(error => $.ui.toast(`ndev: the GitHub set-up failed: ${String(error instanceof Error ? error.message : error).slice(0, 200)}. Run /dev-setup to try again.`))
+      .then(() => askCredentials($, e.isInteractive))
 
     return next(e)
   })

@@ -98,7 +98,7 @@ function load(loc) {
   const found = find(loc)
   if (found === null) return null
   const mode = statSync(found.file).mode & 0o777
-  if (mode & 0o077) process.stderr.write(`warning: ${found.file} can be read by other users (mode ${mode.toString(8)}). Repair: chmod 600 ${found.file}\n`)
+  if (mode & 0o077) throw new Refusal(`${found.file} can be read by other users (mode ${mode.toString(8)}). Repair: chmod 600 ${found.file}`)
   return { ...found, values: parse(readFileSync(found.file, 'utf8'), found.file) }
 }
 
@@ -116,7 +116,10 @@ function missingFrom(found, names) {
     `or exports ${missing.length === 1 ? 'it' : 'them'} in ~/.zshrc and runs ${INIT}.`
 }
 
-// A literal value from an assignment in a shell file; null when it uses an expansion or a command.
+const PLAIN = /^[A-Za-z0-9_\-.:/+=@,~]*$/
+
+// A literal value from an assignment in a shell file; null when it is not a plain value, and
+// undefined when the assignment only prefixes one command (KEY=x cmd), so it sets nothing.
 function literal(raw) {
   const s = raw.trim()
   let value, rest
@@ -129,14 +132,14 @@ function literal(raw) {
     const end = s.indexOf('"', 1)
     if (end < 0) return null
     value = s.slice(1, end)
-    if (/[$`\\]/.test(value)) return null
+    if (/[$`\\']/.test(value)) return null
     rest = s.slice(end + 1)
   } else {
     value = s.split(/\s/)[0]
-    if (/[$`\\()'"]/.test(value)) return null
+    if (!PLAIN.test(value)) return null
     rest = s.slice(value.length)
   }
-  return rest.trim() === '' || rest.trim().startsWith('#') ? value : null
+  return rest.trim() === '' || rest.trim().startsWith('#') ? value : undefined
 }
 
 // The named keys assigned in a shell file, read as text. The last assignment wins.
@@ -147,6 +150,7 @@ function fromShell(text, names) {
     const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/)
     if (m === null || !names.includes(m[1])) continue
     const value = literal(m[2])
+    if (value === undefined) continue
     if (value === null || value === '') {
       unusable.add(m[1])
       delete found[m[1]]
@@ -158,7 +162,10 @@ function fromShell(text, names) {
   return { found, unusable }
 }
 
-const line = (name, value) => `${name}=${/^[A-Za-z0-9_\-.:/+=@,~]*$/.test(value) ? value : `'${value.replace(/'/g, '')}'`}`
+function line(name, value) {
+  if (value.includes("'")) throw new Refusal(`The value of ${name} has a single quote, which ${FILE} cannot hold. Put a value without one in the file by hand.`)
+  return `${name}=${PLAIN.test(value) ? value : `'${value}'`}`
+}
 
 function init(loc, from, extra) {
   const target = loc.main ?? loc.root
@@ -167,11 +174,20 @@ function init(loc, from, extra) {
   const existed = existsSync(file)
   let text = existed ? readFileSync(file, 'utf8') : `# Private credentials for ndev skills. Git-ignored; keep it mode 600.\n# One KEY=VALUE per line. Never commit, print or paste these values.\n`
   const have = existed ? parse(text, file) : {}
+  // A worktree's copy is replaced below; keys added to it by hand go to the main checkout file first.
+  const copy = loc.root !== target ? join(loc.root, FILE) : null
+  const local = copy !== null && existsSync(copy) ? parse(readFileSync(copy, 'utf8'), copy) : {}
+  const differ = Object.keys(local).filter(k => have[k] !== undefined && have[k] !== local[k])
+  if (differ.length > 0) {
+    throw new Refusal(`${differ.join(', ')} ${differ.length === 1 ? 'has' : 'have'} one value in ${copy} and another in ${file}. init copies ${file} over ${copy}, so the person keeps the right value in both files, then runs init again.`)
+  }
+  const fromCopy = Object.keys(local).filter(k => have[k] === undefined)
   const wanted = [...KEYS.map(k => k.name), ...extra]
   const names = [...wanted, ...KEYS.flatMap(k => (k.alias ? [k.alias] : []))]
   const shell = existsSync(from) ? fromShell(readFileSync(from, 'utf8'), names) : null
   const added = [], kept = [], missing = [], unusable = []
-  const lines = []
+  const lines = fromCopy.map(k => line(k, local[k]))
+  for (const k of fromCopy) have[k] = local[k]
   for (const name of wanted) {
     if (isSet(have, name)) { kept.push(name); continue }
     const alias = aliasOf(name)
@@ -198,10 +214,11 @@ function init(loc, from, extra) {
     `${existed ? 'Updated' : 'Created'} ${file} (mode 600)${copies.length ? `, and copied it to ${copies.join(', ')}` : ''}.`,
     `added from ${from}: ${added.join(', ') || 'none'}`,
     `already set: ${kept.join(', ') || 'none'}`,
+    ...(fromCopy.length ? [`kept from the worktree copy ${copy}: ${fromCopy.join(', ')}`] : []),
     `missing: ${missing.join(', ') || 'none'}`,
   ]
   if (shell === null) report.push(`${from} does not exist, so no key came from it.`)
-  if (unusable.length) report.push(`${unusable.join(', ')} in ${from} ${unusable.length === 1 ? 'is' : 'are'} not a plain value (it uses $, a command or a backslash), so it was not copied. Put the value in ${file} by hand.`)
+  if (unusable.length) report.push(`${unusable.join(', ')} in ${from} ${unusable.length === 1 ? 'is' : 'are'} not a plain value (it uses $, a quote, a shell operator such as ; or |, a command or a backslash), so it was not copied. Put the value in ${file} by hand.`)
   if (missing.length) report.push(`To add a missing key, the person fills in its commented line in ${file}, or exports it in ~/.zshrc and runs init again. A project may not need every key.`)
   return report.join('\n')
 }
