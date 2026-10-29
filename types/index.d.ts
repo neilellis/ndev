@@ -27,6 +27,8 @@ export type Snapshot = {
   mergeMethod?: 'merge' | 'squash' | 'rebase'
   isBusy?: boolean
   agentsError?: string
+  // Why the Orca worktrees could not be read to find an owner.
+  orcaError?: string
   error?: string
 }
 
@@ -50,9 +52,10 @@ export type Comm = {
 
 // Who is working on the current pull request, and since when.
 //   asked:  its owning agent was messaged and has not answered
+//   orca:   a Claude agent was started in an Orca workspace and its session is not listed yet
 //   model:  this session's model was handed the pull request
 //   merging: the merge was requested and GitHub has not reported it yet
-export type Step = 'asked' | 'model' | 'merging'
+export type Step = 'asked' | 'orca' | 'model' | 'merging'
 
 export type Outcome = {
   // ready: green, and left for a human to merge (a --no-merge run)
@@ -88,6 +91,10 @@ export type Loop = {
   // The model reported a push through the report tool.
   isRoundDone?: boolean
   by?: string
+  // The model holds the pull request only because the agents could not be listed: an owner found later takes it over.
+  isAwaitingOwner?: boolean
+  // The folder of the Orca worktree an agent was started in: in the orca step, only a session in it owns the pull request.
+  orcaPath?: string
   // Fix rounds on the current pull request; the loop blocks it past the limit.
   attempts: number
   outcomes: Record<string, Outcome>
