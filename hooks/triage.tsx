@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { firstLine, gh, ofRepo, orca, orcaWorktrees, START_ORCA, type Run } from './fix-all-prs'
+import { firstLine, gh, ofRepo, orca, orcaProject, orcaWorktrees, START_ORCA, type Run } from './fix-all-prs'
 import type { TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
 // /orca-triage: this session's model groups the open issues, and Orca does the work. Each group becomes one Task of one
@@ -294,7 +294,7 @@ async function settle($: EngineInterface): Promise<void> {
 async function makeWorkspace($: EngineInterface, repo: string, g: TriageGroup, issues: TriageIssue[]): Promise<string> {
   const refs = g.issues.flatMap(n => ['--reference', issues.find(i => i.number === n)?.url ?? `https://github.com/${repo}/issues/${n}`])
   const made = (await orca(runner($, 600_000), [
-    'worktree', 'create', '--project', `github:${repo}`, '--name', `issue-${g.lead}`, '--no-parent', '--setup', 'run', '--comment', g.title, ...refs,
+    'worktree', 'create', '--project', orcaProject(repo), '--name', `issue-${g.lead}`, '--no-parent', '--setup', 'run', '--comment', g.title, ...refs,
   ])) as { worktree?: { id?: string } }
   const id = made.worktree?.id
   if (!id) throw new Error(`orca worktree create for #${g.lead} answered no worktree id: ${JSON.stringify(made).slice(0, 300)}${START_ORCA}`)

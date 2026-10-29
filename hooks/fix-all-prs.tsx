@@ -299,7 +299,10 @@ export async function orcaWorktrees(run: Run, retry = ''): Promise<OrcaWorktree[
   return listed.worktrees
 }
 
-export const ofRepo = (worktrees: OrcaWorktree[], repo: string) => worktrees.filter(w => w.projectId === `github:${repo.toLowerCase()}`)
+// Orca keeps a repository's project id in lower case and matches it exactly.
+export const orcaProject = (repo: string) => `github:${repo.toLowerCase()}`
+
+export const ofRepo = (worktrees: OrcaWorktree[], repo: string) => worktrees.filter(w => w.projectId === orcaProject(repo))
 
 // The repository's Orca worktrees that hold a pull request: linked to it, or on its head branch. A main checkout
 // never does, since agents do not work in it.

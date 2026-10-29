@@ -45,7 +45,7 @@ const message = (id: string, type: string, from: string, body: string, payload?:
 // A fake GitHub and Orca. Orca keeps its Tasks and workspaces: a Task with deps is pending until every dep's worker
 // reported success, and a workspace keeps the links and board status set on it.
 type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[] }
-function world(on: On, opts: { board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; taskCreateFails?: boolean } = {}) {
+function world(on: On, opts: { repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; taskCreateFails?: boolean } = {}) {
   const ran: string[][] = []
   const prompts: string[] = []
   const toasts: string[] = []
@@ -59,7 +59,7 @@ function world(on: On, opts: { board?: { owner: string; number: number }; issues
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
   on('env.get', () => ({ value: '/home/neil' }))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
-  on('fs.read', () => ({ value: JSON.stringify({ github: { repo: 'acme/widgets', board: opts.board ?? null } }) }))
+  on('fs.read', () => ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null } }) }))
   on('clock.every', () => new Promise(() => {}))
   on('clock.now', () => ({ value: 1_800_000_000_000 }))
   on('ui.status', () => ({ value: undefined }))
@@ -253,6 +253,21 @@ test('accepted groups become one Orca Run with a Task each; Orca makes the works
     '--agent', 'claude', '--model', 'claude-haiku-5-5', '--effort', 'xhigh',
   ]))
   expect(starts[0]).not.toContain('--name')
+})
+
+// Orca keeps project ids in lower case and matches them exactly, so a repository saved as Owner/Name must not miss its setup.
+test('a repository saved in mixed case makes its Orca workspace under the lower-case project id', async ($, on) => {
+  const w = world(on, { repo: 'Acme/Widgets', issues: [issue(3)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  const accepted = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never) as { result?: unknown; isError?: boolean }
+  expect(accepted.isError).toBeFalsy()
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+
+  const made = w.ran.filter(a => a.slice(0, 3).join(' ') === 'orca worktree create')
+  expect(made).toHaveLength(1)
+  expect(made[0]).toEqual(expect.arrayContaining(['--project', 'github:acme/widgets']))
 })
 
 test('a question goes to the model with the reply command; worker_done retains the worker and starts the Task it unblocked', async ($, on) => {
