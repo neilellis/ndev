@@ -213,21 +213,27 @@ async function requireAsciinema($: EngineInterface): Promise<void> {
   throw new Error(`asciinema does not run (${why}). The walk records each command the reader runs. Install it with: brew install asciinema`)
 }
 
+// The reader drives the plugin's Playwright server. The host connects it at session start and keeps the
+// result, so a server that failed then (a slow npx start past the host's connect limit) stays failed.
+async function requireBrowser($: EngineInterface): Promise<string> {
+  const browser = await $.mcp.connect('playwright')
+  if (browser.isConnected) return browser.server
+  throw new Error(`the walk browser plugin:${PLUGIN}:playwright is not connected (${browser.reason}): ${browser.message} Run /mcp, reconnect plugin:${PLUGIN}:playwright, then run /walk-doc again. If the reconnect times out, start Claude Code with MCP_TIMEOUT=120000 so its first npx start has time.`)
+}
+
 // The reader's recordings need the red cursor and walkArrow, which the Playwright server loads as
 // init scripts when it starts. A server started before the plugin's config changed lacks them.
-async function requireOverlay($: EngineInterface, url: string): Promise<void> {
+async function requireOverlay($: EngineInterface, server: string, url: string): Promise<void> {
   let seen: string
   try {
-    const browser = await $.mcp.connect('playwright')
-    if (!browser.isConnected) throw new Error(`the playwright server is not connected (${JSON.stringify(browser)})`)
-    await $.mcp.call(browser.server, 'browser_navigate', { url })
-    const result = await $.mcp.call(browser.server, 'browser_evaluate', { function: '() => `overlay:${typeof window.walkArrow?.point}/${window.__walkCursor === true}`' })
+    await $.mcp.call(server, 'browser_navigate', { url })
+    const result = await $.mcp.call(server, 'browser_evaluate', { function: '() => `overlay:${typeof window.walkArrow?.point}/${window.__walkCursor === true}`' })
     seen = result.content.map(c => ('text' in c ? c.text : '')).join(' ')
     if (!result.isError && seen.includes('overlay:function/true')) return
   } catch (error) {
     seen = error instanceof Error ? error.message : String(error)
   }
-  throw new Error(`the walk browser lacks the cursor and arrow overlay (skills/browser-arrows/scripts/cursor.js and arrow.js): the page at ${url} reported ${seen.trim()}. The Playwright server was started without the plugin's init scripts. Run /mcp, reconnect plugin:ndev:playwright, then run /walk-doc again.`)
+  throw new Error(`the walk browser lacks the cursor and arrow overlay (skills/browser-arrows/scripts/cursor.js and arrow.js): the page at ${url} reported ${seen.trim()}. The Playwright server was started without the plugin's init scripts. Run /mcp, reconnect ${server}, then run /walk-doc again.`)
 }
 
 async function startWalk($: EngineInterface, args: string): Promise<string> {
@@ -237,6 +243,8 @@ async function startWalk($: EngineInterface, args: string): Promise<string> {
   const current = await read($, runAtom)
   await requireAsciinema($)
   if (isActive(current)) throw new Error(`a walk of ${current.target} is still ${current.phase}. Finish it with walk_finish, or run /walk-doc stop.`)
+  // Before the dev server: its first compile can take minutes, and a walk without its browser cannot start.
+  const browser = await requireBrowser($)
   let target = parsed.target.replace(/^\.\//, '')
   if (target.startsWith('/') && !target.startsWith(`${root}/`)) {
     // A docs-site path such as /manuals/operations-manual/ names a page or a section under the content root.
@@ -287,7 +295,7 @@ async function startWalk($: EngineInterface, args: string): Promise<string> {
   }
 
   try {
-    await requireOverlay($, probe)
+    await requireOverlay($, browser, probe)
   } catch (error) {
     await killGroup($, pid)
     throw error

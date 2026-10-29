@@ -27,6 +27,7 @@ test('parseArgs reads the target and an optional quoted persona', () => {
   expect(parseArgs('apps/docs/content/installation')).toEqual({ target: 'apps/docs/content/installation', persona: null, reRecord: false })
   expect(parseArgs('apps/docs/content/x.mdx --persona "an ops engineer on Linux"')).toEqual({ target: 'apps/docs/content/x.mdx', persona: 'an ops engineer on Linux', reRecord: false })
   expect(parseArgs('')).toEqual({ error: expect.stringContaining('/walk-doc <path|url>') })
+  for (const form of ['/walk-doc ask <question>', '/walk-doc restart [note]', '/walk-doc tip <text>', '/walk-doc stop']) expect(parseArgs('')).toEqual({ error: expect.stringContaining(form) })
 })
 
 test('parseArgs reads --re-record before or after the target and the persona', () => {
@@ -455,6 +456,15 @@ test('tips: the config keeps a list of tips, addTip appends one, and the reader 
   expect(() => addTip(twice, 'Use a container.')).toThrow(/already/)
   expect(tipsNote([])).toBe('')
   expect(tipsNote(['a', 'b'])).toBe('Tips from the person who runs this walk:\n- a\n- b')
+})
+
+test('addTip keeps a quoted tip without its quotes, as a shell reads it, and keeps quotes inside the tip', () => {
+  expect(parseConfig(addTip(fixture(), '"Set up the demo on a VM"')).tips).toEqual(['Set up the demo on a VM'])
+  expect(parseConfig(addTip(fixture(), "'Set up the demo on a VM'")).tips).toEqual(['Set up the demo on a VM'])
+  expect(parseConfig(addTip(fixture(), 'Say "yes" at the prompt')).tips).toEqual(['Say "yes" at the prompt'])
+  expect(parseConfig(addTip(fixture(), '"yes" or "no"')).tips).toEqual(['"yes" or "no"'])
+  expect(parseConfig(addTip(fixture(), '"Don\'t skip the VM"')).tips).toEqual(["Don't skip the VM"])
+  expect(() => addTip(fixture(), '""')).toThrow(/Usage: \/walk-doc tip/)
 })
 
 test('parseConfig refuses each missing required key, naming the key, the file and an example value', () => {
