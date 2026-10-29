@@ -16,7 +16,7 @@ Find the project's UX pages from its wiki index file (usually under a `visual/` 
 | Accessibility | Meet WCAG 2.2 AA: contrast, labels, focus order, and no meaning carried by colour alone. |
 | Feedback and performance | Show that work has started. Show progress for slow work. An error names the next action. |
 
-- Use the project's design system for the actual tokens and components.
+- Use the project's design system for the actual tokens and components. For React UI work, prefer repository-owned shadcn/ui primitives for controls, forms, dialogs, menus and selection; theme their standard behaviour and basic styling to the project brand. Keep bespoke illustrations and cinematic scenes custom. Follow the project's existing primitive family (Base UI or Radix), preserve keyboard/focus semantics, and test validation and application state when migrating. Do not replace working interactions with CSS lookalikes or run an initializer that overwrites established global styles.
 - Check desktop reflow and the mobile layout. Use `mobile-testing` for mobile screenshots.
 - Use `copy` for the words.
 
