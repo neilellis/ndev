@@ -279,23 +279,34 @@ in it later.
 |---|---|
 | 0 | Done. |
 | 1 | A stop failed. Its entry stays. |
-| 2 | A usage error, or the file does not parse. |
-| 3 | Refused: the main checkout, or the file is not git-ignored. |
+| 2 | A usage error, a file that does not parse, or a lock that another command holds too long. |
+| 3 | Refused: the main checkout, a file that is not git-ignored, or an id that another worktree lists. |
 | 4 | The stack is not listed. |
 
 - The file must be git-ignored. `add-stack` refuses when it is not, and names the repair:
   add the line `.neil-dev.worktree.json` to `.gitignore` (or to the git common dir's
   `info/exclude`). The plugin does not edit `.gitignore`.
 - `add-stack` refuses in the main checkout: the record belongs to a linked worktree.
+- `add-stack` refuses a project id that another worktree of the repository lists. Two worktrees
+  with one project id share its containers, so a stop from one stops the other's stack. The
+  message names that worktree and the repair: give this worktree its own `project_id`.
+- Each change to the file holds a lock, `<git dir>/ndev-worktree.lock`, so two commands do not
+  overwrite each other. A lock whose process is gone is taken over. A command waits at most 10 s
+  (`NDEV_WORKTREE_LOCK_WAIT_MS`), then exits 2 and names the lock to remove.
 - When a session ends in a worktree, `hooks/worktree-stacks.ts` runs
   `worktree-env.sh stop-all --background` with the policy from `.neil-dev.json`
   (`worktreeStacks.onSessionEnd`). The stop runs detached, so a slow `supabase stop` does not
-  hold up the exit. It logs to `<git dir>/ndev-worktree-stop.log`.
+  hold up the exit. It logs to `<git common dir>/ndev-worktree-stop/<worktree name>.log`, so the
+  log stays when the worktree is removed.
 - The hook acts only on the session's own worktree, and only on the stacks its file lists.
 - A `/clear` or a resume stops nothing: the process goes on in the same worktree.
 - An entry goes only after its stack stopped. A failed stop keeps the entry and records
   `lastStop` (the command, the exit code, the last 40 lines of output and the repair command).
   The next session in that worktree shows it in a message and tells the agent the repair.
+- An entry goes only if it is the same entry the stop read (the same `addedAt`). If a new session
+  records the stack again while an old stop runs, the new entry stays.
+- At session start, the agent is also told which stacks the file still lists, with the
+  `stop-all` command. A task that uses a stack leaves it listed.
 - If `.neil-dev.json` has an error, the hook stops nothing and a message names the error and the
   repair command.
 

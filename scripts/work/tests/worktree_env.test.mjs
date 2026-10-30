@@ -9,7 +9,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'worktree-env.sh')
+// WORKTREE_ENV_SCRIPT runs the tests against another copy, to watch a new test fail on the old code.
+const SCRIPT = process.env.WORKTREE_ENV_SCRIPT ?? join(dirname(fileURLToPath(import.meta.url)), '..', 'worktree-env.sh')
 const FILE = '.neil-dev.worktree.json'
 
 const sh = (cwd, ...argv) => {
@@ -19,10 +20,13 @@ const sh = (cwd, ...argv) => {
 }
 
 // The fake npx records "<cwd>|<args>" in calls.log. It fails (exit 1, a Docker error) for each
-// project id listed in fail.txt, and succeeds for every other id.
+// project id listed in fail.txt, and succeeds for every other id. With slow.txt it takes 1 s; an
+// executable during.sh runs while it "stops".
 const FAKE_NPX = `#!/usr/bin/env bash
 dir="$(cd "$(dirname "$0")" && pwd -P)"
 echo "$(pwd -P)|$*" >> "$dir/calls.log"
+if [ -f "$dir/slow.txt" ]; then sleep 1; fi
+if [ -x "$dir/during.sh" ]; then "$dir/during.sh"; fi
 for id in $(cat "$dir/fail.txt" 2>/dev/null); do
   case " $* " in *" --project-id $id "*)
     echo "Stopping containers..."
@@ -53,13 +57,28 @@ function project({ ignored = true } = {}) {
   return { base, main, worktree, bin, app: join(worktree, 'app') }
 }
 
-const run = (p, cwd, ...args) => {
+const runWith = (env, p, cwd, ...args) => {
   const r = spawnSync('bash', [SCRIPT, ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${p.bin}:${process.env.PATH}` },
+    env: { ...process.env, PATH: `${p.bin}:${process.env.PATH}`, ...env },
   })
   return { status: r.status, out: `${r.stdout}${r.stderr}`, stdout: r.stdout, stderr: r.stderr }
+}
+
+const run = (p, cwd, ...args) => runWith({}, p, cwd, ...args)
+
+// Waits (at most 10 s) until a process has exited.
+async function exited(pid) {
+  for (let i = 0; i < 200; i++) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.fail(`pid ${pid} still runs after 10 s`)
 }
 
 const record = p => JSON.parse(readFileSync(join(p.worktree, FILE), 'utf8'))
@@ -259,4 +278,97 @@ test('stop-all --background returns at once and the detached run stops the stack
   assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id fcc-211 --no-backup`])
   assert.deepEqual(record(p).stacks, [])
   assert.match(readFileSync(log, 'utf8'), /fcc-211/)
+})
+
+test('stop-all keeps a newer entry for the same stack that was added while the stop ran', () => {
+  const p = project()
+  add(p, 'fcc-211')
+  // While the old stack stops, a new session starts the stack again and records it.
+  writeFileSync(join(p.bin, 'during.sh'), `#!/usr/bin/env bash\nrm -f "$0"\nbash ${SCRIPT} add-stack --kind supabase --project-id fcc-211 --workdir ${p.app} --cli-version 2.130.1\n`)
+  chmodSync(join(p.bin, 'during.sh'), 0o755)
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  const { stacks } = record(p)
+  assert.deepEqual(stacks.map(s => `${s.projectId}@${s.cliVersion}`), ['fcc-211@2.130.1'], 'the stop removed the entry added after it read the file')
+})
+
+test('a record change waits for the lock; a lock that a live process holds too long exits 2 and names the repair', () => {
+  const p = project()
+  add(p, 'fcc-211')
+  const lock = join(p.main, '.git', 'worktrees', 'wt', 'ndev-worktree.lock')
+  writeFileSync(lock, String(process.pid))
+  const r = runWith({ NDEV_WORKTREE_LOCK_WAIT_MS: '300' }, p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'fcc-211')
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.out, new RegExp(`held by pid ${process.pid}`))
+  assert.match(r.out, new RegExp(`rm ${lock.replace(/[.]/g, '\\.')}`))
+  assert.equal(record(p).stacks.length, 1, 'the record changed without the lock')
+  assert.ok(existsSync(lock), 'the lock of a live holder was removed')
+})
+
+test('a lock whose holder is gone is taken over', () => {
+  const p = project()
+  add(p, 'fcc-211')
+  const gone = spawnSync('true')
+  const lock = join(p.main, '.git', 'worktrees', 'wt', 'ndev-worktree.lock')
+  writeFileSync(lock, String(gone.pid))
+  const r = runWith({ NDEV_WORKTREE_LOCK_WAIT_MS: '300' }, p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'fcc-211')
+  assert.equal(r.status, 0, r.out)
+  assert.deepEqual(record(p).stacks, [])
+  assert.ok(!existsSync(lock))
+})
+
+test('add-stack refuses a project id that another worktree lists, and names that worktree and the repair', () => {
+  const p = project()
+  add(p, 'fcc-211')
+  const other = join(p.base, 'wt2')
+  sh(p.main, 'git', 'worktree', 'add', '-q', '-b', 'task2', other)
+  const r = run(p, other, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-211', '--workdir', other, '--cli-version', '2.122.0')
+  assert.equal(r.status, 3, r.out)
+  assert.match(r.out, new RegExp(p.worktree.replace(/[.]/g, '\\.')))
+  assert.match(r.out, /project_id/)
+  assert.match(r.out, /remove-stack --kind supabase --project-id fcc-211/)
+  assert.ok(!existsSync(join(other, FILE)))
+  assert.equal(run(p, other, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-211b', '--workdir', other, '--cli-version', '2.122.0').status, 0)
+})
+
+test('stop-all --worktree with a subfolder stops the stacks of its worktree', () => {
+  const p = project()
+  add(p, 'fcc-211')
+  const r = run(p, p.base, 'stop-all', '--worktree', p.app)
+  assert.equal(r.status, 0, r.out)
+  assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id fcc-211 --no-backup`])
+  assert.deepEqual(record(p).stacks, [])
+})
+
+test('stop-all --background logs by default in the common git dir, which outlives the worktree', async () => {
+  const p = project()
+  add(p, 'fcc-211')
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--background')
+  assert.equal(r.status, 0, r.out)
+  const log = join(p.main, '.git', 'ndev-worktree-stop', 'wt.log')
+  assert.match(r.out, new RegExp(`log ${log.replace(/[.]/g, '\\.')}`))
+  await exited(Number(/pid (\d+)/.exec(r.out)?.[1]))
+  assert.match(readFileSync(log, 'utf8'), /stopped supabase stack fcc-211/)
+})
+
+test('the background stop survives a kill of the caller\'s process group', async () => {
+  const p = project()
+  add(p, 'fcc-211')
+  writeFileSync(join(p.bin, 'slow.txt'), '')
+  const log = join(p.base, 'stop.log')
+  // The caller runs in its own process group, as a hook command does; the group is killed at once.
+  const r = spawnSync('bash', [SCRIPT, 'stop-all', '--worktree', p.worktree, '--background', '--log', log], {
+    cwd: p.base, encoding: 'utf8', detached: true, env: { ...process.env, PATH: `${p.bin}:${process.env.PATH}` },
+  })
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`)
+  try {
+    process.kill(-r.pid, 'SIGKILL')
+  } catch (error) {
+    assert.equal(error.code, 'ESRCH')
+  }
+  const pid = Number(/pid (\d+)/.exec(r.stdout)?.[1])
+  assert.ok(pid > 0, r.stdout)
+  await exited(pid)
+  assert.deepEqual(record(p).stacks, [])
+  assert.match(readFileSync(log, 'utf8'), /stopped supabase stack fcc-211/)
 })

@@ -11,12 +11,13 @@
 //   worktree-env.sh stop-all [--on-end stop-and-delete|stop-keep-data|keep-running]
 //                            [--worktree <dir>] [--background [--log <file>]]
 //
-// Exit codes: 0 done; 1 a stop failed (its entry stays); 2 bad usage or an unreadable file;
-// 3 refused (the main checkout, or the file is not git-ignored); 4 remove-stack: not listed.
+// Exit codes: 0 done; 1 a stop failed (its entry stays); 2 bad usage, an unreadable file or a
+// held lock; 3 refused (the main checkout, a file that is not git-ignored, or an id that another
+// worktree lists); 4 remove-stack: not listed.
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync, appendFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -29,6 +30,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const VERSION = /^[0-9][0-9A-Za-z.+-]*$/
 const TAIL_LINES = 40
 const STOP_TIMEOUT_S = Number(process.env.NDEV_STACK_STOP_TIMEOUT_S ?? 180)
+const LOCK_WAIT_MS = Number(process.env.NDEV_WORKTREE_LOCK_WAIT_MS ?? 10000)
 
 class Fail extends Error {
   constructor(code, message) {
@@ -37,7 +39,9 @@ class Fail extends Error {
   }
 }
 
-const HELP = readFileSync(SELF, 'utf8').split('\n').slice(1, 15).map(l => l.replace(/^\/\/ ?/, '')).join('\n')
+// The help is the header comment: from line 2 to the first line that is not a comment.
+const HEADER = readFileSync(SELF, 'utf8').split('\n').slice(1)
+const HELP = HEADER.slice(0, HEADER.findIndex(l => !l.startsWith('//'))).map(l => l.replace(/^\/\/ ?/, '')).join('\n')
 
 function git(cwd, args) {
   const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' })
@@ -109,10 +113,91 @@ function writeRecord(file, record) {
 
 const same = (a, kind, id) => a.kind === kind && a.projectId === id
 
-// Re-reads the file before each change, so an entry added meanwhile is kept.
-function change(file, edit) {
-  const record = readRecord(file)
-  writeRecord(file, { ...record, stacks: edit(record.stacks) })
+// The absolute git dir of the worktree and the repository's common git dir.
+function gitDirs(root) {
+  const r = git(root, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])
+  if (r.status !== 0) throw new Fail(2, `worktree-env: git rev-parse --git-dir exited ${r.status} in ${root}: ${r.stderr.trim()}`)
+  const [gitDir, common] = r.stdout.trim().split('\n')
+  return { gitDir, common }
+}
+
+const alive = pid => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code === 'EPERM'
+  }
+}
+
+const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
+// One writer at a time: an exclusive lock file in the worktree's git dir (not in the worktree, so
+// it needs no .gitignore line). A lock whose holder is gone is taken over.
+function withLock(root, fn) {
+  const lock = join(gitDirs(root).gitDir, 'ndev-worktree.lock')
+  const deadline = Date.now() + LOCK_WAIT_MS
+  for (;;) {
+    try {
+      const fd = openSync(lock, 'wx')
+      writeFileSync(fd, String(process.pid))
+      closeSync(fd)
+      break
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw new Fail(2, `worktree-env: cannot create the lock ${lock}: ${error.message}`)
+    }
+    let holder = 0
+    try {
+      holder = Number(readFileSync(lock, 'utf8').trim()) || 0
+    } catch {
+      continue
+    }
+    if (holder > 0 && !alive(holder)) {
+      rmSync(lock, { force: true })
+      continue
+    }
+    if (Date.now() > deadline) {
+      throw new Fail(2, `worktree-env: ${lock} is held by pid ${holder || 'unknown'} for over ${LOCK_WAIT_MS} ms, so the record was not changed. If no worktree-env command runs, repair: rm ${lock}, then run this command again.`)
+    }
+    pause(50)
+  }
+  try {
+    return fn()
+  } finally {
+    rmSync(lock, { force: true })
+  }
+}
+
+// Reads the file again under the lock before each change, so an entry added meanwhile is kept.
+function change(root, edit) {
+  const file = join(root, FILE)
+  withLock(root, () => {
+    const record = readRecord(file)
+    writeRecord(file, { ...record, stacks: edit(record.stacks) })
+  })
+}
+
+// The other worktrees of the repository that list the same stack. Two worktrees that record one
+// project id share its containers, so a stop from one would stop (and delete) the other's stack.
+function listedElsewhere(root, kind, id) {
+  const r = git(root, ['worktree', 'list', '--porcelain'])
+  if (r.status !== 0) throw new Fail(2, `worktree-env: git worktree list exited ${r.status} in ${root}: ${r.stderr.trim()}`)
+  const others = r.stdout.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9))
+    .filter(dir => isDir(dir) && realpathSync(dir) !== root)
+  const found = []
+  for (const dir of others) {
+    const file = join(dir, FILE)
+    if (!existsSync(file)) continue
+    let stacks
+    try {
+      stacks = readRecord(file).stacks
+    } catch (error) {
+      console.error(`worktree-env: warning: could not check ${file} for ${kind} ${id}: ${error.message}`)
+      continue
+    }
+    if (stacks.some(s => same(s, kind, id))) found.push(realpathSync(dir))
+  }
+  return found
 }
 
 const stopArgv = (stack, policy) => [
@@ -145,8 +230,15 @@ function addStack(values) {
   const stack = { kind, projectId: id, workdir: realpathSync(workdir), cliVersion: version }
   const common = refuseMainCheckout(root, shellText(stopArgv(stack, 'stop-and-delete')))
   refuseNotIgnored(root, common)
+  const elsewhere = listedElsewhere(root, kind, id)
+  if (elsewhere.length > 0) {
+    throw new Fail(3, [
+      `worktree-env: ${kind} stack ${id} is already listed by the worktree ${elsewhere.join(', ')}. Both would share its containers, and a session end there would stop this stack and delete its data. Nothing was recorded.`,
+      `Repair: give this worktree its own project id (project_id in supabase/config.toml), or, if that worktree no longer uses the stack: ${WRAPPER} remove-stack --kind ${kind} --project-id ${id} --worktree ${elsewhere[0]}`,
+    ].join('\n'))
+  }
   const file = join(root, FILE)
-  change(file, stacks => [...stacks.filter(s => !same(s, kind, id)), { ...stack, addedAt: new Date().toISOString() }])
+  change(root, stacks => [...stacks.filter(s => !same(s, kind, id)), { ...stack, addedAt: new Date().toISOString() }])
   console.log(`worktree-env: recorded ${kind} stack ${id} in ${file}. When a Claude session in this worktree ends, the ndev hook stops it (worktreeStacks.onSessionEnd in .neil-dev.json; default stop-and-delete).`)
 }
 
@@ -156,7 +248,7 @@ function removeStack(values) {
   const file = join(root, FILE)
   const { stacks } = readRecord(file)
   if (!stacks.some(s => same(s, kind, id))) throw new Fail(4, `worktree-env: ${kind} stack ${id} is not listed in ${file}. Listed: ${stacks.map(s => `${s.kind} ${s.projectId}`).join(', ') || 'none'}.`)
-  change(file, all => all.filter(s => !same(s, kind, id)))
+  change(root, all => all.filter(s => !same(s, kind, id)))
   console.log(`worktree-env: removed ${kind} stack ${id} from ${file}. It was not stopped.`)
 }
 
@@ -189,10 +281,15 @@ function stopOne(stack, policy, root) {
   return { ok: r.status === 0, command: shellText(argv), exitCode: r.status ?? 128, output, cwd }
 }
 
+// The entry this run read, not a newer one for the same stack that was added while it stopped.
+const sameEntry = (a, b) => same(a, b.kind, b.projectId) && a.addedAt === b.addedAt
+
 function stopAll(values) {
   const policy = values['on-end'] ?? 'stop-and-delete'
   if (!POLICIES.includes(policy)) throw new Fail(2, `worktree-env: --on-end "${policy}" is not known. Use one of: ${POLICIES.join(', ')}.`)
-  const root = values.worktree ? resolve(values.worktree) : worktreeRoot(process.cwd())
+  // A folder that is gone (a worktree removed after the session) is used as given.
+  const given = values.worktree ? resolve(values.worktree) : process.cwd()
+  const root = isDir(given) ? worktreeRoot(given) : given
   if (values.background) return background(values, policy, root)
   const file = join(root, FILE)
   const at = new Date().toISOString()
@@ -211,13 +308,13 @@ function stopAll(values) {
     const keepRecord = existsSync(root)
     if (r.ok) {
       console.log(`worktree-env: ${at} stopped ${s.kind} stack ${s.projectId}: ${r.command} (in ${r.cwd})`)
-      if (keepRecord) change(file, all => all.filter(x => !same(x, s.kind, s.projectId)))
+      if (keepRecord) change(root, all => all.filter(x => !sameEntry(x, s)))
       continue
     }
     failed++
     const repair = r.command || `stop the ${s.kind} stack ${s.projectId} by hand`
     if (keepRecord) {
-      change(file, all => all.map(x => (same(x, s.kind, s.projectId) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
+      change(root, all => all.map(x => (sameEntry(x, s) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
     }
     console.error([
       `worktree-env: ${at} ${s.kind} stack ${s.projectId} did not stop.`,
@@ -236,10 +333,10 @@ function stopAll(values) {
 // session-end hook has about 1.5 s, and a Supabase stop takes longer.
 function background(values, policy, root) {
   let log = values.log
+  // The default log is in the common git dir, which outlives a removed worktree's own git dir.
   if (!log) {
-    const dir = git(root, ['rev-parse', '--absolute-git-dir'])
-    if (dir.status !== 0) throw new Fail(2, `worktree-env: no --log given, and git rev-parse --absolute-git-dir exited ${dir.status} in ${root}: ${dir.stderr.trim()}`)
-    log = join(dir.stdout.trim(), 'ndev-worktree-stop.log')
+    const { gitDir, common } = gitDirs(root)
+    log = join(common, 'ndev-worktree-stop', `${gitDir === common ? 'main' : basename(gitDir)}.log`)
   }
   log = resolve(log)
   mkdirSync(dirname(log), { recursive: true })

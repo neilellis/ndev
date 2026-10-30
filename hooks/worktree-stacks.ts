@@ -7,7 +7,7 @@ import { CONFIG_FILE } from './config'
 // .neil-dev.worktree.json at its root. scripts/work/worktree_env.mjs owns that file: agents record
 // a stack with `worktree-env.sh add-stack`, and `stop-all` stops the listed stacks. This hook runs
 // `stop-all --background` when a session ends, so a worktree's stacks do not run on after the work,
-// and at the next session start it reports a stop that failed.
+// and at the next session start it reports a stop that failed and the stacks that are still listed.
 export const RECORD = '.neil-dev.worktree.json'
 const SECTION = 'ndev:worktree-stacks'
 // session.end shares one short bound (about 1.5 s) across the chain: the script only starts the
@@ -49,8 +49,10 @@ const describeFailure = (dir: string, s: Stack) => {
   ].join('\n')
 }
 
-// Called from register.ts's session.start: finds the worktree root and reports earlier failed stops.
-export async function startWorktreeStacks($: EngineInterface, cwd: string) {
+// Called from register.ts's session.start: finds the worktree root and reports earlier failed stops,
+// and the stacks still listed. A toast at the last session end can go unseen, and a stop that never
+// started leaves no lastStop, so the listing itself is the evidence.
+export async function startWorktreeStacks($: EngineInterface, cwd: string, project: LoadedConfig | undefined) {
   root = undefined
   text = undefined
   script = `${$.plugin.root}/scripts/work/worktree-env.sh`
@@ -68,12 +70,23 @@ export async function startWorktreeStacks($: EngineInterface, cwd: string) {
     return
   }
   const failed = stacks.filter(s => s.lastStop !== undefined)
-  if (failed.length === 0) return
-  text = [
-    `Worktree stacks: a stop at an earlier session end failed, so these stacks may still run and hold Docker resources. Run each repair, then the remove-stack command. Tell the person if a repair fails.`,
-    ...failed.map(s => describeFailure(root!, s)),
-  ].join('\n')
-  $.ui.toast(`ndev: the stop of ${ids(failed)} failed at an earlier session end. Repair: ${failed[0]!.lastStop?.repair ?? `bash ${script} stop-all --worktree ${root}`}`)
+  // With keep-running the stacks are meant to outlive a session, so a listing is no news.
+  const keep = project?.config.worktreeStacks?.onSessionEnd === 'keep-running'
+  const listed = keep ? [] : stacks.filter(s => s.lastStop === undefined)
+  const parts: string[] = []
+  if (failed.length > 0) {
+    parts.push(
+      `Worktree stacks: a stop at an earlier session end failed, so these stacks may still run and hold Docker resources. Run each repair, then the remove-stack command. Tell the person if a repair fails.`,
+      ...failed.map(s => describeFailure(root!, s)),
+    )
+    $.ui.toast(`ndev: the stop of ${ids(failed)} failed at an earlier session end. Repair: ${failed[0]!.lastStop?.repair ?? `bash ${script} stop-all --worktree ${root}`}`)
+  }
+  if (listed.length > 0) {
+    parts.push(
+      `Worktree stacks: ${root}/${RECORD} still lists ${ids(listed)}, which may run from an earlier session. If this task uses a stack, leave it listed: it is stopped when this session ends. If not, stop them now with \`bash ${script} stop-all --worktree ${root}\`.`,
+    )
+  }
+  if (parts.length > 0) text = parts.join('\n')
 }
 
 export const worktreeStacksSection = () => (text === undefined ? undefined : { id: SECTION, text, scope: 'session' as const })

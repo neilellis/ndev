@@ -170,12 +170,30 @@ test('a stop that failed at the last session end is reported at the next start, 
   expect(text).toContain('cannot stop container supabase_db_fcc-211')
   expect(text).toContain('npx -y supabase@2.122.0 stop --project-id fcc-211 --no-backup')
   expect(text).toContain('remove-stack --kind supabase --project-id fcc-211')
-  expect(text).not.toContain('fcc-212')
+  expect(text).not.toMatch(/fcc-212 \(workdir[^\n]*did not stop/)
   expect(toasts.join(' ')).toContain('fcc-211')
 })
 
 test('a worktree whose stacks all stopped gets no section', async ($, on) => {
+  engine(on, { files: { [RECORD]: record() } })
+  await start($)
+
+  expect(await section($)).toBeUndefined()
+})
+
+// A stop that never started (a launch failure or a config error at the last exit) leaves the
+// stacks listed with no lastStop: the next session is told, so they are not forgotten.
+test('stacks still listed at session start are named with the stop command', async ($, on) => {
   engine(on, { files: { [RECORD]: record(stack('fcc-212')) } })
+  await start($)
+
+  const text = (await section($)) ?? ''
+  expect(text).toContain('fcc-212')
+  expect(text).toContain('worktree-env.sh stop-all --worktree /proj')
+})
+
+test('with keep-running, stacks still listed are expected and get no section', async ($, on) => {
+  engine(on, { files: { [RECORD]: record(stack('fcc-212')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }) } })
   await start($)
 
   expect(await section($)).toBeUndefined()

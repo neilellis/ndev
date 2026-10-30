@@ -301,7 +301,7 @@ export const register: Register = (on, options) => {
     await startInitProject($, e.cwd)
     await startCredentials($, e.cwd)
     try {
-      await startWorktreeStacks($, e.cwd)
+      await startWorktreeStacks($, e.cwd, project)
     } catch (error) {
       $.ui.toast(`ndev: the worktree stacks check failed: ${String(error).slice(0, 200)}. Stacks this worktree lists are not stopped at session end in this session.`)
     }
