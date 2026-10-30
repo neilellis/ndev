@@ -11,7 +11,15 @@ export type NeilDevConfig = {
   quality?: Record<string, unknown>
   branding?: Branding
   github?: GitHub
+  worktreeStacks?: WorktreeStacks
 }
+
+// What the session-end hook does with the local stacks a worktree lists in .neil-dev.worktree.json.
+// stop-and-delete (the default) stops each stack and deletes its data; stop-keep-data stops it and
+// keeps its data volumes; keep-running leaves it running.
+export const STACK_POLICIES = ['stop-and-delete', 'stop-keep-data', 'keep-running'] as const
+export type StackPolicy = (typeof STACK_POLICIES)[number]
+export type WorktreeStacks = { onSessionEnd?: StackPolicy }
 
 // The project's GitHub repository and Projects v2 board, asked once by the set-up dialog so no
 // skill or script looks them up again. null means "none", which the dialog does not ask again.
@@ -30,7 +38,7 @@ export type LoadedConfig = {
   error?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const MODES: readonly string[] = ['light', 'heavy']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
@@ -69,6 +77,14 @@ const validate = (raw: unknown): string | undefined => {
       if (typeof b !== 'object' || Array.isArray(b) || typeof b.owner !== 'string' || b.owner === '' || !Number.isInteger(b.number) || (b.number as number) < 1 || Object.keys(b).some(k => k !== 'owner' && k !== 'number'))
         return `"github.board" is ${JSON.stringify(g.board)}; use { "owner": "<org or user>", "number": <n> }, or null for no board`
     }
+  }
+  if (value.worktreeStacks !== undefined) {
+    const w = value.worktreeStacks as Record<string, unknown>
+    const choices = `${STACK_POLICIES.slice(0, -1).join(', ')} or ${STACK_POLICIES.at(-1)}`
+    if (typeof w !== 'object' || w === null || Array.isArray(w)) return `"worktreeStacks" must be an object such as { "onSessionEnd": "stop-and-delete" }`
+    const extra = Object.keys(w).filter(k => k !== 'onSessionEnd')
+    if (extra.length > 0) return `unknown "worktreeStacks" key ${extra.map(k => `"${k}"`).join(', ')}; the key is onSessionEnd`
+    if (w.onSessionEnd !== undefined && !(STACK_POLICIES as readonly unknown[]).includes(w.onSessionEnd)) return `"worktreeStacks.onSessionEnd" is ${JSON.stringify(w.onSessionEnd)}; use ${choices}`
   }
   return undefined
 }

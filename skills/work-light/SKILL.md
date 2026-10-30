@@ -129,6 +129,7 @@ Waiting belongs in scripts, also inside a helper. Tell an editing helper which f
 - Give each independent fix its own worktree, branch and main agent context.
 - File separation does not prove independence. Check shared interfaces, schema, fixtures and runtime state. Keep coupled fixes together, in dependency order.
 - Use separate databases, ports and output paths. Serialise shared browsers, end-to-end runs and other exclusive resources.
+- When you start a local stack in a worktree (for example `supabase start` with the worktree's own project id), record it at once with `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z> --workdir <dir>`. The session-end hook then stops it. If you stop it yourself, run `worktree-env.sh remove-stack --kind supabase --project-id <id>`. If `add-stack` refuses because `.neil-dev.worktree.json` is not git-ignored, tell the person to add it to `.gitignore`.
 - After one fix lands, assess its effect on the others.
 - Keep unrelated discoveries out of the diff.
 - Keep the main agent on the user's chosen model. Reserve Astra (the escalation model) for an unresolved diagnosis, a consequential design decision or a risky review. Give it a bounded brief with the evidence and the decision needed.
