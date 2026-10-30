@@ -23,6 +23,7 @@ usage() {
 URL="$1"; OUT="$2"; shift 2
 PAGE=""; VIEWPORT=""; WAIT=0
 while [ $# -gt 0 ]; do
+  [ $# -ge 2 ] || { echo "orca-shot: $1 needs a value" >&2; usage; }
   case "$1" in
     --page) PAGE="${2:-}"; shift 2 ;;
     --viewport) VIEWPORT="${2:-}"; shift 2 ;;
@@ -51,17 +52,20 @@ fi
 # json <expression> reads Orca's JSON on stdin and prints one field, or exits 1.
 json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1" 2>/dev/null; }
 
-# call <orca args...> runs one Orca command and keeps its JSON in $REPLY. On
-# failure it prints the command, Orca's error code and message, and the repair.
+ERRF="$(mktemp)"
+trap 'rm -f "$ERRF"' EXIT
+
+# call <orca args...> runs one Orca command and keeps its JSON (stdout only) in
+# $REPLY. On failure it prints the command, Orca's error code, its output and the repair.
 call() {
-  REPLY="$(orca "$@" --json 2>&1)"
+  REPLY="$(orca "$@" --json 2>"$ERRF")"
   local rc=$?
   if [ $rc = 0 ] && [ "$(json 'd["ok"]' <<<"$REPLY")" = True ]; then
     return 0
   fi
   local code; code="$(json 'd["error"]["code"]' <<<"$REPLY")"
   echo "orca-shot: 'orca $*' failed (exit $rc): ${code:-no error code}" >&2
-  echo "$REPLY" | head -20 >&2
+  { echo "$REPLY"; cat "$ERRF"; } | head -20 >&2
   case "$code" in
     browser_tab_not_found) echo "Repair: list the pages with 'orca tab list --worktree all --json', or leave out --page to open a new tab." >&2 ;;
     browser_no_tab) echo "Repair: leave out --page, so the script opens a new tab." >&2 ;;
@@ -70,10 +74,10 @@ call() {
   exit 1
 }
 
-STATUS="$(orca status --json 2>&1)"
+STATUS="$(orca status --json 2>"$ERRF")"
 if [ "$(json 'd["result"]["runtime"]["reachable"]' <<<"$STATUS")" != True ]; then
   echo "orca-shot: the Orca runtime is not reachable. Repair: run 'orca open' and try again." >&2
-  echo "$STATUS" | head -20 >&2
+  { echo "$STATUS"; cat "$ERRF"; } | head -20 >&2
   exit 3
 fi
 

@@ -35,7 +35,11 @@ case "\$1" in
   status)
     printf '{"ok":true,"result":{"runtime":{"reachable":%s}}}\n' "\${FAKE_REACHABLE:-true}" ;;
   tab)
-    printf '{"ok":true,"result":{"browserPageId":"new-page"}}\n' ;;
+    if [ "\${FAKE_TAB:-ok}" = ok ]; then
+      printf '{"ok":true,"result":{"browserPageId":"new-page"}}\n'
+    else
+      printf '{"ok":true,"result":{}}\n'
+    fi ;;
   goto)
     [ "\${FAKE_GOTO:-ok}" = ok ] || fail browser_tab_not_found "Browser page p1 was not found"
     printf '{"ok":true,"result":{"url":"u","title":"t"}}\n' ;;
@@ -44,7 +48,9 @@ case "\$1" in
   eval)
     printf '{"ok":true,"result":{"result":"%s"}}\n' "\${FAKE_WIDTH:-390}" ;;
   screenshot)
-    [ "\${FAKE_SHOT:-ok}" = ok ] || fail browser_host_unavailable "The desktop is offline"
+    [ "\${FAKE_SHOT:-ok}" != fail ] || fail browser_host_unavailable "The desktop is offline"
+    [ "\${FAKE_SHOT:-ok}" != text ] || { printf '{"ok":true,"result":{"data":"aGVsbG8="}}\n'; exit 0; }
+    echo "a warning on stderr" >&2
     printf '{"ok":true,"result":{"data":"%s"}}\n' "$PNG_B64" ;;
   *) fail unknown "unexpected \$1" ;;
 esac
@@ -57,18 +63,18 @@ EOF
 run() { local root="$1"; shift; PATH="$root/bin:/usr/bin:/bin" "$SHOT" "$@" 2>&1; }
 
 echo "case 1 — no orca on PATH: exit 3, names the repair"
-R="$(new_env)"; rm "$R/bin/orca"
+R="$(new_env)"; rm "$R/bin/orca"; echo stale > "$R/o.png"
 out="$(run "$R" https://x.test "$R/o.png")"; rc=$?
 [ "$rc" = 3 ] && ok "exit 3" || bad "exit $rc, expected 3 ($out)"
 grep -q "orca open" <<<"$out" && ok "names orca open" || bad "no repair in: $out"
-[ ! -e "$R/o.png" ] && ok "no file" || bad "file written"
+[ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
 
 echo "case 2 — Orca not reachable: exit 3, names orca open"
-R="$(new_env)"
+R="$(new_env)"; echo stale > "$R/o.png"
 out="$(FAKE_REACHABLE=false run "$R" https://x.test "$R/o.png")"; rc=$?
 [ "$rc" = 3 ] && ok "exit 3" || bad "exit $rc, expected 3 ($out)"
 grep -q "orca open" <<<"$out" && ok "names orca open" || bad "no repair in: $out"
-[ ! -e "$R/o.png" ] && ok "no file" || bad "file written"
+[ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
 
 echo "case 3 — no --page: a new tab, PNG written, page id printed"
 R="$(new_env)"
@@ -86,25 +92,28 @@ grep -q "goto --url https://x.test --page p1" "$R/calls.log" && ok "goto on p1" 
 grep -q "^tab create" "$R/calls.log" && bad "created a tab" || ok "no new tab"
 
 echo "case 5 — --page not found: exit 1, names orca tab list"
-R="$(new_env)"
+R="$(new_env)"; echo stale > "$R/o.png"
 out="$(FAKE_GOTO=missing run "$R" https://x.test "$R/o.png" --page p1)"; rc=$?
 [ "$rc" = 1 ] && ok "exit 1" || bad "exit $rc, expected 1 ($out)"
 grep -q "browser_tab_not_found" <<<"$out" && ok "names the error code" || bad "no code in: $out"
 grep -q "orca tab list" <<<"$out" && ok "names the repair" || bad "no repair in: $out"
-[ ! -e "$R/o.png" ] && ok "no file" || bad "file written"
+[ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
 
 echo "case 6 — viewport ignored (innerWidth differs): exit 1, no file"
-R="$(new_env)"
+R="$(new_env)"; echo stale > "$R/o.png"
 out="$(FAKE_WIDTH=1200 run "$R" https://x.test "$R/o.png" --viewport 390x844)"; rc=$?
 [ "$rc" = 1 ] && ok "exit 1" || bad "exit $rc, expected 1 ($out)"
 grep -q "innerWidth" <<<"$out" && ok "names innerWidth" || bad "no detail in: $out"
-[ ! -e "$R/o.png" ] && ok "no file" || bad "file written"
+[ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
 
 echo "case 7 — viewport honoured: exit 0"
 R="$(new_env)"
 out="$(FAKE_WIDTH=390 run "$R" https://x.test "$R/o.png" --viewport 390x844)"; rc=$?
 [ "$rc" = 0 ] && ok "exit 0" || bad "exit $rc, expected 0 ($out)"
 grep -q "viewport --width 390 --height 844" "$R/calls.log" && ok "viewport set" || bad "no viewport: $(cat "$R/calls.log")"
+# A page load resets the viewport, so it must come after the load wait.
+order="$(grep -n -E '^(wait --load|viewport)' "$R/calls.log" | cut -d' ' -f1 | tr '\n' ' ')"
+[ "$order" = "3:wait 4:viewport " ] && ok "viewport after the load" || bad "order: $order"
 
 echo "case 8 — screenshot fails: exit 1, earlier file removed"
 R="$(new_env)"; echo stale > "$R/o.png"
@@ -113,12 +122,28 @@ out="$(FAKE_SHOT=fail run "$R" https://x.test "$R/o.png")"; rc=$?
 grep -q "browser_host_unavailable" <<<"$out" && ok "names the error code" || bad "no code in: $out"
 [ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
 
-echo "case 9 — bad arguments: exit 2"
+echo "case 9 — screenshot data is not a PNG: exit 1, no file"
+R="$(new_env)"; echo stale > "$R/o.png"
+out="$(FAKE_SHOT=text run "$R" https://x.test "$R/o.png")"; rc=$?
+[ "$rc" = 1 ] && ok "exit 1" || bad "exit $rc, expected 1 ($out)"
+grep -q "not a PNG" <<<"$out" && ok "says not a PNG" || bad "no detail in: $out"
+[ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
+
+echo "case 10 — tab create gives no page id: exit 1"
+R="$(new_env)"
+out="$(FAKE_TAB=noid run "$R" https://x.test "$R/o.png")"; rc=$?
+[ "$rc" = 1 ] && ok "exit 1" || bad "exit $rc, expected 1 ($out)"
+grep -q "browserPageId" <<<"$out" && ok "names browserPageId" || bad "no detail in: $out"
+
+echo "case 11 — bad arguments: exit 2, never hangs"
 R="$(new_env)"
 out="$(run "$R" https://x.test)"; rc=$?
 [ "$rc" = 2 ] && ok "missing out: exit 2" || bad "exit $rc, expected 2 ($out)"
 out="$(run "$R" https://x.test "$R/o.png" --viewport wide)"; rc=$?
 [ "$rc" = 2 ] && ok "bad viewport: exit 2" || bad "exit $rc, expected 2 ($out)"
+# A flag with no value once looped for ever; the timeout turns a hang into a failure.
+out="$(PATH="$R/bin:/usr/bin:/bin" perl -e 'alarm 5; exec @ARGV' "$SHOT" https://x.test "$R/o.png" --page 2>&1)"; rc=$?
+[ "$rc" = 2 ] && ok "flag without value: exit 2" || bad "exit $rc, expected 2 ($out)"
 
 echo
 echo "passed $PASS, failed $FAIL"
