@@ -55,6 +55,7 @@ Pass the Orca workspace folder as `<worktree-parent>` when the project uses Orca
 
 Write one short task note: the symptom, the required behaviour, and `Test entry point:` (a public interface that shows the defect). Ask only about unresolved behaviour, scope or consequential design. Batch the questions.
 Write a plan only when interfaces, migrations or competing designs need a decision. Keep it to the decision, boundaries, risks and test evidence.
+For a design decision that is hard to change later, get an independent view with the `second-opinion` skill. It asks Codex or Claude only when their quota allows.
 If baseline health matters, check it once on the base commit. An unrelated baseline failure is recorded, not fixed, and not counted as a pass.
 
 ## Fix with TDD

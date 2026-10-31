@@ -72,6 +72,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `resolving-merge-conflicts` | Use when you need to resolve an in-progress git merge/rebase conflict. |
 | `responsive-check` | Check a website's layout on phones, tablets and desktops, in light and dark mode, and report each defect with its element. Also maintains the breakpoint and layout rules on the brand site. |
 | `retro` | Review a completed coding session and identify improvements to navigation, checks, standards, instructions, information access and tool economy. |
+| `second-opinion` | Get an independent second opinion on a design, plan or piece of code from another agent, usually Codex, through Orca orchestration. |
 | `site-check` | Check a local, preview or live website for broken links, missing pages, server errors and JavaScript errors. |
 | `testing` | Apply the testing taxonomy and verification rules across Python and TypeScript, including guard integrity and minimal live-system tests. |
 | `ux-principles` | Apply the project's UX guidance to navigation, disclosure, touch, accessibility and feedback decisions. |
