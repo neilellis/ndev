@@ -59,7 +59,10 @@ package manifests and record them in the PR body.
 8. Find the cause before you write a fix. A mechanism nobody has run is a hypothesis.
 9. Commit before you mutation-test. Prove a guard in both directions: it fails with the defect and
    passes without it.
-10. Run every gate from inside the worktree, with an absolute path.
+10. Run every gate from inside the worktree, with an absolute path. Give each worktree its own
+    databases and ports. Record each local stack that you start in it with
+    `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z> --workdir <dir>`,
+    so the session-end hook stops it.
 11. Claim green only on fresh evidence: a run you just did, with its exit status and its log.
 12. Never weaken, skip or silence a check to make it pass.
 13. A removal is not finished until the text that describes it is gone (`forget` skill).

@@ -130,7 +130,8 @@ the project. Every key is optional:
   "steering": "interactive",
   "github": { "repo": "acme/app", "board": { "owner": "acme", "number": 3 } },
   "branding": { "site": "https://brand.example", "name": "Acme", "guide": "https://brand.example/guide", "path": "apps/brand" },
-  "quality": { }
+  "quality": { },
+  "worktreeStacks": { "onSessionEnd": "stop-and-delete" }
 }
 ```
 
@@ -151,6 +152,12 @@ the project. Every key is optional:
   `branding`, those skills do no branding and do not mention it. `path` is the brand site's source folder, which `/brand check` and `/brand apply` read.
 - `quality` turns on the quality-control hooks one by one (see [`kb/hooks/README.md`](kb/hooks/README.md)).
   A hook that is not listed does not run.
+- `worktreeStacks.onSessionEnd` sets what happens to the local stacks that a worktree lists in
+  `.neil-dev.worktree.json` when a session in that worktree ends (see "Worktree stacks" below):
+  - `stop-and-delete` (the default): stop each stack and delete its data
+    (`supabase stop --no-backup`).
+  - `stop-keep-data`: stop each stack and keep its data volumes (`supabase stop`).
+  - `keep-running`: stop nothing. A message lists the stacks that are left running.
 
 The plugin checks the file at session start. A bad value or an unknown key shows a message that
 names the file and the problem, and the file then has no effect until it is fixed. The plugin
@@ -242,7 +249,70 @@ from source. When the script exits 0, the hook writes `.ndev-inited`.
   the agent must run the script.
 - Outside a git repository the hook does nothing.
 
-Run the hooks module's tests with `claude plugin test .`.
+## Worktree stacks: .neil-dev.worktree.json
+
+Many worktrees each start their own local stack, for example a Supabase stack with the worktree's
+own project id. When nobody stops them, Docker fills up and a new stack fails to start. So each git
+worktree lists the stacks it started in `.neil-dev.worktree.json`, in the worktree's own folder
+(never only in the main checkout). The file is for facts about one worktree, so other keys can go
+in it later.
+
+```json
+{
+  "version": 1,
+  "stacks": [
+    { "kind": "supabase", "projectId": "fcc-211", "workdir": "/repo/.claude/worktrees/fix-211",
+      "cliVersion": "2.122.0", "addedAt": "2026-10-30T10:00:00.000Z" }
+  ]
+}
+```
+
+`scripts/work/worktree-env.sh` owns the file:
+
+| Command | What it does |
+|---|---|
+| `add-stack --kind supabase --project-id <id> --cli-version <x.y.z> [--workdir <dir>] [--worktree <dir>]` | Records a stack. `--workdir` is the folder you ran `supabase start` in (default: the current folder). The same id again replaces the entry. |
+| `remove-stack --kind supabase --project-id <id> [--worktree <dir>]` | Removes an entry, for a stack that you stopped yourself. |
+| `list [--json] [--worktree <dir>]` | Shows the entries. |
+| `stop-all [--on-end stop-and-delete\|stop-keep-data\|keep-running] [--worktree <dir>] [--background [--log <file>]]` | Stops each listed stack with `npx -y supabase@<cliVersion> stop --project-id <id>` (plus `--no-backup` for `stop-and-delete`), in its workdir. |
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Done. |
+| 1 | A stop failed. Its entry stays. |
+| 2 | A usage error, a file that does not parse, or a lock that another command holds too long. |
+| 3 | Refused: the main checkout, a file that is not git-ignored, or an id that another worktree lists. |
+| 4 | The stack is not listed. |
+
+- The file must be git-ignored. `add-stack` refuses when it is not, and names the repair:
+  add the line `.neil-dev.worktree.json` to `.gitignore` (or to the git common dir's
+  `info/exclude`). The plugin does not edit `.gitignore`.
+- `add-stack` refuses in the main checkout: the record belongs to a linked worktree.
+- `add-stack` refuses a project id that another worktree of the repository lists. Two worktrees
+  with one project id share its containers, so a stop from one stops the other's stack. The
+  message names that worktree and the repair: give this worktree its own `project_id`.
+- Each change to the file holds a lock, `<git dir>/ndev-worktree.lock`, so two commands do not
+  overwrite each other. A lock whose process is gone is taken over. A command waits at most 10 s
+  (`NDEV_WORKTREE_LOCK_WAIT_MS`), then exits 2 and names the lock to remove.
+- When a session ends in a worktree, `hooks/worktree-stacks.ts` runs
+  `worktree-env.sh stop-all --background` with the policy from `.neil-dev.json`
+  (`worktreeStacks.onSessionEnd`). The stop runs detached, so a slow `supabase stop` does not
+  hold up the exit. It logs to `<git common dir>/ndev-worktree-stop/<worktree name>.log`, so the
+  log stays when the worktree is removed.
+- The hook acts only on the session's own worktree, and only on the stacks its file lists.
+- A `/clear` or a resume stops nothing: the process goes on in the same worktree.
+- An entry goes only after its stack stopped. A failed stop keeps the entry and records
+  `lastStop` (the command, the exit code, the last 40 lines of output and the repair command).
+  The next session in that worktree shows it in a message and tells the agent the repair.
+- An entry goes only if it is the same entry the stop read (the same `addedAt`). If a new session
+  records the stack again while an old stop runs, the new entry stays.
+- At session start, the agent is also told which stacks the file still lists, with the
+  `stop-all` command. A task that uses a stack leaves it listed.
+- If `.neil-dev.json` has an error, the hook stops nothing and a message names the error and the
+  repair command.
+
+Run the hooks module's tests with `claude plugin test .`, and the script's tests with
+`node --test scripts/work/tests/worktree_env.test.mjs`.
 
 ## Docs walk-through: /walk-doc
 
