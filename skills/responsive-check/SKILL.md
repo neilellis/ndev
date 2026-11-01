@@ -48,6 +48,7 @@ The default viewports are iPhone SE (320), iPhone 15 Pro (393), Pixel 7 (412), i
 ## 3. Fix
 
 - Fix the cause in the shared CSS or component, not with a media query for one device.
+- If a fix needs a new or replaced component, choose it from the plugin's `kb/ui-components.md`.
 - Use the patterns in [references/checks.md](references/checks.md): `min-width: 0` on flex and grid children, `svh`/`dvh`, `clamp()` type, container queries, safe-area insets, `overflow-x: auto` on a wide table.
 - For a redesign of a section, or when a fix needs a layout decision, use OpenDesign. See [references/open-design.md](references/open-design.md).
 - Run the matrix again. A fix is done only when the cell is green and its screenshot looks right.
@@ -59,7 +60,7 @@ When the project has a brand site (`.neil-dev.json` `branding`), the breakpoints
 ## Tools and limits
 
 - This script is the main tool: it sets the real CSS viewport, device pixel ratio, touch and engine.
-- The Orca embedded browser is good for a quick look. Use `orca exec --command "set viewport W H"`. `orca set device` does not change the CSS viewport.
+- The Orca embedded browser is good for a quick look, and it keeps the user's sign-in. `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> --viewport 390x844` sets the CSS viewport, checks it and saves a screenshot. `orca set device` does not change the CSS viewport.
 - A browser extension (Claude in Chrome) cannot set the CSS viewport, so it cannot emulate a phone.
 - The iOS Simulator (Orca emulator) gives real Safari, but it needs Xcode. Use it for a final Safari check when Xcode is installed.
 - Details and traps: [references/tools.md](references/tools.md).

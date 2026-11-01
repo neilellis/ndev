@@ -17,6 +17,7 @@ Each output line is one grab as JSON.
 - `prompt`, when present, holds the user's task.
 - Without a prompt, apply the standing instruction, or report the source location and wait for direction.
 - `--max-age 0` keeps grabs that queued while you worked.
+- If a grab asks for a new or replaced UI component, choose it from the plugin's `kb/ui-components.md`.
 
 Between work steps, check for queued input without blocking:
 

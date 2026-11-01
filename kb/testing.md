@@ -117,6 +117,8 @@ A live test needs a real service (a database, a node, a paid API).
 A browser check is never a gate ([the taxonomy](#the-taxonomy)), but its report must be true.
 
 - If no browser tool is available, or a size cannot be set, report the check as incomplete. Never report it as passed.
+- For a quick look or a signed-in page, use Orca's built-in browser when Orca runs (`orca status`). It keeps the user's signed-in sessions. For the full device-size check, the `responsive-check` matrix stays the main tool: Orca has no WebKit and no touch. `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> --viewport 390x844` saves a screenshot and checks the width. For snapshots, clicks and `eval`, use the `orca` browser commands (`orca skills get orca-cli --reference browser`). Without Orca, use the Playwright MCP or `claude-in-chrome`.
+- Never type the user's password or another secret into a browser. If a page asks for a sign-in, ask the user to sign in, or use the host's access tool.
 - Check each changed page at three device sizes, for example laptop 1440 × 900, tablet 820 × 1180 and phone 390 × 844.
 - After each resize, confirm that the page's `window.innerWidth` matches the size. Some windows have a minimum width, or ignore the resize. If the width is wrong, the screenshot is not evidence.
 - At each size, check that the changed content is visible, that nothing overlaps, is cut off or scrolls sideways, and that the console shows no errors.

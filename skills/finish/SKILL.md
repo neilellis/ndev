@@ -52,7 +52,7 @@ When a change to a component, content file or style affects a page, pass that pa
 
 ## Browser check
 
-Open each preview link from the ready report at Laptop (1440 × 900), iPad (820 × 1180) and iPhone (390 × 844) sizes. Use the project's browser tool, or `claude-in-chrome`. Take a screenshot of each page at each size. Look at each screenshot yourself: the page loads, the change is present, and nothing overlaps or overflows. Then send the screenshots to the user with `SendUserFile`, and label each one with its page and device.
+Open each preview link from the ready report at Laptop (1440 × 900), iPad (820 × 1180) and iPhone (390 × 844) sizes. When Orca runs, use `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> --viewport 1440x900` (then `820x1180` and `390x844` with `--page <id>`). Orca's browser keeps the user's sign-in. Otherwise use the project's browser tool, or `claude-in-chrome`. Take a screenshot of each page at each size. Look at each screenshot yourself: the page loads, the change is present, and nothing overlaps or overflows. Then send the screenshots to the user with `SendUserFile`, and label each one with its page and device.
 
 If the preview asks for a sign-in that you cannot pass, use the host's own access tool (for example, a Vercel share link from the Vercel MCP `get_access_to_vercel_url` tool). If you cannot get access, say that the browser check is not done, and why.
 

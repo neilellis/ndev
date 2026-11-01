@@ -450,15 +450,15 @@ export async function startWalkDoc($: EngineInterface, cwd: string) {
   if (isActive(run)) $.ui.status(statusLine(run))
 }
 
+// Called from register.ts's session.end (the engine takes one unmatched hook per event).
+// A dev server outlives Claude unless something stops it; the run stays, so walk_status still shows it.
+export async function walkDocEnd($: EngineInterface) {
+  const run = await read($, runAtom)
+  if (isActive(run)) await killGroup($, run.pid)
+}
+
 export const walkDoc = (on: On, options: PluginOptions) => {
   textTo = typeof options.textTo === 'string' ? options.textTo.trim() : ''
-
-  // A dev server outlives Claude unless something stops it; the run stays, so walk_status still shows it.
-  on('session.end', async ($, e, next) => {
-    const run = await read($, runAtom)
-    if (isActive(run)) await killGroup($, run.pid)
-    return next(e)
-  })
 
   // The type stays offered: the engine checks the offer when session.send resumes a stopped Walk agent.
   // The model's own Agent call is refused instead, so only /walk-doc starts one.

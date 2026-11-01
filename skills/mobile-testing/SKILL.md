@@ -37,4 +37,4 @@ Start the local web server first if needed. `--base` is required: the script has
 - An authenticated page needs a session set up first.
 - `networkidle` plus a short wait does not prove that every client-rendered state is ready.
 
-Browser extensions often cannot change the CSS layout viewport, so they cannot emulate a device. Use this script for mobile screenshots. For a full check (phones, tablets and desktops, light and dark, each defect with its element), use `responsive-check`.
+Browser extensions often cannot change the CSS layout viewport, so they cannot emulate a device. Use this script for mobile screenshots. For a quick look at a signed-in page, use Orca's browser when Orca runs: `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> --viewport 390x844`. It has no touch and no WebKit. For a full check (phones, tablets and desktops, light and dark, each defect with its element), use `responsive-check`.
