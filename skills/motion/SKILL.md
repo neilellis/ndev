@@ -41,7 +41,7 @@ Before designing animation, review [Aceternity UI](https://ui.aceternity.com/) f
 
 ## Check
 
-1. Take screenshots of each changed page with reduced motion on and with reduced motion off, at desktop and mobile widths. Look at each one: all content shows, and nothing overlaps or stays hidden.
+1. Take screenshots of each changed page with reduced motion on and with reduced motion off, at desktop and mobile widths. Look at each one: all content shows, and nothing overlaps or stays hidden. In Orca's browser, `orca set media --reduced-motion reduce --page <id>` sets reduced motion until you change it, and `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh` takes the screenshots.
 2. Make sure that the browser console shows no errors.
 3. Run the project's precheck, or let CI run it. If the project requires static pages, make sure that they are still static.
 

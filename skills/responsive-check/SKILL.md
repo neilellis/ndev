@@ -60,7 +60,7 @@ When the project has a brand site (`.neil-dev.json` `branding`), the breakpoints
 ## Tools and limits
 
 - This script is the main tool: it sets the real CSS viewport, device pixel ratio, touch and engine.
-- The Orca embedded browser is good for a quick look. Use `orca exec --command "set viewport W H"`. `orca set device` does not change the CSS viewport.
+- The Orca embedded browser is good for a quick look, and it keeps the user's sign-in. `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> --viewport 390x844` sets the CSS viewport, checks it and saves a screenshot. `orca set device` does not change the CSS viewport.
 - A browser extension (Claude in Chrome) cannot set the CSS viewport, so it cannot emulate a phone.
 - The iOS Simulator (Orca emulator) gives real Safari, but it needs Xcode. Use it for a final Safari check when Xcode is installed.
 - Details and traps: [references/tools.md](references/tools.md).

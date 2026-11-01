@@ -18,6 +18,7 @@ Use this table before you search the repository or write inline shell or Python.
 | Claim a worktree | `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh <repo> <task> origin/<base> [<parent>]` | Checks ownership and makes the worktree. A refused claim stops setup. |
 | Check and push | The repo's checked-push command named in its CLAUDE.md, else `git push` | Hooks run. Never `--no-verify`. |
 | Run a check with saved evidence | `python3 <this skill>/scripts/run_logged.py --out-dir <new-dir> --timeout 900 -- <cmd> <args>` | Saves `output.log` and `result.json`. Returns the command's exit code. A timeout returns 124 and stops the process group. |
+| Screenshot a page | `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> [--page <id>] [--viewport 390x844] [--wait 2]` | Uses Orca's built-in browser and its signed-in sessions. Without `--page` it opens a new tab and prints its id; close it with `orca tab close --page <id>`. Exit 3: Orca is not running (`orca open`). |
 | Wait for a local process | `${CLAUDE_PLUGIN_ROOT}/scripts/work/wait_for_process_end.sh <pid>` | Waits for exit. It cannot recover the exit code: read the owner's result file. |
 | Wait for CI failure or completion | `${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh <pr> --skip-success --json --timeout 600` | Ignores intermediate successes. Exit 0 alone is not a CI pass: read the commit and conclusions. |
 | Save PR context | `${CLAUDE_PLUGIN_ROOT}/scripts/github/dump.py pr <pr> --out <new-dir>` | One file for a focused read. Reuse it until the PR changes. |
