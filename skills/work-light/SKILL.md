@@ -34,6 +34,8 @@ Keep a short path list in the task note and reuse it. If a known path is absent,
 
 For an external API, find the installed version and the local call site before you search the web. Fetch the relevant section of the official documentation. Do not repeat a broad search.
 
+For UI work, choose each component from the plugin's `kb/ui-components.md` before you write one.
+
 ## Start once
 
 Collect the task status in one call, with `${CLAUDE_PLUGIN_ROOT}/scripts/work/work-status.sh`:

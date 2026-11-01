@@ -38,6 +38,7 @@ This knowledge base holds the development method that the plugin's skills and ag
 | [issue-tracking.md](issue-tracking.md) | Board columns, issues and sub-issues, PR conventions. |
 | [llm-wiki.md](llm-wiki.md) | The LLM-wiki method: sections, the routing test, ingest, query, lint, the `.log/` folder. |
 | [adr.md](adr.md) | Architecture decision records: what was chosen and what was turned down. |
+| [ui-components.md](ui-components.md) | The approved UI component sources, the map from each component type to one registry item, and the uniformity rules. |
 | [writing.md](writing.md) | ASD-STE100 house style, instructions that work as written, the readability check. |
 | [hooks/README.md](hooks/README.md) | Reusable hook scripts and how to wire them in. |
 

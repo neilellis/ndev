@@ -68,6 +68,7 @@ package manifests and record them in the PR body.
 13. A removal is not finished until the text that describes it is gone (`forget` skill).
 14. Run the typecheck and lint first. They are fast and they name the line.
 15. Never poll. Run one blocking wait helper in the foreground and read its result.
+16. For UI work, choose each component from the plugin's `kb/ui-components.md` before you write one.
 
 ## Waiting
 
