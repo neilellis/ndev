@@ -59,7 +59,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `milestone-release` | Publish a GitHub release from committed milestone release notes when the user explicitly asks to cut or publish it. |
 | `milestone-release-notes` | Produce stakeholder-facing release notes for a GitHub milestone by reading all included issues and merged PRs. |
 | `mobile-testing` | Capture and inspect the web app with Playwright mobile device emulation. |
-| `motion` | Add animation to a React or Next.js site with the Motion library, with reduced-motion support. |
+| `motion` | Add animation and meaningful delight to a React or Next.js site: CSS first, then Motion, with library verdicts and reduced-motion support. |
 | `perf-review` | Review a specified file or directory for performance risks in algorithms, I/O, allocations, database access and connection use. |
 | `pick-up-prs` | Survey open pull requests, identify unfinished or blocked work, and continue each safely from its existing branch/worktree. |
 | `project-analysis` | Perform a scored, evidence-backed architecture and product health review of the repository and append the run to the project's ratings file. |
