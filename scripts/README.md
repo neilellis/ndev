@@ -44,6 +44,8 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `work-status.sh` | One call for PR, branch, worktree and ownership status. Wrapper for `work_status.py`. | work-light, fix-ci, pick-up-prs, command-reuse |
 | `work_status.py` | The status logic. | `work-status.sh` |
 | `wait_for_process_end.sh` | Waits until a process exits. | work-light, fix-ci, command-reuse |
+| `worktree-env.sh` | Records the local stacks a worktree started in `.neil-dev.worktree.json` (`add-stack`, `remove-stack`, `list`) and stops them (`stop-all`). Wrapper for `worktree_env.mjs`. | work-light, work-heavy, `hooks/worktree-stacks.ts` (session end) |
+| `worktree_env.mjs` | The record and stop logic. Test: `node --test scripts/work/tests/worktree_env.test.mjs`. | `worktree-env.sh` |
 | `tests/test_gates.sh`, `tests/test_peer_activity.sh`, `tests/test_worktree_claim.sh` | Prove `gates.sh`, `peer_activity.sh` and `worktree_claim.sh` in both directions. | work-heavy-auto (its Tests line) |
 
 ## docs/
@@ -72,3 +74,9 @@ Tests are in `<area>/tests/`. Run them after a change.
 | Script | What it does | Used by |
 |---|---|---|
 | `video-to-gif.sh` | Turns a reader's browser video into a GIF. It keeps only the frames that change and caps each still stretch (`--hold`). | `hooks/walk-doc/` (the main agent, when it places a `RECORD`) |
+
+## ui/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `component-sources.mjs` | Fails on a UI component file whose header does not name an approved source from `kb/ui-components.md` (`// From <source> <item> (<url>), <date>.`) or give a reason (`// Own component: <reason>.`). Exit 1 lists each file and the repair; exit 2 is a bad argument. | `kb/ui-components.md`, project guard tests |
