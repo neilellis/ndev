@@ -9,7 +9,8 @@ import { quality } from './quality'
 import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
 import { askCredentials, credentialsSection, startCredentials } from './credentials'
-import { startWalkDoc, walkDoc, walkDocTurn } from './walk-doc/index'
+import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index'
+import { startWorktreeStacks, stopWorktreeStacks, worktreeStacksSection } from './worktree-stacks'
 import { learnAfterPush } from './learn'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { startTriage, triage } from './triage'
@@ -250,6 +251,17 @@ export const register: Register = (on, options) => {
     await walkDocTurn($, e)
     return result
   })
+  // One session.end hook for the same reason. The walk's dev server stops first; then the
+  // worktree's listed stacks get their detached stop. Neither may stop the session from ending.
+  on('session.end', async ($, e, next) => {
+    try {
+      await walkDocEnd($)
+    } catch (error) {
+      $.ui.toast(`walk-doc: the dev server was not stopped at session end: ${String(error).slice(0, 200)}. Run /walk-doc stop in the next session.`)
+    }
+    await stopWorktreeStacks($, e.reason, project)
+    return next(e)
+  })
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'dev',
@@ -288,6 +300,11 @@ export const register: Register = (on, options) => {
     project = await loadConfig($, e.cwd)
     await startInitProject($, e.cwd)
     await startCredentials($, e.cwd)
+    try {
+      await startWorktreeStacks($, e.cwd, project)
+    } catch (error) {
+      $.ui.toast(`ndev: the worktree stacks check failed: ${String(error).slice(0, 200)}. Stacks this worktree lists are not stopped at session end in this session.`)
+    }
     if (project.error) {
       $.ui.toast(`ndev: ${project.path}: ${project.error}. Using light · interactive until it is fixed.`)
     }
@@ -360,7 +377,7 @@ export const register: Register = (on, options) => {
       sections: [
         ...composed.sections,
         { id: `${PLUGIN}:dev-mode`, text, scope: 'session' },
-        ...[initProjectSection(), credentialsSection()].filter(s => s !== undefined),
+        ...[initProjectSection(), credentialsSection(), worktreeStacksSection()].filter(s => s !== undefined),
       ],
     }
   })

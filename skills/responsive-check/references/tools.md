@@ -3,7 +3,7 @@
 | Tool | Real CSS viewport | Real engine | Touch | Use it for |
 |---|---|---|---|---|
 | `scripts/responsive-check.mjs` (Playwright) | yes | WebKit and Chromium | emulated | The matrix. The main tool. |
-| Orca embedded browser | yes, with `set viewport` | Chromium | no | A quick look while you edit. |
+| Orca embedded browser | yes, with `orca viewport` | Chromium | no | A quick look while you edit. |
 | Orca emulator (iOS Simulator) | yes | real iOS Safari | yes | A final Safari check. Needs Xcode. |
 | Claude in Chrome | no | Chrome | no | Not for layout checks. |
 | The ndev Playwright MCP (`browser_resize`, `browser_emulate_media`) | yes | Chromium | no | An interactive look at one state, for example a menu open in dark mode. |
@@ -18,7 +18,9 @@
 
 ## Orca embedded browser
 
-- `orca exec --command "set viewport 390 844"` sets the CSS viewport. `orca set device <name>` changes the user agent only: the layout stays at the desktop width.
+- `orca viewport --width 390 --height 844 --page <id>` sets the CSS viewport. A page load resets it, so set it after each navigation. `orca set device <name>` changes the user agent only: the layout stays at the desktop width.
+- `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh` does these steps in order and fails when `window.innerWidth` is not the width you asked for.
+- It keeps the user's signed-in sessions, so it can show a signed-in page without a password.
 - It has no WebKit and no touch, so it does not replace the matrix.
 
 ## Orca emulator (iOS Simulator)

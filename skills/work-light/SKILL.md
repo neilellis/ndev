@@ -34,6 +34,8 @@ Keep a short path list in the task note and reuse it. If a known path is absent,
 
 For an external API, find the installed version and the local call site before you search the web. Fetch the relevant section of the official documentation. Do not repeat a broad search.
 
+For UI work, choose each component from the plugin's `kb/ui-components.md` before you write one.
+
 ## Start once
 
 Collect the task status in one call, with `${CLAUDE_PLUGIN_ROOT}/scripts/work/work-status.sh`:
@@ -55,6 +57,7 @@ Pass the Orca workspace folder as `<worktree-parent>` when the project uses Orca
 
 Write one short task note: the symptom, the required behaviour, and `Test entry point:` (a public interface that shows the defect). Ask only about unresolved behaviour, scope or consequential design. Batch the questions.
 Write a plan only when interfaces, migrations or competing designs need a decision. Keep it to the decision, boundaries, risks and test evidence.
+For a design decision that is hard to change later, get an independent view with the `second-opinion` skill. It asks Codex or Claude only when their quota allows.
 If baseline health matters, check it once on the base commit. An unrelated baseline failure is recorded, not fixed, and not counted as a pass.
 
 ## Fix with TDD
@@ -129,6 +132,7 @@ Waiting belongs in scripts, also inside a helper. Tell an editing helper which f
 - Give each independent fix its own worktree, branch and main agent context.
 - File separation does not prove independence. Check shared interfaces, schema, fixtures and runtime state. Keep coupled fixes together, in dependency order.
 - Use separate databases, ports and output paths. Serialise shared browsers, end-to-end runs and other exclusive resources.
+- When you start a local stack in a worktree (for example `supabase start` with the worktree's own project id), record it at once with `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z> --workdir <dir>`. The session-end hook then stops it. If you stop it yourself, run `worktree-env.sh remove-stack --kind supabase --project-id <id>`. If `add-stack` refuses because `.neil-dev.worktree.json` is not git-ignored, tell the person to add it to `.gitignore`.
 - After one fix lands, assess its effect on the others.
 - Keep unrelated discoveries out of the diff.
 - Keep the main agent on the user's chosen model. Reserve Astra (the escalation model) for an unresolved diagnosis, a consequential design decision or a risky review. Give it a bounded brief with the evidence and the decision needed.
