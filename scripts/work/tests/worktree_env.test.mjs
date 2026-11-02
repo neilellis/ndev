@@ -455,7 +455,8 @@ after(() => {
     try {
       process.kill(-pid, 'SIGKILL')
     } catch (error) {
-      if (error.code !== 'ESRCH') throw error
+      // ESRCH: the group is gone. EPERM: macOS refuses to signal a group of zombies only.
+      if (error.code !== 'ESRCH' && error.code !== 'EPERM') throw error
     }
   }
 })
@@ -475,6 +476,10 @@ const isRunning = pid => {
     return false
   }
 }
+
+// The test runner is the parent of its servers and does not reap them while spawnSync blocks, so a
+// killed server stays a zombie until then. A zombie has ended.
+const isZombie = pid => spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim().startsWith('Z')
 
 const addServer = (p, name, s, ...extra) =>
   run(p, p.app, 'add-dev-server', '--name', name, '--pid', String(s.pid), '--port', '3000', ...extra)
@@ -573,4 +578,116 @@ test('list shows the dev servers with their pid, port and command', () => {
   const r = run(p, p.app, 'list')
   assert.equal(r.status, 0, r.out)
   assert.match(r.out, new RegExp(`docs: pid ${s.pid}, port 3000, sleep 300`))
+})
+
+// A server with a child in its process group, as `pnpm dev` starts node: a bash that starts
+// `sleep` and waits. With ignoreTerm, the whole group ignores SIGTERM.
+function groupServer(p, { ignoreTerm = false } = {}) {
+  const childFile = join(p.base, `child-${started.length}.pid`)
+  const script = `${ignoreTerm ? "trap '' TERM; " : ''}sleep 300 & echo $! > ${childFile}; wait`
+  const child = spawn('bash', ['-c', script], { detached: true, stdio: 'ignore' })
+  child.unref()
+  started.push(child.pid)
+  for (let i = 0; i < 200 && !existsSync(childFile); i++) spawnSync('sleep', ['0.05'])
+  const pid = Number(readFileSync(childFile, 'utf8').trim())
+  assert.ok(pid > 0, 'the server did not start its child')
+  return { pid: child.pid, child: pid }
+}
+
+test('stop-all stops every dev server with its process group, removes the entries, and stops the stacks', () => {
+  const p = project()
+  const docs = groupServer(p)
+  const ui = server()
+  assert.equal(addServer(p, 'docs', docs).status, 0)
+  assert.equal(addServer(p, 'ui', ui).status, 0)
+  add(p, 'fcc-211')
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  for (const pid of [docs.pid, docs.child, ui.pid]) assert.ok(!isRunning(pid) || isZombie(pid), `pid ${pid} still runs`)
+  assert.match(r.out, /stopped dev server docs/)
+  assert.match(r.out, /stopped dev server ui/)
+  assert.deepEqual(servers(p), {})
+  assert.deepEqual(docker(p), [])
+  assert.equal(calls(p).length, 1)
+})
+
+test('stop-all --on-end keep-running still stops the dev servers and leaves the stacks', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  add(p, 'fcc-211')
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--on-end', 'keep-running')
+  assert.equal(r.status, 0, r.out)
+  assert.ok(!isRunning(s.pid) || isZombie(s.pid), 'the dev server still runs')
+  assert.deepEqual(servers(p), {})
+  assert.equal(docker(p).length, 1)
+  assert.deepEqual(calls(p), [])
+})
+
+test('a dev server that ignores SIGTERM gets SIGKILL after the stop timeout', () => {
+  const p = project()
+  const s = groupServer(p, { ignoreTerm: true })
+  addServer(p, 'docs', s)
+  const r = runWith({ NDEV_DEV_SERVER_STOP_TIMEOUT_S: '1' }, p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  for (const pid of [s.pid, s.child]) assert.ok(!isRunning(pid) || isZombie(pid), `pid ${pid} still runs`)
+  assert.match(r.out, /SIGKILL/)
+  assert.deepEqual(servers(p), {})
+})
+
+test('a pid that now runs another command is not killed: the entry stays with lastStop, and the output names both commands and the repair', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  const changed = record(p)
+  changed.resources['dev-servers'].docs.command = 'node next dev'
+  writeRecord(p, changed)
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 1, r.out)
+  assert.ok(isRunning(s.pid), 'a pid that runs another command was killed')
+  assert.match(r.stderr, /dev server docs/)
+  assert.match(r.stderr, /node next dev/)
+  assert.match(r.stderr, /sleep 300/)
+  assert.match(r.stderr, /lsof -nP -iTCP:3000 -sTCP:LISTEN/)
+  assert.match(r.stderr, /remove-dev-server --name docs/)
+  const entry = servers(p).docs
+  assert.match(entry.lastStop.output, /node next dev/)
+  assert.match(entry.lastStop.repair, /lsof/)
+  assert.match(entry.lastStop.at, /^\d{4}-/)
+})
+
+test('a pid that runs the same command but started at another time is not killed', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  const changed = record(p)
+  changed.resources['dev-servers'].docs.started = '2026-01-01T00:00:00.000Z'
+  writeRecord(p, changed)
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 1, r.out)
+  assert.ok(isRunning(s.pid), 'a pid that started at another time was killed')
+  assert.match(r.stderr, /2026-01-01T00:00:00/)
+  assert.ok(servers(p).docs.lastStop)
+})
+
+test('a dev server whose pid no longer runs is removed and reported as already ended', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  process.kill(-s.pid, 'SIGKILL')
+  spawnSync('sleep', ['0.2'])
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.out, /docs.*already ended/)
+  assert.deepEqual(servers(p), {})
+})
+
+test('stop-all with only dev servers listed stops them', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  assert.ok(!isRunning(s.pid) || isZombie(s.pid), 'the dev server still runs')
+  assert.deepEqual(servers(p), {})
 })

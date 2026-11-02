@@ -42,6 +42,9 @@ const TAIL_LINES = 40
 const VERSION_NOW = 2
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const STOP_TIMEOUT_S = Number(process.env.NDEV_STACK_STOP_TIMEOUT_S ?? 180)
+const SERVER_STOP_TIMEOUT_S = Number(process.env.NDEV_DEV_SERVER_STOP_TIMEOUT_S ?? 10)
+// ps gives the elapsed time to the second, so two readings of one start time differ by a second or so.
+const START_TOLERANCE_MS = 5000
 const LOCK_WAIT_MS = Number(process.env.NDEV_WORKTREE_LOCK_WAIT_MS ?? 10000)
 
 class Fail extends Error {
@@ -374,18 +377,19 @@ function elapsedSeconds(etime, pid) {
 // What a pid runs now: its command line, its start time (ISO, to the second) and its process
 // group. undefined when no process has the pid.
 function processInfo(pid) {
-  const r = spawnSync('ps', ['-ww', '-o', 'etime=', '-o', 'pgid=', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+  const r = spawnSync('ps', ['-ww', '-o', 'etime=', '-o', 'pgid=', '-o', 'stat=', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
   if (r.error) throw new Fail(2, `worktree-env: ps did not start: ${r.error.message}. Dev servers need ps to check a pid.`)
   const line = r.stdout.trim()
   if (line === '') {
     if (r.status === 1 || r.status === 0) return undefined
     throw new Fail(2, `worktree-env: ps -p ${pid} exited ${r.status}: ${r.stderr.trim()}`)
   }
-  const m = /^(\S+)\s+(\d+)\s+(.*)$/.exec(line)
-  if (!m) throw new Fail(2, `worktree-env: ps -p ${pid} printed "${line}", which is not "<etime> <pgid> <command>".`)
+  const m = /^(\S+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)
+  if (!m) throw new Fail(2, `worktree-env: ps -p ${pid} printed "${line}", which is not "<etime> <pgid> <stat> <command>".`)
   const seconds = elapsedSeconds(m[1], pid)
   const started = new Date(Math.floor(Date.now() / 1000 - seconds) * 1000).toISOString()
-  return { command: m[3], started, pgid: Number(m[2]) }
+  // A zombie has ended; only its parent has not yet read its exit status.
+  return { command: m[4], started, pgid: Number(m[2]), zombie: m[3].startsWith('Z') }
 }
 
 function checkName(values) {
@@ -405,7 +409,7 @@ function addDevServer(values) {
   const cwd = resolve(values.cwd ?? process.cwd())
   if (!isDir(cwd)) throw new Fail(2, `worktree-env: --cwd ${cwd} is not a folder. Pass the folder the server runs in.`)
   const info = processInfo(pid)
-  if (info === undefined) throw new Fail(2, `worktree-env: pid ${pid} does not run, so dev server ${name} was not recorded. Pass the pid of the running server (for a job you started in the background: $!).`)
+  if (info === undefined || info.zombie) throw new Fail(2, `worktree-env: pid ${pid} does not run, so dev server ${name} was not recorded. Pass the pid of the running server (for a job you started in the background: $!).`)
   const root = worktreeRoot(values.worktree ? resolve(values.worktree) : cwd)
   const common = refuseMainCheckout(root, `kill ${pid}`)
   refuseNotIgnored(root, common)
@@ -471,6 +475,111 @@ function stopOne(stack, policy, root) {
 
 // The entry this run read, not a newer one for the same stack that was added while it stopped.
 const sameEntry = (a, b) => same(a, b.kind, b.projectId) && a.addedAt === b.addedAt
+const sameServer = (a, b) => a !== undefined && a.pid === b.pid && a.started === b.started
+
+// The live (not zombie) pids of a process group.
+function groupMembers(pgid) {
+  const r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'pgid=', '-o', 'stat='], { encoding: 'utf8' })
+  if (r.error || r.status !== 0) throw new Fail(2, `ps -A exited ${r.status ?? r.error?.message}: ${(r.stderr ?? '').trim()}`)
+  return r.stdout.split('\n').map(l => l.trim().split(/\s+/))
+    .filter(f => f.length === 3 && Number(f[1]) === pgid && !f[2].startsWith('Z')).map(f => Number(f[0]))
+}
+
+// Whether the server still runs: its process group when it leads one, else its pid.
+const serverRuns = (pid, group) => (group ? groupMembers(pid).length > 0 : processInfo(pid)?.zombie === false)
+
+function waitGone(pid, group, seconds) {
+  const deadline = Date.now() + seconds * 1000
+  while (serverRuns(pid, group)) {
+    if (Date.now() > deadline) return false
+    pause(100)
+  }
+  return true
+}
+
+// Sends a signal; returns the error text, or undefined when it was sent or nothing had the pid.
+function signal(target, sig) {
+  try {
+    process.kill(target, sig)
+    return undefined
+  } catch (error) {
+    return error.code === 'ESRCH' ? undefined : `${error.code}: ${error.message}`
+  }
+}
+
+// Stops one dev server, but only while its pid still runs the recorded command from the recorded
+// start time: a pid that the system gave to another process is never killed. A server that leads
+// its process group (as a dev server started with setsid or in the background of a script does)
+// is stopped with its whole group, so its child processes stop too.
+function stopServer(name, d) {
+  const info = processInfo(d.pid)
+  if (info === undefined || info.zombie) return { ok: true, note: `pid ${d.pid} no longer runs, so dev server ${name} already ended` }
+  const drift = Math.abs(Date.parse(info.started) - Date.parse(d.started))
+  if (info.command !== d.command || drift > START_TOLERANCE_MS) {
+    return {
+      ok: false,
+      command: '',
+      output: `pid ${d.pid} now runs "${info.command}" (started ${info.started}), not the recorded "${d.command}" (started ${d.started}). The pid was not killed: the recorded server ended, or it runs under another pid.`,
+    }
+  }
+  const group = info.pgid === d.pid
+  const target = group ? -d.pid : d.pid
+  const term = `kill -TERM ${target}`
+  const termError = signal(target, 'SIGTERM')
+  if (termError) return { ok: false, command: term, output: `${term} failed: ${termError}` }
+  if (waitGone(d.pid, group, SERVER_STOP_TIMEOUT_S)) return { ok: true, note: `stopped dev server ${name}: ${term}` }
+  const kill = `kill -KILL ${target}`
+  const killError = signal(target, 'SIGKILL')
+  if (killError) return { ok: false, command: kill, output: `${kill} failed after ${SERVER_STOP_TIMEOUT_S} s of SIGTERM: ${killError}` }
+  if (waitGone(d.pid, group, 2)) return { ok: true, note: `stopped dev server ${name}: ${term}, then SIGKILL after ${SERVER_STOP_TIMEOUT_S} s` }
+  return { ok: false, command: kill, output: `pid ${d.pid}${group ? ' or its process group' : ''} still runs 2 s after SIGKILL` }
+}
+
+// Stops every listed dev server. Returns the number that did not stop; each keeps its entry with
+// lastStop, and its failure is printed with the repair.
+function stopServers(root, servers, at) {
+  let failed = 0
+  const keepRecord = existsSync(root)
+  for (const [name, d] of Object.entries(servers)) {
+    let r
+    try {
+      r = stopServer(name, d)
+    } catch (error) {
+      if (!(error instanceof Fail)) throw error
+      r = { ok: false, command: '', output: error.message }
+    }
+    if (r.ok) {
+      console.log(`worktree-env: ${at} ${r.note}`)
+      if (keepRecord) {
+        change(root, res => {
+          if (!sameServer(res['dev-servers'][name], d)) return res
+          const { [name]: _stopped, ...rest } = res['dev-servers']
+          return { ...res, 'dev-servers': rest }
+        })
+      }
+      continue
+    }
+    failed++
+    const remove = `${WRAPPER} remove-dev-server --name ${name} --worktree ${root}`
+    const repair = r.command
+      ? `${r.command.replace('-TERM', '-KILL')}; if that fails, find the server by its port: lsof -nP -iTCP:${d.port} -sTCP:LISTEN`
+      : `find the server by its port, lsof -nP -iTCP:${d.port} -sTCP:LISTEN, and stop that process`
+    if (keepRecord) {
+      change(root, res => (sameServer(res['dev-servers'][name], d)
+        ? { ...res, 'dev-servers': { ...res['dev-servers'], [name]: { ...res['dev-servers'][name], lastStop: { at, command: r.command, output: r.output, repair } } } }
+        : res))
+    }
+    console.error([
+      `worktree-env: ${at} dev server ${name} (pid ${d.pid}, port ${d.port}) did not stop.`,
+      `  recorded command: ${d.command} (in ${d.cwd}, started ${d.started})`,
+      `  ${r.output}`,
+      `  Repair: ${repair}`,
+      `  then:   ${remove}`,
+      keepRecord ? `  The entry stays in ${join(root, FILE)} until the server stops.` : `  ${root} no longer exists, so no record was kept.`,
+    ].join('\n'))
+  }
+  return failed
+}
 
 function stopAll(values) {
   const policy = values['on-end'] ?? 'stop-and-delete'
@@ -481,16 +590,16 @@ function stopAll(values) {
   if (values.background) return background(values, policy, root)
   const file = join(root, FILE)
   const at = new Date().toISOString()
-  const stacks = readRecord(root).resources.docker
-  if (stacks.length === 0) {
-    console.log(`worktree-env: ${at} ${file} lists no stacks; nothing to stop.`)
+  const { docker: stacks, 'dev-servers': servers } = readRecord(root).resources
+  if (stacks.length === 0 && Object.keys(servers).length === 0) {
+    console.log(`worktree-env: ${at} ${file} lists no stacks and no dev servers; nothing to stop.`)
     return 0
   }
+  let failed = stopServers(root, servers, at)
   if (policy === 'keep-running') {
     for (const s of stacks) console.log(`worktree-env: ${at} ${s.kind} stack ${s.projectId} left running (keep-running). Stop it with: ${shellText(stopArgv(s, 'stop-and-delete'))}`)
-    return 0
+    return failed > 0 ? 1 : 0
   }
-  let failed = 0
   for (const s of stacks) {
     const r = stopOne(s, policy, root)
     const keepRecord = existsSync(root)
