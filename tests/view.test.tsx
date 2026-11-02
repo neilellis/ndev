@@ -37,7 +37,7 @@ const record = {
 const ok = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A fake engine. `answers` maps a command line to its result; each run is recorded in `ran`.
-function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}) {
+function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, current = WT) {
   let now = 1_000_000
   const ran: string[] = []
   const copied: string[] = []
@@ -66,7 +66,7 @@ function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}) {
     // The plugin's own folder differs per run: name the scripts as PLUGIN/scripts/... .
     const argv = e.argv.map((a, i) => (i === 1 && a.includes('/scripts/work/') ? `${PLUGIN}${a.slice(a.indexOf('/scripts/work/'))}` : a))
     const line = argv.join(' ')
-    if (argv[0] === 'git' && argv[1] === 'rev-parse') return ok(`${ROOT}\n`)
+    if (argv[0] === 'git' && argv[1] === 'rev-parse') return ok(`${current}\n`)
     ran.push(line)
     return table[line] ?? ok('', 0, '')
   })
@@ -79,19 +79,20 @@ const start = async ($: Parameters<Body>[0]) => {
   return $.ui.mount({ ...PANE, surface: 'terminal' })
 }
 
-test('/view opens the pane and lists every worktree with its branch, the main checkout first', async ($, on) => {
+test('/view opens the pane for the current worktree only: its branch and path, not the others', async ($, on) => {
   const w = world(on)
   const ui = await start($)
   expect(w.opened).toContain('view')
-  expect((await ui.find({ type: 'Text', text: /main/ }))?.text).toMatch(/main.*\/proj/)
-  expect((await ui.find({ type: 'Text', text: /fix-1/ }))?.text).toMatch(/fix-1.*fix-1/)
+  expect((await ui.find({ type: 'Text', text: /fix-1/ }))?.text).toMatch(/^fix-1\s+\/proj\/\.claude\/worktrees\/fix-1$/)
+  expect(await ui.find({ type: 'Text', text: /main checkout/ })).toBeUndefined()
+  expect(w.ran.some(l => /--worktree \/proj( |$)/.test(l))).toBe(false)
   await ui.unmount()
 })
 
-test('each worktree shows its ndev files as present or missing, and any other .neil-dev* file', async ($, on) => {
+test('the worktree shows its ndev files as present or missing, and any other .neil-dev* file', async ($, on) => {
   world(on)
   const ui = await start($)
-  expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.json$/ }))?.text).toBe('✔ .neil-dev.json')
+  expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.worktree\.json$/ }))?.text).toBe('✔ .neil-dev.worktree.json')
   expect((await ui.find({ type: 'Text', text: /^✖ \.neil-dev\.json \(missing\)$/ }))?.text).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /\.neil-dev\.local/ }))?.text).toMatch(/\.neil-dev\.local/)
   await ui.unmount()
@@ -114,11 +115,11 @@ test('a docker stack whose state is unknown says so with docker\'s message', asy
   await ui.unmount()
 })
 
-test('a worktree record that cannot be read shows the error and the repair, and the others still list', async ($, on) => {
+test('a worktree record that cannot be read shows the error and the repair, and its files still list', async ($, on) => {
   world(on, { [`${ENV} list --json --live --worktree ${WT}`]: ok('', 2, 'worktree-env: version 1 file. Repair: worktree-env.sh migrate --worktree /w') })
   const ui = await start($)
   expect((await ui.find({ type: 'Text', text: /could not be read/ }))?.text).toMatch(/exit code 2.*version 1 file.*migrate/)
-  expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.json$/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.worktree\.json$/ }))?.text).toBeDefined()
   await ui.unmount()
 })
 
@@ -141,7 +142,7 @@ test('a linked worktree copies a missing file from the main checkout when the ma
 
 test('the main checkout offers create where a file is missing, never copy', async ($, on) => {
   const missing = { worktrees: [{ ...listing.worktrees[0], files: [file('.neil-dev.json', false), file('.neil-dev.env', false, true)] }] }
-  const w = world(on, { [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify(missing)) })
+  const w = world(on, { [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify(missing)) }, ROOT)
   const ui = await start($)
   expect(await ui.find({ type: 'Button', key: `copy:${ROOT}:.neil-dev.json` })).toBeUndefined()
   await ui.press({ key: `create:${ROOT}:.neil-dev.json` })
@@ -241,5 +242,14 @@ test('a stopped dev server cannot be opened or stopped, but its port and command
   expect(await ui.find({ type: 'Button', key: `open:${WT}:ui` })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: `stop:${WT}:ui` })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: `copy-port:${WT}:ui` })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a worktree with a problem shows it with the repair and no files', async ($, on) => {
+  const stale = { worktrees: [listing.worktrees[0], { ...listing.worktrees[1], files: [], problem: 'ndev-files: the worktree folder /gone does not exist. Repair: git -C /proj worktree prune' }] }
+  world(on, { [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify(stale)) })
+  const ui = await start($)
+  expect((await ui.find({ type: 'Text', text: /does not exist/ }))?.text).toMatch(/Repair: git -C \/proj worktree prune/)
+  expect(await ui.find({ type: 'Text', text: /^✔ / })).toBeUndefined()
   await ui.unmount()
 })

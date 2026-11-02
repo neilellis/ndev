@@ -303,6 +303,8 @@ export type ViewTree = {
   files: ViewFile[]
   servers: ViewServer[]
   stacks: ViewStack[]
+  // Why this worktree could not be inspected (its folder or .git is gone), with the repair.
+  problem?: string
   // Why this worktree's record could not be read, with the repair.
   resourceError?: string
 }
@@ -310,6 +312,8 @@ export type ResourceView = {
   trees: ViewTree[]
   // The repo the lists were read for; a failed read of the whole list sits in error.
   repo?: string
+  // The worktree the session is in: the only one the pane shows. The main checkout is read for Copy from main.
+  current?: string
   error?: string
   checkedAt?: number
   // The button pressed once and waiting for its second press (a stop), and when.

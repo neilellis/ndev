@@ -3,7 +3,7 @@ import type { EngineInterface, On } from 'claude-code'
 
 import type { ResourceView, ViewServer, ViewStack, ViewTree } from '../types'
 
-// The /ndev:view pane: the ndev files and the running resources of every git worktree of the
+// The /ndev:view pane: the ndev files and the running resources of the current git worktree of the
 // project, with the controls to create or copy a file and to stop, open or copy a resource.
 // The lists come from two scripts: ndev-files.sh (files) and worktree-env.sh (resources).
 
@@ -36,7 +36,7 @@ async function run($: EngineInterface, script: string, args: string[]): Promise<
 }
 
 type ListedFile = { name: string; isKnown: boolean; present: boolean; isIgnored: boolean }
-type Listed = { path: string; branch: string; isMain: boolean; files: ListedFile[] }
+type Listed = { path: string; branch: string; isMain: boolean; files: ListedFile[]; problem?: string }
 type Record2 = {
   resources?: {
     docker?: { kind: string; projectId: string; workdir: string; live: boolean | null; liveError?: string; lastStop?: { output?: string } }[]
@@ -45,7 +45,7 @@ type Record2 = {
 }
 
 async function readTree($: EngineInterface, t: Listed): Promise<ViewTree> {
-  const tree: ViewTree = { path: t.path, branch: t.branch, isMain: t.isMain, files: t.files, servers: [], stacks: [] }
+  const tree: ViewTree = { path: t.path, branch: t.branch, isMain: t.isMain, files: t.files, problem: t.problem, servers: [], stacks: [] }
   if (!t.files.some(f => f.name === RECORD && f.present)) return tree
   const r = await run($, envScript($), ['list', '--json', '--live', '--worktree', t.path])
   if (r.exitCode !== 0) return { ...tree, resourceError: failure(`The resources of ${t.path} could not be read`, r) }
@@ -74,16 +74,24 @@ export async function refresh($: EngineInterface) {
     await update($, view, v => ({ ...v, trees: [], repo, error: failure(`The worktrees of ${repo} could not be listed (ndev-files.sh list)`, listed) }))
     return
   }
+  // Only the worktree the session is in is shown; the main checkout is read for Copy from main.
+  const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd: repo, timeoutMs: 10000 })
+  if (top.exitCode !== 0) {
+    await update($, view, v => ({ ...v, trees: [], repo, error: failure(`${repo} is not in a git worktree (git rev-parse --show-toplevel)`, { exitCode: top.exitCode, stdout: top.stdout, stderr: top.stderr }) }))
+    return
+  }
+  const current = top.stdout.trim()
   let trees: ViewTree[]
   try {
     const { worktrees } = JSON.parse(listed.stdout) as { worktrees: Listed[] }
-    trees = await Promise.all(worktrees.map(t => readTree($, t)))
+    if (!worktrees.some(t => t.path === current)) throw new Error(`${current} is not one of: ${worktrees.map(t => t.path).join(', ')}`)
+    trees = await Promise.all(worktrees.map(t => (t.path === current ? readTree($, t) : { path: t.path, branch: t.branch, isMain: t.isMain, files: t.files, problem: t.problem, servers: [], stacks: [] })))
   } catch (error) {
     await update($, view, v => ({ ...v, trees: [], repo, error: `ndev-files.sh list printed something that is not the worktree list (${(error as Error).message}): ${detail(listed)}` }))
     return
   }
   const checkedAt = await $.clock.now()
-  await update($, view, v => ({ ...v, trees, repo, error: undefined, checkedAt }))
+  await update($, view, v => ({ ...v, trees, repo, current, error: undefined, checkedAt }))
 }
 
 function startPolling($: EngineInterface) {
@@ -121,7 +129,7 @@ export async function startView($: EngineInterface, cwd: string) {
   repo = cwd
   poll?.cancel()
   poll = undefined
-  await $.command.register({ name: 'view', description: 'Show the ndev files and the running resources of every worktree of this project, in a pane' })
+  await $.command.register({ name: 'view', description: 'Show the ndev files and the running resources of the current worktree, in a pane' })
 }
 
 export const resourceView = (on: On) => {
@@ -129,14 +137,15 @@ export const resourceView = (on: On) => {
     await refresh($)
     startPolling($)
     await $.ui.open({ id: PANE, title: TITLE })
-    const { trees, error } = await read($, view)
-    return { text: error ? `ndev view opened, but the lists could not be read: ${error}` : `ndev view opened: ${trees.length} worktree${trees.length === 1 ? '' : 's'}.` }
+    const { current, error } = await read($, view)
+    return { text: error ? `ndev view opened, but the lists could not be read: ${error}` : `ndev view opened for ${current}.` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const { trees, error, notice, armed, busy } = await read($, view)
-    const main = trees.find(t => t.isMain)
+    const { trees: all, current, error, notice, armed, busy } = await read($, view)
+    const main = all.find(t => t.isMain)
+    const trees = all.filter(t => t.path === current)
     const isArmed = (key: string) => armed?.key === key
     const isBusy = (key: string) => busy.includes(key)
     const stopLabel = (key: string, label: string) => (isBusy(key) ? 'Stopping…' : isArmed(key) ? `Press again: ${label}` : label)
@@ -207,6 +216,7 @@ export const resourceView = (on: On) => {
         {trees.map(t => (
           <Box key={t.path} flexDirection="column" borderStyle="round" borderColor={t.isMain ? 'claude' : 'subtle'} paddingX={1}>
             <Text weight="bold" color="claude">{`${t.branch}  ${t.path}${t.isMain ? '  (main checkout)' : ''}`}</Text>
+            {t.problem && <Text color="error">{t.problem}</Text>}
             {t.files.map(f => fileRow(t, f))}
             {t.resourceError && <Text color="error">{t.resourceError}</Text>}
             {t.servers.map(s => serverRow(t, s))}

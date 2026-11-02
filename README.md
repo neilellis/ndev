@@ -391,7 +391,8 @@ The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.
 ## ndev view: /ndev:view
 
 `/ndev:view` opens a pane for the project (`hooks/view.tsx`). It refreshes every 5 s and has
-`r` for a refresh by hand. For each git worktree, main checkout first, it shows:
+`r` for a refresh by hand. It shows only the worktree the session is in (the main checkout is read
+only as the source for **Copy from main**):
 
 - The ndev files: `.neil-dev.json`, `.neil-dev.env`, `.neil-dev.worktree.json` and any other
   `.neil-dev*` file. A missing `.neil-dev.json` or `.neil-dev.env` has **Create** and, in a linked
@@ -407,7 +408,8 @@ The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.
   data**. A running dev server has **Open** (`http://localhost:<port>`). **Copy port** and
   **Copy command** copy the recorded values.
 
-A failed action shows its exit code and the script's own message in the pane.
+A worktree whose folder or `.git` is gone shows the problem and `git worktree prune` as the
+repair; it does not hide the list. A failed action shows its exit code and the script's own message in the pane.
 `worktree-env.sh stop` stops one resource: `--name <dev server>`, or `--kind supabase
 --project-id <id> [--on-end stop-and-delete|stop-keep-data]`.
 

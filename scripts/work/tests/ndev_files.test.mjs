@@ -3,7 +3,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -152,4 +152,21 @@ test('copy and create refuse a folder that is not a worktree of this repository'
   const r = run(p.main, 'create', '--file', '.neil-dev.json', '--worktree', p.base)
   assert.equal(r.status, 2, r.out)
   assert.match(r.out, /not a worktree of/)
+})
+
+test('list --json keeps listing when a worktree lost its .git or its folder, and names the repair for that one', () => {
+  const p = project()
+  rmSync(join(p.one, '.git'))
+  rmSync(p.two, { recursive: true })
+  const out = listing(p)
+  const [main, one, two] = out.worktrees
+  assert.equal(main.problem, undefined)
+  assert.ok(main.files.length > 0)
+  for (const w of [one, two]) {
+    assert.deepEqual(w.files, [])
+    assert.match(w.problem, new RegExp(`${w.path.replace(/\//g, '\\/')}`))
+    assert.match(w.problem, new RegExp(`Repair: git -C ${p.main.replace(/\//g, '\\/')} worktree prune`))
+  }
+  assert.match(one.problem, /check-ignore/)
+  assert.match(two.problem, /does not exist/)
 })

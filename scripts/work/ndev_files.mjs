@@ -49,7 +49,8 @@ function worktrees(dir) {
     const lines = block.split('\n')
     const path = (lines.find(l => l.startsWith('worktree ')) ?? '').slice('worktree '.length)
     const ref = lines.find(l => l.startsWith('branch '))?.slice('branch refs/heads/'.length)
-    return { path: realpathSync(path), branch: ref ?? (lines.includes('detached') ? '(detached)' : '(bare)'), isMain: i === 0 }
+    // A folder that was deleted is still listed by git until it is pruned: keep its recorded path.
+    return { path: existsSync(path) ? realpathSync(path) : path, branch: ref ?? (lines.includes('detached') ? '(detached)' : '(bare)'), isMain: i === 0 }
   })
 }
 
@@ -71,8 +72,21 @@ function filesOf(dir) {
   }))
 }
 
+// A worktree whose folder is gone, or whose .git is gone, is listed with a problem and no files:
+// one stale worktree must not hide the others.
+function inspect(tree, main) {
+  const repair = `Repair: git -C ${main} worktree prune (it forgets worktrees whose folder or .git is gone), or restore the folder.`
+  if (!existsSync(tree.path)) return { ...tree, files: [], problem: `ndev-files: the worktree folder ${tree.path} does not exist. ${repair}` }
+  try {
+    return { ...tree, files: filesOf(tree.path).filter(f => f.isKnown || f.present) }
+  } catch (error) {
+    if (!(error instanceof Fail)) throw error
+    return { ...tree, files: [], problem: `${error.message} ${repair}` }
+  }
+}
+
 function list(trees) {
-  console.log(JSON.stringify({ worktrees: trees.map(t => ({ ...t, files: filesOf(t.path).filter(f => f.isKnown || f.present) })) }, null, 2))
+  console.log(JSON.stringify({ worktrees: trees.map(t => inspect(t, trees[0].path)) }, null, 2))
 }
 
 function target(trees, values) {
