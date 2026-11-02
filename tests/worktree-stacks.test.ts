@@ -48,6 +48,8 @@ const engine = (on: On, opts: { files?: Record<string, string>; script?: { exitC
   })
   on('ui.status', () => ({ value: undefined }))
   on('process.run', (_, e) => {
+    // The record check at session start (worktree-env.sh init) is not the stop under test.
+    if (e.argv[0] === 'bash' && e.argv.includes('init') && String(e.argv[1]).endsWith('scripts/work/worktree-env.sh')) return ok()
     ran.push({ argv: e.argv, cwd: e.init?.cwd })
     if (e.argv[0] === 'git' && e.argv[1] === 'rev-parse') return ok(`${ROOT}\n`)
     if (e.argv[0] === 'git' && e.argv[1] === 'check-ignore') return ok('x\n')

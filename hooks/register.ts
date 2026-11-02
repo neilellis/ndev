@@ -15,6 +15,8 @@ import { learnAfterPush } from './learn'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { startTriage, triage } from './triage'
 import { resourceView, startView } from './view'
+import { ensureRecord, readSettings, saveWorktreeSetting } from './worktree-settings'
+import type { WorktreeSettings } from './worktree-settings'
 
 const PLUGIN = 'ndev'
 
@@ -26,6 +28,8 @@ const steering = atom(
 
 // The project's .neil-dev.json as read at session start; the switches write back to it.
 let project: LoadedConfig | undefined
+// The linked worktree's own settings (its .neil-dev.worktree.json); undefined in the main checkout.
+let worktree: { root: string; settings: WorktreeSettings } | undefined
 // Set while an agent fills in the github key: the next prompt reads the file again.
 let reloadPending = false
 
@@ -130,6 +134,12 @@ const initWiki = async ($: EngineInterface) => {
 
 // Records a switch in the project's .neil-dev.json and says what happened.
 async function persist($: EngineInterface, key: 'mode' | 'steering', value: string) {
+  if (worktree !== undefined) {
+    const problem = await saveWorktreeSetting($, worktree.root, key, value)
+    if (problem) return ` Not saved: ${problem}`
+    worktree = { ...worktree, settings: { ...worktree.settings, [key]: value } }
+    return ' Saved to .neil-dev.worktree.json (this worktree only; git-ignored).'
+  }
   if (project === undefined) return ' Not saved: the project folder is not known yet.'
   if (project.error) return ` Not saved: ${project.path} has an error (${project.error}). Fix the file, then run the command again.`
   try {
@@ -301,6 +311,17 @@ export const register: Register = (on, options) => {
       $.ui.toast(`walk-doc did not start: ${String(error).slice(0, 300)}. /walk-doc is not available in this session: fix the cause, then start a new session.`)
     }
     project = await loadConfig($, e.cwd)
+    worktree = undefined
+    const problem = await ensureRecord($, project.root)
+    if (problem) $.ui.toast(`ndev: ${problem}`)
+    else {
+      try {
+        const settings = await readSettings($, project.root)
+        if (settings) worktree = { root: project.root, settings }
+      } catch (error) {
+        $.ui.toast(`ndev: ${String(error instanceof Error ? error.message : error).slice(0, 240)}. Its mode and steering are ignored until it is fixed.`)
+      }
+    }
     await startInitProject($, e.cwd)
     await startCredentials($, e.cwd)
     try {
@@ -311,8 +332,8 @@ export const register: Register = (on, options) => {
     if (project.error) {
       $.ui.toast(`ndev: ${project.path}: ${project.error}. Using light · interactive until it is fixed.`)
     }
-    await update($, mode, () => project?.config.mode ?? 'light')
-    await update($, steering, () => project?.config.steering ?? 'interactive')
+    await update($, mode, () => (worktree?.settings.mode as Mode | undefined) ?? project?.config.mode ?? 'light')
+    await update($, steering, () => (worktree?.settings.steering as Steering | undefined) ?? project?.config.steering ?? 'interactive')
     await showStatus($)
     void initWiki($)
     // One dialog at a time: the GitHub set-up first, then the credentials file.

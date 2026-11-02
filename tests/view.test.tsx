@@ -85,7 +85,7 @@ test('/view opens the pane for the current worktree only: its branch and path, n
   expect(w.opened).toContain('view')
   expect((await ui.find({ type: 'Text', text: /fix-1/ }))?.text).toMatch(/^fix-1\s+\/proj\/\.claude\/worktrees\/fix-1$/)
   expect(await ui.find({ type: 'Text', text: /main checkout/ })).toBeUndefined()
-  expect(w.ran.some(l => /--worktree \/proj( |$)/.test(l))).toBe(false)
+  expect(w.ran.some(l => !l.includes(' init ') && /--worktree \/proj( |$)/.test(l))).toBe(false)
   await ui.unmount()
 })
 
@@ -251,5 +251,24 @@ test('a worktree with a problem shows it with the repair and no files', async ($
   const ui = await start($)
   expect((await ui.find({ type: 'Text', text: /does not exist/ }))?.text).toMatch(/Repair: git -C \/proj worktree prune/)
   expect(await ui.find({ type: 'Text', text: /^✔ / })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/view creates a missing worktree record first, before it lists the files', async ($, on) => {
+  const w = world(on)
+  const ui = await start($)
+  const init = w.ran.indexOf(`${ENV} init --worktree ${ROOT}`)
+  expect(init).toBeGreaterThanOrEqual(0)
+  expect(init).toBeLessThan(w.ran.indexOf(`${FILES} list --json --repo ${ROOT}`))
+  await ui.unmount()
+})
+
+test('/view that cannot create the record shows the script\'s own message and its repair, and still lists', async ($, on) => {
+  world(on, { [`${ENV} init --worktree ${ROOT}`]: ok('', 3, 'worktree-env: /proj is not git-ignored. Repair: add the line `.neil-dev.worktree.json` to .gitignore') })
+  const ui = await start($)
+  const text = (await ui.find({ type: 'Text', text: /Repair: add the line/ }))?.text ?? ''
+  expect(text).toContain('exit code 3')
+  expect(text).toContain('.gitignore')
+  expect((await ui.find({ type: 'Text', text: /fix-1/ }))?.text).toMatch(/fix-1/)
   await ui.unmount()
 })

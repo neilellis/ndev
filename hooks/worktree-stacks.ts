@@ -47,7 +47,7 @@ async function readResources($: EngineInterface, dir: string): Promise<Resources
     throw new Error(`${path} uses the version 1 layout (the stacks at the top level). Repair: bash ${script} migrate --worktree ${dir}`)
   }
   if (!isObject(parsed)) throw new Error(`${path} does not hold a JSON object`)
-  const top = outside(parsed, ['version', 'resources'])
+  const top = outside(parsed, ['version', 'settings', 'resources'])
   if (top.length > 0) throw new Error(`${path} has the unknown top-level key ${top.join(', ')}`)
   if (parsed.version !== VERSION) throw new Error(`${path} has "version" ${JSON.stringify(parsed.version)}; ndev reads version ${VERSION}`)
   const resources = parsed.resources

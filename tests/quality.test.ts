@@ -44,6 +44,10 @@ const engine = async (
     return { value: undefined }
   })
   on('process.run', (_, e) => {
+    // The worktree record check at session start is no hook script either.
+    if (e.argv[0] === 'bash' && e.argv.includes('init') && String(e.argv[1]).endsWith('/scripts/work/worktree-env.sh')) {
+      return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     // gh is the set-up dialog's look-up (no repository here), not a hook script.
     if (e.argv[0] === 'gh') {
       return { value: { exitCode: 1, stdout: '', stderr: 'no repo', isStdoutTruncated: false, isStderrTruncated: false } }

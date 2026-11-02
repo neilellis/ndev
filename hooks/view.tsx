@@ -134,7 +134,12 @@ export async function startView($: EngineInterface, cwd: string) {
 
 export const resourceView = (on: On) => {
   on('command.run', { command: 'view' }, async $ => {
+    // A linked worktree without a record gets an empty one, as at session start.
+    const made = repo ? await $.process.run(['bash', envScript($), 'init', '--worktree', repo], { cwd: repo, timeoutMs: 20000 }) : undefined
     await refresh($)
+    if (made && made.exitCode !== 0) {
+      await update($, view, v => ({ ...v, notice: { text: failure('The worktree record could not be created (worktree-env.sh init)', made), isError: true } }))
+    }
     startPolling($)
     await $.ui.open({ id: PANE, title: TITLE })
     const { current, error } = await read($, view)

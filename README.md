@@ -261,6 +261,12 @@ taken, and a new stack or server fails to start. So each git worktree lists the 
 started in `.neil-dev.worktree.json`, in the worktree's own folder (never only in the main
 checkout).
 
+A linked worktree also keeps its own development mode and steering there, under an optional
+`"settings": { "mode": "heavy", "steering": "auto" }`. They win over `.neil-dev.json`, and
+`/dev mode` and `/dev steering` save to this file in a linked worktree, so a setting for one task
+never reaches the committed project file. The main checkout keeps no such file, so there they are
+still saved to `.neil-dev.json`.
+
 ```json
 {
   "version": 2,
@@ -299,6 +305,8 @@ checkout).
 | `list [--json] [--worktree <dir>]` | Shows the entries. |
 | `stop-all [--on-end stop-and-delete\|stop-keep-data\|keep-running] [--worktree <dir>] [--background [--log <file>]]` | Stops each listed dev server. Then it stops each listed stack with `npx -y supabase@<cliVersion> stop --project-id <id>` (plus `--no-backup` for `stop-and-delete`), in its workdir. With `keep-running` it stops only the dev servers. |
 | `migrate [--worktree <dir>]` | Rewrites a version 1 file as version 2. A version 2 file stays as it is. |
+| `init [--worktree <dir>]` | Creates an empty record when a linked worktree has none. It never changes an existing file, and creates nothing in the main checkout. The ndev hook runs it at session start and when `/ndev:view` opens. |
+| `set-setting --key mode\|steering --value <value> [--worktree <dir>]` | Saves the development mode or steering of this worktree under `"settings"` (see below). It refuses in the main checkout. |
 
 | Exit code | Meaning |
 |---|---|

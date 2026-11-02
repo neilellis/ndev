@@ -12,7 +12,9 @@ const ran = (stdout = '') => ({
 
 // A fake engine: the project is a git repository at /proj, ~/dev-wiki exists, and `files`
 // holds the project's files; `wiki` false leaves ~/dev-wiki missing; `refused` names a command the engine refuses. Returns the toasts shown and the commands run.
-const engine = (on: On, files: Map<string, string> = new Map(), wiki = true, refused?: string) => {
+type Fail = { exitCode: number; stderr: string }
+const failed = (f: Fail) => ({ value: { exitCode: f.exitCode, stdout: '', stderr: f.stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+const engine = (on: On, files: Map<string, string> = new Map(), wiki = true, refused?: string, initFails?: Fail, setFails?: Fail) => {
   const toasts: string[] = []
   const runs: string[][] = []
   on('command.register', (_, e) => {
@@ -39,6 +41,8 @@ const engine = (on: On, files: Map<string, string> = new Map(), wiki = true, ref
   on('ui.status', () => ({ value: undefined }))
   on('process.run', (_, e) => {
     runs.push([...e.argv])
+    if (initFails && e.argv.includes('init')) return failed(initFails)
+    if (setFails && e.argv.includes('set-setting')) return failed(setFails)
     return e.argv[0] === 'git' ? ran(`${ROOT}\n`) : ran()
   })
   return { toasts, runs }
@@ -138,7 +142,7 @@ test('a missing wiki is created from the plugin by init.sh', async ($, on) => {
   await start($)
   await new Promise(resolve => setTimeout(resolve, 50))
 
-  const init = runs.filter(argv => argv[0] === 'bash')
+  const init = runs.filter(argv => argv[0] === 'bash' && !argv.includes('init'))
   expect(init).toHaveLength(1)
   expect(init[0]?.[1]).toContain('scripts/wiki/init.sh')
   expect(init[0]?.[2]).toBe('/home/neil/dev-wiki')
@@ -274,4 +278,58 @@ test('a command the engine refuses stops only its own feature: the toast names i
   expect(toasts.join(' ')).toMatch(/ndev: orca-triage did not start: \S.*\/reload-plugins/)
   const ran = await $.command.run({ command: 'dev-mode', args: '' })
   expect(ran.text).toContain('Development mode is now light.')
+})
+
+const RECORD = `${ROOT}/.neil-dev.worktree.json`
+const ENV_SH = 'worktree-env.sh'
+
+test('a session start asks worktree-env.sh to create a missing worktree record', async ($, on) => {
+  const { runs } = engine(on)
+  await start($)
+  expect(runs.some(a => a.some(x => x.endsWith(ENV_SH)) && a.includes('init') && a.includes(ROOT))).toBe(true)
+})
+
+test('a record that cannot be created is shown with the script\'s own message', async ($, on) => {
+  const { toasts } = engine(on, new Map(), true, undefined, { exitCode: 3, stderr: 'worktree-env: not git-ignored. Repair: add the line to .gitignore' })
+  await start($)
+  const text = toasts.join(' ')
+  expect(text).toContain('exited 3')
+  expect(text).toContain('Repair: add the line')
+})
+
+test('the worktree record sets the mode and steering ahead of the project file', async ($, on) => {
+  engine(on, new Map([
+    [CONFIG, '{ "mode": "light", "steering": "interactive" }'],
+    [RECORD, JSON.stringify({ version: 2, settings: { mode: 'heavy', steering: 'auto' }, resources: { docker: [], 'dev-servers': {} } })],
+  ]))
+  await start($)
+  const text = await section($)
+  expect(text).toContain('HEAVY')
+  expect(text).toContain('AUTO')
+})
+
+test('/dev-mode in a worktree with a record saves through worktree-env.sh set-setting, not the project file', async ($, on) => {
+  const files = new Map([
+    [CONFIG, '{ "steering": "auto" }'],
+    [RECORD, JSON.stringify({ version: 2, resources: { docker: [], 'dev-servers': {} } })],
+  ])
+  const { runs } = engine(on, files)
+  await start($)
+  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' })
+  expect(ran.text).toContain('Development mode is now heavy.')
+  expect(ran.text).toContain('Saved to .neil-dev.worktree.json')
+  expect(ran.text).not.toContain('commit it')
+  const call = runs.find(a => a.includes('set-setting'))
+  expect(call?.slice(call.indexOf('set-setting'))).toEqual(['set-setting', '--key', 'mode', '--value', 'heavy', '--worktree', ROOT])
+  expect(files.get(CONFIG)).toBe('{ "steering": "auto" }')
+})
+
+test('a failed set-setting is reported with its exit code and output, and the mode still switches', async ($, on) => {
+  const files = new Map([[RECORD, JSON.stringify({ version: 2, resources: { docker: [], 'dev-servers': {} } })]])
+  engine(on, files, true, undefined, undefined, { exitCode: 2, stderr: 'worktree-env: lock held' })
+  await start($)
+  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' })
+  expect(ran.text).toContain('Not saved')
+  expect(ran.text).toContain('exited 2')
+  expect(ran.text).toContain('lock held')
 })
