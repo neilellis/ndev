@@ -10,6 +10,7 @@
 - Install only with the shadcn CLI or the source's own registry: `npx shadcn@latest add <name or registry URL>`. Do not copy code from a demo page or a gist.
 - Put a comment at the top of each installed file that names the source, the registry item and the date. For example: `// From Kokonut UI hold-button (https://kokonutui.com/r/hold-button.json), 2026-11-01. Changed for <project>: …`. A component you write yourself gets `// Own component: <why no row of the component map fits>.` instead. Enforce it in the project with `node ${CLAUDE_PLUGIN_ROOT}/scripts/ui/component-sources.mjs <component folders>` (in a test or CI step); it fails on a file without either line, on a source that is not approved, and on a URL that is not that source's host.
 - Take a component only when it improves a real interaction. Record the decision for each control: used, or left out and why.
+- After an agent writes or edits a component file (`.tsx`, `.jsx`, `.vue`, `.svelte`; not tests or stories), the plugin's `hooks/component-check.ts` asks it to check the change against the [component map](#component-map). The hook asks once for each file in a session and does not block. It does not see a file changed through Bash.
 - The project's own design system comes first. If the project already has a component for the type, use it. Follow the project's primitive family (Radix or Base UI).
 
 ## Approved sources

@@ -12,6 +12,7 @@ import { askCredentials, credentialsSection, startCredentials } from './credenti
 import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index'
 import { startWorktreeStacks, stopWorktreeStacks, worktreeStacksSection } from './worktree-stacks'
 import { learnAfterPush } from './learn'
+import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { startTriage, triage } from './triage'
 
@@ -241,6 +242,7 @@ export const register: Register = (on, options) => {
   walkDoc(on, options)
   quality(on, () => project)
   learnAfterPush(on)
+  componentCheck(on)
   fixAllPrs(on)
   responsiveCheck(on)
   triage(on, () => project)
@@ -263,6 +265,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
   on('session.start', async ($, e, next) => {
+    startComponentCheck()
     await $.command.register({
       name: 'dev',
       description: 'ndev: help, setup, mode and steering (runs the set-up first if this project is not set up)',

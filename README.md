@@ -341,6 +341,12 @@ The runner writes `progress.json` in its `--out` folder and a pointer to it in
 `~/.cache/ndev/responsive-check/latest.json`. The pane reads these two files. It does not show a
 run that started before the Bash call.
 
+## Component check
+
+`hooks/component-check.ts` runs in every project and needs no setting. After a successful Edit or Write of a `.tsx`, `.jsx`, `.vue` or `.svelte` file, it asks the agent to check the change against the component map in [`kb/ui-components.md`](kb/ui-components.md). The agent then changes to a richer component where one improves the interaction, or says in one line why the basic solution is right.
+
+The hook asks once for each file in a session and never blocks. It skips tests, stories and `node_modules`. A new session, such as after `/clear`, asks again. It does not see a file changed through Bash.
+
 ## The living wiki: ~/dev-wiki
 
 The plugin learns while you use it. The first session that starts with the plugin creates
