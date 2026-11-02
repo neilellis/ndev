@@ -1,19 +1,29 @@
 #!/usr/bin/env node
 // The per-worktree record: .neil-dev.worktree.json at the root of a linked git worktree,
-// git-ignored, never in the main checkout. Today it lists the local service stacks that the
-// worktree started, so the plugin's session-end hook can stop them. Other per-worktree facts can
-// go in it later, as more top-level keys.
+// git-ignored, never in the main checkout. It lists the resources that the worktree started, so
+// the plugin's session-end hook can stop them:
+//   { "version": 2, "resources": { "docker": [<stack>...], "dev-servers": { "<name>": <server> } } }
 //
 //   worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z>
 //                             [--workdir <dir holding supabase/>] [--worktree <dir>]
 //   worktree-env.sh remove-stack --kind supabase --project-id <id> [--worktree <dir>]
+//   worktree-env.sh add-dev-server --name <name> --pid <pid> --port <port> [--cwd <dir>]
+//                                  [--worktree <dir>]
+//   worktree-env.sh remove-dev-server --name <name> [--worktree <dir>]
 //   worktree-env.sh list [--json] [--worktree <dir>]
 //   worktree-env.sh stop-all [--on-end stop-and-delete|stop-keep-data|keep-running]
 //                            [--worktree <dir>] [--background [--log <file>]]
+//   worktree-env.sh migrate [--worktree <dir>]
+//
+// add-dev-server names a running server by what it shows ("docs", "ui"); the same name again
+// replaces the entry. It reads the command line and start time of the pid from ps. stop-all stops
+// every dev server (whatever --on-end says) and each docker stack by --on-end. It kills a pid only
+// while that pid still runs the recorded command from the recorded start time. migrate rewrites a
+// version 1 file ({ version: 1, stacks: [...] }) as version 2; every other command refuses one.
 //
 // Exit codes: 0 done; 1 a stop failed (its entry stays); 2 bad usage, an unreadable file or a
-// held lock; 3 refused (the main checkout, a file that is not git-ignored, or an id that another
-// worktree lists); 4 remove-stack: not listed.
+// held lock; 3 refused (the main checkout, a file that is not git-ignored, or an id or pid that
+// another worktree lists); 4 remove-stack or remove-dev-server: not listed.
 import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -277,7 +287,9 @@ function migrate(values) {
 
 // The other worktrees of the repository that list the same stack. Two worktrees that record one
 // project id share its containers, so a stop from one would stop (and delete) the other's stack.
-function listedElsewhere(root, kind, id) {
+// The same holds for a dev-server pid: a session end there would kill this worktree's server.
+// `match` gets another worktree's resources and returns the names of its matching entries.
+function listedElsewhere(root, what, match) {
   const r = git(root, ['worktree', 'list', '--porcelain'])
   if (r.status !== 0) throw new Fail(2, `worktree-env: git worktree list exited ${r.status} in ${root}: ${r.stderr.trim()}`)
   const others = r.stdout.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9))
@@ -286,14 +298,15 @@ function listedElsewhere(root, kind, id) {
   for (const dir of others) {
     const file = join(dir, FILE)
     if (!existsSync(file)) continue
-    let stacks
+    let resources
     try {
-      stacks = readRecord(dir).resources.docker
+      resources = readRecord(dir).resources
     } catch (error) {
-      console.error(`worktree-env: warning: could not check ${file} for ${kind} ${id}: ${error.message}`)
+      console.error(`worktree-env: warning: could not check ${file} for ${what}: ${error.message}`)
       continue
     }
-    if (stacks.some(s => same(s, kind, id))) found.push(realpathSync(dir))
+    const names = match(resources)
+    if (names.length > 0) found.push({ dir: realpathSync(dir), names })
   }
   return found
 }
@@ -328,11 +341,11 @@ function addStack(values) {
   const stack = { kind, projectId: id, workdir: realpathSync(workdir), cliVersion: version }
   const common = refuseMainCheckout(root, shellText(stopArgv(stack, 'stop-and-delete')))
   refuseNotIgnored(root, common)
-  const elsewhere = listedElsewhere(root, kind, id)
+  const elsewhere = listedElsewhere(root, `${kind} ${id}`, r => (r.docker.some(s => same(s, kind, id)) ? [id] : []))
   if (elsewhere.length > 0) {
     throw new Fail(3, [
-      `worktree-env: ${kind} stack ${id} is already listed by the worktree ${elsewhere.join(', ')}. Both would share its containers, and a session end there would stop this stack and delete its data. Nothing was recorded.`,
-      `Repair: give this worktree its own project id (project_id in supabase/config.toml), or, if that worktree no longer uses the stack: ${WRAPPER} remove-stack --kind ${kind} --project-id ${id} --worktree ${elsewhere[0]}`,
+      `worktree-env: ${kind} stack ${id} is already listed by the worktree ${elsewhere.map(e => e.dir).join(', ')}. Both would share its containers, and a session end there would stop this stack and delete its data. Nothing was recorded.`,
+      `Repair: give this worktree its own project id (project_id in supabase/config.toml), or, if that worktree no longer uses the stack: ${WRAPPER} remove-stack --kind ${kind} --project-id ${id} --worktree ${elsewhere[0].dir}`,
     ].join('\n'))
   }
   const file = join(root, FILE)
@@ -350,6 +363,78 @@ function removeStack(values) {
   console.log(`worktree-env: removed ${kind} stack ${id} from ${file}. It was not stopped.`)
 }
 
+// ps's elapsed time, [[dd-]hh:]mm:ss, in seconds.
+function elapsedSeconds(etime, pid) {
+  const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime)
+  if (!m) throw new Fail(2, `worktree-env: ps gave the elapsed time "${etime}" for pid ${pid}, which is not [[dd-]hh:]mm:ss.`)
+  const [, d = '0', h = '0', min, s] = m
+  return ((Number(d) * 24 + Number(h)) * 60 + Number(min)) * 60 + Number(s)
+}
+
+// What a pid runs now: its command line, its start time (ISO, to the second) and its process
+// group. undefined when no process has the pid.
+function processInfo(pid) {
+  const r = spawnSync('ps', ['-ww', '-o', 'etime=', '-o', 'pgid=', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+  if (r.error) throw new Fail(2, `worktree-env: ps did not start: ${r.error.message}. Dev servers need ps to check a pid.`)
+  const line = r.stdout.trim()
+  if (line === '') {
+    if (r.status === 1 || r.status === 0) return undefined
+    throw new Fail(2, `worktree-env: ps -p ${pid} exited ${r.status}: ${r.stderr.trim()}`)
+  }
+  const m = /^(\S+)\s+(\d+)\s+(.*)$/.exec(line)
+  if (!m) throw new Fail(2, `worktree-env: ps -p ${pid} printed "${line}", which is not "<etime> <pgid> <command>".`)
+  const seconds = elapsedSeconds(m[1], pid)
+  const started = new Date(Math.floor(Date.now() / 1000 - seconds) * 1000).toISOString()
+  return { command: m[3], started, pgid: Number(m[2]) }
+}
+
+function checkName(values) {
+  const name = need(values, 'name')
+  if (!NAME.test(name)) throw new Fail(2, `worktree-env: --name "${name}" must be letters, digits, '.', '_' or '-', such as docs or ui.`)
+  return name
+}
+
+function addDevServer(values) {
+  const name = checkName(values)
+  const pidText = need(values, 'pid')
+  if (!/^[1-9][0-9]*$/.test(pidText)) throw new Fail(2, `worktree-env: --pid "${pidText}" is not a process id.`)
+  const pid = Number(pidText)
+  const portText = need(values, 'port')
+  const port = Number(portText)
+  if (!/^[0-9]+$/.test(portText) || port < 1 || port > 65535) throw new Fail(2, `worktree-env: --port "${portText}" is not a port number from 1 to 65535.`)
+  const cwd = resolve(values.cwd ?? process.cwd())
+  if (!isDir(cwd)) throw new Fail(2, `worktree-env: --cwd ${cwd} is not a folder. Pass the folder the server runs in.`)
+  const info = processInfo(pid)
+  if (info === undefined) throw new Fail(2, `worktree-env: pid ${pid} does not run, so dev server ${name} was not recorded. Pass the pid of the running server (for a job you started in the background: $!).`)
+  const root = worktreeRoot(values.worktree ? resolve(values.worktree) : cwd)
+  const common = refuseMainCheckout(root, `kill ${pid}`)
+  refuseNotIgnored(root, common)
+  const elsewhere = listedElsewhere(root, `pid ${pid}`, r => Object.entries(r['dev-servers']).filter(([, d]) => d.pid === pid).map(([n]) => n))
+  if (elsewhere.length > 0) {
+    const [{ dir, names }] = elsewhere
+    throw new Fail(3, [
+      `worktree-env: pid ${pid} is already listed by the worktree ${dir} as dev server ${names.join(', ')}. A session end there would kill it. Nothing was recorded.`,
+      `Repair: if that worktree no longer owns the server: ${WRAPPER} remove-dev-server --name ${names[0]} --worktree ${dir}`,
+    ].join('\n'))
+  }
+  const entry = { pid, port, command: info.command, cwd: realpathSync(cwd), started: info.started }
+  change(root, r => ({ ...r, 'dev-servers': { ...r['dev-servers'], [name]: entry } }))
+  console.log(`worktree-env: recorded dev server ${name} (pid ${pid}, port ${port}, ${info.command}) in ${join(root, FILE)}. When a Claude session in this worktree ends, the ndev hook stops it.`)
+}
+
+function removeDevServer(values) {
+  const name = checkName(values)
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
+  const file = join(root, FILE)
+  const servers = readRecord(root).resources['dev-servers']
+  if (!Object.hasOwn(servers, name)) throw new Fail(4, `worktree-env: dev server ${name} is not listed in ${file}. Listed: ${Object.keys(servers).join(', ') || 'none'}.`)
+  change(root, r => {
+    const { [name]: _gone, ...rest } = r['dev-servers']
+    return { ...r, 'dev-servers': rest }
+  })
+  console.log(`worktree-env: removed dev server ${name} from ${file}. It was not stopped.`)
+}
+
 function list(values) {
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
@@ -358,9 +443,14 @@ function list(values) {
     console.log(JSON.stringify(record, null, 2))
     return
   }
-  if (record.resources.docker.length === 0) console.log(`worktree-env: ${file} lists no stacks.`)
-  for (const s of record.resources.docker) {
+  const { docker, 'dev-servers': servers } = record.resources
+  if (docker.length === 0) console.log(`worktree-env: ${file} lists no stacks.`)
+  for (const s of docker) {
     console.log(`${s.kind} ${s.projectId} (CLI ${s.cliVersion}, ${s.workdir})${s.lastStop ? ` - last stop failed, exit code ${s.lastStop.exitCode}` : ''}`)
+  }
+  if (Object.keys(servers).length === 0) console.log(`worktree-env: ${file} lists no dev servers.`)
+  for (const [name, d] of Object.entries(servers)) {
+    console.log(`${name}: pid ${d.pid}, port ${d.port}, ${d.command} (in ${d.cwd}, started ${d.started})${d.lastStop ? ` - last stop failed: ${d.lastStop.output}` : ''}`)
   }
 }
 
@@ -471,6 +561,10 @@ function main(argv) {
         background: { type: 'boolean' },
         log: { type: 'string' },
         json: { type: 'boolean' },
+        name: { type: 'string' },
+        pid: { type: 'string' },
+        port: { type: 'string' },
+        cwd: { type: 'string' },
       },
       strict: true,
     }))
@@ -483,6 +577,12 @@ function main(argv) {
       return 0
     case 'remove-stack':
       removeStack(values)
+      return 0
+    case 'add-dev-server':
+      addDevServer(values)
+      return 0
+    case 'remove-dev-server':
+      removeDevServer(values)
       return 0
     case 'list':
       list(values)

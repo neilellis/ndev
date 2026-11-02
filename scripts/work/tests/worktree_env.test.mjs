@@ -1,9 +1,10 @@
 // Tests for worktree-env.sh against real git repositories in a temporary folder.
 // A fake `npx` first on PATH stands in for the Supabase CLI: no test stops a real stack.
+// Dev-server tests start real `sleep` processes as the servers and kill every one they start.
 // Run: node --test scripts/work/tests/
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -444,4 +445,132 @@ test('an unknown shape is refused with exit 2 and names the bad part', () => {
     assert.match(r.out, new RegExp(FILE.replace(/[.]/g, '\\.')))
   }
   assert.deepEqual(calls(p), [])
+})
+
+// Dev servers. Each test server is a real `sleep` in its own process group, so its command line
+// is known ("sleep <seconds>") without asking ps. Every one is killed after the tests.
+const started = []
+after(() => {
+  for (const pid of started) {
+    try {
+      process.kill(-pid, 'SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
+  }
+})
+
+function server(seconds = 300) {
+  const child = spawn('sleep', [String(seconds)], { detached: true, stdio: 'ignore' })
+  child.unref()
+  started.push(child.pid)
+  return { pid: child.pid, at: Date.now(), command: `sleep ${seconds}` }
+}
+
+const isRunning = pid => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const addServer = (p, name, s, ...extra) =>
+  run(p, p.app, 'add-dev-server', '--name', name, '--pid', String(s.pid), '--port', '3000', ...extra)
+
+test('add-dev-server records the server under its name with pid, port, command, cwd and start time', () => {
+  const p = project()
+  const s = server()
+  const r = addServer(p, 'docs', s, '--cwd', p.app)
+  assert.equal(r.status, 0, r.out)
+  const entry = servers(p).docs
+  assert.deepEqual(Object.keys(entry).sort(), ['command', 'cwd', 'pid', 'port', 'started'])
+  assert.equal(entry.pid, s.pid)
+  assert.equal(entry.port, 3000)
+  assert.equal(entry.command, s.command)
+  assert.equal(entry.cwd, p.app)
+  const at = Date.parse(entry.started)
+  assert.ok(Math.abs(at - s.at) < 3000, `started ${entry.started} is not near the spawn time ${new Date(s.at).toISOString()}`)
+  assert.deepEqual(docker(p), [])
+})
+
+test('add-dev-server with the same name replaces the entry; another name adds one', () => {
+  const p = project()
+  const first = server()
+  const second = server(301)
+  assert.equal(addServer(p, 'docs', first).status, 0)
+  assert.equal(addServer(p, 'docs', second).status, 0)
+  assert.equal(addServer(p, 'ui', first).status, 0)
+  assert.deepEqual(Object.keys(servers(p)).sort(), ['docs', 'ui'])
+  assert.equal(servers(p).docs.pid, second.pid)
+  assert.equal(servers(p).docs.command, 'sleep 301')
+  assert.equal(servers(p).docs.cwd, p.app, 'the default cwd is the folder the command ran in')
+})
+
+test('add-dev-server needs --name, a running pid and a port, and names what is wrong', () => {
+  const p = project()
+  const s = server()
+  const gone = spawnSync('true').pid
+  const cases = [
+    [['--pid', String(s.pid), '--port', '3000'], /--name/],
+    [['--name', 'bad name', '--pid', String(s.pid), '--port', '3000'], /--name/],
+    [['--name', 'docs', '--port', '3000'], /--pid/],
+    [['--name', 'docs', '--pid', String(gone), '--port', '3000'], new RegExp(`pid ${gone}`)],
+    [['--name', 'docs', '--pid', String(s.pid)], /--port/],
+    [['--name', 'docs', '--pid', String(s.pid), '--port', '70000'], /--port/],
+  ]
+  for (const [args, problem] of cases) {
+    const r = run(p, p.app, 'add-dev-server', ...args)
+    assert.equal(r.status, 2, `${args.join(' ')}: ${r.out}`)
+    assert.match(r.out, problem, args.join(' '))
+  }
+  assert.ok(!existsSync(join(p.worktree, FILE)))
+})
+
+test('add-dev-server refuses in the main checkout and when the file is not git-ignored', () => {
+  const p = project()
+  const s = server()
+  const main = run(p, p.main, 'add-dev-server', '--name', 'docs', '--pid', String(s.pid), '--port', '3000')
+  assert.equal(main.status, 3, main.out)
+  assert.match(main.out, /main checkout/)
+  const q = project({ ignored: false })
+  const r = addServer(q, 'docs', s)
+  assert.equal(r.status, 3, r.out)
+  assert.match(r.out, /not git-ignored/)
+})
+
+test('add-dev-server refuses a pid that another worktree lists, and names that worktree', () => {
+  const p = project()
+  const s = server()
+  assert.equal(addServer(p, 'docs', s).status, 0)
+  const other = join(p.base, 'wt2')
+  sh(p.main, 'git', 'worktree', 'add', '-q', '-b', 'task2', other)
+  const r = run(p, other, 'add-dev-server', '--name', 'docs', '--pid', String(s.pid), '--port', '3000')
+  assert.equal(r.status, 3, r.out)
+  assert.match(r.out, new RegExp(p.worktree.replace(/[.]/g, '\\.')))
+  assert.match(r.out, /remove-dev-server --name docs/)
+  assert.ok(!existsSync(join(other, FILE)))
+})
+
+test('remove-dev-server removes the entry and stops nothing; an unlisted name exits 4', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  const r = run(p, p.app, 'remove-dev-server', '--name', 'docs')
+  assert.equal(r.status, 0, r.out)
+  assert.deepEqual(servers(p), {})
+  assert.ok(isRunning(s.pid), 'remove-dev-server stopped the process')
+  const again = run(p, p.app, 'remove-dev-server', '--name', 'docs')
+  assert.equal(again.status, 4, again.out)
+  assert.match(again.out, /docs/)
+})
+
+test('list shows the dev servers with their pid, port and command', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  const r = run(p, p.app, 'list')
+  assert.equal(r.status, 0, r.out)
+  assert.match(r.out, new RegExp(`docs: pid ${s.pid}, port 3000, sleep 300`))
 })
