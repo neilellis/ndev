@@ -29,6 +29,8 @@ const POLICIES = ['stop-and-delete', 'stop-keep-data', 'keep-running']
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const VERSION = /^[0-9][0-9A-Za-z.+-]*$/
 const TAIL_LINES = 40
+const VERSION_NOW = 2
+const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const STOP_TIMEOUT_S = Number(process.env.NDEV_STACK_STOP_TIMEOUT_S ?? 180)
 const LOCK_WAIT_MS = Number(process.env.NDEV_WORKTREE_LOCK_WAIT_MS ?? 10000)
 
@@ -90,18 +92,86 @@ function refuseNotIgnored(root, common) {
   throw new Fail(2, `git check-ignore exited ${r.status} in ${root}: ${r.stderr.trim()}`)
 }
 
-function readRecord(file) {
-  if (!existsSync(file)) return { version: 1, stacks: [] }
-  let raw
+const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isText = v => typeof v === 'string' && v !== ''
+const keysOutside = (value, allowed) => Object.keys(value).filter(k => !allowed.includes(k))
+const quoted = keys => keys.map(k => `"${k}"`).join(', ')
+const STACK_KEYS = ['kind', 'projectId', 'workdir', 'cliVersion', 'addedAt', 'lastStop']
+const SERVER_KEYS = ['pid', 'port', 'command', 'cwd', 'started', 'lastStop']
+const empty = () => ({ version: VERSION_NOW, resources: { docker: [], 'dev-servers': {} } })
+
+// The problem with one docker entry, or undefined.
+function stackProblem(s, i) {
+  const at = `resources.docker[${i}]`
+  if (!isObject(s)) return `${at} must be an object`
+  const extra = keysOutside(s, STACK_KEYS)
+  if (extra.length > 0) return `${at} has the unknown key ${quoted(extra)}; the keys are ${STACK_KEYS.join(', ')}`
+  for (const k of ['kind', 'projectId']) if (!isText(s[k])) return `${at}.${k} must be a non-empty string`
+  return undefined
+}
+
+// The problem with one dev-server entry, or undefined.
+function serverProblem(name, d) {
+  const at = `resources.dev-servers.${name}`
+  if (!NAME.test(name)) return `${at}: the name must be letters, digits, '.', '_' or '-'`
+  if (!isObject(d)) return `${at} must be an object`
+  const extra = keysOutside(d, SERVER_KEYS)
+  if (extra.length > 0) return `${at} has the unknown key ${quoted(extra)}; the keys are ${SERVER_KEYS.join(', ')}`
+  if (!Number.isInteger(d.pid) || d.pid < 1) return `${at}.pid must be a positive whole number; got ${JSON.stringify(d.pid)}`
+  if (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535) return `${at}.port must be a port number from 1 to 65535; got ${JSON.stringify(d.port)}`
+  for (const k of ['command', 'cwd']) if (!isText(d[k])) return `${at}.${k} must be a non-empty string`
+  if (!isText(d.started) || Number.isNaN(Date.parse(d.started))) return `${at}.started must be an ISO date and time; got ${JSON.stringify(d.started)}`
+  return undefined
+}
+
+// The problem with a parsed record, or undefined.
+function shapeProblem(raw) {
+  if (!isObject(raw)) return 'must hold a JSON object'
+  const extra = keysOutside(raw, ['version', 'resources'])
+  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, resources`
+  if (raw.version !== VERSION_NOW) return `has "version" ${JSON.stringify(raw.version)}; this script reads version ${VERSION_NOW}`
+  if (!isObject(raw.resources)) return 'must hold a "resources" object'
+  const kinds = keysOutside(raw.resources, ['docker', 'dev-servers'])
+  if (kinds.length > 0) return `has the unknown resource ${quoted(kinds)}; the resources are docker, dev-servers`
+  const { docker = [], 'dev-servers': servers = {} } = raw.resources
+  if (!Array.isArray(docker)) return 'must hold resources.docker as a list'
+  if (!isObject(servers)) return 'must hold resources.dev-servers as an object keyed by server name'
+  for (const [i, s] of docker.entries()) {
+    const problem = stackProblem(s, i)
+    if (problem) return problem
+  }
+  for (const [name, d] of Object.entries(servers)) {
+    const problem = serverProblem(name, d)
+    if (problem) return problem
+  }
+  return undefined
+}
+
+const isVersion1 = raw => isObject(raw) && raw.version === 1
+
+function parseRecord(file) {
   try {
-    raw = JSON.parse(readFileSync(file, 'utf8'))
+    return JSON.parse(readFileSync(file, 'utf8'))
   } catch (error) {
-    throw new Fail(2, `worktree-env: ${file} is not valid JSON (${error.message}). Nothing was stopped. Repair: fix or delete the file; it lists the stacks this worktree started.`)
+    throw new Fail(2, `worktree-env: ${file} is not valid JSON (${error.message}). Nothing was changed or stopped. Repair: fix or delete the file; it lists the resources this worktree started.`)
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || (raw.stacks !== undefined && !Array.isArray(raw.stacks))) {
-    throw new Fail(2, `worktree-env: ${file} must hold a JSON object whose "stacks" is a list. Nothing was stopped. Repair: fix or delete the file.`)
+}
+
+// The record of the worktree at `root`. A missing file is an empty record. A version 1 file, or
+// any shape this script does not know, is refused: nothing reads it as something else.
+function readRecord(root) {
+  const file = join(root, FILE)
+  if (!existsSync(file)) return empty()
+  const raw = parseRecord(file)
+  if (isVersion1(raw)) {
+    throw new Fail(2, [
+      `worktree-env: ${file} uses the version 1 layout (the stacks at the top level). Nothing was changed or stopped.`,
+      `Repair: ${WRAPPER} migrate --worktree ${root}`,
+    ].join('\n'))
   }
-  return { version: 1, ...raw, stacks: raw.stacks ?? [] }
+  const problem = shapeProblem(raw)
+  if (problem) throw new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed or stopped. Repair: fix the file (see the plugin README, "Worktree resources"), or delete it if nothing it lists still runs.`)
+  return { version: VERSION_NOW, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} } }
 }
 
 // Write a temporary file, then rename it, so a reader never sees half a file.
@@ -169,11 +239,39 @@ function withLock(root, fn) {
 }
 
 // Reads the file again under the lock before each change, so an entry added meanwhile is kept.
+// `edit` gets the resources and returns them changed.
 function change(root, edit) {
+  withLock(root, () => {
+    const record = readRecord(root)
+    writeRecord(join(root, FILE), { version: VERSION_NOW, resources: edit(record.resources) })
+  })
+}
+
+const changeDocker = (root, edit) => change(root, r => ({ ...r, docker: edit(r.docker) }))
+
+// Rewrites a version 1 file ({ version: 1, stacks: [...] }) as version 2, with the stacks under
+// resources.docker. A version 2 file is left as it is; any other shape is refused.
+function migrate(values) {
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
   withLock(root, () => {
-    const record = readRecord(file)
-    writeRecord(file, { ...record, stacks: edit(record.stacks) })
+    if (!existsSync(file)) {
+      console.log(`worktree-env: ${file} does not exist; nothing to migrate.`)
+      return
+    }
+    const raw = parseRecord(file)
+    if (!isVersion1(raw)) {
+      readRecord(root)
+      console.log(`worktree-env: ${file} is already version ${VERSION_NOW}; nothing changed.`)
+      return
+    }
+    const extra = keysOutside(raw, ['version', 'stacks'])
+    if (extra.length > 0) throw new Fail(2, `worktree-env: ${file} is version 1 but has the unknown key ${quoted(extra)}, so it was not migrated. Repair: fix the file by hand; version 1 holds only version and stacks.`)
+    const next = { version: VERSION_NOW, resources: { docker: raw.stacks ?? [], 'dev-servers': {} } }
+    const problem = shapeProblem(next)
+    if (problem) throw new Fail(2, `worktree-env: ${file} was not migrated: as version ${VERSION_NOW} it ${problem.startsWith('resources') ? `would fail: ${problem}` : problem}. Repair: fix its "stacks" by hand.`)
+    writeRecord(file, next)
+    console.log(`worktree-env: migrated ${file} to version ${VERSION_NOW}: ${next.resources.docker.length} stack(s) moved to resources.docker.`)
   })
 }
 
@@ -190,7 +288,7 @@ function listedElsewhere(root, kind, id) {
     if (!existsSync(file)) continue
     let stacks
     try {
-      stacks = readRecord(file).stacks
+      stacks = readRecord(dir).resources.docker
     } catch (error) {
       console.error(`worktree-env: warning: could not check ${file} for ${kind} ${id}: ${error.message}`)
       continue
@@ -238,7 +336,7 @@ function addStack(values) {
     ].join('\n'))
   }
   const file = join(root, FILE)
-  change(root, stacks => [...stacks.filter(s => !same(s, kind, id)), { ...stack, addedAt: new Date().toISOString() }])
+  changeDocker(root, stacks => [...stacks.filter(s => !same(s, kind, id)), { ...stack, addedAt: new Date().toISOString() }])
   console.log(`worktree-env: recorded ${kind} stack ${id} in ${file}. When a Claude session in this worktree ends, the ndev hook stops it (worktreeStacks.onSessionEnd in .neil-dev.json; default stop-and-delete).`)
 }
 
@@ -246,22 +344,22 @@ function removeStack(values) {
   const { kind, id } = checkStackOptions(values)
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
-  const { stacks } = readRecord(file)
+  const stacks = readRecord(root).resources.docker
   if (!stacks.some(s => same(s, kind, id))) throw new Fail(4, `worktree-env: ${kind} stack ${id} is not listed in ${file}. Listed: ${stacks.map(s => `${s.kind} ${s.projectId}`).join(', ') || 'none'}.`)
-  change(root, all => all.filter(s => !same(s, kind, id)))
+  changeDocker(root, all => all.filter(s => !same(s, kind, id)))
   console.log(`worktree-env: removed ${kind} stack ${id} from ${file}. It was not stopped.`)
 }
 
 function list(values) {
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
-  const record = readRecord(file)
+  const record = readRecord(root)
   if (values.json) {
     console.log(JSON.stringify(record, null, 2))
     return
   }
-  if (record.stacks.length === 0) console.log(`worktree-env: ${file} lists no stacks.`)
-  for (const s of record.stacks) {
+  if (record.resources.docker.length === 0) console.log(`worktree-env: ${file} lists no stacks.`)
+  for (const s of record.resources.docker) {
     console.log(`${s.kind} ${s.projectId} (CLI ${s.cliVersion}, ${s.workdir})${s.lastStop ? ` - last stop failed, exit code ${s.lastStop.exitCode}` : ''}`)
   }
 }
@@ -293,7 +391,7 @@ function stopAll(values) {
   if (values.background) return background(values, policy, root)
   const file = join(root, FILE)
   const at = new Date().toISOString()
-  const { stacks } = readRecord(file)
+  const stacks = readRecord(root).resources.docker
   if (stacks.length === 0) {
     console.log(`worktree-env: ${at} ${file} lists no stacks; nothing to stop.`)
     return 0
@@ -308,13 +406,13 @@ function stopAll(values) {
     const keepRecord = existsSync(root)
     if (r.ok) {
       console.log(`worktree-env: ${at} stopped ${s.kind} stack ${s.projectId}: ${r.command} (in ${r.cwd})`)
-      if (keepRecord) change(root, all => all.filter(x => !sameEntry(x, s)))
+      if (keepRecord) changeDocker(root, all => all.filter(x => !sameEntry(x, s)))
       continue
     }
     failed++
     const repair = r.command || `stop the ${s.kind} stack ${s.projectId} by hand`
     if (keepRecord) {
-      change(root, all => all.map(x => (sameEntry(x, s) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
+      changeDocker(root, all => all.map(x => (sameEntry(x, s) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
     }
     console.error([
       `worktree-env: ${at} ${s.kind} stack ${s.projectId} did not stop.`,
@@ -388,6 +486,9 @@ function main(argv) {
       return 0
     case 'list':
       list(values)
+      return 0
+    case 'migrate':
+      migrate(values)
       return 0
     case 'stop-all':
       return stopAll(values)
