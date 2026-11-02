@@ -14,9 +14,10 @@ export type NeilDevConfig = {
   worktreeStacks?: WorktreeStacks
 }
 
-// What the session-end hook does with the local stacks a worktree lists in .neil-dev.worktree.json.
-// stop-and-delete (the default) stops each stack and deletes its data; stop-keep-data stops it and
-// keeps its data volumes; keep-running leaves it running.
+// What the session-end hook does with the docker stacks a worktree lists in .neil-dev.worktree.json
+// (resources.docker). stop-and-delete (the default) stops each stack and deletes its data;
+// stop-keep-data stops it and keeps its data volumes; keep-running leaves it running. The dev servers
+// (resources.dev-servers) stop at every session end, whatever this says.
 export const STACK_POLICIES = ['stop-and-delete', 'stop-keep-data', 'keep-running'] as const
 export type StackPolicy = (typeof STACK_POLICIES)[number]
 export type WorktreeStacks = { onSessionEnd?: StackPolicy }

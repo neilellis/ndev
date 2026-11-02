@@ -14,7 +14,12 @@ const ok = (stdout = '', exitCode = 0, stderr = '') => ({
 const stack = (id: string, extra: Record<string, unknown> = {}) => ({
   kind: 'supabase', projectId: id, workdir: `${ROOT}/app`, cliVersion: '2.122.0', addedAt: '2026-10-30T10:00:00.000Z', ...extra,
 })
-const record = (...stacks: unknown[]) => JSON.stringify({ version: 1, stacks })
+const withServers = (servers: Record<string, unknown>, ...stacks: unknown[]) =>
+  JSON.stringify({ version: 2, resources: { docker: stacks, 'dev-servers': servers } })
+const record = (...stacks: unknown[]) => withServers({}, ...stacks)
+const devServer = (pid: number, port: number, extra: Record<string, unknown> = {}) => ({
+  pid, port, command: 'node next dev', cwd: `${ROOT}/apps/docs`, started: '2026-10-30T10:00:00.000Z', ...extra,
+})
 
 // A fake engine: a git worktree at /proj. `files` holds the worktree record and .neil-dev.json;
 // `script` is what worktree-env.sh does when run.
@@ -197,4 +202,100 @@ test('with keep-running, stacks still listed are expected and get no section', a
   await start($)
 
   expect(await section($)).toBeUndefined()
+})
+
+test('a session end with only dev servers listed starts the background stop', async ($, on) => {
+  const { ran } = engine(on, { files: { [RECORD]: withServers({ docs: devServer(4242, 3000) }) } })
+  await start($)
+  await end($)
+
+  expect(stops(ran)).toHaveLength(1)
+  expect(stops(ran)[0]!.argv.slice(2)).toEqual(['stop-all', '--background', '--on-end', 'stop-and-delete', '--worktree', ROOT])
+})
+
+test('keep-running still stops the dev servers: the stop runs with --on-end keep-running, and the toast names the stacks left running', async ($, on) => {
+  const { ran, toasts } = engine(on, {
+    files: {
+      [RECORD]: withServers({ docs: devServer(4242, 3000) }, stack('fcc-211')),
+      [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }),
+    },
+  })
+  await start($)
+  await end($)
+
+  expect(stops(ran)).toHaveLength(1)
+  expect(stops(ran)[0]!.argv.slice(2)).toEqual(['stop-all', '--background', '--on-end', 'keep-running', '--worktree', ROOT])
+  expect(toasts.join(' ')).toContain('fcc-211')
+  expect(toasts.join(' ')).toContain('keep-running')
+})
+
+test('a project file with an error still stops the dev servers, and leaves the stacks', async ($, on) => {
+  const { ran, toasts } = engine(on, {
+    files: {
+      [RECORD]: withServers({ docs: devServer(4242, 3000) }, stack('fcc-211')),
+      [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'nuke' } }),
+    },
+  })
+  await start($)
+  await end($)
+
+  expect(stops(ran)).toHaveLength(1)
+  expect(stops(ran)[0]!.argv).toContain('keep-running')
+  expect(toasts.join(' ')).toContain('did not stop supabase fcc-211')
+})
+
+test('a version 1 record is refused: the section and the toast name the migrate repair, and the session end stops nothing', async ($, on) => {
+  const { ran, toasts } = engine(on, { files: { [RECORD]: JSON.stringify({ version: 1, stacks: [stack('fcc-211')] }) } })
+  await start($)
+
+  const text = (await section($)) ?? ''
+  expect(text).toContain('version 1')
+  expect(text).toContain('worktree-env.sh migrate --worktree /proj')
+  expect(toasts.join(' ')).toContain('migrate --worktree /proj')
+  await end($)
+  expect(stops(ran)).toHaveLength(0)
+})
+
+test('a record of an unknown shape is refused and named', async ($, on) => {
+  engine(on, { files: { [RECORD]: JSON.stringify({ version: 2, resources: { docker: [], 'dev-servers': {}, vms: [] } }) } })
+  await start($)
+
+  const text = (await section($)) ?? ''
+  expect(text).toContain('"vms"')
+  expect(text).toContain('worktree-env.sh list --worktree /proj')
+})
+
+test('a dev server stop that failed at the last session end is reported at the next start, with the repair', async ($, on) => {
+  const failed = devServer(4242, 3000, {
+    lastStop: {
+      at: '2026-10-30T11:00:00.000Z',
+      command: '',
+      output: 'pid 4242 now runs "postgres" (started 2026-10-30T10:30:00.000Z), not the recorded "node next dev"',
+      repair: 'find the server by its port, lsof -nP -iTCP:3000 -sTCP:LISTEN, and stop that process',
+    },
+  })
+  const { toasts } = engine(on, { files: { [RECORD]: withServers({ docs: failed, ui: devServer(4343, 5173) }) } })
+  await start($)
+
+  const text = (await section($)) ?? ''
+  expect(text).toContain('dev server docs')
+  expect(text).toContain('now runs "postgres"')
+  expect(text).toContain('lsof -nP -iTCP:3000 -sTCP:LISTEN')
+  expect(text).toContain('remove-dev-server --name docs --worktree /proj')
+  expect(text).not.toMatch(/dev server ui[^\n]*did not stop/)
+  expect(toasts.join(' ')).toContain('docs')
+})
+
+test('dev servers still listed at session start are named, even with keep-running', async ($, on) => {
+  engine(on, {
+    files: {
+      [RECORD]: withServers({ ui: devServer(4343, 5173) }),
+      [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }),
+    },
+  })
+  await start($)
+
+  const text = (await section($)) ?? ''
+  expect(text).toContain('dev server ui (pid 4343, port 5173)')
+  expect(text).toContain('worktree-env.sh stop-all --worktree /proj --on-end keep-running')
 })
