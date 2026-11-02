@@ -152,12 +152,16 @@ the project. Every key is optional:
   `branding`, those skills do no branding and do not mention it. `path` is the brand site's source folder, which `/brand check` and `/brand apply` read.
 - `quality` turns on the quality-control hooks one by one (see [`kb/hooks/README.md`](kb/hooks/README.md)).
   A hook that is not listed does not run.
-- `worktreeStacks.onSessionEnd` sets what happens to the local stacks that a worktree lists in
-  `.neil-dev.worktree.json` when a session in that worktree ends (see "Worktree stacks" below):
+- `worktreeStacks.onSessionEnd` sets what happens to the docker stacks that a worktree lists in
+  `.neil-dev.worktree.json` (`resources.docker`) when a session in that worktree ends (see
+  "Worktree resources" below):
   - `stop-and-delete` (the default): stop each stack and delete its data
     (`supabase stop --no-backup`).
   - `stop-keep-data`: stop each stack and keep its data volumes (`supabase stop`).
-  - `keep-running`: stop nothing. A message lists the stacks that are left running.
+  - `keep-running`: do not stop the stacks. A message lists the stacks that are left running.
+
+  This setting does not apply to dev servers. The hook stops the listed dev servers at each
+  session end.
 
 The plugin checks the file at session start. A bad value or an unknown key shows a message that
 names the file and the problem, and the file then has no effect until it is fixed. The plugin
@@ -249,48 +253,95 @@ from source. When the script exits 0, the hook writes `.ndev-inited`.
   the agent must run the script.
 - Outside a git repository the hook does nothing.
 
-## Worktree stacks: .neil-dev.worktree.json
+## Worktree resources: .neil-dev.worktree.json
 
-Many worktrees each start their own local stack, for example a Supabase stack with the worktree's
-own project id. When nobody stops them, Docker fills up and a new stack fails to start. So each git
-worktree lists the stacks it started in `.neil-dev.worktree.json`, in the worktree's own folder
-(never only in the main checkout). The file is for facts about one worktree, so other keys can go
-in it later.
+Many worktrees each start their own local stack (for example a Supabase stack with the worktree's
+own project id) and their own dev servers. When nobody stops them, Docker fills up, ports stay
+taken, and a new stack or server fails to start. So each git worktree lists the resources it
+started in `.neil-dev.worktree.json`, in the worktree's own folder (never only in the main
+checkout).
 
 ```json
 {
-  "version": 1,
-  "stacks": [
-    { "kind": "supabase", "projectId": "fcc-211", "workdir": "/repo/.claude/worktrees/fix-211",
-      "cliVersion": "2.122.0", "addedAt": "2026-10-30T10:00:00.000Z" }
-  ]
+  "version": 2,
+  "resources": {
+    "docker": [
+      { "kind": "supabase", "projectId": "fcc-211", "workdir": "/repo/.claude/worktrees/fix-211",
+        "cliVersion": "2.122.0", "addedAt": "2026-10-30T10:00:00.000Z" }
+    ],
+    "dev-servers": {
+      "docs": { "pid": 48213, "port": 3000, "command": "node /repo/node_modules/.bin/next dev",
+                "cwd": "/repo/.claude/worktrees/fix-211/apps/docs", "started": "2026-10-30T10:05:12.000Z" }
+    }
+  }
 }
 ```
+
+- `resources.docker` is a list of docker stacks.
+- `resources.dev-servers` is a map. Each key is a name for what the server shows, for example
+  `docs` or `ui`. The script reads `command` (the full command line) and `started` from `ps` when
+  it records the server.
+- A failed stop adds `lastStop` to its entry.
+- The script refuses a file with an unknown key, at any level, and names the key. It changes and
+  stops nothing.
+- The script refuses a version 1 file (`{ "version": 1, "stacks": [...] }`) and names the repair:
+  `worktree-env.sh migrate --worktree <dir>`. The migrate command moves the stacks to
+  `resources.docker`.
 
 `scripts/work/worktree-env.sh` owns the file:
 
 | Command | What it does |
 |---|---|
 | `add-stack --kind supabase --project-id <id> --cli-version <x.y.z> [--workdir <dir>] [--worktree <dir>]` | Records a stack. `--workdir` is the folder you ran `supabase start` in (default: the current folder). The same id again replaces the entry. |
-| `remove-stack --kind supabase --project-id <id> [--worktree <dir>]` | Removes an entry, for a stack that you stopped yourself. |
+| `remove-stack --kind supabase --project-id <id> [--worktree <dir>]` | Removes a stack entry, for a stack that you stopped yourself. |
+| `add-dev-server --name <name> --pid <pid> --port <port> [--cwd <dir>] [--worktree <dir>]` | Records a running dev server under `<name>`. `--cwd` is the folder the server runs in (default: the current folder). The same name again replaces the entry. |
+| `remove-dev-server --name <name> [--worktree <dir>]` | Removes a dev-server entry, for a server that you stopped yourself. It stops nothing. |
 | `list [--json] [--worktree <dir>]` | Shows the entries. |
-| `stop-all [--on-end stop-and-delete\|stop-keep-data\|keep-running] [--worktree <dir>] [--background [--log <file>]]` | Stops each listed stack with `npx -y supabase@<cliVersion> stop --project-id <id>` (plus `--no-backup` for `stop-and-delete`), in its workdir. |
+| `stop-all [--on-end stop-and-delete\|stop-keep-data\|keep-running] [--worktree <dir>] [--background [--log <file>]]` | Stops each listed dev server. Then it stops each listed stack with `npx -y supabase@<cliVersion> stop --project-id <id>` (plus `--no-backup` for `stop-and-delete`), in its workdir. With `keep-running` it stops only the dev servers. |
+| `migrate [--worktree <dir>]` | Rewrites a version 1 file as version 2. A version 2 file stays as it is. |
 
 | Exit code | Meaning |
 |---|---|
 | 0 | Done. |
 | 1 | A stop failed. Its entry stays. |
-| 2 | A usage error, a file that does not parse, or a lock that another command holds too long. |
-| 3 | Refused: the main checkout, a file that is not git-ignored, or an id that another worktree lists. |
-| 4 | The stack is not listed. |
+| 2 | A usage error, a file that does not parse, a version 1 file, an unknown shape, a pid that does not run, or a lock that another command holds too long. |
+| 3 | Refused: the main checkout, a file that is not git-ignored, or a project id or pid that another worktree lists. |
+| 4 | The stack or the dev server is not listed. |
 
-- The file must be git-ignored. `add-stack` refuses when it is not, and names the repair:
+To record a dev server, start it in the background and record its pid at once:
+
+```bash
+pnpm --dir apps/docs dev --port 3000 > /tmp/docs-dev.log 2>&1 &
+"${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree-env.sh" add-dev-server --name docs --pid $! --port 3000 --cwd apps/docs
+```
+
+- The file must be git-ignored. `add-stack` and `add-dev-server` refuse when it is not, and name the repair:
   add the line `.neil-dev.worktree.json` to `.gitignore` (or to the git common dir's
   `info/exclude`). The plugin does not edit `.gitignore`.
-- `add-stack` refuses in the main checkout: the record belongs to a linked worktree.
+- `add-stack` and `add-dev-server` refuse in the main checkout: the record belongs to a linked
+  worktree.
 - `add-stack` refuses a project id that another worktree of the repository lists. Two worktrees
   with one project id share its containers, so a stop from one stops the other's stack. The
   message names that worktree and the repair: give this worktree its own `project_id`.
+- `add-dev-server` refuses a pid that does not run, and a pid that another worktree lists. The
+  message names that worktree and its `remove-dev-server` command.
+- `stop-all` stops a dev server only while its pid runs the recorded command from the recorded
+  start time (within 5 s). The system can give the pid of a server that ended to a new process,
+  and that process is never killed. A mismatch keeps the entry with `lastStop`, prints the
+  recorded and the actual command, and names the repair: find the server by its port with
+  `lsof -nP -iTCP:<port> -sTCP:LISTEN`, then run `remove-dev-server`. The exit code is 1.
+- A server that changes its process title after it starts does not match its record, so it is
+  never killed. Stop it by its port, then run `remove-dev-server`.
+- `stop-all` sends SIGTERM to the server's process group when the server leads one. It also
+  signals each child process of the server, and their children. It finds them before it sends a
+  signal, so they also stop when the server does not lead a group (for example `pnpm dev &` in a
+  script). After 10 s (`NDEV_DEV_SERVER_STOP_TIMEOUT_S`) it sends SIGKILL to each process that
+  still runs.
+- When the server's pid no longer runs but processes of its group still run, `stop-all` stops that
+  group. When nothing of it runs, the server has already ended: its entry goes, and the log says so.
+- When a signal fails, the stored repair is `stop-all --on-end keep-running` (which checks the pid
+  again), then the `lsof` search by port. It is never a bare `kill` of the pid, because a later
+  session can find that pid given to another process.
 - Each change to the file holds a lock, `<git dir>/ndev-worktree.lock`, so two commands do not
   overwrite each other. A lock whose process is gone is taken over. A command waits at most 10 s
   (`NDEV_WORKTREE_LOCK_WAIT_MS`), then exits 2 and names the lock to remove.
@@ -298,18 +349,27 @@ in it later.
   `worktree-env.sh stop-all --background` with the policy from `.neil-dev.json`
   (`worktreeStacks.onSessionEnd`). The stop runs detached, so a slow `supabase stop` does not
   hold up the exit. It logs to `<git common dir>/ndev-worktree-stop/<worktree name>.log`, so the
-  log stays when the worktree is removed.
-- The hook acts only on the session's own worktree, and only on the stacks its file lists.
+  log stays when the worktree is removed. Each run ends its log with its exit code.
+- `stop-all --background` reads the file before it detaches. A bad file exits 2 at once, so the
+  hook shows the error, not only the log.
+- The dev servers stop at each session end. With `keep-running` the hook runs `stop-all` with
+  `--on-end keep-running`, which stops only the dev servers.
+- The hook acts only on the session's own worktree, and only on the resources its file lists.
 - A `/clear` or a resume stops nothing: the process goes on in the same worktree.
-- An entry goes only after its stack stopped. A failed stop keeps the entry and records
-  `lastStop` (the command, the exit code, the last 40 lines of output and the repair command).
-  The next session in that worktree shows it in a message and tells the agent the repair.
-- An entry goes only if it is the same entry the stop read (the same `addedAt`). If a new session
-  records the stack again while an old stop runs, the new entry stays.
-- At session start, the agent is also told which stacks the file still lists, with the
-  `stop-all` command. A task that uses a stack leaves it listed.
-- If `.neil-dev.json` has an error, the hook stops nothing and a message names the error and the
-  repair command.
+- An entry goes only after its stack or server stopped. A failed stop keeps the entry and records
+  `lastStop` (the command, the output and the repair command; for a stack also the exit code and
+  the last 40 lines of output). The next session in that worktree shows it in a message and tells
+  the agent the repair.
+- An entry goes only if it is the same entry the stop read (for a stack the same `addedAt`, for a
+  dev server the same pid and `started`). If a new session records it again while an old stop
+  runs, the new entry stays.
+- At session start, the agent is also told which stacks and dev servers the file still lists, with
+  the `stop-all` command. A task that uses one leaves it listed.
+- If `.neil-dev.json` has an error, the hook stops the dev servers but not the stacks. A message
+  names the error and the repair command.
+- If `.neil-dev.worktree.json` is version 1 or has an unknown shape, the hook stops nothing. The
+  session-start message and the session-end message name the problem and the repair. For version 1
+  the repair is `migrate`.
 
 Run the hooks module's tests with `claude plugin test .`, and the script's tests with
 `node --test scripts/work/tests/worktree_env.test.mjs`.

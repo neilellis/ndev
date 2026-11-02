@@ -1,19 +1,29 @@
 #!/usr/bin/env node
 // The per-worktree record: .neil-dev.worktree.json at the root of a linked git worktree,
-// git-ignored, never in the main checkout. Today it lists the local service stacks that the
-// worktree started, so the plugin's session-end hook can stop them. Other per-worktree facts can
-// go in it later, as more top-level keys.
+// git-ignored, never in the main checkout. It lists the resources that the worktree started, so
+// the plugin's session-end hook can stop them:
+//   { "version": 2, "resources": { "docker": [<stack>...], "dev-servers": { "<name>": <server> } } }
 //
 //   worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z>
 //                             [--workdir <dir holding supabase/>] [--worktree <dir>]
 //   worktree-env.sh remove-stack --kind supabase --project-id <id> [--worktree <dir>]
+//   worktree-env.sh add-dev-server --name <name> --pid <pid> --port <port> [--cwd <dir>]
+//                                  [--worktree <dir>]
+//   worktree-env.sh remove-dev-server --name <name> [--worktree <dir>]
 //   worktree-env.sh list [--json] [--worktree <dir>]
 //   worktree-env.sh stop-all [--on-end stop-and-delete|stop-keep-data|keep-running]
 //                            [--worktree <dir>] [--background [--log <file>]]
+//   worktree-env.sh migrate [--worktree <dir>]
+//
+// add-dev-server names a running server by what it shows ("docs", "ui"); the same name again
+// replaces the entry. It reads the command line and start time of the pid from ps. stop-all stops
+// every dev server (whatever --on-end says) and each docker stack by --on-end. It kills a pid only
+// while that pid still runs the recorded command from the recorded start time. migrate rewrites a
+// version 1 file ({ version: 1, stacks: [...] }) as version 2; every other command refuses one.
 //
 // Exit codes: 0 done; 1 a stop failed (its entry stays); 2 bad usage, an unreadable file or a
-// held lock; 3 refused (the main checkout, a file that is not git-ignored, or an id that another
-// worktree lists); 4 remove-stack: not listed.
+// held lock; 3 refused (the main checkout, a file that is not git-ignored, or an id or pid that
+// another worktree lists); 4 remove-stack or remove-dev-server: not listed.
 import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -29,7 +39,12 @@ const POLICIES = ['stop-and-delete', 'stop-keep-data', 'keep-running']
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const VERSION = /^[0-9][0-9A-Za-z.+-]*$/
 const TAIL_LINES = 40
+const VERSION_NOW = 2
+const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const STOP_TIMEOUT_S = Number(process.env.NDEV_STACK_STOP_TIMEOUT_S ?? 180)
+const SERVER_STOP_TIMEOUT_S = Number(process.env.NDEV_DEV_SERVER_STOP_TIMEOUT_S ?? 10)
+// ps gives the elapsed time to the second, so two readings of one start time differ by a second or so.
+const START_TOLERANCE_MS = 5000
 const LOCK_WAIT_MS = Number(process.env.NDEV_WORKTREE_LOCK_WAIT_MS ?? 10000)
 
 class Fail extends Error {
@@ -90,18 +105,86 @@ function refuseNotIgnored(root, common) {
   throw new Fail(2, `git check-ignore exited ${r.status} in ${root}: ${r.stderr.trim()}`)
 }
 
-function readRecord(file) {
-  if (!existsSync(file)) return { version: 1, stacks: [] }
-  let raw
+const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isText = v => typeof v === 'string' && v !== ''
+const keysOutside = (value, allowed) => Object.keys(value).filter(k => !allowed.includes(k))
+const quoted = keys => keys.map(k => `"${k}"`).join(', ')
+const STACK_KEYS = ['kind', 'projectId', 'workdir', 'cliVersion', 'addedAt', 'lastStop']
+const SERVER_KEYS = ['pid', 'port', 'command', 'cwd', 'started', 'lastStop']
+const empty = () => ({ version: VERSION_NOW, resources: { docker: [], 'dev-servers': {} } })
+
+// The problem with one docker entry, or undefined.
+function stackProblem(s, i) {
+  const at = `resources.docker[${i}]`
+  if (!isObject(s)) return `${at} must be an object`
+  const extra = keysOutside(s, STACK_KEYS)
+  if (extra.length > 0) return `${at} has the unknown key ${quoted(extra)}; the keys are ${STACK_KEYS.join(', ')}`
+  for (const k of ['kind', 'projectId']) if (!isText(s[k])) return `${at}.${k} must be a non-empty string`
+  return undefined
+}
+
+// The problem with one dev-server entry, or undefined.
+function serverProblem(name, d) {
+  const at = `resources.dev-servers.${name}`
+  if (!NAME.test(name)) return `${at}: the name must be letters, digits, '.', '_' or '-'`
+  if (!isObject(d)) return `${at} must be an object`
+  const extra = keysOutside(d, SERVER_KEYS)
+  if (extra.length > 0) return `${at} has the unknown key ${quoted(extra)}; the keys are ${SERVER_KEYS.join(', ')}`
+  if (!Number.isInteger(d.pid) || d.pid < 1) return `${at}.pid must be a positive whole number; got ${JSON.stringify(d.pid)}`
+  if (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535) return `${at}.port must be a port number from 1 to 65535; got ${JSON.stringify(d.port)}`
+  for (const k of ['command', 'cwd']) if (!isText(d[k])) return `${at}.${k} must be a non-empty string`
+  if (!isText(d.started) || Number.isNaN(Date.parse(d.started))) return `${at}.started must be an ISO date and time; got ${JSON.stringify(d.started)}`
+  return undefined
+}
+
+// The problem with a parsed record, or undefined.
+function shapeProblem(raw) {
+  if (!isObject(raw)) return 'must hold a JSON object'
+  const extra = keysOutside(raw, ['version', 'resources'])
+  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, resources`
+  if (raw.version !== VERSION_NOW) return `has "version" ${JSON.stringify(raw.version)}; this script reads version ${VERSION_NOW}`
+  if (!isObject(raw.resources)) return 'must hold a "resources" object'
+  const kinds = keysOutside(raw.resources, ['docker', 'dev-servers'])
+  if (kinds.length > 0) return `has the unknown resource ${quoted(kinds)}; the resources are docker, dev-servers`
+  const { docker = [], 'dev-servers': servers = {} } = raw.resources
+  if (!Array.isArray(docker)) return 'must hold resources.docker as a list'
+  if (!isObject(servers)) return 'must hold resources.dev-servers as an object keyed by server name'
+  for (const [i, s] of docker.entries()) {
+    const problem = stackProblem(s, i)
+    if (problem) return problem
+  }
+  for (const [name, d] of Object.entries(servers)) {
+    const problem = serverProblem(name, d)
+    if (problem) return problem
+  }
+  return undefined
+}
+
+const isVersion1 = raw => isObject(raw) && raw.version === 1
+
+function parseRecord(file) {
   try {
-    raw = JSON.parse(readFileSync(file, 'utf8'))
+    return JSON.parse(readFileSync(file, 'utf8'))
   } catch (error) {
-    throw new Fail(2, `worktree-env: ${file} is not valid JSON (${error.message}). Nothing was stopped. Repair: fix or delete the file; it lists the stacks this worktree started.`)
+    throw new Fail(2, `worktree-env: ${file} is not valid JSON (${error.message}). Nothing was changed or stopped. Repair: fix or delete the file; it lists the resources this worktree started.`)
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || (raw.stacks !== undefined && !Array.isArray(raw.stacks))) {
-    throw new Fail(2, `worktree-env: ${file} must hold a JSON object whose "stacks" is a list. Nothing was stopped. Repair: fix or delete the file.`)
+}
+
+// The record of the worktree at `root`. A missing file is an empty record. A version 1 file, or
+// any shape this script does not know, is refused: nothing reads it as something else.
+function readRecord(root) {
+  const file = join(root, FILE)
+  if (!existsSync(file)) return empty()
+  const raw = parseRecord(file)
+  if (isVersion1(raw)) {
+    throw new Fail(2, [
+      `worktree-env: ${file} uses the version 1 layout (the stacks at the top level). Nothing was changed or stopped.`,
+      `Repair: ${WRAPPER} migrate --worktree ${root}`,
+    ].join('\n'))
   }
-  return { version: 1, ...raw, stacks: raw.stacks ?? [] }
+  const problem = shapeProblem(raw)
+  if (problem) throw new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed or stopped. Repair: fix the file (see the plugin README, "Worktree resources"), or delete it if nothing it lists still runs.`)
+  return { version: VERSION_NOW, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} } }
 }
 
 // Write a temporary file, then rename it, so a reader never sees half a file.
@@ -169,17 +252,47 @@ function withLock(root, fn) {
 }
 
 // Reads the file again under the lock before each change, so an entry added meanwhile is kept.
+// `edit` gets the resources and returns them changed.
 function change(root, edit) {
+  withLock(root, () => {
+    const record = readRecord(root)
+    writeRecord(join(root, FILE), { version: VERSION_NOW, resources: edit(record.resources) })
+  })
+}
+
+const changeDocker = (root, edit) => change(root, r => ({ ...r, docker: edit(r.docker) }))
+
+// Rewrites a version 1 file ({ version: 1, stacks: [...] }) as version 2, with the stacks under
+// resources.docker. A version 2 file is left as it is; any other shape is refused.
+function migrate(values) {
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
   withLock(root, () => {
-    const record = readRecord(file)
-    writeRecord(file, { ...record, stacks: edit(record.stacks) })
+    if (!existsSync(file)) {
+      console.log(`worktree-env: ${file} does not exist; nothing to migrate.`)
+      return
+    }
+    const raw = parseRecord(file)
+    if (!isVersion1(raw)) {
+      readRecord(root)
+      console.log(`worktree-env: ${file} is already version ${VERSION_NOW}; nothing changed.`)
+      return
+    }
+    const extra = keysOutside(raw, ['version', 'stacks'])
+    if (extra.length > 0) throw new Fail(2, `worktree-env: ${file} is version 1 but has the unknown key ${quoted(extra)}, so it was not migrated. Repair: fix the file by hand; version 1 holds only version and stacks.`)
+    const next = { version: VERSION_NOW, resources: { docker: raw.stacks ?? [], 'dev-servers': {} } }
+    const problem = shapeProblem(next)
+    if (problem) throw new Fail(2, `worktree-env: ${file} was not migrated: as version ${VERSION_NOW} it ${problem.startsWith('resources') ? `would fail: ${problem}` : problem}. Repair: fix its "stacks" by hand.`)
+    writeRecord(file, next)
+    console.log(`worktree-env: migrated ${file} to version ${VERSION_NOW}: ${next.resources.docker.length} stack(s) moved to resources.docker.`)
   })
 }
 
 // The other worktrees of the repository that list the same stack. Two worktrees that record one
 // project id share its containers, so a stop from one would stop (and delete) the other's stack.
-function listedElsewhere(root, kind, id) {
+// The same holds for a dev-server pid: a session end there would kill this worktree's server.
+// `match` gets another worktree's resources and returns the names of its matching entries.
+function listedElsewhere(root, what, match) {
   const r = git(root, ['worktree', 'list', '--porcelain'])
   if (r.status !== 0) throw new Fail(2, `worktree-env: git worktree list exited ${r.status} in ${root}: ${r.stderr.trim()}`)
   const others = r.stdout.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9))
@@ -188,14 +301,15 @@ function listedElsewhere(root, kind, id) {
   for (const dir of others) {
     const file = join(dir, FILE)
     if (!existsSync(file)) continue
-    let stacks
+    let resources
     try {
-      stacks = readRecord(file).stacks
+      resources = readRecord(dir).resources
     } catch (error) {
-      console.error(`worktree-env: warning: could not check ${file} for ${kind} ${id}: ${error.message}`)
+      console.error(`worktree-env: warning: could not check ${file} for ${what}: ${error.message}`)
       continue
     }
-    if (stacks.some(s => same(s, kind, id))) found.push(realpathSync(dir))
+    const names = match(resources)
+    if (names.length > 0) found.push({ dir: realpathSync(dir), names })
   }
   return found
 }
@@ -230,15 +344,15 @@ function addStack(values) {
   const stack = { kind, projectId: id, workdir: realpathSync(workdir), cliVersion: version }
   const common = refuseMainCheckout(root, shellText(stopArgv(stack, 'stop-and-delete')))
   refuseNotIgnored(root, common)
-  const elsewhere = listedElsewhere(root, kind, id)
+  const elsewhere = listedElsewhere(root, `${kind} ${id}`, r => (r.docker.some(s => same(s, kind, id)) ? [id] : []))
   if (elsewhere.length > 0) {
     throw new Fail(3, [
-      `worktree-env: ${kind} stack ${id} is already listed by the worktree ${elsewhere.join(', ')}. Both would share its containers, and a session end there would stop this stack and delete its data. Nothing was recorded.`,
-      `Repair: give this worktree its own project id (project_id in supabase/config.toml), or, if that worktree no longer uses the stack: ${WRAPPER} remove-stack --kind ${kind} --project-id ${id} --worktree ${elsewhere[0]}`,
+      `worktree-env: ${kind} stack ${id} is already listed by the worktree ${elsewhere.map(e => e.dir).join(', ')}. Both would share its containers, and a session end there would stop this stack and delete its data. Nothing was recorded.`,
+      `Repair: give this worktree its own project id (project_id in supabase/config.toml), or, if that worktree no longer uses the stack: ${WRAPPER} remove-stack --kind ${kind} --project-id ${id} --worktree ${elsewhere[0].dir}`,
     ].join('\n'))
   }
   const file = join(root, FILE)
-  change(root, stacks => [...stacks.filter(s => !same(s, kind, id)), { ...stack, addedAt: new Date().toISOString() }])
+  changeDocker(root, stacks => [...stacks.filter(s => !same(s, kind, id)), { ...stack, addedAt: new Date().toISOString() }])
   console.log(`worktree-env: recorded ${kind} stack ${id} in ${file}. When a Claude session in this worktree ends, the ndev hook stops it (worktreeStacks.onSessionEnd in .neil-dev.json; default stop-and-delete).`)
 }
 
@@ -246,23 +360,101 @@ function removeStack(values) {
   const { kind, id } = checkStackOptions(values)
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
-  const { stacks } = readRecord(file)
+  const stacks = readRecord(root).resources.docker
   if (!stacks.some(s => same(s, kind, id))) throw new Fail(4, `worktree-env: ${kind} stack ${id} is not listed in ${file}. Listed: ${stacks.map(s => `${s.kind} ${s.projectId}`).join(', ') || 'none'}.`)
-  change(root, all => all.filter(s => !same(s, kind, id)))
+  changeDocker(root, all => all.filter(s => !same(s, kind, id)))
   console.log(`worktree-env: removed ${kind} stack ${id} from ${file}. It was not stopped.`)
+}
+
+// ps's elapsed time, [[dd-]hh:]mm:ss, in seconds.
+function elapsedSeconds(etime, pid) {
+  const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(etime)
+  if (!m) throw new Fail(2, `worktree-env: ps gave the elapsed time "${etime}" for pid ${pid}, which is not [[dd-]hh:]mm:ss.`)
+  const [, d = '0', h = '0', min, s] = m
+  return ((Number(d) * 24 + Number(h)) * 60 + Number(min)) * 60 + Number(s)
+}
+
+// What a pid runs now: its command line, its start time (ISO, to the second) and its process
+// group. undefined when no process has the pid.
+function processInfo(pid) {
+  const r = spawnSync('ps', ['-ww', '-o', 'etime=', '-o', 'pgid=', '-o', 'stat=', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+  if (r.error) throw new Fail(2, `worktree-env: ps did not start: ${r.error.message}. Dev servers need ps to check a pid.`)
+  const line = r.stdout.trim()
+  if (line === '') {
+    if (r.status === 1 || r.status === 0) return undefined
+    throw new Fail(2, `worktree-env: ps -p ${pid} exited ${r.status}: ${r.stderr.trim()}`)
+  }
+  const m = /^(\S+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)
+  if (!m) throw new Fail(2, `worktree-env: ps -p ${pid} printed "${line}", which is not "<etime> <pgid> <stat> <command>".`)
+  const seconds = elapsedSeconds(m[1], pid)
+  const started = new Date(Math.floor(Date.now() / 1000 - seconds) * 1000).toISOString()
+  // A zombie has ended; only its parent has not yet read its exit status.
+  return { command: m[4], started, pgid: Number(m[2]), zombie: m[3].startsWith('Z') }
+}
+
+function checkName(values) {
+  const name = need(values, 'name')
+  if (!NAME.test(name)) throw new Fail(2, `worktree-env: --name "${name}" must be letters, digits, '.', '_' or '-', such as docs or ui.`)
+  return name
+}
+
+function addDevServer(values) {
+  const name = checkName(values)
+  const pidText = need(values, 'pid')
+  if (!/^[1-9][0-9]*$/.test(pidText)) throw new Fail(2, `worktree-env: --pid "${pidText}" is not a process id.`)
+  const pid = Number(pidText)
+  const portText = need(values, 'port')
+  const port = Number(portText)
+  if (!/^[0-9]+$/.test(portText) || port < 1 || port > 65535) throw new Fail(2, `worktree-env: --port "${portText}" is not a port number from 1 to 65535.`)
+  const cwd = resolve(values.cwd ?? process.cwd())
+  if (!isDir(cwd)) throw new Fail(2, `worktree-env: --cwd ${cwd} is not a folder. Pass the folder the server runs in.`)
+  const info = processInfo(pid)
+  if (info === undefined || info.zombie) throw new Fail(2, `worktree-env: pid ${pid} does not run, so dev server ${name} was not recorded. Pass the pid of the running server (for a job you started in the background: $!).`)
+  const root = worktreeRoot(values.worktree ? resolve(values.worktree) : cwd)
+  const common = refuseMainCheckout(root, `kill ${pid}`)
+  refuseNotIgnored(root, common)
+  const elsewhere = listedElsewhere(root, `pid ${pid}`, r => Object.entries(r['dev-servers']).filter(([, d]) => d.pid === pid).map(([n]) => n))
+  if (elsewhere.length > 0) {
+    const [{ dir, names }] = elsewhere
+    throw new Fail(3, [
+      `worktree-env: pid ${pid} is already listed by the worktree ${dir} as dev server ${names.join(', ')}. A session end there would kill it. Nothing was recorded.`,
+      `Repair: if that worktree no longer owns the server: ${WRAPPER} remove-dev-server --name ${names[0]} --worktree ${dir}`,
+    ].join('\n'))
+  }
+  const entry = { pid, port, command: info.command, cwd: realpathSync(cwd), started: info.started }
+  change(root, r => ({ ...r, 'dev-servers': { ...r['dev-servers'], [name]: entry } }))
+  console.log(`worktree-env: recorded dev server ${name} (pid ${pid}, port ${port}, ${info.command}) in ${join(root, FILE)}. When a Claude session in this worktree ends, the ndev hook stops it.`)
+}
+
+function removeDevServer(values) {
+  const name = checkName(values)
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
+  const file = join(root, FILE)
+  const servers = readRecord(root).resources['dev-servers']
+  if (!Object.hasOwn(servers, name)) throw new Fail(4, `worktree-env: dev server ${name} is not listed in ${file}. Listed: ${Object.keys(servers).join(', ') || 'none'}.`)
+  change(root, r => {
+    const { [name]: _gone, ...rest } = r['dev-servers']
+    return { ...r, 'dev-servers': rest }
+  })
+  console.log(`worktree-env: removed dev server ${name} from ${file}. It was not stopped.`)
 }
 
 function list(values) {
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
-  const record = readRecord(file)
+  const record = readRecord(root)
   if (values.json) {
     console.log(JSON.stringify(record, null, 2))
     return
   }
-  if (record.stacks.length === 0) console.log(`worktree-env: ${file} lists no stacks.`)
-  for (const s of record.stacks) {
+  const { docker, 'dev-servers': servers } = record.resources
+  if (docker.length === 0) console.log(`worktree-env: ${file} lists no stacks.`)
+  for (const s of docker) {
     console.log(`${s.kind} ${s.projectId} (CLI ${s.cliVersion}, ${s.workdir})${s.lastStop ? ` - last stop failed, exit code ${s.lastStop.exitCode}` : ''}`)
+  }
+  if (Object.keys(servers).length === 0) console.log(`worktree-env: ${file} lists no dev servers.`)
+  for (const [name, d] of Object.entries(servers)) {
+    console.log(`${name}: pid ${d.pid}, port ${d.port}, ${d.command} (in ${d.cwd}, started ${d.started})${d.lastStop ? ` - last stop failed: ${d.lastStop.output}` : ''}`)
   }
 }
 
@@ -283,6 +475,162 @@ function stopOne(stack, policy, root) {
 
 // The entry this run read, not a newer one for the same stack that was added while it stopped.
 const sameEntry = (a, b) => same(a, b.kind, b.projectId) && a.addedAt === b.addedAt
+const sameServer = (a, b) => a !== undefined && a.pid === b.pid && a.started === b.started
+
+// The live (not zombie) processes, each with its parent pid and process group.
+function liveProcesses() {
+  const r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'stat='], { encoding: 'utf8' })
+  if (r.error || r.status !== 0) throw new Fail(2, `worktree-env: ps -A exited ${r.status ?? r.error?.message}: ${(r.stderr ?? '').trim()}`)
+  return r.stdout.split('\n').map(l => l.trim().split(/\s+/))
+    .filter(f => f.length === 4 && !f[3].startsWith('Z'))
+    .map(([pid, ppid, pgid]) => ({ pid: Number(pid), ppid: Number(ppid), pgid: Number(pgid) }))
+}
+
+// The live descendants of a pid: its children, their children, and so on.
+function descendants(pid, all) {
+  const found = []
+  const queue = [pid]
+  while (queue.length > 0) {
+    const parent = queue.shift()
+    for (const p of all) {
+      if (p.ppid === parent && !found.includes(p.pid)) {
+        found.push(p.pid)
+        queue.push(p.pid)
+      }
+    }
+  }
+  return found
+}
+
+// A stop's targets: { group } is a process group to signal as a whole, { pids } the processes to
+// signal one by one. The server's descendants are read before any signal, because a child whose
+// parent ends is given to pid 1 and can no longer be found from the server's pid.
+const targetsRun = t => liveProcesses().some(p => p.pgid === t.group || t.pids.includes(p.pid))
+const killText = (t, sig) => `kill -${sig} ${[...(t.group === undefined ? [] : [-t.group]), ...t.pids].join(' ')}`
+
+function waitGone(t, seconds) {
+  const deadline = Date.now() + seconds * 1000
+  while (targetsRun(t)) {
+    if (Date.now() > deadline) return false
+    pause(100)
+  }
+  return true
+}
+
+// Signals each target. Returns the errors, ignoring a target that has already ended (ESRCH).
+function signalAll(t, sig) {
+  const errors = []
+  for (const target of [...(t.group === undefined ? [] : [-t.group]), ...t.pids]) {
+    try {
+      process.kill(target, sig)
+    } catch (error) {
+      if (error.code !== 'ESRCH') errors.push(`${target}: ${error.code}`)
+    }
+  }
+  return errors.join(', ')
+}
+
+// SIGTERM, then SIGKILL after the stop timeout. A signal error counts only while a target still
+// runs: macOS refuses (EPERM) to signal a group whose members have all ended but are not yet reaped.
+function stopTargets(name, t, detail) {
+  const term = killText(t, 'TERM')
+  const termError = signalAll(t, 'SIGTERM')
+  if (termError && targetsRun(t)) return { ok: false, command: term, output: `${term} failed: ${termError}` }
+  if (waitGone(t, SERVER_STOP_TIMEOUT_S)) return { ok: true, note: `stopped dev server ${name}${detail}: ${term}` }
+  const kill = killText(t, 'KILL')
+  const killError = signalAll(t, 'SIGKILL')
+  if (killError && targetsRun(t)) return { ok: false, command: kill, output: `${kill} failed after ${SERVER_STOP_TIMEOUT_S} s of SIGTERM: ${killError}` }
+  if (waitGone(t, 2)) return { ok: true, note: `stopped dev server ${name}${detail}: ${term}, then SIGKILL after ${SERVER_STOP_TIMEOUT_S} s` }
+  return { ok: false, command: kill, output: `${kill}: a process still runs 2 s after SIGKILL` }
+}
+
+// Stops one dev server, but only while its pid still runs the recorded command from the recorded
+// start time: a pid that the system gave to another process is never killed. A server that leads
+// its process group (as one started with setsid does) is stopped with its whole group. The
+// server's descendants are stopped too, also when it does not lead a group (as with `pnpm dev &`
+// in a script, which shares the script's group).
+function stopServer(name, d) {
+  const info = processInfo(d.pid)
+  if (info === undefined || info.zombie) {
+    // The system does not give a pid to a new process while a process group of that id has
+    // members, so live members of group <pid> are the children of the server that led it.
+    const left = liveProcesses().filter(p => p.pgid === d.pid)
+    if (left.length === 0) return { ok: true, note: `pid ${d.pid} no longer runs, so dev server ${name} already ended` }
+    return stopTargets(name, { group: d.pid, pids: [] }, ` (its leader pid ${d.pid} had ended; ${left.length} process(es) of its group still ran)`)
+  }
+  const drift = Math.abs(Date.parse(info.started) - Date.parse(d.started))
+  if (info.command !== d.command || drift > START_TOLERANCE_MS) {
+    return {
+      ok: false,
+      command: '',
+      output: `pid ${d.pid} now runs "${info.command}" (started ${info.started}), not the recorded "${d.command}" (started ${d.started}). The pid was not killed: the recorded server ended, or it runs under another pid.`,
+    }
+  }
+  const all = liveProcesses()
+  const group = info.pgid === d.pid ? d.pid : undefined
+  const inGroup = pid => group !== undefined && all.find(p => p.pid === pid)?.pgid === group
+  const pids = [d.pid, ...descendants(d.pid, all)].filter(pid => !inGroup(pid))
+  return stopTargets(name, { group, pids }, '')
+}
+
+// Stops every listed dev server. Returns the number that did not stop; each keeps its entry with
+// lastStop, and its failure is printed with the repair.
+function stopServers(root, servers, at) {
+  let failed = 0
+  const keepRecord = existsSync(root)
+  // A change that fails (a lock held too long) is printed and counted, and the other servers and
+  // the stacks are still stopped.
+  const record = (name, edit, what) => {
+    if (!keepRecord) return true
+    try {
+      change(root, edit)
+      return true
+    } catch (error) {
+      if (!(error instanceof Fail)) throw error
+      console.error(`worktree-env: ${at} dev server ${name} ${what}, but ${join(root, FILE)} was not updated: ${error.message}`)
+      return false
+    }
+  }
+  for (const [name, d] of Object.entries(servers)) {
+    let r
+    try {
+      r = stopServer(name, d)
+    } catch (error) {
+      if (!(error instanceof Fail)) throw error
+      r = { ok: false, command: '', output: error.message }
+    }
+    if (r.ok) {
+      console.log(`worktree-env: ${at} ${r.note}`)
+      const removed = record(name, res => {
+        if (!sameServer(res['dev-servers'][name], d)) return res
+        const { [name]: _stopped, ...rest } = res['dev-servers']
+        return { ...res, 'dev-servers': rest }
+      }, 'stopped')
+      if (!removed) failed++
+      continue
+    }
+    failed++
+    const remove = `${WRAPPER} remove-dev-server --name ${name} --worktree ${root}`
+    const byPort = `lsof -nP -iTCP:${d.port} -sTCP:LISTEN`
+    // The repair is read in a later session, when the pid can belong to another process, so it is
+    // never a bare kill of the pid: stop-all checks the pid again before it signals.
+    const repair = r.command
+      ? `run ${WRAPPER} stop-all --on-end keep-running --worktree ${root}, which checks the pid again; if the server still runs, find it by its port with ${byPort} and stop that process`
+      : `find the server by its port with ${byPort} and stop that process`
+    record(name, res => (sameServer(res['dev-servers'][name], d)
+      ? { ...res, 'dev-servers': { ...res['dev-servers'], [name]: { ...res['dev-servers'][name], lastStop: { at, command: r.command, output: r.output, repair } } } }
+      : res), 'did not stop')
+    console.error([
+      `worktree-env: ${at} dev server ${name} (pid ${d.pid}, port ${d.port}) did not stop.`,
+      `  recorded command: ${d.command} (in ${d.cwd}, started ${d.started})`,
+      `  ${r.output}`,
+      `  Repair: ${repair}`,
+      `  then:   ${remove}`,
+      keepRecord ? `  The entry stays in ${join(root, FILE)} until the server stops.` : `  ${root} no longer exists, so no record was kept.`,
+    ].join('\n'))
+  }
+  return failed
+}
 
 function stopAll(values) {
   const policy = values['on-end'] ?? 'stop-and-delete'
@@ -290,31 +638,36 @@ function stopAll(values) {
   // A folder that is gone (a worktree removed after the session) is used as given.
   const given = values.worktree ? resolve(values.worktree) : process.cwd()
   const root = isDir(given) ? worktreeRoot(given) : given
-  if (values.background) return background(values, policy, root)
+  if (values.background) {
+    // Check the record before detaching, so a bad file fails where the caller sees it, not only
+    // in the background log.
+    if (isDir(root)) readRecord(root)
+    return background(values, policy, root)
+  }
   const file = join(root, FILE)
   const at = new Date().toISOString()
-  const { stacks } = readRecord(file)
-  if (stacks.length === 0) {
-    console.log(`worktree-env: ${at} ${file} lists no stacks; nothing to stop.`)
+  const { docker: stacks, 'dev-servers': servers } = readRecord(root).resources
+  if (stacks.length === 0 && Object.keys(servers).length === 0) {
+    console.log(`worktree-env: ${at} ${file} lists no stacks and no dev servers; nothing to stop.`)
     return 0
   }
+  let failed = stopServers(root, servers, at)
   if (policy === 'keep-running') {
     for (const s of stacks) console.log(`worktree-env: ${at} ${s.kind} stack ${s.projectId} left running (keep-running). Stop it with: ${shellText(stopArgv(s, 'stop-and-delete'))}`)
-    return 0
+    return failed > 0 ? 1 : 0
   }
-  let failed = 0
   for (const s of stacks) {
     const r = stopOne(s, policy, root)
     const keepRecord = existsSync(root)
     if (r.ok) {
       console.log(`worktree-env: ${at} stopped ${s.kind} stack ${s.projectId}: ${r.command} (in ${r.cwd})`)
-      if (keepRecord) change(root, all => all.filter(x => !sameEntry(x, s)))
+      if (keepRecord) changeDocker(root, all => all.filter(x => !sameEntry(x, s)))
       continue
     }
     failed++
     const repair = r.command || `stop the ${s.kind} stack ${s.projectId} by hand`
     if (keepRecord) {
-      change(root, all => all.map(x => (sameEntry(x, s) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
+      changeDocker(root, all => all.map(x => (sameEntry(x, s) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
     }
     console.error([
       `worktree-env: ${at} ${s.kind} stack ${s.projectId} did not stop.`,
@@ -373,6 +726,10 @@ function main(argv) {
         background: { type: 'boolean' },
         log: { type: 'string' },
         json: { type: 'boolean' },
+        name: { type: 'string' },
+        pid: { type: 'string' },
+        port: { type: 'string' },
+        cwd: { type: 'string' },
       },
       strict: true,
     }))
@@ -386,8 +743,17 @@ function main(argv) {
     case 'remove-stack':
       removeStack(values)
       return 0
+    case 'add-dev-server':
+      addDevServer(values)
+      return 0
+    case 'remove-dev-server':
+      removeDevServer(values)
+      return 0
     case 'list':
       list(values)
+      return 0
+    case 'migrate':
+      migrate(values)
       return 0
     case 'stop-all':
       return stopAll(values)
@@ -396,10 +762,17 @@ function main(argv) {
   }
 }
 
+const args = process.argv.slice(2)
 try {
-  process.exitCode = main(process.argv.slice(2))
+  process.exitCode = main(args)
 } catch (error) {
   if (!(error instanceof Fail)) throw error
   console.error(error.message)
   process.exitCode = error.code
+}
+// A stop in the background has only its log: end each run there with its exit code.
+if (args[0] === 'stop-all' && !args.includes('--background')) {
+  const line = `worktree-env: stop-all ended with exit code ${process.exitCode}`
+  if (process.exitCode === 0) console.log(line)
+  else console.error(line)
 }

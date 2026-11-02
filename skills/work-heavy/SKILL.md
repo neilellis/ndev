@@ -62,7 +62,9 @@ package manifests and record them in the PR body.
 10. Run every gate from inside the worktree, with an absolute path. Give each worktree its own
     databases and ports. Record each local stack that you start in it with
     `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z> --workdir <dir>`,
-    so the session-end hook stops it.
+    and each dev server by name with
+    `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree-env.sh add-dev-server --name <name> --pid $! --port <port> --cwd <dir>`,
+    so the session-end hook stops them.
 11. Claim green only on fresh evidence: a run you just did, with its exit status and its log.
 12. Never weaken, skip or silence a check to make it pass.
 13. A removal is not finished until the text that describes it is gone (`forget` skill).

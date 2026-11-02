@@ -19,7 +19,8 @@ A Postgres in a container on `tmpfs` with `fsync=off` is fast. Use it only for a
 - A build or a test that needs a database can fail in a new worktree because the worktree has no environment file or no container. Compare with a run on the base branch as the control before you call it a regression.
 - Run commands from the worktree that you test. A command from the main checkout tests the main checkout.
 - Give each worktree its own container names and ports, or let the kernel pick the port. See [ci.md](ci.md#self-hosted-runners).
-- Stop each worktree's stack when the work ends. Stacks that nobody stops fill Docker: about 100 containers on 16 GB make the next `supabase start` fail with `DbSetupError`. Record each stack in the worktree's `.neil-dev.worktree.json` with `scripts/work/worktree-env.sh add-stack`. The ndev session-end hook then stops the listed stacks (see the plugin README, "Worktree stacks").
+- Stop each worktree's stack when the work ends. Stacks that nobody stops fill Docker: about 100 containers on 16 GB make the next `supabase start` fail with `DbSetupError`. Record each stack in the worktree's `.neil-dev.worktree.json` with `scripts/work/worktree-env.sh add-stack`. The ndev session-end hook then stops the listed stacks (see the plugin README, "Worktree resources").
+- Stop each worktree's dev servers when the work ends. A server that nobody stops keeps its port, so the next worktree's server starts on another port or fails. Record each dev server by name with `scripts/work/worktree-env.sh add-dev-server --name docs --pid $! --port 3000`. The session-end hook stops it, but only while its pid still runs the recorded command.
 
 ## Switches
 
