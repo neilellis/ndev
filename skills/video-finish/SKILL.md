@@ -28,7 +28,7 @@ The user may not be technical. Tell them what is happening in plain English, wit
 2. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/video-finish/scripts/finish.mjs"` in the video's folder. If the branch has no open pull request, add `--title "<plain title>" --body-file <file>`. Write the body in viewer terms: what changes on screen and in the voice, and the new length. End it with the required attribution lines. Add `--scene <n>` or `--scene credits` for any affected scene the script cannot see, for example after an animation change in the page's script file.
 3. Show the user every output line that does not start with `[agent]`, as written. `[agent]` lines are instructions for you.
 4. Act on the exit code:
-   - `0` ready: open each preview link in a browser and confirm the video plays and cues to the scene. If that fails, fix it and go back to step 2. Then hand off as below.
+   - `0` ready: open each preview link in a browser (Orca's built-in browser when Orca runs; see `video-docs`) and confirm the video plays and cues to the scene. If that fails, fix it and go back to step 2. Then hand off as below.
    - `1` fix needed: read the logs named in the `[agent]` lines and find the first causal error. Fix the cause without weakening any check. Re-render if the fix changes the video. Commit, and go back to step 2.
    - `2` cannot start: do what the `[agent]` line says, then go back to step 2.
    - `3` stopped: show the message, and explain in one or two plain sentences what the user can do next.

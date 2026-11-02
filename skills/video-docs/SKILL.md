@@ -58,7 +58,8 @@ Review every narration in two passes: integrity, then clarity for the intended a
 
 - Inspect every still, the contact sheet and frames taken from the encoded MP4: the start, chapter boundaries, the end, and the densest scenes.
 - Check captions against the actual audio.
-- Test the final MP4 in a real browser, including playback and a seek. Codec metadata alone does not prove decoding. Record the browser and environment you used.
+- Test the final MP4 in a real browser, including playback and a seek. Use Orca's built-in browser when Orca runs (`orca status`): open the page with `orca tab create --url <url> --json`, then drive the `<video>` with `orca eval` and read `orca console`. Codec metadata alone does not prove decoding. Record the browser and environment you used.
+- A browser setting that a test needs is not a reason to report this check as skipped. Run the check in Orca's browser instead. List a skipped test only with what it covers: it may cover a different video.
 - Report voice qualities (softness, pronunciation, pace) as unassessed unless a person listened.
 - Tie the delivery record to the MP4 hash. Report the measured duration, the reviewed coverage and the remaining limits.
 

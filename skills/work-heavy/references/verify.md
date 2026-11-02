@@ -58,10 +58,10 @@ build it skipped (read the status `description`, not only `state`). A workflow n
 preview" can pass when it decided to skip your PR. Get the real preview URL from the thing that
 created it (its log or the provider's API).
 
-**4. Browser smoke.** Open the preview with a real browser (the Chrome MCP tools: load them with
-ToolSearch in one batched call). Visit the pages the change touched and a few core pages, and read
-the console. **If the change adds animation, make sure it actually runs**: trigger it at a mobile
-viewport, because a static screenshot looks clean on an inert animation. If no browser is available,
+**4. Browser smoke.** Open the preview in Orca's built-in browser (`orca status`, then
+`orca tab create --url <url> --json`; the `orca-cli` skill has the commands). Visit the pages the change touched and a few core pages, and read
+the console with `orca console`. **If the change adds animation, make sure it actually runs**: trigger it at a mobile
+viewport (`orca viewport --mobile`), because a static screenshot looks clean on an inert animation. If no browser is available,
 do an HTTP 200 check and record that interactive smoke is pending. The E2E suite is an addition to
 this smoke, not a replacement.
 

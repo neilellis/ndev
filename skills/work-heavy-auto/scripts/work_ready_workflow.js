@@ -1038,8 +1038,8 @@ function smokePrompt(item) {
     '   Confirm the deployment belongs to the',
     '   head sha; if it does not, or there is no preview yet, STOP and report status "awaiting-review"',
     '   with a note saying the preview has not arrived — do NOT smoke an older commit and call it done.',
-    '2. Open it with the Chrome MCP (mcp__claude-in-chrome__*; load via ToolSearch in ONE batched',
-    '   call). Visit the pages this PR touches plus a couple of core pages, and read the console.',
+    '2. Open it in Orca\'s built-in browser (orca tab create --url <url> --json; the orca-cli skill has',
+    '   the commands). Visit the pages this PR touches plus a couple of core pages, and read the console.',
     '   For animation or motion work, TRIGGER the surface at a mobile viewport and verify it fires —',
     '   a static screenshot false-cleans an inert animation. Browser unavailable => fall back to an',
     '   HTTP 200 check and SAY SO in the review; never let it imply more than you did.',
@@ -1397,7 +1397,7 @@ if (SEQUENTIAL) {
 
 // ---------------------------------------------------------------------------
 // Report. ci-green PRs are left in In progress — the ORCHESTRATOR (main thread)
-// smokes each preview in Chrome and promotes the card to In review.
+// smokes each preview in Orca's browser and promotes the card to In review.
 // ---------------------------------------------------------------------------
 const count = (s) => results.filter((r) => r.status === s).length
 log('Done: ' + count('ci-green') + ' CI-green (ready for main-thread smoke), '

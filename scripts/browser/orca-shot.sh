@@ -41,7 +41,7 @@ fi
 rm -f "$OUT"
 
 if ! command -v orca >/dev/null 2>&1; then
-  echo "orca-shot: the orca CLI is not on PATH. Repair: start the Orca app (orca open), or use Playwright or claude-in-chrome." >&2
+  echo "orca-shot: the orca CLI is not on PATH. Repair: start the Orca app (orca open), or use Playwright." >&2
   exit 3
 fi
 if ! command -v python3 >/dev/null 2>&1; then
