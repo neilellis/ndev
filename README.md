@@ -388,6 +388,29 @@ embed media and how to file an issue. Without the file, `/walk-doc` does nothing
 to write. A missing required key stops the walk and names the key, the file and an example value.
 The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.md).
 
+## ndev view: /ndev:view
+
+`/ndev:view` opens a pane for the project (`hooks/view.tsx`). It refreshes every 5 s and has
+`r` for a refresh by hand. For each git worktree, main checkout first, it shows:
+
+- The ndev files: `.neil-dev.json`, `.neil-dev.env`, `.neil-dev.worktree.json` and any other
+  `.neil-dev*` file. A missing `.neil-dev.json` or `.neil-dev.env` has **Create** and, in a linked
+  worktree, **Copy from main**. Neither overwrites a file. `.neil-dev.env` is written only where
+  git ignores it. The work is done by `scripts/work/ndev-files.sh`
+  (`list --json`, `create`, `copy`; test: `node --test scripts/work/tests/ndev_files.test.mjs`).
+- The resources in `.neil-dev.worktree.json` (version 2), with live status from
+  `worktree-env.sh list --json --live`: a dev server is running while its pid still runs the
+  recorded command; a docker stack is running while `docker ps` shows its containers (`?` and
+  docker's message when docker does not answer).
+- Controls. **Stop** needs two presses within 5 s. A docker stack offers **Stop, keep data** and
+  **Stop and delete data**. Each worktree has **Stop all, keep data** and **Stop all and delete
+  data**. A running dev server has **Open** (`http://localhost:<port>`). **Copy port** and
+  **Copy command** copy the recorded values.
+
+A failed action shows its exit code and the script's own message in the pane.
+`worktree-env.sh stop` stops one resource: `--name <dev server>`, or `--kind supabase
+--project-id <id> [--on-end stop-and-delete|stop-keep-data]`.
+
 ## Responsive matrix: /responsive-matrix
 
 A fourth hooks module, `hooks/responsive-check.tsx`, shows the `responsive-check` skill's run in a

@@ -14,6 +14,7 @@ import { startWorktreeStacks, stopWorktreeStacks, worktreeStacksSection } from '
 import { learnAfterPush } from './learn'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { startTriage, triage } from './triage'
+import { resourceView, startView } from './view'
 
 const PLUGIN = 'ndev'
 
@@ -243,6 +244,7 @@ export const register: Register = (on, options) => {
   learnAfterPush(on)
   fixAllPrs(on)
   responsiveCheck(on)
+  resourceView(on)
   triage(on, () => project)
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
   on('turn.complete', async ($, e, next) => {
@@ -291,6 +293,7 @@ export const register: Register = (on, options) => {
     await startFeature($, 'fix-all-prs', () => startFixAllPrs($))
     await startFeature($, 'responsive-check', () => startResponsiveCheck($))
     await startFeature($, 'orca-triage', () => startTriage($))
+    await startFeature($, 'view', () => startView($, e.cwd))
     // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
     try {
       await startWalkDoc($, e.cwd)

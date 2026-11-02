@@ -185,6 +185,8 @@ declare module 'claude-code' {
       responsiveView: Shaped<ResponsiveView>
       // The /triage run (hooks/triage.tsx).
       triage: Shaped<TriageView>
+      // The /ndev:view pane (hooks/view.tsx).
+      resourceView: Shaped<ResourceView>
     }
   }
 }
@@ -288,4 +290,32 @@ export type ResponsiveView = {
   frame: number
   // When a Bash call started the runner: until its run appears, older runs are not shown.
   since?: number
+}
+
+// The /ndev:view pane: the ndev files and the running resources of every git worktree.
+export type ViewFile = { name: string; isKnown: boolean; present: boolean; isIgnored: boolean }
+export type ViewServer = { name: string; pid: number; port: number; command: string; cwd: string; live: boolean; lastStopOutput?: string }
+export type ViewStack = { kind: string; projectId: string; workdir: string; live: boolean | null; liveError?: string; lastStopOutput?: string }
+export type ViewTree = {
+  path: string
+  branch: string
+  isMain: boolean
+  files: ViewFile[]
+  servers: ViewServer[]
+  stacks: ViewStack[]
+  // Why this worktree's record could not be read, with the repair.
+  resourceError?: string
+}
+export type ResourceView = {
+  trees: ViewTree[]
+  // The repo the lists were read for; a failed read of the whole list sits in error.
+  repo?: string
+  error?: string
+  checkedAt?: number
+  // The button pressed once and waiting for its second press (a stop), and when.
+  armed?: { key: string; at: number }
+  // The keys of the actions that run now.
+  busy: string[]
+  // What the last action did, or why it failed, with the repair.
+  notice?: { text: string; isError: boolean }
 }
