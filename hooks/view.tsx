@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { ResourceView, ViewServer, ViewStack, ViewTree } from '../types'
+import { loadConfigAt } from './config'
 
 // The /ndev:view pane: the ndev files and the running resources of the current git worktree of the
 // project, with the controls to create or copy a file and to stop, open or copy a resource.
@@ -91,7 +92,12 @@ export async function refresh($: EngineInterface) {
     return
   }
   const checkedAt = await $.clock.now()
-  await update($, view, v => ({ ...v, trees, repo, current, error: undefined, checkedAt }))
+  const main = trees.find(t => t.isMain)?.path
+  let loaded = await loadConfigAt($, current)
+  if (!loaded.exists && main && main !== current) loaded = await loadConfigAt($, main)
+  const services = loaded.config.services
+  const servicesError = loaded.error ? `${loaded.path} could not be read: ${loaded.error}` : undefined
+  await update($, view, v => ({ ...v, trees, repo, current, error: undefined, checkedAt, services, servicesError }))
 }
 
 function startPolling($: EngineInterface) {
@@ -147,8 +153,8 @@ export const resourceView = (on: On) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const { trees: all, current, error, notice, armed, busy } = await read($, view)
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const { trees: all, current, error, notice, services, servicesError, armed, busy } = await read($, view)
     const main = all.find(t => t.isMain)
     const trees = all.filter(t => t.path === current)
     const isArmed = (key: string) => armed?.key === key
@@ -218,6 +224,13 @@ export const resourceView = (on: On) => {
       <Box flexDirection="column" gap={1}>
         {error && <Text color="error">{error}</Text>}
         {notice && <Text color={notice.isError ? 'error' : 'success'}>{notice.text}</Text>}
+        {servicesError && <Text color="error">{servicesError}</Text>}
+        {services && Object.keys(services).length > 0 && (
+          <Box gap={2}>
+            <Text color="subtle">Services</Text>
+            {Object.entries(services).map(([name, s]) => <Link key={`service:${name}`} href={s.url} label={name} />)}
+          </Box>
+        )}
         {trees.map(t => (
           <Box key={t.path} flexDirection="column" borderStyle="round" borderColor={t.isMain ? 'claude' : 'subtle'} paddingX={1}>
             <Text weight="bold" color="claude">{`${t.branch}  ${t.path}${t.isMain ? '  (main checkout)' : ''}`}</Text>

@@ -12,7 +12,11 @@ export type NeilDevConfig = {
   branding?: Branding
   github?: GitHub
   worktreeStacks?: WorktreeStacks
+  services?: Services
 }
+
+// The project's web consoles, by name ("supabase", "vercel"), that /ndev:view shows as links.
+export type Services = Record<string, { url: string }>
 
 // What the session-end hook does with the docker stacks a worktree lists in .neil-dev.worktree.json
 // (resources.docker). stop-and-delete (the default) stops each stack and deletes its data;
@@ -39,7 +43,7 @@ export type LoadedConfig = {
   error?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const MODES: readonly string[] = ['light', 'heavy']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
@@ -87,6 +91,16 @@ const validate = (raw: unknown): string | undefined => {
     if (extra.length > 0) return `unknown "worktreeStacks" key ${extra.map(k => `"${k}"`).join(', ')}; the key is onSessionEnd`
     if (w.onSessionEnd !== undefined && !(STACK_POLICIES as readonly unknown[]).includes(w.onSessionEnd)) return `"worktreeStacks.onSessionEnd" is ${JSON.stringify(w.onSessionEnd)}; use ${choices}`
   }
+  if (value.services !== undefined) {
+    const s = value.services as Record<string, unknown>
+    const shape = '"services" must be an object such as { "supabase": { "url": "https://supabase.com/dashboard/project/<ref>" } }'
+    if (typeof s !== 'object' || s === null || Array.isArray(s)) return shape
+    for (const [name, entry] of Object.entries(s)) {
+      const e = entry as Record<string, unknown>
+      if (typeof e !== 'object' || e === null || Array.isArray(e) || Object.keys(e).some(k => k !== 'url')) return `"services.${name}" must be { "url": "https://..." }; the only key is url`
+      if (typeof e.url !== 'string' || !/^https?:\/\/\S+$/.test(e.url)) return `"services.${name}.url" is ${JSON.stringify(e.url)}; use an http or https URL`
+    }
+  }
   return undefined
 }
 
@@ -100,7 +114,11 @@ export const missingGitHub = (config: NeilDevConfig): ('repo' | 'board')[] => {
 // Reads and checks .neil-dev.json. A missing file is an empty config; a bad file sets `error`
 // and an empty config, so the caller shows the error and runs nothing that the file would enable.
 export async function loadConfig($: EngineInterface, cwd: string): Promise<LoadedConfig> {
-  const root = await projectRoot($, cwd)
+  return loadConfigAt($, await projectRoot($, cwd))
+}
+
+// The same, for a project root that is already known.
+export async function loadConfigAt($: EngineInterface, root: string): Promise<LoadedConfig> {
   const path = `${root}/${CONFIG_FILE}`
   if (!(await $.fs.exists(path))) return { root, path, exists: false, config: {} }
   let raw: unknown

@@ -309,6 +309,10 @@ export type ViewTree = {
   resourceError?: string
 }
 export type ResourceView = {
+  // The services of .neil-dev.json (the current worktree's, else the main checkout's), shown as links.
+  services?: Record<string, { url: string }>
+  // Why .neil-dev.json could not be read, with its path.
+  servicesError?: string
   trees: ViewTree[]
   // The repo the lists were read for; a failed read of the whole list sits in error.
   repo?: string

@@ -131,7 +131,8 @@ the project. Every key is optional:
   "github": { "repo": "acme/app", "board": { "owner": "acme", "number": 3 } },
   "branding": { "site": "https://brand.example", "name": "Acme", "guide": "https://brand.example/guide", "path": "apps/brand" },
   "quality": { },
-  "worktreeStacks": { "onSessionEnd": "stop-and-delete" }
+  "worktreeStacks": { "onSessionEnd": "stop-and-delete" },
+  "services": { "supabase": { "url": "https://supabase.com/dashboard/project/<ref>" }, "vercel": { "url": "https://vercel.com/<team>/<project>" } }
 }
 ```
 
@@ -152,6 +153,7 @@ the project. Every key is optional:
   `branding`, those skills do no branding and do not mention it. `path` is the brand site's source folder, which `/brand check` and `/brand apply` read.
 - `quality` turns on the quality-control hooks one by one (see [`kb/hooks/README.md`](kb/hooks/README.md)).
   A hook that is not listed does not run.
+- `services` names the project's web consoles, each as `{ "url": "https://..." }` (http or https only). `/ndev:view` shows them as clickable links. Take the values from the CLIs: the Supabase ref from `supabase projects list`, the Vercel team slug and project name from `vercel teams ls` and `.vercel/project.json`.
 - `worktreeStacks.onSessionEnd` sets what happens to the docker stacks that a worktree lists in
   `.neil-dev.worktree.json` (`resources.docker`) when a session in that worktree ends (see
   "Worktree resources" below):

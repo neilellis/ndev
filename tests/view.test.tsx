@@ -37,7 +37,7 @@ const record = {
 const ok = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A fake engine. `answers` maps a command line to its result; each run is recorded in `ran`.
-function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, current = WT) {
+function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, current = WT, files: Record<string, string> = {}) {
   let now = 1_000_000
   const ran: string[] = []
   const copied: string[] = []
@@ -56,8 +56,8 @@ function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, curr
   on('prompt.compose', () => ({ sections: [] }))
   on('prompt.submit', (_, e) => e)
   on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || e.path === `${ROOT}/.ndev-inited` }))
-  on('fs.read', () => ({ value: '' }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || e.path === `${ROOT}/.ndev-inited` || e.path in files }))
+  on('fs.read', (_, e) => ({ value: files[e.path] ?? '' }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.open', (_, e) => { opened.push(e.id); return { value: { isPlaced: true } } })
@@ -270,5 +270,30 @@ test('/view that cannot create the record shows the script\'s own message and it
   expect(text).toContain('exit code 3')
   expect(text).toContain('.gitignore')
   expect((await ui.find({ type: 'Text', text: /fix-1/ }))?.text).toMatch(/fix-1/)
+  await ui.unmount()
+})
+
+const SERVICES = { services: { supabase: { url: 'https://supabase.com/dashboard/project/abc' }, vercel: { url: 'https://vercel.com/acme/web' } } }
+
+test('the services of .neil-dev.json show as links, each with its name', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.neil-dev.json`]: JSON.stringify(SERVICES) })
+  const ui = await start($)
+  expect((await ui.find({ type: 'Link', text: 'supabase' }))?.props).toMatchObject({ href: 'https://supabase.com/dashboard/project/abc', label: 'supabase' })
+  expect((await ui.find({ type: 'Link', text: 'vercel' }))?.props).toMatchObject({ href: 'https://vercel.com/acme/web', label: 'vercel' })
+  await ui.unmount()
+})
+
+test('a worktree without .neil-dev.json shows the services of the main checkout', async ($, on) => {
+  world(on, {}, WT, { [`${ROOT}/.neil-dev.json`]: JSON.stringify(SERVICES) })
+  const ui = await start($)
+  expect((await ui.find({ type: 'Link', text: 'vercel' }))?.props.href).toBe('https://vercel.com/acme/web')
+  await ui.unmount()
+})
+
+test('a .neil-dev.json that cannot be read shows its error and the file, and the pane still lists', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.neil-dev.json`]: JSON.stringify({ services: { vercel: { url: 'ftp://x' } } }) })
+  const ui = await start($)
+  expect((await ui.find({ type: 'Text', text: /\.neil-dev\.json.*services\.vercel\.url/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.worktree\.json$/ }))?.text).toBeDefined()
   await ui.unmount()
 })
