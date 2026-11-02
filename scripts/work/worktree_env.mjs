@@ -2,7 +2,8 @@
 // The per-worktree record: .neil-dev.worktree.json at the root of a linked git worktree,
 // git-ignored, never in the main checkout. It lists the resources that the worktree started, so
 // the plugin's session-end hook can stop them:
-//   { "version": 2, "resources": { "docker": [<stack>...], "dev-servers": { "<name>": <server> } } }
+//   { "version": 2, "settings": { "mode": ..., "steering": ... }, "resources": { "docker": [<stack>...], "dev-servers": { "<name>": <server> } } }
+// "settings" is optional: the development mode and steering this worktree chose (/dev mode, /dev steering).
 //
 //   worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z>
 //                             [--workdir <dir holding supabase/>] [--worktree <dir>]
@@ -17,6 +18,8 @@
 //   worktree-env.sh stop-all [--on-end stop-and-delete|stop-keep-data|keep-running]
 //                            [--worktree <dir>] [--background [--log <file>]]
 //   worktree-env.sh migrate [--worktree <dir>]
+//   worktree-env.sh init [--worktree <dir>]
+//   worktree-env.sh set-setting --key mode|steering --value <value> [--worktree <dir>]
 //
 // add-dev-server names a running server by what it shows ("docs", "ui"); the same name again
 // replaces the entry. It reads the command line and start time of the pid from ps. stop-all stops
@@ -43,6 +46,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const VERSION = /^[0-9][0-9A-Za-z.+-]*$/
 const TAIL_LINES = 40
 const VERSION_NOW = 2
+const SETTINGS = { mode: ['light', 'heavy'], steering: ['interactive', 'auto'] }
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const STOP_TIMEOUT_S = Number(process.env.NDEV_STACK_STOP_TIMEOUT_S ?? 180)
 const SERVER_STOP_TIMEOUT_S = Number(process.env.NDEV_DEV_SERVER_STOP_TIMEOUT_S ?? 10)
@@ -114,7 +118,20 @@ const keysOutside = (value, allowed) => Object.keys(value).filter(k => !allowed.
 const quoted = keys => keys.map(k => `"${k}"`).join(', ')
 const STACK_KEYS = ['kind', 'projectId', 'workdir', 'cliVersion', 'addedAt', 'lastStop']
 const SERVER_KEYS = ['pid', 'port', 'command', 'cwd', 'started', 'lastStop']
-const empty = () => ({ version: VERSION_NOW, resources: { docker: [], 'dev-servers': {} } })
+const empty = () => ({ version: VERSION_NOW, settings: {}, resources: { docker: [], 'dev-servers': {} } })
+
+// The file's content: settings only when there are some, so an empty record stays as before.
+const content = (settings, resources) => ({ version: VERSION_NOW, ...(Object.keys(settings).length > 0 ? { settings } : {}), resources })
+
+function settingsProblem(settings) {
+  if (!isObject(settings)) return 'must hold "settings" as an object'
+  const extra = keysOutside(settings, Object.keys(SETTINGS))
+  if (extra.length > 0) return `has the unknown setting ${quoted(extra)}; the settings are ${Object.keys(SETTINGS).join(', ')}`
+  for (const [key, choices] of Object.entries(SETTINGS)) {
+    if (settings[key] !== undefined && !choices.includes(settings[key])) return `has settings.${key} ${JSON.stringify(settings[key])}; the choices are ${choices.join(', ')}`
+  }
+  return undefined
+}
 
 // The problem with one docker entry, or undefined.
 function stackProblem(s, i) {
@@ -143,8 +160,12 @@ function serverProblem(name, d) {
 // The problem with a parsed record, or undefined.
 function shapeProblem(raw) {
   if (!isObject(raw)) return 'must hold a JSON object'
-  const extra = keysOutside(raw, ['version', 'resources'])
-  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, resources`
+  const extra = keysOutside(raw, ['version', 'settings', 'resources'])
+  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, settings, resources`
+  if (raw.settings !== undefined) {
+    const problem = settingsProblem(raw.settings)
+    if (problem) return problem
+  }
   if (raw.version !== VERSION_NOW) return `has "version" ${JSON.stringify(raw.version)}; this script reads version ${VERSION_NOW}`
   if (!isObject(raw.resources)) return 'must hold a "resources" object'
   const kinds = keysOutside(raw.resources, ['docker', 'dev-servers'])
@@ -187,7 +208,7 @@ function readRecord(root) {
   }
   const problem = shapeProblem(raw)
   if (problem) throw new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed or stopped. Repair: fix the file (see the plugin README, "Worktree resources"), or delete it if nothing it lists still runs.`)
-  return { version: VERSION_NOW, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} } }
+  return { version: VERSION_NOW, settings: raw.settings ?? {}, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} } }
 }
 
 // Write a temporary file, then rename it, so a reader never sees half a file.
@@ -259,11 +280,52 @@ function withLock(root, fn) {
 function change(root, edit) {
   withLock(root, () => {
     const record = readRecord(root)
-    writeRecord(join(root, FILE), { version: VERSION_NOW, resources: edit(record.resources) })
+    writeRecord(join(root, FILE), content(record.settings, edit(record.resources)))
   })
 }
 
 const changeDocker = (root, edit) => change(root, r => ({ ...r, docker: edit(r.docker) }))
+
+// Creates an empty record where a linked worktree has none, so the pane and the hooks find one.
+// An existing file is never touched (a version 1 file stays for `migrate`). The main checkout
+// keeps no record, so there it creates nothing and exits 0. Not git-ignored: exit 3 with the repair.
+function init(values) {
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
+  const file = join(root, FILE)
+  const dirs = git(root, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])
+  if (dirs.status !== 0) throw new Fail(2, `git rev-parse --git-dir exited ${dirs.status} in ${root}: ${dirs.stderr.trim()}`)
+  const [gitDir, common] = dirs.stdout.trim().split('\n')
+  if (gitDir === common) {
+    console.log(`worktree-env: ${root} is the main checkout, which keeps no ${FILE}; nothing created.`)
+    return
+  }
+  refuseNotIgnored(root, common)
+  withLock(root, () => {
+    if (existsSync(file)) {
+      console.log(`worktree-env: ${file} already exists; nothing changed.`)
+      return
+    }
+    writeRecord(file, content({}, empty().resources))
+    console.log(`worktree-env: created ${file} with no resources.`)
+  })
+}
+
+// Saves one setting of this worktree (the mode or steering), creating the file when it is missing.
+// The main checkout keeps no record, so there it refuses (exit 3); the caller writes .neil-dev.json.
+function setSetting(values) {
+  const key = need(values, 'key')
+  const value = need(values, 'value')
+  if (!Object.hasOwn(SETTINGS, key)) throw new Fail(2, `worktree-env: --key "${key}" is not a setting. The settings are ${Object.keys(SETTINGS).join(', ')}.`)
+  if (!SETTINGS[key].includes(value)) throw new Fail(2, `worktree-env: --value "${value}" is not a ${key}. The choices are ${SETTINGS[key].join(', ')}.`)
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
+  const common = refuseMainCheckout(root, 'edit .neil-dev.json instead')
+  refuseNotIgnored(root, common)
+  withLock(root, () => {
+    const record = readRecord(root)
+    writeRecord(join(root, FILE), content({ ...record.settings, [key]: value }, record.resources))
+  })
+  console.log(`worktree-env: saved ${key} ${value} in ${join(root, FILE)}.`)
+}
 
 // Rewrites a version 1 file ({ version: 1, stacks: [...] }) as version 2, with the stacks under
 // resources.docker. A version 2 file is left as it is; any other shape is refused.
@@ -792,6 +854,8 @@ function main(argv) {
         pid: { type: 'string' },
         port: { type: 'string' },
         cwd: { type: 'string' },
+        key: { type: 'string' },
+        value: { type: 'string' },
       },
       strict: true,
     }))
@@ -816,6 +880,12 @@ function main(argv) {
       return 0
     case 'migrate':
       migrate(values)
+      return 0
+    case 'set-setting':
+      setSetting(values)
+      return 0
+    case 'init':
+      init(values)
       return 0
     case 'stop':
       return stopResource(values)
