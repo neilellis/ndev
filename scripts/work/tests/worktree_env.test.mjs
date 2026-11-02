@@ -746,3 +746,127 @@ test('stop-all with only dev servers listed stops them', () => {
   assert.ok(!isRunning(s.pid) || isZombie(s.pid), 'the dev server still runs')
   assert.deepEqual(servers(p), {})
 })
+
+// --- stop: one resource, for the /ndev:view pane ---
+
+test('stop --name stops that dev server only, removes its entry, and leaves the others and the stacks', () => {
+  const p = project()
+  const docs = groupServer(p)
+  const ui = server()
+  assert.equal(addServer(p, 'docs', docs).status, 0)
+  assert.equal(addServer(p, 'ui', ui).status, 0)
+  add(p, 'fcc-211')
+  const r = run(p, p.base, 'stop', '--name', 'docs', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  for (const pid of [docs.pid, docs.child]) assert.ok(!isRunning(pid) || isZombie(pid), `pid ${pid} still runs`)
+  assert.ok(isRunning(ui.pid) && !isZombie(ui.pid), 'the other server was stopped')
+  assert.deepEqual(Object.keys(servers(p)), ['ui'])
+  assert.deepEqual(docker(p).map(s => s.projectId), ['fcc-211'])
+  assert.deepEqual(calls(p), [])
+})
+
+test('stop --kind --project-id stops that stack by --on-end, and no other resource', () => {
+  const p = project()
+  const ui = server()
+  assert.equal(addServer(p, 'ui', ui).status, 0)
+  add(p, 'fcc-211')
+  add(p, 'fcc-212')
+  const keep = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-211', '--on-end', 'stop-keep-data', '--worktree', p.worktree)
+  assert.equal(keep.status, 0, keep.out)
+  assert.deepEqual(docker(p).map(s => s.projectId), ['fcc-212'])
+  assert.equal(calls(p).length, 1)
+  assert.match(calls(p)[0], /--project-id fcc-211/)
+  assert.doesNotMatch(calls(p)[0], /--no-backup/)
+  const wipe = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-212', '--on-end', 'stop-and-delete', '--worktree', p.worktree)
+  assert.equal(wipe.status, 0, wipe.out)
+  assert.match(calls(p)[1], /--project-id fcc-212 --no-backup/)
+  assert.deepEqual(docker(p), [])
+  assert.ok(isRunning(ui.pid) && !isZombie(ui.pid), 'the dev server was stopped')
+})
+
+test('stop names the listed resources when the one asked for is not listed, and exits 4', () => {
+  const p = project()
+  assert.equal(addServer(p, 'docs', server()).status, 0)
+  const a = run(p, p.base, 'stop', '--name', 'nope', '--worktree', p.worktree)
+  assert.equal(a.status, 4, a.out)
+  assert.match(a.out, /nope/)
+  assert.match(a.out, /docs/)
+  const b = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'ghost', '--worktree', p.worktree)
+  assert.equal(b.status, 4, b.out)
+  assert.match(b.out, /ghost/)
+})
+
+test('stop refuses a call that names no resource, or a stack with the keep-running policy', () => {
+  const p = project()
+  add(p, 'fcc-211')
+  const none = run(p, p.base, 'stop', '--worktree', p.worktree)
+  assert.equal(none.status, 2, none.out)
+  assert.match(none.out, /stop needs --name <dev server> or --kind <kind> --project-id <id>/)
+  const keep = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-211', '--on-end', 'keep-running', '--worktree', p.worktree)
+  assert.equal(keep.status, 2, keep.out)
+  assert.match(keep.out, /stop does not take --on-end keep-running/)
+  assert.deepEqual(docker(p).map(s => s.projectId), ['fcc-211'])
+  assert.deepEqual(calls(p), [])
+})
+
+test('a stack that fails to stop keeps its entry with lastStop, and stop exits 1 with the repair', () => {
+  const p = project()
+  add(p, 'fcc-211')
+  writeFileSync(join(p.bin, 'fail.txt'), 'fcc-211\n')
+  const r = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-211', '--worktree', p.worktree)
+  assert.equal(r.status, 1, r.out)
+  assert.match(r.out, /Repair:/)
+  assert.equal(docker(p)[0].lastStop.exitCode, 1)
+})
+
+// --- list --live ---
+
+const FAKE_DOCKER = `#!/usr/bin/env bash
+dir="$(cd "$(dirname "$0")" && pwd -P)"
+if [ -f "$dir/docker-down.txt" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
+cat "$dir/containers.txt" 2>/dev/null
+exit 0
+`
+const withDocker = (p, containers = []) => {
+  writeFileSync(join(p.bin, 'docker'), FAKE_DOCKER)
+  chmodSync(join(p.bin, 'docker'), 0o755)
+  writeFileSync(join(p.bin, 'containers.txt'), containers.map(c => `${c}\n`).join(''))
+}
+
+test('list --json --live marks a running dev server live and an ended one not live', () => {
+  const p = project()
+  withDocker(p)
+  const up = server()
+  const down = server()
+  assert.equal(addServer(p, 'up', up).status, 0)
+  assert.equal(addServer(p, 'down', down).status, 0)
+  process.kill(down.pid, 'SIGKILL')
+  spawnSync('sleep', ['0.3'])
+  const r = run(p, p.base, 'list', '--json', '--live', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  const out = JSON.parse(r.stdout)
+  assert.equal(out.resources['dev-servers'].up.live, true)
+  assert.equal(out.resources['dev-servers'].down.live, false)
+  assert.equal(servers(p).up.live, undefined, 'live was written to the record')
+})
+
+test('list --json --live marks a docker stack live when one of its containers runs', () => {
+  const p = project()
+  withDocker(p, ['supabase_db_fcc-211', 'supabase_auth_fcc-211', 'supabase_db_other'])
+  add(p, 'fcc-211')
+  add(p, 'fcc-212')
+  const out = JSON.parse(run(p, p.base, 'list', '--json', '--live', '--worktree', p.worktree).stdout)
+  assert.deepEqual(out.resources.docker.map(s => [s.projectId, s.live]), [['fcc-211', true], ['fcc-212', false]])
+})
+
+test('list --json --live says live is unknown, with the docker error, when docker does not answer', () => {
+  const p = project()
+  withDocker(p)
+  writeFileSync(join(p.bin, 'docker-down.txt'), '')
+  add(p, 'fcc-211')
+  const r = run(p, p.base, 'list', '--json', '--live', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  const [s] = JSON.parse(r.stdout).resources.docker
+  assert.equal(s.live, null)
+  assert.match(s.liveError, /Docker daemon/)
+})

@@ -10,7 +10,10 @@
 //   worktree-env.sh add-dev-server --name <name> --pid <pid> --port <port> [--cwd <dir>]
 //                                  [--worktree <dir>]
 //   worktree-env.sh remove-dev-server --name <name> [--worktree <dir>]
-//   worktree-env.sh list [--json] [--worktree <dir>]
+//   worktree-env.sh list [--json [--live]] [--worktree <dir>]
+//   worktree-env.sh stop --name <dev server> [--worktree <dir>]
+//   worktree-env.sh stop --kind supabase --project-id <id> [--on-end stop-and-delete|stop-keep-data]
+//                    [--worktree <dir>]
 //   worktree-env.sh stop-all [--on-end stop-and-delete|stop-keep-data|keep-running]
 //                            [--worktree <dir>] [--background [--log <file>]]
 //   worktree-env.sh migrate [--worktree <dir>]
@@ -439,12 +442,36 @@ function removeDevServer(values) {
   console.log(`worktree-env: removed dev server ${name} from ${file}. It was not stopped.`)
 }
 
+// Whether each listed resource runs now, added to a copy of the record (never written to the file).
+// A dev server is live while its pid still runs the recorded command from the recorded start time.
+// A docker stack is live while one of its containers runs; when docker does not answer, live is
+// null and liveError holds docker's own message.
+function withLive(record) {
+  const servers = Object.fromEntries(Object.entries(record.resources['dev-servers']).map(([name, d]) => {
+    const info = processInfo(d.pid)
+    const isLive = info !== undefined && !info.zombie && info.command === d.command && Math.abs(Date.parse(info.started) - Date.parse(d.started)) <= START_TOLERANCE_MS
+    return [name, { ...d, live: isLive }]
+  }))
+  let names
+  let error
+  if (record.resources.docker.length > 0) {
+    const r = spawnSync('docker', ['ps', '--format', '{{.Names}}'], { encoding: 'utf8' })
+    if (r.error) error = `docker did not start: ${r.error.message}`
+    else if (r.status !== 0) error = tail([r.stdout, r.stderr].filter(t => t && t.trim() !== '').join('\n')) || `docker ps exited ${r.status}`
+    else names = r.stdout.split('\n').map(n => n.trim()).filter(Boolean)
+  }
+  const dockerEntries = record.resources.docker.map(s => (names === undefined
+    ? { ...s, live: null, liveError: error }
+    : { ...s, live: names.some(n => n.endsWith(`_${s.projectId}`)) }))
+  return { ...record, resources: { docker: dockerEntries, 'dev-servers': servers } }
+}
+
 function list(values) {
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
   const record = readRecord(root)
   if (values.json) {
-    console.log(JSON.stringify(record, null, 2))
+    console.log(JSON.stringify(values.live ? withLive(record) : record, null, 2))
     return
   }
   const { docker, 'dev-servers': servers } = record.resources
@@ -632,6 +659,62 @@ function stopServers(root, servers, at) {
   return failed
 }
 
+// Stops the given docker stacks by policy. Returns the number that did not stop; each keeps its
+// entry with lastStop, and its failure is printed with the repair.
+function stopStacks(root, stacks, policy, at) {
+  let failed = 0
+  const file = join(root, FILE)
+  for (const s of stacks) {
+    const r = stopOne(s, policy, root)
+    const keepRecord = existsSync(root)
+    if (r.ok) {
+      console.log(`worktree-env: ${at} stopped ${s.kind} stack ${s.projectId}: ${r.command} (in ${r.cwd})`)
+      if (keepRecord) changeDocker(root, all => all.filter(x => !sameEntry(x, s)))
+      continue
+    }
+    failed++
+    const repair = r.command || `stop the ${s.kind} stack ${s.projectId} by hand`
+    if (keepRecord) {
+      changeDocker(root, all => all.map(x => (sameEntry(x, s) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
+    }
+    console.error([
+      `worktree-env: ${at} ${s.kind} stack ${s.projectId} did not stop.`,
+      `  command: ${r.command} (in ${r.cwd})`,
+      `  exit code ${r.exitCode}; last ${TAIL_LINES} lines of its output:`,
+      r.output.split('\n').map(l => `    ${l}`).join('\n'),
+      `  Repair: ${repair}`,
+      `  then:   ${WRAPPER} remove-stack --kind ${s.kind} --project-id ${s.projectId} --worktree ${root}`,
+      keepRecord ? `  The entry stays in ${file} until the stack stops.` : `  ${root} no longer exists, so no record was kept.`,
+    ].join('\n'))
+  }
+  return failed
+}
+
+// Stops one resource: a dev server (--name) or a docker stack (--kind --project-id [--on-end]).
+// The pane /ndev:view calls this for its stop buttons.
+function stopResource(values) {
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
+  const file = join(root, FILE)
+  const at = new Date().toISOString()
+  const { docker: stacks, 'dev-servers': servers } = readRecord(root).resources
+  const named = values.name !== undefined
+  if (!named && values.kind === undefined && values['project-id'] === undefined) {
+    throw new Fail(2, 'worktree-env: stop needs --name <dev server> or --kind <kind> --project-id <id>.')
+  }
+  if (named) {
+    const name = checkName(values)
+    if (!Object.hasOwn(servers, name)) throw new Fail(4, `worktree-env: dev server ${name} is not listed in ${file}. Listed: ${Object.keys(servers).join(', ') || 'none'}.`)
+    return stopServers(root, { [name]: servers[name] }, at) > 0 ? 1 : 0
+  }
+  const { kind, id } = checkStackOptions(values)
+  const policy = values['on-end'] ?? 'stop-and-delete'
+  if (!POLICIES.includes(policy)) throw new Fail(2, `worktree-env: --on-end "${policy}" is not known. Use one of: ${POLICIES.join(', ')}.`)
+  if (policy === 'keep-running') throw new Fail(2, 'worktree-env: stop does not take --on-end keep-running: to leave a stack running, do not stop it. Use stop-and-delete or stop-keep-data.')
+  const stack = stacks.find(s => same(s, kind, id))
+  if (stack === undefined) throw new Fail(4, `worktree-env: ${kind} stack ${id} is not listed in ${file}. Listed: ${stacks.map(s => `${s.kind} ${s.projectId}`).join(', ') || 'none'}.`)
+  return stopStacks(root, [stack], policy, at) > 0 ? 1 : 0
+}
+
 function stopAll(values) {
   const policy = values['on-end'] ?? 'stop-and-delete'
   if (!POLICIES.includes(policy)) throw new Fail(2, `worktree-env: --on-end "${policy}" is not known. Use one of: ${POLICIES.join(', ')}.`)
@@ -656,29 +739,7 @@ function stopAll(values) {
     for (const s of stacks) console.log(`worktree-env: ${at} ${s.kind} stack ${s.projectId} left running (keep-running). Stop it with: ${shellText(stopArgv(s, 'stop-and-delete'))}`)
     return failed > 0 ? 1 : 0
   }
-  for (const s of stacks) {
-    const r = stopOne(s, policy, root)
-    const keepRecord = existsSync(root)
-    if (r.ok) {
-      console.log(`worktree-env: ${at} stopped ${s.kind} stack ${s.projectId}: ${r.command} (in ${r.cwd})`)
-      if (keepRecord) changeDocker(root, all => all.filter(x => !sameEntry(x, s)))
-      continue
-    }
-    failed++
-    const repair = r.command || `stop the ${s.kind} stack ${s.projectId} by hand`
-    if (keepRecord) {
-      changeDocker(root, all => all.map(x => (sameEntry(x, s) ? { ...x, lastStop: { at, command: r.command, exitCode: r.exitCode, output: r.output, repair } } : x)))
-    }
-    console.error([
-      `worktree-env: ${at} ${s.kind} stack ${s.projectId} did not stop.`,
-      `  command: ${r.command} (in ${r.cwd})`,
-      `  exit code ${r.exitCode}; last ${TAIL_LINES} lines of its output:`,
-      r.output.split('\n').map(l => `    ${l}`).join('\n'),
-      `  Repair: ${repair}`,
-      `  then:   ${WRAPPER} remove-stack --kind ${s.kind} --project-id ${s.projectId} --worktree ${root}`,
-      keepRecord ? `  The entry stays in ${file} until the stack stops.` : `  ${root} no longer exists, so no record was kept.`,
-    ].join('\n'))
-  }
+  failed += stopStacks(root, stacks, policy, at)
   return failed > 0 ? 1 : 0
 }
 
@@ -726,6 +787,7 @@ function main(argv) {
         background: { type: 'boolean' },
         log: { type: 'string' },
         json: { type: 'boolean' },
+        live: { type: 'boolean' },
         name: { type: 'string' },
         pid: { type: 'string' },
         port: { type: 'string' },
@@ -755,6 +817,8 @@ function main(argv) {
     case 'migrate':
       migrate(values)
       return 0
+    case 'stop':
+      return stopResource(values)
     case 'stop-all':
       return stopAll(values)
     default:
