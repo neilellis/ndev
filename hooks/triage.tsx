@@ -317,8 +317,8 @@ async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise
     const before = groups.find(x => x.lead === a)
     const pr = worktrees.find(w => w.id === before?.worktree)?.linkedPR ?? before?.pr
     if (!pr) continue
-    const { headRefName } = (await gh(runner($, 60_000), ['pr', 'view', String(pr), '--repo', repo, '--json', 'headRefName'])) as { headRefName?: string }
-    if (!headRefName) throw new Error(`gh pr view ${pr} --repo ${repo} answered no head branch, so the branch #${g.lead} follows is unknown`)
+    const headRefName = (await gh(runner($, 60_000), ['api', `repos/${repo}/pulls/${pr}`, '--jq', '{headRefName: .head.ref}']) as { headRefName?: string }).headRefName
+    if (!headRefName) throw new Error(`gh api repos/${repo}/pulls/${pr} answered no head branch, so the branch #${g.lead} follows is unknown`)
     return headRefName
   }
   return undefined

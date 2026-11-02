@@ -507,3 +507,7 @@ The skills refer to these. Install them as well:
 2. Write project-neutral text. A fact about one project goes in that project's wiki.
 3. Bump `version` in `.claude-plugin/plugin.json`.
 4. Run `claude plugin validate .` before you push.
+
+## GitHub quota
+
+The plugin reads and merges pull requests with the REST API (`gh api`), not `gh pr list`, `gh pr view` or `gh pr merge`: those use GraphQL, whose quota runs out first. This covers `/fix-all-prs`, `/orca-triage` and the helper scripts. The Projects v2 board still uses GraphQL, which has no REST API.

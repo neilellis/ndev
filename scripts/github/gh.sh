@@ -163,9 +163,11 @@ case "$cmd" in
   issues-by-milestone)
     need_repo
     want="${1:?milestone title required}"
-    GH issue list --repo "$REPO" --milestone "$want" --state all --limit 200 \
-      --json number,title,state,labels,milestone,url \
-      --jq '.[] | {number, title, state, milestone: .milestone.title, labels: [.labels[].name], url}'
+    # REST: issues need the milestone number, and the list also holds pull requests.
+    mnum="$(GH api --paginate "repos/$REPO/milestones?state=all&per_page=100" --jq ".[] | select(.title == \"$want\") | .number" | head -1)"
+    [ -n "$mnum" ] || die "issues-by-milestone: no milestone titled '$want' in $REPO"
+    GH api --paginate "repos/$REPO/issues?milestone=$mnum&state=all&per_page=100" \
+      --jq '.[] | select(.pull_request == null) | {number, title, state: (.state | ascii_upcase), milestone: .milestone.title, labels: [.labels[].name], url: .html_url}'
     ;;
 
   issue-new)
@@ -222,7 +224,7 @@ case "$cmd" in
     done
     [ -n "$title" ] && [ -n "$bodyfile" ] || die "pr-new: --title and --body-file are both required"
     [ -n "$head" ] || head="$(git rev-parse --abbrev-ref HEAD)"
-    [ -n "$base" ] || base="$(GH repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name)"
+    [ -n "$base" ] || base="$(GH api "repos/$REPO" --jq .default_branch)"
     check_body "$bodyfile"
     url="$(GH api -X POST "repos/$REPO/pulls" -f "title=$title" -F "body=@$bodyfile" \
              -f "head=$head" -f "base=$base" -F "draft=$draft" --jq '.html_url')"

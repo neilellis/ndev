@@ -28,7 +28,7 @@ gh_resolve_repo() {
   if [ -n "${REPO:-}" ]; then return 0; fi
   if [ -n "${GH_REPO:-}" ]; then REPO="$GH_REPO"; return 0; fi
   local out
-  if ! out="$(GH repo view --json nameWithOwner -q .nameWithOwner 2>&1)" || [ -z "$out" ]; then
+  if ! out="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" || [ -z "$out" ]; then
     echo "github lib: cannot find the GitHub repository for $(pwd): ${out:-no output}" >&2
     echo "  Repair: run from inside a checkout with a GitHub origin, or set GH_REPO=OWNER/REPO, or run 'gh auth login'." >&2
     return 1

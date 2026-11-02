@@ -30,7 +30,7 @@ make_stub() {
   mkdir -p "$dir"
   cat > "$dir/gh" <<'STUB'
 #!/usr/bin/env bash
-# Only `gh pr view … --jq .body` is used by gates.sh.
+# Only `gh api repos/O/R/pulls/N --jq .body` is used by gates.sh.
 cat <<'BODY'
 A real plan of record.
 

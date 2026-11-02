@@ -82,7 +82,7 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     ran.push(a)
     if (a[0] === 'gh' && a[1] === 'issue' && a[2] === 'list') return ok(JSON.stringify(opts.issues ?? []))
     if (args.includes('gh.sh board items')) return ok((opts.cards ?? []).map(c => `${JSON.stringify(c)}\n`).join(''))
-    if (a[0] === 'gh' && a[1] === 'pr' && a[2] === 'view' && a.includes('headRefName')) return ok(JSON.stringify({ headRefName: `claude/issue-${a.length > 3 ? prHeads.get(Number(a[3])) : ''}` }))
+    if (a[0] === 'gh' && a[1] === 'api' && /^repos\/[^/]+\/[^/]+\/pulls\/\d+$/.test(a[2] ?? '')) return ok(JSON.stringify({ headRefName: `claude/issue-${prHeads.get(Number(a[2]!.split('/').pop()))}` }))
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
     if (args.startsWith('orca worktree list')) return reply({ worktrees, totalCount: worktrees.length, truncated: false })
     if (args.startsWith('orca worktree create')) {

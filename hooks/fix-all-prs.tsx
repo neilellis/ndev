@@ -62,7 +62,6 @@ type GhPr = {
   statusCheckRollup: Check[] | null
 }
 
-const FIELDS = 'number,title,headRefName,headRefOid,state,isDraft,mergeable,mergeStateStatus,mergeCommit,createdAt,statusCheckRollup'
 const FAILED = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
 
 function toRow(pr: GhPr): PrRow {
@@ -87,13 +86,24 @@ function toRow(pr: GhPr): PrRow {
 
 export type Run = (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 
+// What a failed call names: the first words of a gh command, or the endpoint of a gh api call.
+const label = (args: string[]) => {
+  if (args[0] !== 'api') return args.slice(0, 3).join(' ')
+  const rest = args.slice(1)
+  const method = rest[0] === '--method' || rest[0] === '-X' ? rest[1] : undefined
+  const endpoint = rest.find((a, i) => !a.startsWith('-') && rest[i - 1] !== '--method' && rest[i - 1] !== '-X') ?? ''
+  return `api ${method ? `${method} ` : ''}${endpoint}`
+}
+
 export async function gh(run: Run, args: string[], isJson = true): Promise<unknown> {
   const out = await run(['gh', ...args])
   if (out.exitCode !== 0) {
     const detail = out.stderr.trim() || out.stdout.trim()
     throw new Error(
-      `gh ${args.slice(0, 3).join(' ')} exited ${out.exitCode}: ${detail}\n` +
-        'Repair: run Claude Code inside a clone of a GitHub repository, and `gh auth login` if gh is not signed in.',
+      `gh ${label(args)} exited ${out.exitCode}: ${detail}\n` +
+        (/rate limit/i.test(detail)
+          ? 'Repair: wait for the quota to reset (`gh api rate_limit` shows the reset times). This plugin reads pull requests through the REST API, not GraphQL; a GraphQL `gh` call elsewhere (`gh pr list`, `gh pr view`) uses the smaller quota.'
+          : 'Repair: run Claude Code inside a clone of a GitHub repository, and `gh auth login` if gh is not signed in.'),
     )
   }
   return isJson ? JSON.parse(out.stdout) : out.stdout.trim()
@@ -132,23 +142,78 @@ async function storageQuotaHit(run: Run, repo: string, head: string): Promise<{ 
   return runs.size ? { runs: [...runs], message } : undefined
 }
 
-// Lists the open pull requests by the signed-in user, oldest first.
-async function openQueue(run: Run): Promise<PrRow[]> {
-  const prs = (await gh(run, ['pr', 'list', '--state', 'open', '--author', '@me', '--limit', '100', '--json', FIELDS])) as GhPr[]
-  return prs.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(toRow)
+// The pull request calls use the REST API (`gh api`), never `gh pr list` or `gh pr view`: those
+// are GraphQL, which has its own, smaller quota and runs out first.
+type RestPull = {
+  number: number
+  title: string
+  state: string
+  draft: boolean
+  merged: boolean
+  mergeable: boolean | null
+  mergeable_state: string
+  merge_commit_sha: string | null
+  created_at: string
+  user: { login: string }
+  head: { ref: string; sha: string }
+}
+type RestListed = Pick<RestPull, 'number' | 'state' | 'created_at' | 'user'>
+
+// The signed-in user's login.
+const login = async (run: Run) => String(await gh(run, ['api', 'user', '--jq', '.login'], false))
+
+// The signed-in user's pull requests in a state, newest first, at most `pages` pages of 100.
+async function listPulls(run: Run, repo: string, state: 'open' | 'all', pages: number, me: string): Promise<RestListed[]> {
+  const mine: RestListed[] = []
+  for (let page = 1; page <= pages; page++) {
+    const got = (await gh(run, ['api', `repos/${repo}/pulls?state=${state}&per_page=100&page=${page}`])) as RestListed[]
+    mine.push(...got.filter(p => p.user.login === me))
+    if (got.length < 100) break
+  }
+  return mine
 }
 
-// Reads the queued pull requests again in one call, so merged and closed ones stay in the pane,
+// One pull request in the shape the loop reads: its own call, and, while it is open, the check runs
+// and commit statuses of its head (a merged or closed one needs no checks).
+async function readPull(run: Run, repo: string, n: number): Promise<GhPr> {
+  const p = (await gh(run, ['api', `repos/${repo}/pulls/${n}`])) as RestPull
+  let checks: Check[] | null = null
+  if (p.state === 'open') {
+    const runs = (await gh(run, ['api', `repos/${repo}/commits/${p.head.sha}/check-runs?per_page=100&filter=latest`])) as { check_runs: { name: string; status: string; conclusion: string | null }[] }
+    const combined = (await gh(run, ['api', `repos/${repo}/commits/${p.head.sha}/status?per_page=100`])) as { statuses: { context: string; state: string }[] }
+    checks = [
+      ...runs.check_runs.map(c => ({ name: c.name, status: c.status.toUpperCase(), conclusion: (c.conclusion ?? '').toUpperCase() })),
+      ...combined.statuses.map(s => ({ context: s.context, state: s.state.toUpperCase() })),
+    ]
+  }
+  return {
+    number: p.number,
+    title: p.title,
+    headRefName: p.head.ref,
+    state: p.merged ? 'MERGED' : p.state === 'open' ? 'OPEN' : 'CLOSED',
+    isDraft: p.draft,
+    mergeable: p.mergeable === null ? 'UNKNOWN' : p.mergeable ? 'MERGEABLE' : 'CONFLICTING',
+    mergeStateStatus: p.mergeable_state.toUpperCase(),
+    mergeCommit: p.merge_commit_sha ? { oid: p.merge_commit_sha } : null,
+    headRefOid: p.head.sha,
+    createdAt: p.created_at,
+    statusCheckRollup: checks,
+  }
+}
+
+// Lists the open pull requests by the signed-in user, oldest first.
+async function openQueue(run: Run, repo: string): Promise<PrRow[]> {
+  const listed = (await listPulls(run, repo, 'open', 1, await login(run))).sort((a, b) => a.created_at.localeCompare(b.created_at))
+  return Promise.all(listed.map(async p => toRow(await readPull(run, repo, p.number))))
+}
+
+// Reads the queued pull requests again, so merged and closed ones stay in the pane,
 // and adds those opened since, oldest first after the queue.
-async function refreshQueue(run: Run, queue: number[]): Promise<PrRow[]> {
-  const all = (await gh(run, ['pr', 'list', '--state', 'all', '--author', '@me', '--limit', '200', '--json', FIELDS])) as GhPr[]
-  const byNumber = new Map(all.map(pr => [pr.number, pr]))
-  const queued = await Promise.all(
-    queue.map(async n => toRow(byNumber.get(n) ?? ((await gh(run, ['pr', 'view', String(n), '--json', FIELDS])) as GhPr))),
-  )
-  const opened = all.filter(pr => pr.state === 'OPEN' && !queue.includes(pr.number))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(toRow)
-  return [...queued, ...opened]
+async function refreshQueue(run: Run, repo: string, queue: number[]): Promise<PrRow[]> {
+  const all = await listPulls(run, repo, 'all', 2, await login(run))
+  const queued = await Promise.all(queue.map(async n => toRow(await readPull(run, repo, n))))
+  const opened = all.filter(p => p.state === 'open' && !queue.includes(p.number)).sort((a, b) => a.created_at.localeCompare(b.created_at))
+  return [...queued, ...(await Promise.all(opened.map(async p => toRow(await readPull(run, repo, p.number)))))]
 }
 
 type Agent = { name: string; status: string }
@@ -237,9 +302,9 @@ async function sessionTitles(run: Run, registry: Registry, names: string[]): Pro
 
 // The listed agent whose session signed the pull request's commits (the `Claude-Session:` trailer),
 // newest commit first; `isFinal` false when the search should run again.
-async function signedOwner(run: Run, n: number, agents: Agent[], registry: Registry):
+async function signedOwner(run: Run, repoName: string, n: number, agents: Agent[], registry: Registry):
   Promise<{ owner?: string; isFinal: boolean }> {
-  const bodies = String(await gh(run, ['pr', 'view', String(n), '--json', 'commits', '--jq', '.commits[].messageBody'], false))
+  const bodies = String(await gh(run, ['api', `repos/${repoName}/pulls/${n}/commits?per_page=100`, '--jq', '.[].commit.message'], false))
   const sessions = [...bodies.matchAll(SESSION_TRAILER)].map(m => m[1]!).reverse()
   const owner = sessions.map(id => registry.sessions.find(x => x.bridgeSessionId === id)?.name)
     .find(name => name !== undefined && agents.some(a => a.name === name))
@@ -332,12 +397,13 @@ const isListed = (name: string | undefined, agents: Agent[]) => name !== undefin
 const ownerOf = (r: PrRow, was: Comm | undefined, agents: Agent[], found: { owner?: string } | undefined) =>
   (isListed(was?.owner, agents) ? was?.owner : undefined) ?? matchOwner(r, agents)?.name ?? found?.owner ?? was?.owner
 
+// The repository of the checkout, as `gh api repos/{owner}/{repo}` answers.
 type Repo = {
-  nameWithOwner: string
-  defaultBranchRef: { name: string }
-  mergeCommitAllowed: boolean
-  squashMergeAllowed: boolean
-  rebaseMergeAllowed: boolean
+  full_name: string
+  default_branch: string
+  allow_merge_commit: boolean
+  allow_squash_merge: boolean
+  allow_rebase_merge: boolean
 }
 
 // `isQuiet` keeps a failed background read out of a toast: it still shows in the pane.
@@ -346,10 +412,8 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
   const { queue } = await read($, snapshot)
   await update($, snapshot, s => ({ ...s, isBusy: true }))
   try {
-    const repo = (await gh(run, [
-      'repo', 'view', '--json', 'nameWithOwner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed',
-    ])) as Repo
-    const rows = queue.length > 0 ? await refreshQueue(run, queue) : await openQueue(run)
+    const repo = (await gh(run, ['api', 'repos/{owner}/{repo}'])) as Repo
+    const rows = queue.length > 0 ? await refreshQueue(run, repo.full_name, queue) : await openQueue(run, repo.full_name)
     let agentsError: string | undefined
     const agents = await listAgents($).catch((err: unknown) => {
       agentsError = err instanceof Error ? err.message : String(err) // shown in the pane
@@ -376,14 +440,14 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
       try {
         const registry = await readRegistry(run)
         for (const r of unnamed.filter(r => known[r.number]?.searchedFor !== searchKey(r))) {
-          found[r.number] = { ...(await signedOwner(run, r.number, agents, registry)), via: 'the listed session that signed its commits' }
+          found[r.number] = { ...(await signedOwner(run, repo.full_name, r.number, agents, registry)), via: 'the listed session that signed its commits' }
         }
         const lost = unnamed.filter(r => !found[r.number]?.owner)
         if (lost.length || started) {
           try {
             const worktrees = await orcaWorktrees(run)
             for (const r of lost) {
-              const o = orcaOwner(r, repo.nameWithOwner, worktrees, agents, registry)
+              const o = orcaOwner(r, repo.full_name, worktrees, agents, registry)
               if (o) found[r.number] = { isFinal: false, ...found[r.number], owner: o.owner, via: `in Orca workspace ${o.workspace}` }
             }
             if (started) {
@@ -422,9 +486,9 @@ async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
       return copy
     })
     const fresh: Snapshot = {
-      repo: repo.nameWithOwner,
-      defaultBranch: repo.defaultBranchRef.name,
-      mergeMethod: repo.mergeCommitAllowed ? 'merge' : repo.squashMergeAllowed ? 'squash' : 'rebase',
+      repo: repo.full_name,
+      defaultBranch: repo.default_branch,
+      mergeMethod: repo.allow_merge_commit ? 'merge' : repo.allow_squash_merge ? 'squash' : 'rebase',
       queue: rows.map(r => r.number),
       rows,
       checkedAt: await $.clock.now(),
@@ -710,7 +774,7 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
     const prior = state.step === 'merging' ? state.preMerge : state
     await update($, loop, (l): Loop => ({ ...l, step: 'merging', stepAt: now, preMerge: { step: prior?.step, stepAt: prior?.stepAt, askedHead: prior?.askedHead } }))
     try {
-      await gh(run, ['pr', 'merge', String(n), `--${snap.mergeMethod ?? 'merge'}`], false)
+      await gh(run, ['api', '--method', 'PUT', `repos/${snap.repo}/pulls/${n}/merge`, '-f', `merge_method=${snap.mergeMethod ?? 'merge'}`], false)
     } catch (err) {
       // GitHub can refuse a merge it reported clean (the base moved, a rule changed): try again next tick.
       const failures = (state.mergeFailures ?? 0) + 1

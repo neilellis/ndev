@@ -52,7 +52,7 @@ GH() {
 }
 
 if [ -z "$REPO_ARG" ]; then
-  REPO_ARG="$(GH repo view --json nameWithOwner -q .nameWithOwner)" || {
+  REPO_ARG="$(GH api 'repos/{owner}/{repo}' --jq .full_name)" || {
     echo "fetch-prs.sh: cannot find the GitHub repository for $(pwd). Pass --repo OWNER/REPO or run 'gh auth status'." >&2
     exit 2
   }
@@ -68,7 +68,7 @@ QUERY="merged:>=$SINCE $AUTHOR_Q"
 
 # --- fetch -------------------------------------------------------------------
 if [ "$COUNT_ONLY" = "1" ]; then
-  GH pr list --repo "$REPO_ARG" --state merged --limit 500 --json number --search "$QUERY" | python3 -c \
+  GH api -X GET search/issues -f q="repo:$REPO_ARG is:pr is:merged $QUERY" -f per_page=100 --paginate --jq '.items[] | {number}' | jq -s . | python3 -c \
     'import json,sys; n=len(json.load(sys.stdin)); print(n); sys.exit("fetch-prs.sh: reached the 500-PR limit; the count is a lower bound. Use a shorter --since window.") if n>=500 else None'
   exit 0
 fi
@@ -78,9 +78,10 @@ if [ -z "$OUT" ]; then
 fi
 mkdir -p "$OUT"
 
-GH pr list --repo "$REPO_ARG" --state merged --limit 500 \
-  --json number,title,mergedAt,author,body \
-  --search "$QUERY" > "$OUT/prs.json"
+# REST search (its own quota, not GraphQL); the search API returns at most 1000 results.
+GH api -X GET search/issues -f q="repo:$REPO_ARG is:pr is:merged $QUERY" -f per_page=100 --paginate \
+  --jq '.items[] | {number, title, mergedAt: .pull_request.merged_at, author: {login: .user.login}, body: (.body // "")}' \
+  | jq -s . > "$OUT/prs.json"
 
 # --- chunk (stride, so every chunk sees a mix of dates and topics) -----------
 python3 - "$OUT" "$CHUNKS" "$SINCE" "$QUERY" <<'PY'

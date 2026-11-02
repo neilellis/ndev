@@ -62,7 +62,7 @@ for tool in gh jq; do
 done
 REPO="${GH_REPO:-}"
 if [ -z "$REPO" ]; then
-  REPO="$(GH repo view --json nameWithOwner -q .nameWithOwner 2>&1)" || {
+  REPO="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" || {
     echo "pr_feedback.sh: cannot find the GitHub repository: $REPO" >&2
     echo "  Repair: run inside the checkout, set GH_REPO=OWNER/REPO, or run 'gh auth login'" >&2
     exit 2; }
@@ -94,15 +94,19 @@ while IFS= read -r card; do
   [ -n "$ONLY" ] && [ "$n" != "$ONLY" ] && continue
   case ",$EXCLUDE," in *",$n,"*) continue ;; esac
 
-  pr=$(GH pr list --repo "$REPO" --head "claude/issue-$n" --state all --limit 1 \
-        --json number,url,state,isDraft,createdAt,headRefName | jq -c '.[0] // null')
+  pr=$(GH api "repos/$REPO/pulls?head=${REPO%%/*}:claude/issue-$n&state=all&per_page=1" \
+        --jq '[.[] | {number, url: .html_url, state: (if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end), isDraft: .draft, createdAt: .created_at, headRefName: .head.ref}] | .[0] // null')
   if [ "$pr" = "null" ]; then
     # Batched work (work-heavy skill, references/prs.md): the issue may be covered by another
     # issue's batch PR — branch claude/issue-<lead>, body "Closes #<n>". gh search is
     # fuzzy, so verify with a strict body regex; prefer an OPEN PR, else the newest.
-    pr=$(GH pr list --repo "$REPO" --state all --search "Closes #$n in:body" --limit 10 \
-          --json number,url,state,isDraft,createdAt,headRefName,body \
-        | jq -c --arg n "$n" '[.[]
+    pr=$(GH api -X GET search/issues -f q="repo:$REPO is:pr \"Closes #$n\" in:body" -f per_page=10 \
+          --jq '[.items[] | {number, body: (.body // "")}]' \
+        | jq -c '.[]' | while IFS= read -r cand; do
+            cnum=$(jq -r .number <<<"$cand")
+            GH api "repos/$REPO/pulls/$cnum" --jq '{number, url: .html_url, state: (if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end), isDraft: .draft, createdAt: .created_at, headRefName: .head.ref}' \
+              | jq -c --argjson c "$cand" '. + {body: $c.body}'
+          done | jq -sc --arg n "$n" '[.[]
               | select(.headRefName | startswith("claude/"))
               | select(.body | test("(?i)closes #\($n)([^0-9]|$)"))]
             | sort_by(.createdAt) | reverse
@@ -118,16 +122,15 @@ while IFS= read -r card; do
 
   prnum=$(jq -r .number <<<"$pr")
   prstate=$(jq -r .state <<<"$pr")
-  last=$(GH pr view "$prnum" --repo "$REPO" --json commits \
-          --jq '[.commits[].committedDate] | max // ""')
+  last=$(GH api --paginate "repos/$REPO/pulls/$prnum/commits?per_page=100" --jq '.[].commit.committer.date' | sort | tail -1)
+  headsha=$(GH api "repos/$REPO/pulls/$prnum" --jq .head.sha)
 
   # Check status at the PR's current head: CheckRun entries ONLY (CI workflow
   # jobs). Commit StatusContext entries from third-party integrations are left out:
   # a standing account or permission failure there would resume nearly every PR on
   # every pass, and a guard that fires on healthy input teaches agents to ignore it.
-  checks=$(GH pr view "$prnum" --repo "$REPO" --json statusCheckRollup --jq '
-    [.statusCheckRollup[]?
-      | select(.__typename == "CheckRun")
+  checks=$(GH api "repos/$REPO/commits/$headsha/check-runs?per_page=100&filter=latest" --jq '
+    [.check_runs[]?
       | if (.conclusion // "") != ""
         then {name: (.name // "?"), verdict: .conclusion}
         else {name: (.name // "?"), verdict: (.status // "PENDING")} end]

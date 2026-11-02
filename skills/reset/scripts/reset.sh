@@ -88,7 +88,7 @@ case "$cmd" in
     _paths
     dirty=no; [ -n "$(git status --porcelain)" ] && dirty=yes
     base=$(_base)
-    pr=$(GH pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""' 2>/dev/null || echo "")
+    pr=$(GH api "repos/{owner}/{repo}/pulls?state=open&head={owner}:$BRANCH" --jq '.[0].html_url // ""' 2>/dev/null || echo "")
     python3 - "$IN_WORKTREE" "$BRANCH" "$WORKTREE" "$MAIN_ROOT" "$dirty" "$pr" "$base" <<'PY'
 import json, sys
 iw, branch, wt, root, dirty, pr, base = sys.argv[1:8]
@@ -133,7 +133,7 @@ PY
     git push -q -u origin "$BRANCH"
     echo "pushed $BRANCH"
 
-    pr=$(GH pr list --head "$BRANCH" --state open --json url --jq '.[0].url // ""' 2>/dev/null || echo "")
+    pr=$(GH api "repos/{owner}/{repo}/pulls?state=open&head={owner}:$BRANCH" --jq '.[0].html_url // ""' 2>/dev/null || echo "")
 
     # No OPEN PR — before creating one, check whether the branch's most recent PR
     # (any state) already covers this exact commit. Squash-merges break commit-graph
@@ -143,8 +143,8 @@ PY
     # work every time `save` runs again with nothing new to commit.
     if [ -z "$pr" ]; then
       head_sha=$(git rev-parse HEAD)
-      last=$(GH pr list --head "$BRANCH" --state all --json number,url,state,headRefOid \
-        --jq 'sort_by(.number) | reverse | .[0] // empty' 2>/dev/null || echo "")
+      last=$(GH api "repos/{owner}/{repo}/pulls?state=all&head={owner}:$BRANCH&per_page=100" \
+        --jq '[.[] | {number, url: .html_url, headRefOid: .head.sha, state: (if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end)}] | sort_by(.number) | reverse | .[0] // empty' 2>/dev/null || echo "")
       if [ -n "$last" ]; then
         fields=$(printf '%s' "$last" | python3 -c '
 import json, sys
@@ -159,7 +159,7 @@ print(d.get("headRefOid",""), d.get("state",""), d.get("url",""), d.get("number"
               echo "branch already merged via $pr (no new commits since) — not opening a duplicate" >&2
               ;;
             CLOSED)
-              if GH pr reopen "$last_num" >/dev/null 2>&1; then
+              if GH api -X PATCH "repos/{owner}/{repo}/pulls/$last_num" -f state=open >/dev/null 2>&1; then
                 pr="$last_url"
                 echo "reopened $pr (no new commits since it was closed)" >&2
               fi
@@ -173,12 +173,12 @@ print(d.get("headRefOid",""), d.get("state",""), d.get("url",""), d.get("number"
       title="$BRANCH"
       if [ -n "$msg" ]; then title="${msg%%$'\n'*}"; fi
       body=$(printf 'Automated finish of `%s` via the reset skill.\n\n%s' "$BRANCH" "$(_pr_footer)")
-      if ! out=$(GH pr create --base "$base" --head "$BRANCH" --title "$title" --body "$body" 2>&1); then
-        echo "reset: gh pr create failed for $BRANCH -> $base: $out" >&2
+      if ! out=$(GH api -X POST "repos/{owner}/{repo}/pulls" -f base="$base" -f head="$BRANCH" -f title="$title" -f body="$body" --jq .html_url 2>&1); then
+        echo "reset: creating the pull request for $BRANCH -> $base failed: $out" >&2
         echo "  Repair: run 'gh auth status', then 'gh pr create --base $base --head $BRANCH' by hand." >&2
         exit 1
       fi
-      pr=$(printf '%s\n' "$out" | grep -Eo 'https://github.com/[^ ]+/pull/[0-9]+' | head -1 || true)
+      pr="$out"
     fi
     echo "PR_URL=${pr:-none}"
     echo "WORKTREE=$WORKTREE"

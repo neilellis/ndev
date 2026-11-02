@@ -175,7 +175,7 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
     if (clock.now < fault.rateLimitUntil) {
       return { value: { exitCode: 1, stdout: '', stderr: 'HTTP 403: API rate limit exceeded for user ID 1.', isStdoutTruncated: false, isStderrTruncated: false } }
     }
-    const checkRuns = /^gh api repos\/acme\/widgets\/commits\/head-(\d+)-\d+\/check-runs/.exec(args)
+    const checkRuns = /^gh api repos\/acme\/widgets\/commits\/head-(\d+)-\d+\/check-runs.* --jq /.exec(args)
     if (checkRuns) return ok(fault.storage[Number(checkRuns[1])] ? '901 https://github.com/acme/widgets/actions/runs/77/job/901\n' : '')
     if (/^gh api repos\/acme\/widgets\/check-runs\/901\/annotations/.test(args)) {
       return ok('Failed to CreateArtifact: Artifact storage quota has been hit. Unable to upload any new artifacts. Usage is recalculated every 6-12 hours.\n')
@@ -191,30 +191,52 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
     }
     if (fault.outage > 0) {
       fault.outage--
-      return { value: { exitCode: 1, stdout: '', stderr: 'HTTP 502: Bad Gateway (https://api.github.com/graphql)', isStdoutTruncated: false, isStderrTruncated: false } }
+      return { value: { exitCode: 1, stdout: '', stderr: 'HTTP 502: Bad Gateway (https://api.github.com/repos/acme/widgets/pulls)', isStdoutTruncated: false, isStderrTruncated: false } }
     }
-    const refused = /^gh pr merge (\d+)/.exec(args)
-    if (refused && fault.mergeError[Number(refused[1])]) {
-      merged.push(args)
-      return { value: { exitCode: 1, stdout: '', stderr: fault.mergeError[Number(refused[1])]!, isStdoutTruncated: false, isStderrTruncated: false } }
+    // The REST answers the plugin reads; GraphQL (gh pr list, gh pr view, gh repo view, gh pr merge) is never used.
+    if (/^gh (pr|repo) /.test(args) && !args.startsWith('gh run ')) throw new Error(`GraphQL call: ${args}`)
+    if (args === 'gh api repos/{owner}/{repo}') {
+      return ok(JSON.stringify({ full_name: REPO.nameWithOwner, default_branch: REPO.defaultBranchRef.name, allow_merge_commit: REPO.mergeCommitAllowed, allow_squash_merge: REPO.squashMergeAllowed, allow_rebase_merge: REPO.rebaseMergeAllowed }))
     }
-    if (args.startsWith('gh repo view')) return ok(JSON.stringify(REPO))
+    if (args === 'gh api user --jq .login') return ok('me')
     if (args.startsWith('gh api repos/acme/widgets/compare/')) return ok('behind')
-    const merge = /^gh pr merge (\d+)/.exec(args)
+    const rest = (p: Pr) => ({
+      number: p.number,
+      title: p.title,
+      state: p.state === 'OPEN' ? 'open' : 'closed',
+      draft: p.isDraft,
+      merged: p.state === 'MERGED',
+      mergeable: p.mergeable === 'UNKNOWN' ? null : p.mergeable === 'MERGEABLE',
+      mergeable_state: p.mergeStateStatus.toLowerCase(),
+      merge_commit_sha: p.mergeCommit?.oid ?? null,
+      created_at: p.createdAt,
+      user: { login: 'me' },
+      head: { ref: p.headRefName, sha: p.headRefOid },
+    })
+    const merge = /^gh api --method PUT repos\/acme\/widgets\/pulls\/(\d+)\/merge -f merge_method=(\w+)$/.exec(args)
     if (merge) {
-      merged.push(args)
+      merged.push(`gh pr merge ${merge[1]} --${merge[2]}`)
+      if (fault.mergeError[Number(merge[1])]) return { value: { exitCode: 1, stdout: '', stderr: fault.mergeError[Number(merge[1])]!, isStdoutTruncated: false, isStderrTruncated: false } }
       const p = prs.find(x => x.number === Number(merge[1]))!
       Object.assign(p, { state: 'MERGED', mergeCommit: { oid: `abcdef${p.number}` } })
-      return ok('')
+      return ok('{}')
     }
-    const commits = /^gh pr view (\d+) --json commits/.exec(args)
+    const commits = /^gh api repos\/acme\/widgets\/pulls\/(\d+)\/commits/.exec(args)
     if (commits) {
       commitReads.count++
       return ok((signed[Number(commits[1])] ?? []).join('\n'))
     }
-    const view = /^gh pr view (\d+)/.exec(args)
-    if (view) return ok(JSON.stringify(prs.find(p => p.number === Number(view[1]))))
-    return ok(JSON.stringify(prs))
+    const statuses = /^gh api repos\/acme\/widgets\/commits\/(head-(\d+)-\d+)\/status/.exec(args)
+    if (statuses) return ok(JSON.stringify({ statuses: [] }))
+    const runsOf = /^gh api repos\/acme\/widgets\/commits\/(head-(\d+)-\d+)\/check-runs/.exec(args)
+    if (runsOf) {
+      const p = prs.find(x => x.headRefOid === runsOf[1])
+      return ok(JSON.stringify({ check_runs: (p?.statusCheckRollup ?? []).map(c => ({ name: c.name, status: c.status.toLowerCase(), conclusion: c.conclusion ? c.conclusion.toLowerCase() : null })) }))
+    }
+    const one = /^gh api repos\/acme\/widgets\/pulls\/(\d+)$/.exec(args)
+    if (one) return ok(JSON.stringify(rest(prs.find(p => p.number === Number(one[1]))!)))
+    if (args.startsWith('gh api repos/acme/widgets/pulls?')) return ok(JSON.stringify(/page=1$/.test(args) ? prs.map(rest) : []))
+    return ok('')
   })
   return { sent, prompts, merged, clock, fault, reruns, calls, commitReads, timer, toasts, signed, registry, titles, orca, listing }
 }
@@ -1079,7 +1101,7 @@ test('a merge GitHub keeps refusing is retried a minute apart, then recorded as 
   await until(async () => (await ui.find({ type: 'Text', text: /^Finished/ })) !== undefined)
   expect((await ui.find({ type: 'Text', text: /#185/ }))?.text).toMatch(/merged\s+#185/)
   expect((await ui.find({ type: 'Text', text: /#190/ }))?.text).toMatch(/blocked\s+#190/)
-  expect((await ui.find({ type: 'Text', text: /refused the merge/ }))?.text).toMatch(/refused the merge 3 times: gh pr merge 190 exited 1/)
+  expect((await ui.find({ type: 'Text', text: /refused the merge/ }))?.text).toMatch(/refused the merge 3 times: gh api PUT repos\/acme\/widgets\/p/)
   await ui.unmount()
 })
 

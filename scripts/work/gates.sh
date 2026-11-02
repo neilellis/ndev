@@ -39,12 +39,12 @@ GH() { if [ "${GH_USE_KEYRING:-0}" = "1" ]; then env -u GITHUB_TOKEN gh "$@"; el
 
 repo="${GH_REPO:-}"
 if [ -z "$repo" ]; then
-  repo="$(GH repo view --json nameWithOwner -q .nameWithOwner 2>&1)" \
+  repo="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" \
     || die2 "cannot find the GitHub repository: $repo. Repair: run inside the checkout, set GH_REPO=OWNER/REPO, or run 'gh auth login'"
 fi
 
 body_err="$(mktemp)"; trap 'rm -f "$body_err"' EXIT
-body=$(GH pr view "$pr" --repo "$repo" --json body --jq '.body' 2>"$body_err") \
+body=$(GH api "repos/$repo/pulls/$pr" --jq '.body // ""' 2>"$body_err") \
   || die2 "could not read the body of PR #${pr} in ${repo}: $(cat "$body_err"). Repair: check 'gh auth status' or set GH_USE_KEYRING=1"
 
 files=$(git ls-tree -r --name-only "$ref" 2>&1) \

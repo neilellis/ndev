@@ -58,7 +58,7 @@ command -v gh >/dev/null 2>&1 || die "the GitHub CLI (gh) is not installed. Fix:
 GH() { if [ -n "$KEYRING" ]; then env -u GITHUB_TOKEN gh "$@"; else gh "$@"; fi; }
 
 if [ -z "$REPO" ]; then
-  REPO="$(GH repo view --json nameWithOwner -q .nameWithOwner 2>&1)" ||
+  REPO="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" ||
     die "could not find the repo from the current directory: $REPO. Fix: run inside the checkout, or pass --repo OWNER/NAME"
 fi
 
