@@ -172,6 +172,10 @@ export async function stopWorktreeStacks($: EngineInterface, reason: string, pro
       $.ui.toast(`ndev: the stop of ${what} did not start: worktree-env.sh exited ${ran.exitCode}: ${output}. Repair: bash ${script} stop-all --worktree ${dir} --on-end ${policy}`)
     }
   } catch (error) {
-    $.ui.toast(`ndev: the resources of ${dir} were not stopped: ${String(error instanceof Error ? error.message : error).slice(0, 300)}. Repair: bash ${script} stop-all --worktree ${dir}`)
+    // An error that names its own repair (a version 1 record names migrate) gets no second one:
+    // stop-all would refuse the same record.
+    const detail = String(error instanceof Error ? error.message : error).slice(0, 300)
+    const repair = detail.includes('Repair:') ? '' : `. Repair: bash ${script} stop-all --worktree ${dir}`
+    $.ui.toast(`ndev: the resources of ${dir} were not stopped: ${detail}${repair}`)
   }
 }

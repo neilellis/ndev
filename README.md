@@ -330,10 +330,18 @@ pnpm --dir apps/docs dev --port 3000 > /tmp/docs-dev.log 2>&1 &
   and that process is never killed. A mismatch keeps the entry with `lastStop`, prints the
   recorded and the actual command, and names the repair: find the server by its port with
   `lsof -nP -iTCP:<port> -sTCP:LISTEN`, then run `remove-dev-server`. The exit code is 1.
-- `stop-all` sends SIGTERM to the server's process group when the server leads one, so its child
-  processes stop too. Otherwise it signals the pid only. After 10 s
-  (`NDEV_DEV_SERVER_STOP_TIMEOUT_S`) it sends SIGKILL. A server whose pid no longer runs has
-  already ended: its entry goes, and the log says so.
+- A server that changes its process title after it starts does not match its record, so it is
+  never killed. Stop it by its port, then run `remove-dev-server`.
+- `stop-all` sends SIGTERM to the server's process group when the server leads one. It also
+  signals each child process of the server, and their children. It finds them before it sends a
+  signal, so they also stop when the server does not lead a group (for example `pnpm dev &` in a
+  script). After 10 s (`NDEV_DEV_SERVER_STOP_TIMEOUT_S`) it sends SIGKILL to each process that
+  still runs.
+- When the server's pid no longer runs but processes of its group still run, `stop-all` stops that
+  group. When nothing of it runs, the server has already ended: its entry goes, and the log says so.
+- When a signal fails, the stored repair is `stop-all --on-end keep-running` (which checks the pid
+  again), then the `lsof` search by port. It is never a bare `kill` of the pid, because a later
+  session can find that pid given to another process.
 - Each change to the file holds a lock, `<git dir>/ndev-worktree.lock`, so two commands do not
   overwrite each other. A lock whose process is gone is taken over. A command waits at most 10 s
   (`NDEV_WORKTREE_LOCK_WAIT_MS`), then exits 2 and names the lock to remove.
@@ -341,7 +349,9 @@ pnpm --dir apps/docs dev --port 3000 > /tmp/docs-dev.log 2>&1 &
   `worktree-env.sh stop-all --background` with the policy from `.neil-dev.json`
   (`worktreeStacks.onSessionEnd`). The stop runs detached, so a slow `supabase stop` does not
   hold up the exit. It logs to `<git common dir>/ndev-worktree-stop/<worktree name>.log`, so the
-  log stays when the worktree is removed.
+  log stays when the worktree is removed. Each run ends its log with its exit code.
+- `stop-all --background` reads the file before it detaches. A bad file exits 2 at once, so the
+  hook shows the error, not only the log.
 - The dev servers stop at each session end. With `keep-running` the hook runs `stop-all` with
   `--on-end keep-running`, which stops only the dev servers.
 - The hook acts only on the session's own worktree, and only on the resources its file lists.
@@ -358,7 +368,8 @@ pnpm --dir apps/docs dev --port 3000 > /tmp/docs-dev.log 2>&1 &
 - If `.neil-dev.json` has an error, the hook stops the dev servers but not the stacks. A message
   names the error and the repair command.
 - If `.neil-dev.worktree.json` is version 1 or has an unknown shape, the hook stops nothing. The
-  session-start message names the problem and the repair.
+  session-start message and the session-end message name the problem and the repair. For version 1
+  the repair is `migrate`.
 
 Run the hooks module's tests with `claude plugin test .`, and the script's tests with
 `node --test scripts/work/tests/worktree_env.test.mjs`.

@@ -252,8 +252,13 @@ test('a version 1 record is refused: the section and the toast name the migrate 
   expect(text).toContain('version 1')
   expect(text).toContain('worktree-env.sh migrate --worktree /proj')
   expect(toasts.join(' ')).toContain('migrate --worktree /proj')
+  const before = toasts.length
   await end($)
   expect(stops(ran)).toHaveLength(0)
+  // stop-all would refuse the same record, so the end toast names only the migrate repair.
+  const endToasts = toasts.slice(before).join(' ')
+  expect(endToasts).toContain('migrate --worktree /proj')
+  expect(endToasts).not.toContain('stop-all')
 })
 
 test('a record of an unknown shape is refused and named', async ($, on) => {

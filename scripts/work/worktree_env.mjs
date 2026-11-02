@@ -477,43 +477,87 @@ function stopOne(stack, policy, root) {
 const sameEntry = (a, b) => same(a, b.kind, b.projectId) && a.addedAt === b.addedAt
 const sameServer = (a, b) => a !== undefined && a.pid === b.pid && a.started === b.started
 
-// The live (not zombie) pids of a process group.
-function groupMembers(pgid) {
-  const r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'pgid=', '-o', 'stat='], { encoding: 'utf8' })
-  if (r.error || r.status !== 0) throw new Fail(2, `ps -A exited ${r.status ?? r.error?.message}: ${(r.stderr ?? '').trim()}`)
+// The live (not zombie) processes, each with its parent pid and process group.
+function liveProcesses() {
+  const r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'stat='], { encoding: 'utf8' })
+  if (r.error || r.status !== 0) throw new Fail(2, `worktree-env: ps -A exited ${r.status ?? r.error?.message}: ${(r.stderr ?? '').trim()}`)
   return r.stdout.split('\n').map(l => l.trim().split(/\s+/))
-    .filter(f => f.length === 3 && Number(f[1]) === pgid && !f[2].startsWith('Z')).map(f => Number(f[0]))
+    .filter(f => f.length === 4 && !f[3].startsWith('Z'))
+    .map(([pid, ppid, pgid]) => ({ pid: Number(pid), ppid: Number(ppid), pgid: Number(pgid) }))
 }
 
-// Whether the server still runs: its process group when it leads one, else its pid.
-const serverRuns = (pid, group) => (group ? groupMembers(pid).length > 0 : processInfo(pid)?.zombie === false)
+// The live descendants of a pid: its children, their children, and so on.
+function descendants(pid, all) {
+  const found = []
+  const queue = [pid]
+  while (queue.length > 0) {
+    const parent = queue.shift()
+    for (const p of all) {
+      if (p.ppid === parent && !found.includes(p.pid)) {
+        found.push(p.pid)
+        queue.push(p.pid)
+      }
+    }
+  }
+  return found
+}
 
-function waitGone(pid, group, seconds) {
+// A stop's targets: { group } is a process group to signal as a whole, { pids } the processes to
+// signal one by one. The server's descendants are read before any signal, because a child whose
+// parent ends is given to pid 1 and can no longer be found from the server's pid.
+const targetsRun = t => liveProcesses().some(p => p.pgid === t.group || t.pids.includes(p.pid))
+const killText = (t, sig) => `kill -${sig} ${[...(t.group === undefined ? [] : [-t.group]), ...t.pids].join(' ')}`
+
+function waitGone(t, seconds) {
   const deadline = Date.now() + seconds * 1000
-  while (serverRuns(pid, group)) {
+  while (targetsRun(t)) {
     if (Date.now() > deadline) return false
     pause(100)
   }
   return true
 }
 
-// Sends a signal; returns the error text, or undefined when it was sent or nothing had the pid.
-function signal(target, sig) {
-  try {
-    process.kill(target, sig)
-    return undefined
-  } catch (error) {
-    return error.code === 'ESRCH' ? undefined : `${error.code}: ${error.message}`
+// Signals each target. Returns the errors, ignoring a target that has already ended (ESRCH).
+function signalAll(t, sig) {
+  const errors = []
+  for (const target of [...(t.group === undefined ? [] : [-t.group]), ...t.pids]) {
+    try {
+      process.kill(target, sig)
+    } catch (error) {
+      if (error.code !== 'ESRCH') errors.push(`${target}: ${error.code}`)
+    }
   }
+  return errors.join(', ')
+}
+
+// SIGTERM, then SIGKILL after the stop timeout. A signal error counts only while a target still
+// runs: macOS refuses (EPERM) to signal a group whose members have all ended but are not yet reaped.
+function stopTargets(name, t, detail) {
+  const term = killText(t, 'TERM')
+  const termError = signalAll(t, 'SIGTERM')
+  if (termError && targetsRun(t)) return { ok: false, command: term, output: `${term} failed: ${termError}` }
+  if (waitGone(t, SERVER_STOP_TIMEOUT_S)) return { ok: true, note: `stopped dev server ${name}${detail}: ${term}` }
+  const kill = killText(t, 'KILL')
+  const killError = signalAll(t, 'SIGKILL')
+  if (killError && targetsRun(t)) return { ok: false, command: kill, output: `${kill} failed after ${SERVER_STOP_TIMEOUT_S} s of SIGTERM: ${killError}` }
+  if (waitGone(t, 2)) return { ok: true, note: `stopped dev server ${name}${detail}: ${term}, then SIGKILL after ${SERVER_STOP_TIMEOUT_S} s` }
+  return { ok: false, command: kill, output: `${kill}: a process still runs 2 s after SIGKILL` }
 }
 
 // Stops one dev server, but only while its pid still runs the recorded command from the recorded
 // start time: a pid that the system gave to another process is never killed. A server that leads
-// its process group (as a dev server started with setsid or in the background of a script does)
-// is stopped with its whole group, so its child processes stop too.
+// its process group (as one started with setsid does) is stopped with its whole group. The
+// server's descendants are stopped too, also when it does not lead a group (as with `pnpm dev &`
+// in a script, which shares the script's group).
 function stopServer(name, d) {
   const info = processInfo(d.pid)
-  if (info === undefined || info.zombie) return { ok: true, note: `pid ${d.pid} no longer runs, so dev server ${name} already ended` }
+  if (info === undefined || info.zombie) {
+    // The system does not give a pid to a new process while a process group of that id has
+    // members, so live members of group <pid> are the children of the server that led it.
+    const left = liveProcesses().filter(p => p.pgid === d.pid)
+    if (left.length === 0) return { ok: true, note: `pid ${d.pid} no longer runs, so dev server ${name} already ended` }
+    return stopTargets(name, { group: d.pid, pids: [] }, ` (its leader pid ${d.pid} had ended; ${left.length} process(es) of its group still ran)`)
+  }
   const drift = Math.abs(Date.parse(info.started) - Date.parse(d.started))
   if (info.command !== d.command || drift > START_TOLERANCE_MS) {
     return {
@@ -522,17 +566,11 @@ function stopServer(name, d) {
       output: `pid ${d.pid} now runs "${info.command}" (started ${info.started}), not the recorded "${d.command}" (started ${d.started}). The pid was not killed: the recorded server ended, or it runs under another pid.`,
     }
   }
-  const group = info.pgid === d.pid
-  const target = group ? -d.pid : d.pid
-  const term = `kill -TERM ${target}`
-  const termError = signal(target, 'SIGTERM')
-  if (termError) return { ok: false, command: term, output: `${term} failed: ${termError}` }
-  if (waitGone(d.pid, group, SERVER_STOP_TIMEOUT_S)) return { ok: true, note: `stopped dev server ${name}: ${term}` }
-  const kill = `kill -KILL ${target}`
-  const killError = signal(target, 'SIGKILL')
-  if (killError) return { ok: false, command: kill, output: `${kill} failed after ${SERVER_STOP_TIMEOUT_S} s of SIGTERM: ${killError}` }
-  if (waitGone(d.pid, group, 2)) return { ok: true, note: `stopped dev server ${name}: ${term}, then SIGKILL after ${SERVER_STOP_TIMEOUT_S} s` }
-  return { ok: false, command: kill, output: `pid ${d.pid}${group ? ' or its process group' : ''} still runs 2 s after SIGKILL` }
+  const all = liveProcesses()
+  const group = info.pgid === d.pid ? d.pid : undefined
+  const inGroup = pid => group !== undefined && all.find(p => p.pid === pid)?.pgid === group
+  const pids = [d.pid, ...descendants(d.pid, all)].filter(pid => !inGroup(pid))
+  return stopTargets(name, { group, pids }, '')
 }
 
 // Stops every listed dev server. Returns the number that did not stop; each keeps its entry with
@@ -540,6 +578,19 @@ function stopServer(name, d) {
 function stopServers(root, servers, at) {
   let failed = 0
   const keepRecord = existsSync(root)
+  // A change that fails (a lock held too long) is printed and counted, and the other servers and
+  // the stacks are still stopped.
+  const record = (name, edit, what) => {
+    if (!keepRecord) return true
+    try {
+      change(root, edit)
+      return true
+    } catch (error) {
+      if (!(error instanceof Fail)) throw error
+      console.error(`worktree-env: ${at} dev server ${name} ${what}, but ${join(root, FILE)} was not updated: ${error.message}`)
+      return false
+    }
+  }
   for (const [name, d] of Object.entries(servers)) {
     let r
     try {
@@ -550,25 +601,25 @@ function stopServers(root, servers, at) {
     }
     if (r.ok) {
       console.log(`worktree-env: ${at} ${r.note}`)
-      if (keepRecord) {
-        change(root, res => {
-          if (!sameServer(res['dev-servers'][name], d)) return res
-          const { [name]: _stopped, ...rest } = res['dev-servers']
-          return { ...res, 'dev-servers': rest }
-        })
-      }
+      const removed = record(name, res => {
+        if (!sameServer(res['dev-servers'][name], d)) return res
+        const { [name]: _stopped, ...rest } = res['dev-servers']
+        return { ...res, 'dev-servers': rest }
+      }, 'stopped')
+      if (!removed) failed++
       continue
     }
     failed++
     const remove = `${WRAPPER} remove-dev-server --name ${name} --worktree ${root}`
+    const byPort = `lsof -nP -iTCP:${d.port} -sTCP:LISTEN`
+    // The repair is read in a later session, when the pid can belong to another process, so it is
+    // never a bare kill of the pid: stop-all checks the pid again before it signals.
     const repair = r.command
-      ? `${r.command.replace('-TERM', '-KILL')}; if that fails, find the server by its port: lsof -nP -iTCP:${d.port} -sTCP:LISTEN`
-      : `find the server by its port, lsof -nP -iTCP:${d.port} -sTCP:LISTEN, and stop that process`
-    if (keepRecord) {
-      change(root, res => (sameServer(res['dev-servers'][name], d)
-        ? { ...res, 'dev-servers': { ...res['dev-servers'], [name]: { ...res['dev-servers'][name], lastStop: { at, command: r.command, output: r.output, repair } } } }
-        : res))
-    }
+      ? `run ${WRAPPER} stop-all --on-end keep-running --worktree ${root}, which checks the pid again; if the server still runs, find it by its port with ${byPort} and stop that process`
+      : `find the server by its port with ${byPort} and stop that process`
+    record(name, res => (sameServer(res['dev-servers'][name], d)
+      ? { ...res, 'dev-servers': { ...res['dev-servers'], [name]: { ...res['dev-servers'][name], lastStop: { at, command: r.command, output: r.output, repair } } } }
+      : res), 'did not stop')
     console.error([
       `worktree-env: ${at} dev server ${name} (pid ${d.pid}, port ${d.port}) did not stop.`,
       `  recorded command: ${d.command} (in ${d.cwd}, started ${d.started})`,
@@ -587,7 +638,12 @@ function stopAll(values) {
   // A folder that is gone (a worktree removed after the session) is used as given.
   const given = values.worktree ? resolve(values.worktree) : process.cwd()
   const root = isDir(given) ? worktreeRoot(given) : given
-  if (values.background) return background(values, policy, root)
+  if (values.background) {
+    // Check the record before detaching, so a bad file fails where the caller sees it, not only
+    // in the background log.
+    if (isDir(root)) readRecord(root)
+    return background(values, policy, root)
+  }
   const file = join(root, FILE)
   const at = new Date().toISOString()
   const { docker: stacks, 'dev-servers': servers } = readRecord(root).resources
@@ -706,10 +762,17 @@ function main(argv) {
   }
 }
 
+const args = process.argv.slice(2)
 try {
-  process.exitCode = main(process.argv.slice(2))
+  process.exitCode = main(args)
 } catch (error) {
   if (!(error instanceof Fail)) throw error
   console.error(error.message)
   process.exitCode = error.code
+}
+// A stop in the background has only its log: end each run there with its exit code.
+if (args[0] === 'stop-all' && !args.includes('--background')) {
+  const line = `worktree-env: stop-all ended with exit code ${process.exitCode}`
+  if (process.exitCode === 0) console.log(line)
+  else console.error(line)
 }

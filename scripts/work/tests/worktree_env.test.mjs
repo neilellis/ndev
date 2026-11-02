@@ -450,7 +450,16 @@ test('an unknown shape is refused with exit 2 and names the bad part', () => {
 // Dev servers. Each test server is a real `sleep` in its own process group, so its command line
 // is known ("sleep <seconds>") without asking ps. Every one is killed after the tests.
 const started = []
+// Processes that do not lead their own group: the cleanup kills each by pid, never by group.
+const loose = []
 after(() => {
+  for (const pid of loose) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error
+    }
+  }
   for (const pid of started) {
     try {
       process.kill(-pid, 'SIGKILL')
@@ -653,6 +662,8 @@ test('a pid that now runs another command is not killed: the entry stays with la
   const entry = servers(p).docs
   assert.match(entry.lastStop.output, /node next dev/)
   assert.match(entry.lastStop.repair, /lsof/)
+  // The repair is read in a later session, when the pid can belong to another process.
+  assert.doesNotMatch(entry.lastStop.repair, /\bkill\b/)
   assert.match(entry.lastStop.at, /^\d{4}-/)
 })
 
@@ -680,6 +691,50 @@ test('a dev server whose pid no longer runs is removed and reported as already e
   assert.equal(r.status, 0, r.out)
   assert.match(r.out, /docs.*already ended/)
   assert.deepEqual(servers(p), {})
+})
+
+// As the documented recipe starts one (`pnpm dev &` in a script): the server shares the shell's
+// process group, and it is a wrapper that dies on SIGTERM without passing it to its child.
+test('a dev server that does not lead its process group: the children it started stop too', () => {
+  const p = project()
+  const childFile = join(p.base, 'loose-child.pid')
+  const wrapper = spawn('bash', ['-c', `sleep 300 & echo $! > ${childFile}; wait`], { stdio: 'ignore' })
+  loose.push(wrapper.pid)
+  for (let i = 0; i < 200 && !existsSync(childFile); i++) spawnSync('sleep', ['0.05'])
+  const child = Number(readFileSync(childFile, 'utf8').trim())
+  loose.push(child)
+  assert.equal(addServer(p, 'docs', { pid: wrapper.pid }).status, 0)
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  assert.ok(!isRunning(child) || isZombie(child), `the server's child ${child} still runs`)
+  assert.deepEqual(servers(p), {})
+})
+
+test('a dev server whose group leader ended while its children run: the rest of the group is stopped', () => {
+  const p = project()
+  const s = groupServer(p)
+  addServer(p, 'docs', s)
+  process.kill(s.pid, 'SIGKILL')
+  for (let i = 0; i < 40 && isRunning(s.pid) && !isZombie(s.pid); i++) spawnSync('sleep', ['0.05'])
+  assert.ok(isRunning(s.child), 'the test needs the child to outlive its leader')
+  const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
+  assert.equal(r.status, 0, r.out)
+  assert.ok(!isRunning(s.child) || isZombie(s.child), `the child ${s.child} still runs`)
+  assert.doesNotMatch(r.out, /already ended/)
+  assert.deepEqual(servers(p), {})
+})
+
+test('stop-all --background checks the record before it detaches, so a bad entry fails where the hook sees it', () => {
+  const p = project()
+  const s = server()
+  addServer(p, 'docs', s)
+  const bad = record(p)
+  bad.resources['dev-servers'].docs.pid = String(s.pid)
+  writeRecord(p, bad)
+  const r = run(p, p.base, 'stop-all', '--background', '--worktree', p.worktree)
+  assert.equal(r.status, 2, r.out)
+  assert.match(r.stderr, /resources\.dev-servers\.docs\.pid/)
+  assert.ok(isRunning(s.pid))
 })
 
 test('stop-all with only dev servers listed stops them', () => {
