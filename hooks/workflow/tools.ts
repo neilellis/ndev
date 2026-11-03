@@ -1437,7 +1437,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
       const nextAt = Math.min(deadline, (await $.clock.now()) + spec.period * 1000)
       for (let now = await $.clock.now(); now < nextAt; now = await $.clock.now()) {
         const secs = Math.min(WAIT_SLICE_S, (nextAt - now) / 1000)
-        const pause = await run($, ['sleep', String(secs)], { cwd: root, timeoutMs: (secs + 10) * 1000 })
+        const pause = await run($, ['sleep', String(secs)], { cwd: root, timeoutMs: Math.ceil((secs + 10) * 1000) })
         if (pause.exitCode !== 0) throw new Error(`sleep ${secs} exited ${pause.exitCode}: ${pause.stderr.trim().slice(0, 300)}`)
         if (limits.signal.aborted || !(await waitGoesOn($, root, id))) break
       }

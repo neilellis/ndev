@@ -37,7 +37,7 @@ const engine = (on: On, opts: Opts = {}) => {
   const s = {
     now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
-    clockSleeps: 0, staleSaves: 0, sleepAdvances: false, immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
+    clockSleeps: 0, staleSaves: 0, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -105,7 +105,10 @@ const engine = (on: On, opts: Opts = {}) => {
   on('process.run', (_, e) => {
     const a = e.argv.map(String)
     const line = a.join(' ')
-    if (a[0] === 'sleep') return (async () => { await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000; return ok() })() as never
+    // The host refuses a timeout that is not a whole number of ms, as $.process.run does in a session.
+    const limit = e.init?.timeoutMs
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 600_000)) throw new Error('ndev: process.run: init.timeoutMs is a whole number of ms, 1 to 600000 (host check)')
+    if (a[0] === 'sleep') return (async () => { await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
       return (async () => {
@@ -1841,6 +1844,19 @@ test('waitForSubAgent waits while the agent is listed as busy', async ($, on) =>
   const r = await call
   expect(r.isError).toBe(false)
   expect(r.text).toContain('a1')
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('waitForSubAgent holds through a pause of part of a second', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  // A first slice that runs 181 ms late leaves 0.819 s of the period: (0.819 + 10) * 1000 is not a whole number.
+  w.s.sleepDrift = [181]
+  Object.defineProperty(w.s, 'agents', { get: () => [{ id: 'a1', status: w.s.now >= 5000 ? 'completed' : 'running' }] })
+  const r = await tool($, 'waitForSubAgent', { claude_agent_id: 'a1' })
+  expect(r.text).toContain('ended after 2 checks')
+  expect(r.isError).toBe(false)
   expect(w.state()?.state).toBe('developing')
 })
 
