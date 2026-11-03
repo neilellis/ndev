@@ -104,6 +104,8 @@ const workflowIssue = atom({ plugin: 'ndev', key: 'workflowIssue' } as const, nu
 const workflowDeclined = atom({ plugin: 'ndev', key: 'workflowDeclined' } as const, false, { shape: 'workflow-declined-1' })
 // The worktrees of the agents that followUp started: each commits there through checkpoint.
 const followUpWorktrees = atom({ plugin: 'ndev', key: 'workflowFollowUpWorktrees' } as const, [] as string[], { shape: 'workflow-follow-up-worktrees-1' })
+// The work skills that this session's context holds. A compaction clears them, so started loads them again.
+const workSkillsLoaded = atom({ plugin: 'ndev', key: 'workflowSkillsLoaded' } as const, [] as string[], { shape: 'workflow-skills-loaded-1' })
 const doneWaitsFor = atom({ plugin: 'ndev', key: 'workflowDoneWaitsFor' } as const, null as string | null, { shape: 'workflow-done-waits-1' })
 export async function boundRoot($: EngineInterface): Promise<string | null> {
   return read($, workflowRoot)
@@ -569,6 +571,27 @@ export async function setDeclined($: EngineInterface, value: boolean): Promise<v
   await update($, workflowDeclined, () => value)
 }
 
+// The method of the mode, for the answer of started. The board skills (work-light-auto, work-heavy-auto)
+// dispatch other agents, and an agent on one issue does not, so steering does not change the choice.
+// A skill that cannot be read does not stop the work: the workflow has already moved, and the note names the repair.
+async function workSkill($: EngineInterface, mode: Facts['mode']): Promise<string> {
+  const name = mode === 'heavy' ? 'work-heavy' : 'work-light'
+  if ((await read($, workSkillsLoaded)).includes(name)) return ''
+  const folder = `${$.plugin.root}/skills/${name}`
+  const path = `${folder}/SKILL.md`
+  const notLoaded = (why: string) => `The ${name} skill was not loaded: ${path} ${why}. Repair: call the Skill tool with ndev:${name}.`
+  let file: string
+  try {
+    file = await $.fs.read(path)
+  } catch (error) {
+    return notLoaded(`could not be read: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const body = file.replace(/^---\n[\s\S]*?\n---\n/, '').trim()
+  if (!body) return notLoaded('has no text')
+  await update($, workSkillsLoaded, loaded => [...loaded, name])
+  return `The ${name} skill follows. Develop by it. Its relative paths start at ${folder}.\n\n${body.replaceAll('${CLAUDE_PLUGIN_ROOT}', $.plugin.root)}`
+}
+
 async function started($: EngineInterface, c: Ctx): Promise<string> {
   if (await read($, workflowDeclined)) throw new Refuse('Refused: the human chose to work without the workflow in this session. Do the work without these tools, or ask the human to type /flow on.')
   const { args, project } = c
@@ -730,7 +753,9 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     notes.push(await resumeReview($, record, facts))
     await saveWorkflow($, record)
   }
-  return answer($, record, facts, notes)
+  const skill = await workSkill($, facts.mode)
+  const reply = await answer($, record, facts, notes)
+  return skill ? `${reply}\n\n${skill}` : reply
 }
 
 const PLANS = /<!-- ndev:plan:(\d+) -->[\s\S]*?<!-- \/ndev:plan:\1 -->\n?/g
@@ -1756,6 +1781,15 @@ async function reachesWorkflowRepo($: EngineInterface, wf: Workflow, command: st
     if (!common || common === own) return true
   }
   return false
+}
+
+// A compaction takes the loaded skill out of the context, so the next started loads it again.
+export const workflowSkillReset = (on: Parameters<Register>[0]) => {
+  on('session.compact', async ($, e, next) => {
+    const result = await next(e)
+    if (!e.agentId && !('skip' in result)) await update($, workSkillsLoaded, () => [])
+    return result
+  })
 }
 
 export const workflowGitGuard = (on: Parameters<Register>[0], getProject: () => LoadedConfig | undefined) => {

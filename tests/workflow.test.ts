@@ -43,7 +43,7 @@ const pull = (over: Record<string, unknown> = {}) => ({
 const CHECKS = (...runs: { name: string; status?: string; conclusion: string | null }[]) => ({ check_runs: runs.map(r => ({ status: 'completed', ...r })) })
 
 type Opts = {
-  refuseCommand?: RegExp; wf?: Record<string, unknown> | null; config?: Record<string, unknown>; pr?: Record<string, unknown>; checks?: unknown; scripts?: boolean; files?: Record<string, string>; guide?: boolean; main?: boolean; names?: string[] }
+  refuseCommand?: RegExp; wf?: Record<string, unknown> | null; config?: Record<string, unknown>; pr?: Record<string, unknown>; checks?: unknown; scripts?: boolean; skillFiles?: boolean; files?: Record<string, string>; guide?: boolean; main?: boolean; names?: string[] }
 
 // A fake engine: a linked worktree at /proj, a simulated git and a simulated GitHub. Only the
 // process and file boundaries are fake: the plugin's tools, machine and watchdog all really run.
@@ -114,6 +114,8 @@ const engine = (on: On, opts: Opts = {}) => {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/neil' : e.name === 'ORCA_WORKSPACE_ID' && s.orcaOn ? 'workspace-1' : undefined }) as never)
   const guide = (path: string) => {
     if (path.endsWith('/kb/workflow.md')) return opts.guide !== false ? '# The guide' : undefined
+    const skill = /\/skills\/(work-light|work-heavy)\/SKILL\.md$/.exec(path)
+    if (skill && opts.skillFiles !== false) return `---\nname: ${skill[1]}\ndescription: "the listing"\n---\n\n# The ${skill[1]} method\n\nRun \`\${CLAUDE_PLUGIN_ROOT}/scripts/x.sh\`.\n`
     for (const name of ['kb/ui-components.md', 'kb/libraries.md', 'skills/motion/SKILL.md', 'skills/motion/references/delight.md']) if (path.endsWith(`/${name}`)) return `SOURCE ${name}`
     return undefined
   }
@@ -365,6 +367,50 @@ test('started opens the workflow and answers with the next step', async ($, on) 
   expect(w.state()?.state).toBe('developing')
   expect(w.state()?.prs).toEqual([12])
   expect(r.text).toContain('State: developing')
+})
+
+test('started loads the skill of the mode into its answer, with the plugin path filled in', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.text).toContain('# The work-light method')
+  expect(r.text).toMatch(/Run `\/\S*\/scripts\/x\.sh`\./)
+  expect(r.text).toMatch(/relative paths start at \/\S*\/skills\/work-light\./)
+  expect(r.text).not.toContain('the listing')
+  expect(r.text).not.toContain('CLAUDE_PLUGIN_ROOT')
+  expect(r.text).not.toContain('work-heavy method')
+})
+
+test('started loads the heavy skill for a heavy issue, and the board skills never', async ($, on) => {
+  const w = engine(on, { wf: null, config: { steering: 'auto' } })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub', mode: 'heavy' })
+  expect(r.text).toContain('# The work-heavy method')
+  expect(r.text).not.toContain('work-heavy-auto')
+  expect(r.text).not.toContain('work-light method')
+})
+
+test('started loads a skill once in a session, and again after a compaction', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  const again = await tool($, 'started', { issue: 7 })
+  expect(again.isError).toBe(false)
+  expect(again.text).not.toContain('# The work-light method')
+  await $.session.compact({ instructions: 'keep it', messages: [{ role: 'user', text: 'the talk', toolUses: [] }] } as never)
+  const after = await tool($, 'started', { issue: 7 })
+  expect(after.text).toContain('# The work-light method')
+})
+
+test('started names the repair when it cannot read the skill, and the workflow still starts', async ($, on) => {
+  const w = engine(on, { wf: null, skillFiles: false })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+  expect(r.text).toMatch(/\/skills\/work-light\/SKILL\.md has no text/)
+  expect(r.text).toContain('Skill tool')
+  expect(r.text).toContain('ndev:work-light')
 })
 
 test('started goes to setup when a check script is missing, and names them', async ($, on) => {

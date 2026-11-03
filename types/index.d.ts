@@ -189,6 +189,7 @@ declare module 'claude-code' {
       workflowDoneWaitsFor: Shaped<string | null>
       workflowFollowUpWorktrees: Shaped<string[]>
       workflowDeclined: Shaped<boolean>
+      workflowSkillsLoaded: Shaped<string[]>
       workflowIssueAsked: Shaped<boolean>
       workflowCheckRead: Shaped<{ at: number }>
       workflowWatchNote: Shaped<{ at: number; why: string }>
