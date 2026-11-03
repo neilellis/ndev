@@ -16,7 +16,7 @@
 // Exit codes: 0 current or written; 1 stale; 2 bad input.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const fail = (message, code = 2) => {
@@ -156,4 +156,5 @@ function main() {
   console.log(`Recorded a source-only review of ${changes.length} pages in ${path.relative(top, manifestPath)}.`);
 }
 
-if (import.meta.filename === process.argv[1] || import.meta.filename === path.resolve(process.argv[1] ?? "")) main();
+// Node resolves import.meta.filename through symbolic links, so resolve the command's path too, or a linked path runs nothing and exits 0.
+if (process.argv[1] && import.meta.filename === realpathSync(process.argv[1])) main();
