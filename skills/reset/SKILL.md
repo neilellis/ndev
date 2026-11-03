@@ -10,7 +10,7 @@ This skill changes the repository. Use it only when the user invokes it. The com
 
 ## The workflow
 
-A workflow's state stays in `.neil-dev.worktree.json`. Call `mcp__ndev__started(issue)` to resume it, or use `/ndev-workflow off` to stop it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+A workflow's state stays in `.neil-dev.worktree.json`. Call `mcp__ndev__started(issue)` to resume it, or use `/flow off` to stop it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 Settings: `RESET_BASE` (base branch; default origin/HEAD, else `main`), `COMMIT_TRAILERS` (trailer lines that the session requires), `PR_FOOTER` (appended to a new PR body), `GH_USE_KEYRING=1` (use the gh keyring login).
 

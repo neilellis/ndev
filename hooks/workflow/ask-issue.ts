@@ -5,7 +5,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from '../config'
 import { git, run } from './effects'
-import { loadWorkflow, setDeclined } from './tools'
+import { readEffective, setDeclined } from './tools'
 import { promptSince } from './watchdog'
 
 // A worker's first prompt reaches the session in this time, so it is not met by a dialog.
@@ -29,8 +29,7 @@ async function orcaIssue($: EngineInterface, root: string): Promise<boolean> {
 }
 
 async function hasIssue($: EngineInterface, root: string): Promise<boolean> {
-  const wf = await loadWorkflow($, root)
-  if (wf?.off || (wf && wf.state !== 'done')) return true
+  if ((await readEffective($, root)).some(wf => wf.off || wf.state !== 'done')) return true
   const branch = await git(root, $, 'rev-parse', '--abbrev-ref', 'HEAD')
   if (branch.exitCode !== 0) return true // Not a git repository, so there is no work for an issue here.
   return /(?:^|[/-])issue-\d+/.test(branch.stdout) || orcaIssue($, root)
@@ -45,7 +44,7 @@ async function act($: EngineInterface, answer: string): Promise<void> {
   const typed = /^#?(\d+)$/.exec(answer)?.[1] ?? /\/issues\/(\d+)\b/.exec(answer)?.[1]
   if (answer === NONE) {
     await setDeclined($, true)
-    $.ui.toast('ndev: no workflow in this session. /ndev-workflow on turns it back on.')
+    $.ui.toast('ndev: no workflow in this session. /flow on turns it back on.')
   } else if (answer === EXISTING) {
     await fill($, 'Work on issue #')
   } else if (answer === NEW_ISSUE) {

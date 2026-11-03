@@ -12,8 +12,9 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { LoadedConfig } from '../config'
 import { git, readChecks, readPrHealth } from './effects'
 import type { Checks, PrHealth } from './effects'
-import { blockWorkflow, boundRoot, factsFor, loadWorkflow, moved, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
+import { blockWorkflow, boundRoot, factsFor, labelOf, loadWorkflow, moved, recordOfReviewer, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
 import type { Workflow } from './tools'
+import { liveName, shownValue, writeLive } from './live'
 
 export const IDLE_MS = 20 * 60_000
 const CHECK_MS = 3 * 60_000 // A read of the checks costs two GitHub calls. NDEV_WORKFLOW_CHECK_MS overrides it.
@@ -24,7 +25,7 @@ const IDLE_LIMIT = 1 // Idle nudges with no progress before the block.
 
 const activity = atom({ plugin: 'ndev', key: 'workflowActivity' } as const, { at: 0, isTurnRunning: false }, { shape: 'workflow-activity-1' })
 const checkRead = atom({ plugin: 'ndev', key: 'workflowCheckRead' } as const, { at: 0 }, { shape: 'workflow-check-read-1' })
-// What the last tick did or why it did nothing. /ndev-workflow status shows it, so a quiet watcher can be explained.
+// What the last tick did or why it did nothing. /flow status shows it, so a quiet watcher can be explained.
 const watchNote = atom({ plugin: 'ndev', key: 'workflowWatchNote' } as const, { at: 0, why: 'the watcher has not run yet' }, { shape: 'workflow-watch-note-1' })
 
 async function note($: EngineInterface, why: string): Promise<void> {
@@ -38,7 +39,7 @@ export async function watcherNote($: EngineInterface): Promise<{ at: number; why
 
 // A finished workflow is watched too, until its PR merges: the base can move under a PR that waits
 // for a human, and then the PR is not ready after all.
-const isWatched = (wf: Workflow | undefined): wf is Workflow => !!wf && !wf.off && wf.state !== 'blocked' && wf.state !== 'wait' && !(wf.state === 'done' && (wf.prsClosed || !wf.prs.length))
+const isWatched = (wf: Workflow | undefined): wf is Workflow => !!wf && !wf.off && wf.state !== 'blocked' && wf.state !== 'wait' && wf.state !== 'developed' && !(wf.state === 'done' && (wf.prsClosed || !wf.prs.length))
 
 const hashOf = (s: string) => [...s].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7).toString(16)
 
@@ -87,15 +88,15 @@ async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | u
   const print = await fingerprint($, wf, problems)
   const count = wf.nudges.fingerprint === print ? wf.nudges.count : 0
   if (count >= (why === 'idle' ? IDLE_LIMIT : TURN_END_LIMIT)) {
-    await blockWorkflow($, wf, `Issue #${wf.issue} made no progress in the state "${wf.state}" after ${count} reminder(s).${problems.length ? ` ${problems.join(' ')}` : ''}`)
+    await blockWorkflow($, wf, `${labelOf(wf)} made no progress in the state "${wf.state}" after ${count} reminder(s).${problems.length ? ` ${problems.join(' ')}` : ''}`)
     return
   }
   wf.nudges = { count: count + 1, fingerprint: print }
   await saveWorkflow($, wf)
-  const facts = await factsFor($, wf.root, project)
+  const facts = await factsFor($, wf.root, project, wf)
   if (why === 'idle') {
     try {
-      const { skip } = await $.session.compact({ instructions: `Keep what this session knows about issue #${wf.issue}: its worktree ${wf.root}, the state "${wf.state}" and its open work.` })
+      const { skip } = await $.session.compact({ instructions: `Keep what this session knows about ${labelOf(wf)}: its worktree ${wf.root}, the state "${wf.state}" and its open work.` })
       if (skip) $.ui.toast(`workflow: compaction skipped: ${skip}`)
     } catch (error) {
       // The prompt still goes: a failed compaction costs a cold cache, not the work.
@@ -107,8 +108,8 @@ async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | u
   if (why === 'checks') {
     const tool = wf.state === 'ci' ? 'finishedChecks' : 'done'
     const text = problems.length
-      ? `The workflow read the PR of issue #${wf.issue}. ${problems.join(' ')} Do not run a wait helper after the push: the workflow goes on watching.`
-      : `The checks of issue #${wf.issue} have ended on ${sha.slice(0, 8)}, and none failed. Now call ${tool}.`
+      ? `The workflow read the PR of ${labelOf(wf)}. ${problems.join(' ')} Do not run a wait helper after the push: the workflow goes on watching.`
+      : `The checks of ${labelOf(wf)} have ended on ${sha.slice(0, 8)}, and none failed. Now call ${tool}.`
     void $.prompt.submit({ text }).catch((error: unknown) => {
       $.ui.toast(`workflow: the result of the checks for #${wf.issue} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
     })
@@ -116,14 +117,15 @@ async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | u
   }
   const lead = why === 'idle' ? 'This session was idle for a long time.' : 'The workflow is not finished, so the turn does not end here.'
   const found = problems.length ? ` Fix these first: ${problems.join(' ')}` : ''
-  void $.prompt.submit({ text: `${lead}${found} Issue #${wf.issue} is in the state "${wf.state}". ${stepOf(wf, facts)} Wait for a long process in the foreground with one wait helper, because a turn that ends on a background wait gets this reminder again. Do not end the turn before you call done or blocked.` }).catch((error: unknown) => {
+  void $.prompt.submit({ text: `${lead}${found} ${labelOf(wf)} is in the state "${wf.state}". ${stepOf(wf, facts)} Wait for a long process in the foreground with one wait helper, because a turn that ends on a background wait gets this reminder again. Do not end the turn before you call done or blocked.` }).catch((error: unknown) => {
     $.ui.toast(`workflow: the next step for #${wf.issue} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
   })
 }
 
 export async function workflowTurn($: EngineInterface, e: { reason?: string; agentId?: string; answer?: string }, project: LoadedConfig | undefined): Promise<void> {
   if (e.agentId) {
-    const wf = project ? await loadWorkflow($, (await boundRoot($)) ?? project.root) : undefined
+    // The agent may be on another issue by now, so the search covers each record in the worktree.
+    const wf = project ? await recordOfReviewer($, (await boundRoot($)) ?? project.root, e.agentId) : undefined
     if (wf) await reviewerAnswered($, wf, e.agentId, e.answer ?? '')
     return
   }
@@ -185,6 +187,7 @@ async function watchChecks($: EngineInterface, wf: Workflow, project: LoadedConf
     return
   }
   const problems = [...health.problems]
+  await writeLive($, wf.root, liveName(wf), l => ({ ...l, watch: { at: now, nextAt: now + limit, sha: sha.slice(0, 8), red: checks.red, pending: checks.pending, green: checks.green.length, problems: problems.map(p => shownValue('problem', p)), seen: health.seen } }))
   await note($, `watching: read ${sha.slice(0, 8)}: ${problems.length} problem(s), ${checks.red.length} red, ${checks.pending.length} pending`)
   if (checks.red.length && !problems.some(p => p.includes('failed checks'))) problems.push(`These checks failed on ${sha.slice(0, 8)}: ${checks.red.join(', ')}. Read their logs (the ndev:fix-ci skill), fix the cause, and call checkpoint.`)
   if (problems.length) return nudge($, wf, project, 'checks', problems, sha)
@@ -194,7 +197,7 @@ async function watchChecks($: EngineInterface, wf: Workflow, project: LoadedConf
   await nudge($, wf, project, 'idle', [`These checks on ${sha.slice(0, 8)} are still pending after ${STUCK_MS / 60_000} minutes: ${checks.pending.join(', ')}. Find out why, such as a stopped runner or a long queue.`])
 }
 
-async function prHealth($: EngineInterface, wf: Workflow): Promise<{ problems: string[]; checks?: { sha: string; checks: Checks } }> {
+async function prHealth($: EngineInterface, wf: Workflow): Promise<{ problems: string[]; checks?: { sha: string; checks: Checks }; seen?: Record<string, string> }> {
   if (wf.direct || !wf.prs.length) return { problems: [] }
   const all: PrHealth[] = []
   for (const n of wf.prs) {
@@ -212,12 +215,12 @@ async function prHealth($: EngineInterface, wf: Workflow): Promise<{ problems: s
     await saveWorkflow($, wf)
     if (wf.state !== 'done') {
       const unmerged = all.filter(h => !h.merged).map(h => `#${h.number}`)
-      await blockWorkflow($, wf, unmerged.length ? `Issue #${wf.issue} is in the state "${wf.state}", and its PR ${unmerged.join(', ')} was closed with no merge.` : `Issue #${wf.issue} is in the state "${wf.state}", and its PR is already merged. Use /ndev-workflow goto done if the work is finished.`)
+      await blockWorkflow($, wf, unmerged.length ? `${labelOf(wf)} is in the state "${wf.state}", and its PR ${unmerged.join(', ')} was closed with no merge.` : `${labelOf(wf)} is in the state "${wf.state}", and its PR is already merged. Use /flow goto done if the work is finished.`)
     }
     return { problems: [] }
   }
   const read0 = all[0]?.checks
-  return { problems: all.flatMap(h => h.problems), checks: read0 && { sha: all[0].sha, checks: read0 } }
+  return { problems: all.flatMap(h => h.problems), checks: read0 && { sha: all[0].sha, checks: read0 }, seen: all[0]?.seen }
 }
 
 // A turn runs, or ran, since this time: a prompt reached the session.

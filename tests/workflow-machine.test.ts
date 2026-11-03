@@ -166,7 +166,7 @@ test('the last step says who merges', () => {
   expect(nextStep('done', facts({ level: 'straw_man' }))).not.toContain('human')
 })
 
-// ---- /ndev-workflow skip ----
+// ---- /flow skip ----
 test('skip moves on from each phase that has a next one', () => {
   const moves: [State, State][] = [
     ['planning', 'developing'], ['developing', 'reviewing'], ['reviewing', 'ci'], ['ci', 'finishing'], ['smoke', 'finishing'], ['revising', 'ci'],

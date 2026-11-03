@@ -4,14 +4,17 @@
 
 **The workflow keeps an agent on one issue from start to finish, and always in a clear state.** The agent calls a tool at each phase. The tool records the state, does the mechanical work, and returns the next step. You do not need to ask "are we done?".
 
-To read this guide in a session, type `/ndev-workflow guide`. A terminal shows the diagrams below as Mermaid source. A Markdown viewer draws them.
+To read this guide in a session, type `/flow guide`. A terminal shows the diagrams below as Mermaid source. A Markdown viewer draws them.
 
 ## The states
 
 This diagram shows only the states and the moves between them. The flow chart below adds the checks and what each tool does.
 
+The colours are the same in both diagrams: grey is the start, blue is the work, teal is the verification, amber is a revision, green is done, red is a stop and purple is a hold. The dashed box stands for any active state.
+
 ```mermaid
 stateDiagram-v2
+    %%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui, sans-serif","fontSize":"14px","primaryColor":"#334155","primaryTextColor":"#ffffff","primaryBorderColor":"#94a3b8","lineColor":"#8b95a5","edgeLabelBackground":"#1e293b","tertiaryTextColor":"#e2e8f0","textColor":"#e2e8f0"},"state":{"nodeSpacing":60,"rankSpacing":70}}}%%
     [*] --> setup: started, a check script is missing
     [*] --> planning: started, heavy mode
     [*] --> developing: started, light mode
@@ -20,9 +23,11 @@ stateDiagram-v2
     setup --> developing: started again, light mode
     planning --> developing: finishedPlan
     planning --> blocked: finishedPlan, waits for sign-off
-    developing --> reviewing: finishedDevelopment
+    developing --> reviewing: finishedDevelopment, all issues of the PR are complete
+    developing --> developed: finishedDevelopment, another issue of the PR is not complete
+    developed --> reviewing: finishedDevelopment of the last issue
     reviewing --> ci: finishedReview
-    ci --> smoke: finishedChecks, a preview or a web change
+    ci --> smoke: finishedChecks, a preview, a web change or a docs change
     ci --> finishing: finishedChecks, nothing to smoke
     smoke --> finishing: finishedSmoke
     finishing --> done: done
@@ -31,7 +36,7 @@ stateDiagram-v2
     revising --> ci: finishedRevision
     smoke --> ci: checkpoint, a new commit
     finishing --> ci: checkpoint, a new commit
-    reviewing --> developing: followUp this_agent
+    reviewing --> developing: followUp this_agent, or an issue joins the PR
     ci --> developing: followUp this_agent
     smoke --> developing: followUp this_agent
     finishing --> developing: followUp this_agent
@@ -43,6 +48,23 @@ stateDiagram-v2
     done --> [*]
 
     state "any state from setup to revising" as active
+
+    classDef start fill:#475569,stroke:#94a3b8,color:#ffffff
+    classDef build fill:#1d4ed8,stroke:#93c5fd,color:#ffffff
+    classDef verify fill:#0f766e,stroke:#5eead4,color:#ffffff
+    classDef revise fill:#b45309,stroke:#fcd34d,color:#ffffff
+    classDef finished fill:#15803d,stroke:#86efac,color:#ffffff
+    classDef stop fill:#b91c1c,stroke:#fca5a5,color:#ffffff
+    classDef hold fill:#6d28d9,stroke:#c4b5fd,color:#ffffff
+    classDef any fill:#1e293b,stroke:#94a3b8,color:#ffffff,stroke-dasharray:5 4
+    class setup start
+    class planning,developing,developed build
+    class reviewing,ci,smoke,finishing verify
+    class revising revise
+    class done finished
+    class blocked stop
+    class wait hold
+    class active any
 ```
 
 `blocked` and `wait` each keep the previous state, and they go back to it. Thus the stage hooks do not fire again.
@@ -51,6 +73,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
+    %%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui, sans-serif","fontSize":"14px","primaryColor":"#334155","primaryTextColor":"#ffffff","primaryBorderColor":"#94a3b8","lineColor":"#8b95a5","edgeLabelBackground":"#1e293b","tertiaryTextColor":"#e2e8f0","textColor":"#e2e8f0"},"flowchart":{"curve":"basis","nodeSpacing":90,"rankSpacing":100,"wrappingWidth":320}}}%%
     session([a session starts]) -->|"no issue yet: ask the person"| ask{{"The issue?<br/>A new issue?<br/>No workflow?"}}
     session -->|"it has a prompt, a linked issue,<br/>an issue branch or a live record"| none
     ask -->|"issue or new issue"| none
@@ -66,9 +89,9 @@ flowchart TD
     planning -->|"finishedPlan(file)<br/>auto, or straw_man or poc"| developing[developing<br/>test first]
     planning -->|"finishedPlan(file)<br/>interactive: wait for sign-off"| blocked
 
-    developing -->|"finishedDevelopment(prs, message, files)<br/>fast, pre-commit, commit. No push."| reviewing[reviewing<br/>the plugin starts the review,<br/>REMEMBER HOOK fires]
+    developing -->|"finishedDevelopment(issues, prs, message, files)<br/>fast, pre-commit, commit. No push."| reviewing[reviewing<br/>the plugin starts the review,<br/>REMEMBER HOOK fires]
     reviewing -->|"finishedReview(review, deadcode, remembered)<br/>pre-ready, pre-push, push, mark PR ready"| ci[ci<br/>the plugin watches the checks]
-    ci -->|"finishedChecks()<br/>green, preview or web change"| smoke[smoke<br/>browser smoke test]
+    ci -->|"finishedChecks()<br/>green, preview, web change or docs change"| smoke[smoke<br/>browser smoke test]
     ci -->|"finishedChecks()<br/>green, nothing to smoke"| finishing
     ci -->|"checks red: refused, attempts + 1"| ci
     smoke -->|"finishedSmoke(report or skip reason)"| finishing[finishing]
@@ -77,13 +100,30 @@ flowchart TD
     done -->|"heartbeat finds a conflict or red checks,<br/>or started(issue) with new feedback"| revising[revising<br/>answer the feedback]
     revising -->|"checkpoint, then<br/>finishedRevision()"| ci
 
-    smoke & finishing -->|"checkpoint: a new commit<br/>makes the evidence stale.<br/>Documents only: stays in finishing"| ci
+    smoke & finishing -->|"checkpoint: a new commit<br/>makes the evidence stale.<br/>Documents only: stays in finishing,<br/>or goes to smoke when a docs smoke test is due"| ci
     reviewing & ci & smoke & finishing -->|"followUp('this_agent')"| developing
 
     active["any active state"] -->|"blocked(message)<br/>or 3 failed attempts<br/>or stalled with no progress"| blocked[[blocked<br/>keeps the previous state]]
     blocked -->|"unblocked(message) or /unblock message<br/>goes back to the previous state"| active
     active -->|"waitFor, waitForURL, waitForProcessEnd,<br/>waitForSubAgent, waitForSeconds,<br/>waitForPR, waitForIssue"| wait[[wait<br/>the tool call holds the agent,<br/>keeps the previous state]]
     wait -->|"the condition is true, attempts or timeout run out,<br/>/unblock message, or an interrupt<br/>goes back to the previous state"| active
+
+    classDef start fill:#475569,stroke:#94a3b8,color:#ffffff
+    classDef build fill:#1d4ed8,stroke:#93c5fd,color:#ffffff
+    classDef verify fill:#0f766e,stroke:#5eead4,color:#ffffff
+    classDef revise fill:#b45309,stroke:#fcd34d,color:#ffffff
+    classDef finished fill:#15803d,stroke:#86efac,color:#ffffff
+    classDef stop fill:#b91c1c,stroke:#fca5a5,color:#ffffff
+    classDef hold fill:#6d28d9,stroke:#c4b5fd,color:#ffffff
+    classDef any fill:#1e293b,stroke:#94a3b8,color:#ffffff,stroke-dasharray:5 4
+    class session,none,setup,ask,checks start
+    class planning,developing build
+    class reviewing,ci,smoke,finishing verify
+    class revising revise
+    class done finished
+    class blocked,refused stop
+    class wait,off hold
+    class active any
 ```
 
 The `active` node stands for each state from `setup` to `revising`.
@@ -95,32 +135,36 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 
 | Tool                                                          | What it does                                                                                                                                                                  | It refuses when                                                                                                                                  |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `started(issue, shortName)`                                   | Records the state, or resumes it. A new workflow needs `shortName`, and a resume does not. Claims the worktree, initialises its submodules and opens the draft PR.            | The issue is closed. Another live session owns the record.                                                                                       |
-| `finishedPlan(markdown_file)`                                 | Moves the plan into the PR body, with `Closes #n`.                                                                                                                            | The plan has no `Test entry point:` line.                                                                                                        |
-| `checkpoint(message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit. `changeTypes` is optional. See [Change types](#change-types). | A check script fails.                                                                                                                            |
-| `finishedDevelopment(prs, message, files)`                    | Commits the named files. It does not push. Starts the code review at once, and lists the changed UI files for it.                                                             | Changed files are not named.                                                                                                                     |
-| `finishedReview(review, deadcode, remembered)`                | Takes the results of the review and remember hooks. Runs `pre-ready-check.sh`, pushes, marks the PR ready.                                                                    | A field is empty. A `formal_project` sends `skipped:`. A check fails, and then nothing is pushed.                                                |
-| `finishedChecks()`                                            | Reads the checks of HEAD.                                                                                                                                                     | Checks are pending or red. HEAD is not pushed.                                                                                                   |
-| `finishedSmoke(report)`                                       | Records the smoke test on HEAD.                                                                                                                                               | HEAD is not in the report. A `formal_project` sends `skipped:`.                                                                                  |
-| `finishedRevision()`                                          | Goes back to `ci` after you answer the feedback.                                                                                                                              | Feedback has no answer.                                                                                                                          |
-| `blocked(message)`                                            | Sends a notification that stays until you dismiss it, and flags the Orca worktree.                                                                                            | It is already blocked.                                                                                                                           |
-| `unblocked(message)`                                          | Removes the notification and the flag, and goes back to the previous state.                                                                                                   | It is not blocked.                                                                                                                               |
-| `waitForSubAgent(claude_agent_id, period, attempts, timeout)` | Holds the agent until the subagent ends.                                                                                                                                      | See [Wait tools](#wait-tools).                                                                                                                   |
-| `waitForURL(url, period, attempts, timeout)`                  | Holds the agent until the URL answers with a 2xx status.                                                                                                                      | See [Wait tools](#wait-tools). The URL is not http or https.                                                                                     |
-| `waitForProcessEnd(pid, period, attempts, timeout)`           | Holds the agent until the process ends. It cannot read the exit code.                                                                                                         | See [Wait tools](#wait-tools).                                                                                                                   |
-| `waitForSeconds(secs, attempts, timeout)`                     | Holds the agent for this time. `attempts` has no effect, because no check runs.                                                                                               | See [Wa/ndeit tools](#wait-tools).                                                                                                               |
-| `waitFor(shell_command, period, attempts, timeout)`           | Runs the command every `period` seconds (30 by default), in the worktree, until it exits 0. Each run may last 60 s.                                                           | See [Wait tools](#wait-tools).                                                                                                                   |
-| `waitForPR(pr, state, period, attempts, timeout)`             | Holds the agent until the PR is `open`, `closed`, `merged`, `draft`, `ready` or `mergeable`. It does not wait for checks, because the workflow watches those.                 | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
-| `waitForIssue(issue, state, period, attempts, timeout)`       | Holds the agent until the issue is `open` or `closed`.                                                                                                                        | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
-| `done(message, remembered)`                                   | Runs the done checks. It needs `remembered` only when a human skipped the review stage. Merges if the project level allows it.                                                | `remembered` is empty. A check fails, and then the message lists each problem.                                                                   |
-| `followUp(mode, message)`                                     | Creates an issue, then acts by mode.                                                                                                                                          | After `done`, only `issue_only` is allowed.                                                                                                      |
-| `addMigration(name)`                                          | Makes the empty migration file and lists it in the PR body, to run after the merge.                                                                                           | The name holds other than lower-case letters, digits and underscores. The workflow has no PR. The state is `setup`, `done`, `blocked` or `wait`. |
+| `started(issue, shortName, mode)`                                   | Records the state, or resumes it. A new workflow needs `shortName`, and a resume does not. Claims the worktree, initialises its submodules and opens the draft PR.            | The issue is closed. Another live session owns the record.                                                                                       |
+| `create(shortName, description, mode)` | Files a new issue and calls `started` for it. The answer gives the issue number. It adds no board card. |
+| `comment(issue or pr, message)` | Adds a comment to the issue or the PR. It works with or without a workflow. |
+| `finishedPlan(issue, markdown_file)`                                 | Moves the plan into the PR body, with `Closes #n`.                                                                                                                            | The plan has no `Test entry point:` line.                                                                                                        |
+| `checkpoint(issue or pr, message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit. `changeTypes` is optional. See [Change types](#change-types). | A check script fails.                                                                                                                            |
+| `finishedDevelopment(issues, prs, message, files)`                    | Commits the named files for the listed issues. It does not push. When each issue of the PR is complete, it starts the code review and lists the changed UI files. Until then, the listed issues wait in `developed`.                                                             | Changed files are not named.                                                                                                                     |
+| `finishedReview(issue or pr, review, deadcode, remembered)`                | Takes the results of the review and remember hooks. Runs `pre-ready-check.sh`, pushes, marks the PR ready.                                                                    | A field is empty. A `formal_project` sends `skipped:`. A check fails, and then nothing is pushed.                                                |
+| `finishedChecks(issue or pr)`                                            | Reads the checks of HEAD.                                                                                                                                                     | Checks are pending or red. HEAD is not pushed.                                                                                                   |
+| `finishedSmoke(issue or pr, report)`                                       | Records the smoke test on HEAD.                                                                                                                                               | HEAD is not in the report. A `formal_project` sends `skipped:`.                                                                                  |
+| `finishedRevision(issue or pr)`                                          | Goes back to `ci` after you answer the feedback.                                                                                                                              | Feedback has no answer.                                                                                                                          |
+| `blocked(issue or pr, message)`                                            | Sends a notification that stays until you dismiss it, and flags the Orca worktree.                                                                                            | It is already blocked.                                                                                                                           |
+| `unblocked(issue or pr, message)`                                          | Removes the notification and the flag, and goes back to the previous state.                                                                                                   | It is not blocked.                                                                                                                               |
+| `waitForSubAgent(issue or pr, claude_agent_id, period, attempts, timeout)` | Holds the agent until the subagent ends.                                                                                                                                      | See [Wait tools](#wait-tools).                                                                                                                   |
+| `waitForURL(issue or pr, url, period, attempts, timeout)`                  | Holds the agent until the URL answers with a 2xx status.                                                                                                                      | See [Wait tools](#wait-tools). The URL is not http or https.                                                                                     |
+| `waitForProcessEnd(issue or pr, pid, period, attempts, timeout)`           | Holds the agent until the process ends. It cannot read the exit code.                                                                                                         | See [Wait tools](#wait-tools).                                                                                                                   |
+| `waitForSeconds(issue or pr, secs, attempts, timeout)`                     | Holds the agent for this time. `attempts` has no effect, because no check runs.                                                                                               | See [Wa/ndeit tools](#wait-tools).                                                                                                               |
+| `waitFor(issue or pr, shell_command, period, attempts, timeout)`           | Runs the command every `period` seconds (30 by default), in the worktree, until it exits 0. Each run may last 60 s.                                                           | See [Wait tools](#wait-tools).                                                                                                                   |
+| `waitForPR(issue, pr, state, period, attempts, timeout)`             | Holds the agent until the PR is `open`, `closed`, `merged`, `draft`, `ready` or `mergeable`. It does not wait for checks, because the workflow watches those.                 | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
+| `waitForIssue(issue or pr, waitOn, state, period, attempts, timeout)`       | Holds the agent until each issue in the list `waitOn` is `open` or `closed`.                                                                                                                        | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
+| `done(issue or pr, message, remembered)`                                   | Runs the done checks. It needs `remembered` only when a human skipped the review stage. Merges if the project level allows it.                                                | `remembered` is empty. A check fails, and then the message lists each problem.                                                                   |
+| `followUp(issue or pr, mode, message)`                                     | Creates an issue, then acts by mode.                                                                                                                                          | After `done`, only `issue_only` is allowed.                                                                                                      |
+| `addMigration(issue or pr, name)`                                          | Makes the empty migration file and lists it in the PR body, to run after the merge.                                                                                           | The name holds other than lower-case letters, digits and underscores. The workflow has no PR. The state is `setup`, `done`, `blocked` or `wait`. |
 | `requestSecret(name)`                                         | Says where a secret is: the file and the line. It never returns the value.                                                                                                    | Never. A secret that it cannot find is reported.                                                                                                 |
 | `iNeedA(kind, description)`                                   | Gives guidance before the agent chooses a thing. The kinds are `react-component`, `library`, `brand-style` and `animation`.                                                   | The kind is not one of these.                                                                                                                    |
 | `reportWorkflowBug(title, details)`                           | Starts an Orca agent that fixes a fault of the plugin on its `main`.                                                                                                          | The limit of 5 agents in 24 hours is reached. Orca cannot start the agent.                                                                       |
 | `screenshot(url, viewports, schemes, fullPage, waitSeconds)`  | Takes images of a page in the Orca browser and gives their full paths. See [Change types](#change-types). A helper can also call it.                                          | Orca does not run. The page goes to a login page. A viewport or a scheme is not valid.                                                           |
-| `status()`                                                    | Shows the state and the next step. It changes nothing.                                                                                                                        | Never.                                                                                                                                           |
+| `status(issue or pr)`                                                    | Shows the state and the next step. It changes nothing.                                                                                                                        | Never.                                                                                                                                           |
 
+
+Give each call the thing that it works on. A call for development gives `issue`. A call from `reviewing` onward can give `pr`, or an issue that the PR carries. See [The issue and the PR](#the-issue-and-the-pr).
 
 Each next step tells the agent not to ask permission for a step that the plan already allows, and to call `blocked` for a question that only the human can answer. A question at the end of a turn stops the work until the human answers it.
 
@@ -137,7 +181,7 @@ A stage hook is work that a change of state sets off. The hooks are in the tools
 
 | Hook       | Fires when the state enters | It tells the agent to                                                                                                                                                                                                                    | Result taken by                   |
 | ---------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `review`   | `reviewing`                 | `finishedDevelopment` starts the `ndev:diff-reviewer` agent itself. Its answer comes back as a prompt and stays in the record. A resume starts it again if a restart lost it. The agent fixes the findings and runs the dead-code sweep. | `finishedReview`                  |
+| `review` | `reviewing`                 | `finishedDevelopment` starts the `ndev:diff-reviewer` agent itself. Its answer comes back as a prompt and stays in the record. A resume starts it again if a restart lost it. The agent fixes the findings and runs the dead-code sweep. | `finishedReview`                  |
 | `remember` | `reviewing`                 | The main agent records what the work taught (`ndev:remember`), updates the documents it made wrong (`ndev:docs-sync`), and runs the dev-wiki ingest. A subagent cannot do this, because it does not know the session.                    | `finishedReview`, as `remembered` |
 
 
@@ -191,7 +235,7 @@ Set `projectLevel` in `.neil-dev.json`. A project with no level behaves as `smal
 | `formal_project` | No                       | No                                      | When interactive | No                              |
 
 
-A migration file in the change that `addMigration` does not list is named at `finishedDevelopment`, and `done` refuses it, because nothing will run it after the merge. A human who knows that CI runs it can go on with `/ndev-workflow goto done`.
+A migration file in the change that `addMigration` does not list is named at `finishedDevelopment`, and `done` refuses it, because nothing will run it after the merge. A human who knows that CI runs it can go on with `/flow goto done`.
 
 When the agent can merge, `done` merges the PR. A PR with migrations is not merged by `done`: the reply tells the agent to load `ndev:merge`, which merges the PR and then runs the migrations.
 
@@ -212,6 +256,23 @@ When the agent can merge, `done` merges the PR. A PR with migrations is not merg
 | At each phase  | The agent reports the checkpoint | The agent continues |
 
 
+### The settings of one issue
+
+Each issue in a worktree can have its own mode and steering. The first value in this order applies:
+
+1. The entry of the issue in `workflows`.
+2. `settings` in `.neil-dev.worktree.json`, which `/dev mode` and `/dev steering` set.
+3. `.neil-dev.json` of the project.
+4. The defaults, `light` and `interactive`.
+
+An issue with no value of its own stores nothing, and it follows the worktree.
+
+- **The agent chooses the mode at the start.** It gives `mode` to `started` or `create`: `heavy` for a multi-step, cross-cutting or high-risk change, and `light` for the others. Past `setup`, `started` refuses a different mode and names the command for the human. The agent cannot choose the steering.
+- **The human can change either setting at any time.** `/flow mode heavy 7` or `/flow steering auto 7`. With no number, the command sets the active issue. With no value, it shows the setting. The steps that remain follow the new setting, and the steps that are complete stay complete.
+- **A PR follows the strictest of its issues.** Heavy wins over light, and interactive wins over auto. An issue with no setting of its own counts with what it inherits from the worktree. When no issue has its own setting, the PR record stores none and follows the worktree. The PR record takes these values when an issue comes to the PR. After that, `/flow mode` on that record sets the PR. `finishedDevelopment` runs `gates.sh` for each heavy issue that it finishes, and the review of the PR follows the strictest setting.
+
+`/dev mode` still sets the worktree. It does not change an issue that has its own value. `started` names the mode and the steering, and each prompt names them when they apply to an issue.
+
 ## When a session starts with no issue
 
 A person who starts a session with no issue gets one question, with three answers:
@@ -221,7 +282,7 @@ A person who starts a session with no issue gets one question, with three answer
 | ----------- | --------------------------------------------------------------------------------------------------------------------------- |
 | The issue   | The prompt box gets `Work on issue #`, and the person adds the number. A typed number or issue URL starts the work at once. |
 | A new issue | The prompt box gets `/ndev:issue` . A typed description files the issue and starts the work at once.                        |
-| No workflow | The tools and the reminders stay off for this session. `/ndev-workflow on` turns them back on.                              |
+| No workflow | The tools and the reminders stay off for this session. `/flow on` turns them back on.                              |
 
 
 There is no question when the session already has work: a first prompt, a linked Orca issue, a branch that names an issue, or a live record. Thus a worker that runs alone does not stop here. The plugin waits 3 seconds for a first prompt. A worker can meet the question only when its prompt comes later than that. It must also have no link and no issue in its branch.
@@ -290,6 +351,7 @@ GitHub calls are limited, so the workflow makes as few as it can:
 - The end of a turn makes no GitHub call.
 - An idle check makes one read of the PR. Only a PR that is not clean costs one more read, of its checks.
 - While checks run, each 3-minute read costs two calls, and one more for each further PR that the workflow holds. This replaces the 2-minute poll of the agent's own wait helper.
+- Each push by a tool costs two calls for the change map: one read and one edit of the PR body.
 - `blocked` and off make no calls. A `done` workflow stops when its PR closes.
 - All of it goes through `scripts/github/gh.sh`: the `gh` command first, and REST when that fails. `gh` commands spend GraphQL points and `gh api` spends REST calls, so one route still answers when the other is used up. `board.sh` uses GraphQL when the project has a board.
 
@@ -326,7 +388,7 @@ A wait ends in one of these ways:
 
 - A check always runs at the deadline, so a wait that ends at its timeout does not fail.
 - A wait stops early if the host's time budget for one hook is nearly spent, and the error says to call the tool again.
-- `/unblock` runs at once, also during a turn. `/ndev-workflow unblock` and the other `/ndev-workflow` commands run after the turn, so they cannot end a wait that is running.
+- `/unblock` runs at once, also during a turn. `/flow unblock` and the other `/flow` commands run after the turn, so they cannot end a wait that is running.
 - While the state is `wait`, the other phase tools refuse and no reminder comes. The reason is that the agent is not idle. `status` still answers.
 - Only the main agent can call a wait tool, because a helper does not move the state.
 - A session that dies or reloads during a wait leaves the state `wait` in the record, and no reminder comes. The next `started` goes back to the previous state. `/unblock <message>` also does this, and it prompts the agent with the message.
@@ -338,7 +400,7 @@ The plugin pauses with a short `sleep` process and not with `$.clock.sleep`. A h
 
 ## Orca
 
-In an Orca workspace, each save of the state updates the workspace. Tools, the heartbeat and `/ndev-workflow` all go through that one step.
+In an Orca workspace, each save of the state updates the workspace. Tools, the heartbeat and `/flow` all go through that one step.
 
 - **Name:** the workspace is `<issue>-<shortName>`, such as `7-add-sub`. The agent chooses `shortName` from the issue when it calls `started`, and the record keeps it. A project that commits to its base branch keeps the name of its main checkout.
 - **Status:** see the table below. A block keeps the status that the work had.
@@ -371,21 +433,23 @@ In an Orca workspace, each save of the state updates the workspace. Tools, the h
 | `issue_only`     | A new issue only.                                                                                        |
 
 
-## /ndev-workflow
+## /flow
 
-The name is `/ndev-workflow`, not `/ndev:workflow` or `/workflow`. The engine refuses a colon in a command that a plugin registers, and the Vercel plugin owns `workflow`. `status` also shows the last thing that the heartbeat did and how long ago.
+The name is `/flow`, not `/ndev:workflow` or `/workflow`. The engine refuses a colon in a command that a plugin registers, and the Vercel plugin owns `workflow`. `status` also shows the last thing that the heartbeat did and how long ago.
 
 
 | Command                                     | What it does                                                                                                              |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `/ndev-workflow guide`                      | Shows this guide.                                                                                                         |
-| `/ndev-workflow status`                     | Shows the state and the next step.                                                                                        |
-| `/ndev-workflow skip [reason]`              | Leaves the current phase and goes to the next one. The PR records the reason.                                             |
-| `/ndev-workflow goto <state> [reason]`      | Goes to a named state. The PR records the reason.                                                                         |
+| `/flow guide`                      | Shows this guide.                                                                                                         |
+| `/flow status`                     | Shows the state and the next step.                                                                                        |
+| `/flow mode [light\|heavy] [issue]` | Shows or sets the mode of one issue. See [The settings of one issue](#the-settings-of-one-issue). |
+| `/flow steering [interactive\|auto] [issue]` | Shows or sets the steering of one issue. |
+| `/flow skip [reason]`              | Leaves the current phase and goes to the next one. The PR records the reason.                                             |
+| `/flow goto <state> [reason]`      | Goes to a named state. The PR records the reason.                                                                         |
 | `/unblock <message>`                        | Gives the agent your answer and ends `blocked` or `wait`. The message is compulsory. It runs at once, also during a turn. |
-| `/ndev-workflow unblock [message]`          | Ends `blocked`, for when the agent does not. The message is optional. It runs after the turn.                             |
-| `/ndev-workflow off [reason]` / `on`        | Turns the tools and the reminders of this worktree off or on. The record stays.                                           |
-| `/ndev-workflow off project` / `on project` | Does the same for the whole project, in `.neil-dev.json`.                                                                 |
+| `/flow unblock [message]`          | Ends `blocked`, for when the agent does not. The message is optional. It runs after the turn.                             |
+| `/flow off [reason]` / `on`        | Turns the tools and the reminders off or on for one record: the issue or PR that this agent is on. The record stays. |
+| `/flow off project` / `on project` | Does the same for the whole project, in `.neil-dev.json`.                                                                 |
 
 
 If you skip `reviewing`, the held commit is not pushed yet. The agent pushes it with `checkpoint` and no files, and `finishedChecks` tells it to do this.
@@ -406,7 +470,7 @@ If git cannot read the diff, the record has `typesUnread`. Then the review is th
 | `web`      | The agent takes images with `screenshot` from a local dev server. It takes the changed pages, at 390x844, 820x1180 and 1440x900, in light and in dark. It reads each image. A web change also goes to the smoke stage, and the smoke step asks for images of the preview. |
 | `backend`  | The reviewer checks the error paths, input validation, authorisation, concurrency and each caller of a changed interface.                                                                                                                                                 |
 | `database` | The agent applies each new migration to a local database and runs the tests. The reviewer checks locks, the order against the deployed code, the way back, indexes and row-level security.                                                                                |
-| `docs`     | The reviewer checks each changed claim against the code in the diff. If all types are `docs`, the review is shorter: no dead-code sweep, and `deadcode` is `none: documents only`.                                                                                        |
+| `docs`     | The reviewer checks each changed claim against the code in the diff. If all types are `docs`, the review is shorter: no dead-code sweep, and `deadcode` is `none: documents only`. A docs change also goes to the smoke stage.                                                                                        |
 | `tests`    | The reviewer checks that each new test fails when the defect returns, that no assertion became weaker, and that only external boundaries are mocked.                                                                                                                      |
 | `config`   | The reviewer checks the effect on the checks, the build and the deployment, each new dependency, and that the diff has no secret and no turned-off check.                                                                                                                 |
 
@@ -415,11 +479,145 @@ The commit is held in `reviewing`, so no preview exists at that time. This is wh
 
 `screenshot` drives the Orca browser, not Chrome. It opens its own tab, sets each scheme and each viewport, checks that the page took them, saves the images and closes the tab. The images go in `<git folder>/ndev-screenshots/<sha>/`. They are in no commit and do not reach the PR, so the result must say what the agent saw. If the page goes to a login page, the tool saves nothing and keeps the tab open, so the human can sign in once. Orca that does not run gives a refusal that names `orca open`.
 
+## The smoke test of a web or docs change
+
+If the change types hold `web` or `docs`, the smoke test is required:
+
+- `finishedChecks` goes to `smoke`. This applies in light mode too, and to a change of documents only.
+- `finishedSmoke` with `skipped` is refused, at each project level. The refusal names the types and the repair.
+- A human can still skip it, with `/flow skip <reason>`. The evidence records that a human skipped it.
+- A commit of documents in `finishing` goes to `smoke` when no smoke test has run. If a human skipped the checks or the smoke test, it stays in `finishing`.
+
+The smoke test of a document: read it as a reader sees it, on the preview or in the file view of the PR. Run each changed command and follow each changed link. The review of documents only stays short.
+
+## The change map for CI
+
+The tools give CI a map of what the change holds, so that a workflow can choose which jobs to run. The map is a hint. It never makes a check necessary, and a workflow can ignore it.
+
+**Where it is.** The map is one line in the PR body, a hidden HTML comment:
+
+```text
+<!-- ndev:change-map {"version":1,"sha":"<HEAD sha>","issues":{"7":{"changeTypes":["web","docs"]}},"files":{"app/page.tsx":["web"],"README.md":["docs"]}} -->
+```
+
+The JSON has these fields:
+
+| Field | Value |
+| --------- | ----- |
+| `version` | `1`. A reader treats another value as a bad map. |
+| `sha` | The commit that the map describes: the HEAD of the push. |
+| `issues` | For each issue of the PR, `changeTypes`: the types in its record, the types declared by the agent, and the types of the diff. |
+| `files` | For each path in the diff against the base branch, a list of types. It has the old path and the new path of a moved file. |
+
+The types are `web`, `backend`, `database`, `docs`, `tests` and `config`. `>` in the JSON is written as `\u003e`, so a path cannot close the comment.
+
+**When it is written.** `commitAndPush` writes the map just before each `git push` of a workflow tool: `checkpoint` and `finishedReview`. Thus the `pull_request` event of the push carries the map, with no API call. Each write costs two GitHub calls: one read and one edit of the PR.
+
+**Why the PR body.** A workflow reads `github.event.pull_request.body` with no API call and no checkout, and the body holds no secret. A committed file adds noise to each diff and reaches the base branch. The event does not carry a commit trailer, so a trailer needs a checkout. The body is not per commit, so `sha` ties the map to one commit.
+
+**The rule for a reader: run everything, unless all of these are true.**
+
+1. The event is `pull_request`, from a branch of this repository. Anyone who opens a PR from a fork can write the body.
+2. The body has exactly one map line, and the JSON is valid.
+3. `version` is `1`.
+4. `sha` is equal to `github.event.pull_request.head.sha`. A push that a tool did not make has no map for its commit.
+5. `issues` and `files` are objects, and `files` is not empty.
+
+No map is a normal state. There is no map if the diff cannot be read, if the map is over 30,000 characters, if the edit of the body fails, or if the workflow commits direct to the base branch, with no PR. The tool then gives a note that says CI runs everything. A `push` event to the base branch has no map, so it runs everything. Do not make a job fail because of a missing map.
+
+**Keep each required check reporting.** GitHub counts a job that a job-level `if` skips as a success, but a required check that no job reports stays pending for ever. So choose with a job-level `if`, and not with `paths` on the workflow. A job with a matrix reports under other names when it is skipped, so put a small final job after it, and make that job the required check.
+
+**A reader for a workflow.** Pass the body through `env`, never with `${{ }}` in the script, because the body is untrusted text. This reader prints a JSON list of types, or `["all"]`:
+
+```yaml
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      types: ${{ steps.map.outputs.types }}
+    steps:
+      - id: map
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          types='["all"]'
+          lines=$(printf '%s\n' "$BODY" | tr -d '\r' | grep -E '^<!-- ndev:change-map .* -->$' || true)
+          if [ "$SAME_REPO" = true ] && [ "$(printf '%s\n' "$lines" | grep -c .)" = 1 ]; then
+            json=${lines#'<!-- ndev:change-map '}
+            json=${json%' -->'}
+            found=$(printf '%s' "$json" | jq -ce --arg head "$HEAD_SHA" '
+              select(.version == 1 and .sha == $head
+                and (.issues | type) == "object" and (.files | type) == "object" and (.files | length) > 0)
+              | [(.issues[].changeTypes[]), (.files[][])] | unique') && types=$found
+          fi
+          echo "types=$types" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: changes
+    # Runs when the reader failed too: a failed reader must not skip a check.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(fromJSON(needs.changes.outputs.types), 'all') || contains(fromJSON(needs.changes.outputs.types), 'web')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo run the browser tests
+```
+
+Treat `backend`, `database` and `config` as "run everything" unless the project has a clear reason. A change to a workflow file is `config`.
+
 ## The record
 
-The state is in `.neil-dev.worktree.json`, under the `workflow` key. `scripts/work/worktree_env.mjs` is the only writer. It uses a lock and a revision number, so a stale writer fails and does not overwrite. `/view` shows the state of the worktree.
+The state is in `.neil-dev.worktree.json`, under `workflows`, with one entry for each issue number. Each issue has its own revision. A file with the old `workflow` key still reads, and the next write moves it. `scripts/work/worktree_env.mjs` is the only writer. It uses a lock and a revision number, so a stale writer fails and does not overwrite. An entry can also hold `mode` and `steering`. A PR has its own entry in `prs`, by PR number, with `issues` for what it carries. `/view` shows the state of the worktree.
 
 The record must stay out of git. `set-workflow` adds the line to `info/exclude` of the repository by itself, so the workflow tools start in any project. It refuses a record that git tracks and names `git rm --cached` as the repair. It also refuses when a `.gitignore` un-ignores the record.
+
+## Several issues in one worktree
+
+Each agent has one active issue. The active issue is in the session, not in the file. `started` on a new issue makes it the active issue of this agent. The earlier issue keeps its state, and the agent releases it, so another agent can take it. `started` on the earlier issue makes it active again.
+
+A new issue joins the unfinished issue of the agent. It uses the same worktree, branch and PR, and `started` adds `Closes #<issue>` to the PR body. So one PR can carry several issues:
+
+- Each plan has its own section in the PR body. `finishedPlan` replaces only the plan of its issue and keeps each closing reference.
+- `done(pr)` covers each issue on the PR. If the project level allows the merge, it merges the PR and marks those issues as merged.
+- `done` counts the migrations of all issues on the PR. It leaves the merge to the `ndev:merge` skill if there are any.
+
+### The issue and the PR
+
+`finishedDevelopment` is the merge point. Each issue has a record for development, and the PR has a record for what comes after.
+
+
+| Record | States | Tools |
+| ------ | ------ | ----- |
+| Issue | `setup`, `planning`, `developing`, `developed` | `started`, `create`, `finishedPlan`, `finishedDevelopment` |
+| PR | `reviewing`, `ci`, `smoke`, `finishing`, `revising`, `done` | `finishedReview`, `finishedChecks`, `finishedSmoke`, `finishedRevision`, `done` |
+| Either | `blocked`, `wait` | `blocked`, `unblocked`, the wait tools, `status`, `comment`, `checkpoint`, `followUp`, `addMigration` |
+
+
+A direct project, and a record from before this split, keep the whole flow on the issue record.
+
+`finishedDevelopment(issues, prs, …)` names the issues that are complete. An issue that is not complete holds back the PR. The listed issues wait in `developed`, and `finishedDevelopment` of the last issue starts the review.
+
+You can add an issue to a PR until the PR is merged. `started` with a new issue, or `followUp('this_agent')`, adds it. When the PR is at `reviewing` or later, it goes back to `developing`, and the evidence becomes stale. So the review and the checks run again. A merged or closed PR refuses a new issue. When the PR is merged or closed, `started` and `followUp('this_agent')` refuse, and the message gives the repair.
+
+`/flow skip` and `/flow goto` refuse to move one issue past development while the PR has another open issue, because past that point the PR has one record. Have the agent call `finishedDevelopment` with all the issues. Then the command works on the PR.
+
+## The /view panel
+
+`/view` shows the record and what the tools are doing now. Each worktree with a workflow has a card. The title names the issue or the PR, such as `reviewing, PR #12 (issues #7, #9)`.
+
+
+| Row | What it shows |
+| --- | ------------- |
+| Needs you | The message of `blocked`, for how long, and the command that ends it. |
+| Waiting | The wait tool, its arguments, the time since the last check and the state that the check read. For a PR, this is the state, the draft flag, the merge state and the checks. |
+| Running | A tool call that has not ended, with its arguments. |
+| Watching | The state of the checks that the plugin watches, when no wait tool runs. |
+| In review | Each reviewer, and whether it has answered. |
+| Last calls | The last tool calls, with their arguments and results. |
+| For this issue | A mode and a steering that the issue sets. |
+
+
+The tools write these values to `<git dir>/ndev-live-<issue|pr>-<n>.json`, and not to the record. A poll must not change the revision of the record. The file holds at most 4 KB, with secrets masked and each value on one line of at most 120 characters. A failed write shows one toast and does not stop the tool. A value that is too old is marked stale.
 
 ## Rules that the tools enforce
 
@@ -433,4 +631,4 @@ GitHub lists no checks just after a push. With `.github/workflows`, `finishedChe
 
 `done` and `started` treat each human comment after the last `finishedRevision` as new feedback. A commit for another reason does not answer a comment. If no `finishedRevision` was called, the time is the time that the PR opened.
 
-A workflow with no PR cannot move: each tool that needs the PR names `started`, which opens it. `/ndev-workflow goto done` refuses when there is no PR, or when a commit is not pushed.
+A workflow with no PR cannot move: each tool that needs the PR names `started`, which opens it. `/flow goto done` refuses when there is no PR, or when a commit is not pushed.

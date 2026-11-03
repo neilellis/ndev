@@ -1,10 +1,12 @@
-import { loadWorkflow } from './workflow/tools'
+import { boundRoot, readEffective } from './workflow/tools'
+import type { Workflow } from './workflow/tools'
+import { liveBox, liveGitDir, liveName, livePath, readLive } from './workflow/live'
 import { flowPicture } from './workflow/machine'
 import type { FlowMark, State } from './workflow/machine'
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
-import type { ResourceView, ViewServer, ViewStack, ViewTree } from '../types'
+import type { ResourceView, ViewServer, ViewStack, ViewTree, WorkflowView } from '../types'
 import { loadConfigAt } from './config'
 import { fileUrl, issueUrl, pullUrl } from './links'
 
@@ -50,9 +52,10 @@ type Record2 = {
 }
 
 // The flow line in parts, so the issue and the PR can be drawn as links: text, then a number, then text.
-function workflowParts(w: NonNullable<ViewTree['workflow']>) {
+function workflowParts(w: NonNullable<ViewTree['workflows']>[number]) {
   const state = w.previous ? `${w.state} (was ${w.previous})` : w.state
-  return { head: `${state}, issue `, issue: w.issue, mid: w.prs[0] ? ', PR ' : '', pr: w.prs[0], tail: w.blocked ? `: ${w.blocked}` : '' }
+  const tail = w.blocked && !w.pr ? `: ${w.blocked}` : ''
+  return { state, tail }
 }
 
 // How each step of the flow looks: its mark, and the colour of its box.
@@ -65,11 +68,43 @@ const MARK: Record<FlowMark, { sign: string; color: 'success' | 'claude' | 'warn
   skipped: { sign: '–', color: 'subtle' },
 }
 
+// The workflows of a worktree, each with what it does now. It has its own failure, so a bad record
+// does not hide the resources, and a bad live file does not hide the record.
+async function workflowsOf($: EngineInterface, path: string): Promise<Pick<ViewTree, 'workflows' | 'workflowError'>> {
+  try {
+    const records = await readEffective($, path)
+    if (!records.length) return { workflows: [] }
+    const gitDir = await liveGitDir($, path)
+    return { workflows: await Promise.all(records.map(wf => workflowView($, wf, gitDir))) }
+  } catch (error) {
+    return { workflowError: `The workflows of ${path} could not be read: ${(error as Error).message}` }
+  }
+}
+
+async function workflowView($: EngineInterface, wf: Workflow, gitDir: string): Promise<WorkflowView> {
+  const own = await readLive($, livePath(gitDir, liveName(wf)))
+  // A call can name an issue of the PR, so a PR record also draws the calls of its issues.
+  const others = wf.pr ? await Promise.all((wf.issues ?? []).map(n => readLive($, livePath(gitDir, `issue-${n}`)))) : []
+  const calls = [own, ...others].flatMap(l => l.live?.calls ?? []).sort((a, b) => a.at - b.at)
+  const hook = wf.hooks?.review
+  const review = [
+    ...(hook ? [{ name: 'review', firedAt: hook.firedAt, answered: hook.answer !== undefined }] : []),
+    ...(wf.reviewSpec ? [{ name: 'spec', answered: wf.reviewSpec.answer !== undefined }] : []),
+  ]
+  return {
+    kind: wf.pr ? 'pr' : 'issue', mode: wf.mode, steering: wf.steering, state: wf.state, previous: wf.previous, issue: wf.issue, pr: wf.pr, issues: wf.issues, repo: wf.repo, prs: wf.prs,
+    blocked: wf.blocked?.message, blockedAt: wf.blocked?.at, waiting: wf.waiting, review,
+    visited: (wf.history ?? []).flatMap(h => [h.from, h.to]).filter((x): x is State => !!x),
+    live: own.live || calls.length ? { at: own.live?.at ?? 0, ...own.live, calls } : undefined,
+    liveError: [own, ...others].map(l => l.error).find(Boolean),
+  }
+}
+
 async function readTree($: EngineInterface, t: Listed): Promise<ViewTree> {
   const tree: ViewTree = { path: t.path, branch: t.branch, isMain: t.isMain, files: t.files, problem: t.problem, servers: [], stacks: [] }
   if (!t.files.some(f => f.name === RECORD && f.present)) return tree
   const r = await run($, envScript($), ['list', '--json', '--live', '--worktree', t.path])
-  if (r.exitCode !== 0) return { ...tree, resourceError: failure(`The resources of ${t.path} could not be read`, r) }
+  if (r.exitCode !== 0) return { ...tree, ...(await workflowsOf($, t.path)), resourceError: failure(`The resources of ${t.path} could not be read`, r) }
   try {
     const resources = (JSON.parse(r.stdout) as Record2).resources ?? {}
     const servers: ViewServer[] = Object.entries(resources['dev-servers'] ?? {}).map(([name, s]) => ({
@@ -78,9 +113,7 @@ async function readTree($: EngineInterface, t: Listed): Promise<ViewTree> {
     const stacks: ViewStack[] = (resources.docker ?? []).map(s => ({
       kind: s.kind, projectId: s.projectId, workdir: s.workdir, live: s.live, liveError: s.liveError, lastStopOutput: s.lastStop?.output,
     }))
-    const wf = await loadWorkflow($, t.path)
-    const workflow = wf && { state: wf.state, previous: wf.previous, issue: wf.issue, repo: wf.repo, prs: wf.prs, blocked: wf.blocked?.message, visited: (wf.history ?? []).flatMap(h => (h.from ? [h.from, h.to] : [h.to])) }
-    return { ...tree, servers, stacks, workflow }
+    return { ...tree, servers, stacks, ...(await workflowsOf($, t.path)) }
   } catch (error) {
     return { ...tree, resourceError: `The resources of ${t.path} could not be read: worktree-env.sh list printed no JSON (${(error as Error).message}). Run: bash ${envScript($)} list --json --live --worktree ${t.path}` }
   }
@@ -103,10 +136,13 @@ export async function refresh($: EngineInterface) {
     await update($, view, v => ({ ...v, trees: [], repo, error: failure(`${repo} is not in a git worktree (git rev-parse --show-toplevel)`, { exitCode: top.exitCode, stdout: top.stdout, stderr: top.stderr }) }))
     return
   }
-  const current = top.stdout.trim()
+  let current = top.stdout.trim()
   let trees: ViewTree[]
   try {
     const { worktrees } = JSON.parse(listed.stdout) as { worktrees: Listed[] }
+    // A session that started a workflow in another worktree works there, so the pane follows it.
+    const bound = await boundRoot($)
+    if (bound && worktrees.some(t => t.path === bound)) current = bound
     if (!worktrees.some(t => t.path === current)) throw new Error(`${current} is not one of: ${worktrees.map(t => t.path).join(', ')}`)
     trees = await Promise.all(worktrees.map(t => (t.path === current ? readTree($, t) : { path: t.path, branch: t.branch, isMain: t.isMain, files: t.files, problem: t.problem, servers: [], stacks: [] })))
   } catch (error) {
@@ -178,7 +214,7 @@ export const resourceView = (on: On) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
-    const { trees: all, current, error, notice, services, servicesError, armed, busy } = await read($, view)
+    const { trees: all, current, error, notice, services, servicesError, armed, busy, checkedAt } = await read($, view)
     const main = all.find(t => t.isMain)
     const trees = all.filter(t => t.path === current)
     const isArmed = (key: string) => armed?.key === key
@@ -197,20 +233,44 @@ export const resourceView = (on: On) => {
       )
     }
 
+    const issueLink = (repoName: string | undefined, n: number) => (repoName ? <Link key={`issue:${n}`} href={issueUrl(repoName, n)} label={`#${n}`} /> : `#${n}`)
+    const prLink = (repoName: string | undefined, n: number) => (repoName ? <Link key={`pr:${n}`} href={pullUrl(repoName, n)} label={`#${n}`} /> : `#${n}`)
+    const liveLine = (line: { text: string; color?: 'warning' | 'error' | 'subtle' | 'success' }, key: string) => <Text key={key} color={line.color} wrap="wrap">{line.text}</Text>
+
+    // What the workflow does now, what it waits for and what came back last.
+    const liveCard = (w: WorkflowView) => {
+      const box = liveBox(w, checkedAt ?? 0)
+      if (!box) return undefined
+      return (
+        <Box key="live" flexDirection="column" borderStyle="round" borderColor={box.color} paddingX={1}>
+          <Text color={box.color} weight="bold">{`${box.sign} ${box.title}`}</Text>
+          {box.lines.map((line, i) => liveLine(line, `line:${i}`))}
+          {box.earlier.length > 0 && box.lines.length > 0 && <Text color="subtle" weight="bold">Earlier</Text>}
+          {box.earlier.map((line, i) => liveLine(line, `earlier:${i}`))}
+        </Box>
+      )
+    }
+
     // The flow as a chain of boxes, so a look shows where this session stands. A narrow pane wraps the chain.
-    const flowChart = (w: NonNullable<ViewTree['workflow']>) => {
+    const flowChart = (w: NonNullable<ViewTree['workflows']>[number]) => {
       const parts = workflowParts(w)
       const picture = flowPicture({ state: w.state as State, previous: w.previous as State | undefined }, (w.visited ?? []) as State[])
+      const issues = w.issues ?? [w.issue]
       return (
-        <Box key="flow" flexDirection="column">
+        <Box key={`flow-${w.kind}-${w.pr ?? w.issue}`} flexDirection="column">
           {heading('Workflow')}
-          <Text color={w.state === 'blocked' ? 'warning' : undefined} weight="bold">
-            {parts.head}
-            {w.repo ? <Link href={issueUrl(w.repo, parts.issue)} label={`#${parts.issue}`} /> : `#${parts.issue}`}
-            {parts.mid}
-            {parts.pr !== undefined && (w.repo ? <Link href={pullUrl(w.repo, parts.pr)} label={`#${parts.pr}`} /> : `#${parts.pr}`)}
-            {parts.tail}
-          </Text>
+          {w.pr ? (
+            <Text color={w.state === 'blocked' ? 'warning' : undefined} weight="bold">
+              {`${parts.state}, PR `}{prLink(w.repo, w.pr)}{` (${issues.length > 1 ? 'issues' : 'issue'} `}
+              {issues.flatMap((n, i) => [...(i ? [', '] : []), issueLink(w.repo, n)])}{')'}
+            </Text>
+          ) : (
+            <Text color={w.state === 'blocked' ? 'warning' : undefined} weight="bold">
+              {`${parts.state}, issue `}{issueLink(w.repo, w.issue)}
+              {w.prs[0] !== undefined && ', PR '}{w.prs[0] !== undefined && prLink(w.repo, w.prs[0])}
+              {parts.tail}
+            </Text>
+          )}
           <Box flexWrap="wrap">
             {picture.steps.map((step, i) => (
               <Box key={`step:${step.state}`} alignItems="center" flexShrink={0}>
@@ -226,6 +286,9 @@ export const resourceView = (on: On) => {
               <Text color="subtle">──→ back to ci</Text>
             </Box>
           )}
+          {(w.mode || w.steering) && <Text color="subtle">{`For this ${w.pr ? 'PR' : 'issue'}: ${[w.mode, w.steering].filter(Boolean).join(', ')}`}</Text>}
+          {liveCard(w)}
+          {w.liveError && <Text color="error">{w.liveError}</Text>}
         </Box>
       )
     }
@@ -307,7 +370,9 @@ export const resourceView = (on: On) => {
               <Text weight="bold" color="claude">{`${t.branch}  `}<Link href={fileUrl(t.path)} label={t.path} />{t.isMain ? '  (main checkout)' : ''}</Text>
               {t.problem && <Text color="error">{t.problem}</Text>}
             </Box>
-            {t.workflow && flowChart(t.workflow)}
+            {t.workflows?.map(flowChart)}
+            {t.workflowError && <Text color="error">{t.workflowError}</Text>}
+            {t.workflows?.length === 0 && <Text color="subtle">No workflow in this worktree.</Text>}
             <Box key="files" flexDirection="column">
               {heading('Files')}
               <Box flexWrap="wrap" columnGap={3}>{t.files.map(f => fileRow(t, f))}</Box>

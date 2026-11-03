@@ -348,7 +348,7 @@ export const register: Register = (on, options) => {
     const began = await $.clock.now()
     // Each part starts alone: another plugin can own the command's name, and that must not stop the watcher.
     await startFeature($, 'workflow tools', () => startWorkflow($, e.cwd))
-    await startFeature($, '/ndev-workflow', () => startWorkflowCommand($))
+    await startFeature($, '/flow', () => startWorkflowCommand($))
     await startFeature($, 'workflow watcher', () => startWatchdog($, () => project))
     await startInitProject($, e.cwd)
     await startCredentials($, e.cwd)

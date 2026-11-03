@@ -185,6 +185,7 @@ declare module 'claude-code' {
       responsiveView: Shaped<ResponsiveView>
       // The worktree of this session's workflow, and when the session was last active (hooks/workflow/).
       workflowRoot: Shaped<string | null>
+      workflowIssue: Shaped<number | null>
       workflowDoneWaitsFor: Shaped<string | null>
       workflowFollowUpWorktrees: Shaped<string[]>
       workflowDeclined: Shaped<boolean>
@@ -316,8 +317,39 @@ export type ViewTree = {
   problem?: string
   // Why this worktree's record could not be read, with the repair.
   resourceError?: string
-  // The workflow of this worktree, when one runs here.
-  workflow?: { state: string; previous?: string; issue: number; repo?: string; prs: number[]; blocked?: string; visited?: string[] }
+  // The workflow of each issue in this worktree.
+  workflows?: WorkflowView[]
+  // Why the workflows could not be read, with the repair. The resources still draw.
+  workflowError?: string
+}
+// One workflow as the pane draws it: an issue record, or the record of a PR with its issues.
+export type WorkflowView = {
+  kind: 'issue' | 'pr'
+  state: string
+  previous?: string
+  issue: number
+  pr?: number
+  issues?: number[]
+  repo?: string
+  prs: number[]
+  // Set for this issue. The worktree and the project decide when these are empty.
+  mode?: string
+  steering?: string
+  blocked?: string
+  blockedAt?: number
+  visited?: string[]
+  waiting?: { id: string; tool: string; what: string; at: number; period?: number; most?: number; timeoutS?: number; args?: Record<string, string> }
+  review?: { name: string; firedAt?: number; answered: boolean }[]
+  live?: WorkflowLive
+  // Why the live file could not be read. The pane still draws the record.
+  liveError?: string
+}
+// What the tools write beside the record while they work: <git dir>/ndev-live-<issue|pr>-<n>.json.
+export type WorkflowLive = {
+  at: number
+  wait?: { id: string; tries: number; checkedAt?: number; nextAt?: number; detail?: string; seen?: Record<string, string> }
+  watch?: { at: number; nextAt?: number; sha?: string; red: string[]; pending: string[]; green: number; problems: string[]; seen?: Record<string, string> }
+  calls?: { tool: string; args: Record<string, string>; at: number; endedAt?: number; outcome: 'running' | 'ok' | 'refused' | 'failed'; note?: string }[]
 }
 export type ResourceView = {
   // The services of .neil-dev.json (the current worktree's, else the main checkout's), shown as links.

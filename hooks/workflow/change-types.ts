@@ -16,7 +16,7 @@ export const isDocsPath = (path: string) => DOCS_FILE.test(path)
 // A test or a story does not change what a person sees, so it is not a web change.
 export const isWebPath = (path: string) => WEB_FILE.test(path) && !TEST_FILE.test(path)
 
-function typeOf(path: string): ChangeType {
+export function typeOfPath(path: string): ChangeType {
   if (isDocsPath(path)) return 'docs'
   if (TEST_FILE.test(path)) return 'tests'
   if (isWebPath(path)) return 'web'
@@ -25,11 +25,14 @@ function typeOf(path: string): ChangeType {
 }
 
 export function inferChangeTypes(paths: readonly string[]): ChangeType[] {
-  const found = new Set(paths.map(typeOf))
+  const found = new Set(paths.map(typeOfPath))
   return CHANGE_TYPES.filter(type => found.has(type))
 }
 
 // No known type is not documents only: the full review is the safe side.
+// A person sees these, so the smoke test is not the agent's to skip.
+export const requiredSmokeTypes = (types: readonly ChangeType[]): ChangeType[] => CHANGE_TYPES.filter(type => (type === 'web' || type === 'docs') && types.includes(type))
+
 export const isDocsOnly = (types: readonly ChangeType[]) => types.length > 0 && types.every(type => type === 'docs')
 
 const NEXT_PAGE = /(?:^|\/)app\/(?:(.*)\/)?page\.[jt]sx$/
@@ -67,6 +70,8 @@ export const reviewWebStep = (files: readonly string[]) =>
 
 export const smokeWebStep = (files: readonly string[]) =>
   `Screenshots: call the screenshot tool (mcp__ndev__screenshot) with the preview URL of ${targets(files)}. By default it takes ${views}. Read each image. The images stay on this machine and do not reach the PR, so say in the report which pages you looked at and what you saw.`
+
+export const SMOKE_DOCS_STEP = 'Documents: read each changed document as a reader sees it: on the preview when the project has one, or else in the file view of the PR. Run each changed command and follow each changed link. Say in the report what you read and what you ran.'
 
 export const REVIEW_DATABASE_STEP = 'Database: apply each new migration to a local database and run the tests against it. If a migration must run after the merge, list it with addMigration.'
 

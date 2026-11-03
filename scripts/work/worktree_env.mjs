@@ -4,7 +4,8 @@
 // the plugin's session-end hook can stop them:
 //   { "version": 2, "settings": { "mode": ..., "steering": ... }, "resources": { "docker": [<stack>...], "dev-servers": { "<name>": <server> } } }
 // "settings" is optional: the development mode and steering this worktree chose (/dev mode, /dev steering).
-// "workflow" is optional: the state of the workflow tools (hooks/workflow/machine.ts owns its meaning).
+// "workflows" is optional: the state of the workflow tools for each issue, under the issue number
+// (hooks/workflow/machine.ts owns its meaning). The old "workflow" key is read and moves at the next write.
 //
 //   worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z>
 //                             [--workdir <dir holding supabase/>] [--worktree <dir>]
@@ -21,7 +22,7 @@
 //   worktree-env.sh migrate [--worktree <dir>]
 //   worktree-env.sh init [--worktree <dir>]
 //   worktree-env.sh set-setting --key mode|steering --value <value> [--worktree <dir>]
-//   worktree-env.sh set-workflow --expect-rev <n> [--worktree <dir>]   (the state as JSON on stdin)
+//   worktree-env.sh set-workflow --expect-rev <n> [--worktree <dir>]   (the state of one issue as JSON on stdin)
 //
 // add-dev-server names a running server by what it shows ("docs", "ui"); the same name again
 // replaces the entry. It reads the command line and start time of the pid from ps. stop-all stops
@@ -146,10 +147,10 @@ const keysOutside = (value, allowed) => Object.keys(value).filter(k => !allowed.
 const quoted = keys => keys.map(k => `"${k}"`).join(', ')
 const STACK_KEYS = ['kind', 'projectId', 'workdir', 'cliVersion', 'addedAt', 'lastStop']
 const SERVER_KEYS = ['pid', 'port', 'command', 'cwd', 'started', 'lastStop']
-const empty = () => ({ version: VERSION_NOW, settings: {}, resources: { docker: [], 'dev-servers': {} } })
+const empty = () => ({ version: VERSION_NOW, settings: {}, resources: { docker: [], 'dev-servers': {} }, workflows: {}, prs: {} })
 
 // The file's content: settings only when there are some, so an empty record stays as before.
-const content = (settings, resources, workflow) => ({ version: VERSION_NOW, ...(Object.keys(settings).length > 0 ? { settings } : {}), resources, ...(workflow ? { workflow } : {}) })
+const content = (settings, resources, workflows, prs) => ({ version: VERSION_NOW, ...(Object.keys(settings).length > 0 ? { settings } : {}), resources, ...(Object.keys(workflows ?? {}).length > 0 ? { workflows } : {}), ...(Object.keys(prs ?? {}).length > 0 ? { prs } : {}) })
 
 function settingsProblem(settings) {
   if (!isObject(settings)) return 'must hold "settings" as an object'
@@ -185,16 +186,34 @@ function serverProblem(name, d) {
   return undefined
 }
 
+const isIssue = (n) => Number.isInteger(n) && n > 0
+
+function workflowsProblem(raw) {
+  if (raw.workflow !== undefined && !(isObject(raw.workflow) && isIssue(raw.workflow.issue))) return 'must hold the old "workflow" key as an object with an issue number'
+  if (raw.prs !== undefined) {
+    if (!isObject(raw.prs)) return 'must hold "prs" as an object'
+    for (const [key, value] of Object.entries(raw.prs)) {
+      if (!isObject(value) || String(value.pr) !== key || !isIssue(value.pr)) return `must hold under prs.${key} an object whose pr is ${key}`
+    }
+  }
+  if (raw.workflows === undefined) return undefined
+  if (!isObject(raw.workflows)) return 'must hold "workflows" as an object'
+  for (const [key, value] of Object.entries(raw.workflows)) {
+    if (!isObject(value) || String(value.issue) !== key || !isIssue(value.issue)) return `must hold under workflows.${key} an object whose issue is ${key}`
+  }
+}
+
 // The problem with a parsed record, or undefined.
 function shapeProblem(raw) {
   if (!isObject(raw)) return 'must hold a JSON object'
-  const extra = keysOutside(raw, ['version', 'settings', 'resources', 'workflow'])
-  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, settings, resources, workflow`
+  const extra = keysOutside(raw, ['version', 'settings', 'resources', 'workflow', 'workflows', 'prs'])
+  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, settings, resources, workflows, prs`
   if (raw.settings !== undefined) {
     const problem = settingsProblem(raw.settings)
     if (problem) return problem
   }
-  if (raw.workflow !== undefined && !isObject(raw.workflow)) return 'must hold "workflow" as an object'
+  const flows = workflowsProblem(raw)
+  if (flows) return flows
   if (raw.version !== VERSION_NOW) return `has "version" ${JSON.stringify(raw.version)}; this script reads version ${VERSION_NOW}`
   if (!isObject(raw.resources)) return 'must hold a "resources" object'
   const kinds = keysOutside(raw.resources, ['docker', 'dev-servers'])
@@ -237,7 +256,7 @@ function readRecord(root) {
   }
   const problem = shapeProblem(raw)
   if (problem) throw new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed or stopped. Repair: fix the file (see the plugin README, "Worktree resources"), or delete it if nothing it lists still runs.`)
-  return { version: VERSION_NOW, settings: raw.settings ?? {}, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} }, workflow: raw.workflow }
+  return { version: VERSION_NOW, settings: raw.settings ?? {}, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} }, workflows: { ...(raw.workflow ? { [raw.workflow.issue]: raw.workflow } : {}), ...raw.workflows }, prs: raw.prs ?? {} }
 }
 
 // Write a temporary file, then rename it, so a reader never sees half a file.
@@ -309,7 +328,7 @@ function withLock(root, fn) {
 function change(root, edit) {
   withLock(root, () => {
     const record = readRecord(root)
-    writeRecord(join(root, FILE), content(record.settings, edit(record.resources), record.workflow))
+    writeRecord(join(root, FILE), content(record.settings, edit(record.resources), record.workflows, record.prs))
   })
 }
 
@@ -351,13 +370,14 @@ function setSetting(values) {
   refuseNotIgnored(root, common)
   withLock(root, () => {
     const record = readRecord(root)
-    writeRecord(join(root, FILE), content({ ...record.settings, [key]: value }, record.resources, record.workflow))
+    writeRecord(join(root, FILE), content({ ...record.settings, [key]: value }, record.resources, record.workflows, record.prs))
   })
   console.log(`worktree-env: saved ${key} ${value} in ${join(root, FILE)}.`)
 }
 
-// Saves the workflow state (hooks/workflow), read from stdin as a JSON object. --expect-rev is the
-// revision the caller read: a stale writer gets exit 5 and changes nothing. The record is allowed
+// Saves the workflow state of one issue or one PR (hooks/workflow), read from stdin as a JSON object: a state
+// with a "pr" goes under prs, and any other under workflows, by its issue. --expect-rev is the revision of
+// that state the caller read: a stale writer gets exit 5 and changes nothing. The record is allowed
 // in the main checkout here only, for a straw_man project that works directly on main.
 function setWorkflow(values) {
   const expected = Number(need(values, 'expect-rev'))
@@ -369,13 +389,18 @@ function setWorkflow(values) {
     throw new Fail(2, `worktree-env: set-workflow reads a JSON object from stdin, and the text is not valid JSON (${error.message}). Nothing was changed.`)
   }
   if (!isObject(workflow)) throw new Fail(2, 'worktree-env: set-workflow reads a JSON object from stdin, and the text is another JSON value. Nothing was changed.')
+  const { issue, pr } = workflow
+  if (pr !== undefined && !isIssue(pr)) throw new Fail(2, `worktree-env: set-workflow needs a PR state with a PR number, and its pr is ${JSON.stringify(pr)}. Nothing was changed.`)
+  if (!isIssue(issue)) throw new Fail(2, `worktree-env: set-workflow needs a state with an issue number, and its issue is ${JSON.stringify(issue)}. Nothing was changed.`)
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   ignoreLocally(root, gitDirs(root).common)
   withLock(root, () => {
     const record = readRecord(root)
-    const current = record.workflow?.rev ?? 0
-    if (current !== expected) throw new Fail(5, `worktree-env: the workflow in ${join(root, FILE)} is at revision ${current}, and this writer expected ${expected}. Nothing was changed. Repair: read the state again (the status tool) and retry.`)
-    writeRecord(join(root, FILE), content(record.settings, record.resources, { ...workflow, rev: expected + 1 }))
+    const current = (pr ? record.prs[pr] : record.workflows[issue])?.rev ?? 0
+    const name = pr ? `PR #${pr}` : `#${issue}`
+    if (current !== expected) throw new Fail(5, `worktree-env: the workflow of ${name} in ${join(root, FILE)} is at revision ${current}, and this writer expected ${expected}. Nothing was changed. Repair: read the state again (the status tool) and retry.`)
+    const saved = { ...workflow, rev: expected + 1 }
+    writeRecord(join(root, FILE), content(record.settings, record.resources, pr ? record.workflows : { ...record.workflows, [issue]: saved }, pr ? { ...record.prs, [pr]: saved } : record.prs))
   })
   console.log(String(expected + 1))
 }

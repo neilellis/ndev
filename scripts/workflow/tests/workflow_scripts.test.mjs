@@ -202,7 +202,7 @@ test('ast-grep runs only in a project with its config', () => {
   assert.match(fastCalls(dir), /ast-grep scan c\.go\n/)
 })
 
-// The guide is what /ndev-workflow guide shows, so it must not fall behind the code.
+// The guide is what /flow guide shows, so it must not fall behind the code.
 test('the guide names each tool, each state and each stage hook', () => {
   const plugin = new URL('../../../', import.meta.url).pathname
   const guide = readFileSync(`${plugin}kb/workflow.md`, 'utf8')

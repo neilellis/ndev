@@ -441,13 +441,15 @@ The runner writes `progress.json` in its `--out` folder and a pointer to it in
 `~/.cache/ndev/responsive-check/latest.json`. The pane reads these two files. It does not show a
 run that started before the Bash call.
 
-## The workflow: /ndev-workflow
+## The workflow: /flow
 
 The `mcp__ndev__*` workflow tools keep an agent on one issue from `started` to `done`. Each tool records the state in `.neil-dev.worktree.json`, does the commit, push or mark-ready step, and returns the next step. The `review` and `remember` stage hooks fire when the state changes. When a turn ends and the work is not finished, the plugin prompts the agent again. After 20 minutes with no activity, it compacts the session, reads the PR status and prompts again. `blocked` sends a notification that stays until you dismiss it.
 
-The guide, with the flow chart, is [kb/workflow.md](kb/workflow.md). To show it in a session, type `/ndev-workflow guide`. `/ndev-workflow` also shows the status, skips a phase, goes to a state, ends a block and turns the workflow off. `/unblock <message>` gives the agent your answer and ends a block or a wait. It runs at once, also during a turn.
+The guide, with the flow chart, is [kb/workflow.md](kb/workflow.md). To show it in a session, type `/flow guide`. `/flow` also shows the status, skips a phase, goes to a state, ends a block and turns the workflow off. `/unblock <message>` gives the agent your answer and ends a block or a wait. It runs at once, also during a turn.
 
 A session that starts with no issue asks for the issue, a new issue, or no workflow. `iNeedA(kind, description)` gives guidance on a `react-component`, `library`, `brand-style` or `animation`. `reportWorkflowBug(title, details)` starts an Orca agent that fixes a fault of the plugin on its `main`. Each skill and agent names the tools that it needs.
+
+Each issue can have its own mode and steering. The agent chooses heavy or light in `started` or `create`, and `/flow mode` and `/flow steering` set one issue. A PR follows the strictest of its issues. `/view` shows the state, and what each tool waits for.
 
 `checkpoint` and `finishedDevelopment` take an optional `changeTypes` list (`web`, `backend`, `database`, `docs`, `tests`, `config`). The review instructions change with the types that accumulate. `screenshot(url)` takes images of a page in the Orca browser for a web change. See [Change types](kb/workflow.md#change-types).
 

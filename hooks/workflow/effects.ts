@@ -164,10 +164,10 @@ export async function readChecks($: EngineInterface, root: string, repo: string,
 // What the idle heartbeat wants to know, for as few GitHub calls as it can: one read of the PR. Only
 // a state other than "clean" costs the extra read of the checks. `checks` lets a caller that needs
 // them too spend no second read.
-export type PrHealth = { number: number; merged: boolean; closed: boolean; problems: string[]; sha: string; checks?: Checks }
+export type PrHealth = { number: number; merged: boolean; closed: boolean; problems: string[]; sha: string; checks?: Checks; seen: Record<string, string> }
 export async function readPrHealth($: EngineInterface, root: string, repo: string, n: number): Promise<PrHealth> {
   const pr = await readPr($, root, repo, n)
-  const health: PrHealth = { number: n, merged: !!pr.merged, closed: pr.state !== 'open', problems: [], sha: pr.head.sha }
+  const health: PrHealth = { number: n, merged: !!pr.merged, closed: pr.state !== 'open', problems: [], sha: pr.head.sha, seen: { state: pr.merged ? 'merged' : pr.state, draft: pr.draft ? 'yes' : 'no', mergeable: `${pr.mergeable === true ? 'yes' : pr.mergeable === false ? 'no' : 'unknown'}${pr.mergeable_state ? ` (${pr.mergeable_state})` : ''}` } }
   if (health.closed) return health
   if (pr.mergeable === false || pr.mergeable_state === 'dirty') health.problems.push(`PR #${n} has merge conflicts with its base. Merge the base into the branch, resolve them (the ndev:resolving-merge-conflicts skill), and call checkpoint.`)
   if (pr.mergeable_state !== 'clean') {
@@ -213,7 +213,7 @@ export async function orca($: EngineInterface, root: string, args: string[]): Pr
 
 export type Alert = { group: string; pid?: number; problem?: string }
 export async function raiseAlert($: EngineInterface, root: string, issue: number, message: string, title = `ndev: #${issue} is blocked`): Promise<Alert> {
-  const group = `ndev-${root.split('/').pop()}`
+  const group = `ndev-${root.split('/').pop()}-${issue}`
   const { gitDir } = await paths($, root)
   const terminal = String((await $.env.get('ORCA_TERMINAL_HANDLE')) ?? '')
   const r = await run($, ['bash', `${$.plugin.root}/scripts/workflow/notify.sh`, 'raise', '--group', group, '--title', title, '--message', message.slice(0, 200), '--terminal', terminal, '--log', `${gitDir}/ndev-notify.log`], { cwd: root, timeoutMs: 20_000 })

@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { shownValue } from '../hooks/workflow/live'
 
 type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
 type On = Parameters<Body>[1]
@@ -93,6 +94,14 @@ test('a worktree that runs a workflow shows its state and its issue', async ($, 
   world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'reviewing', issue: 7, prs: [12] } }) })
   const ui = await start($)
   expect((await ui.find({ type: 'Text', text: /^reviewing, issue #7, PR #12/ }))).toBeTruthy()
+})
+
+test('a worktree with several issues shows the state of each', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflows: { 7: { state: 'reviewing', issue: 7, prs: [12] }, 12: { state: 'planning', issue: 12, prs: [12] } } }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^reviewing, issue #7, PR #12/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^planning, issue #12, PR #12/ })).toBeTruthy()
+  await ui.unmount()
 })
 
 test('a blocked workflow shows the state it keeps and the message', async ($, on) => {
@@ -374,4 +383,129 @@ test('the issue and the pull request of a workflow are links to GitHub', async (
   expect((await ui.find({ type: 'Link', text: '#7' }))?.props.href).toBe('https://github.com/acme/widgets/issues/7')
   expect((await ui.find({ type: 'Link', text: '#12' }))?.props.href).toBe('https://github.com/acme/widgets/pull/12')
   await ui.unmount()
+})
+
+const RECORD_AT = `${WT}/.neil-dev.worktree.json`
+const LIVE = (name: string) => `${WT}/ndev-live-${name}.json`
+const waiting = { id: 'waitForPR-1', tool: 'waitForPR', what: 'PR #12 to be mergeable', at: 900_000, period: 300, most: 12, timeoutS: 3600, args: { pr: '12', state: 'mergeable' } }
+
+test('a wait draws its arguments, the check count and what came back for the PR', async ($, on) => {
+  const seen = { state: 'open', draft: 'no', mergeable: 'no (blocked)', head: 'a1b2c3d4' }
+  world(on, {}, WT, {
+    [RECORD_AT]: JSON.stringify({ workflows: { 7: { state: 'wait', previous: 'ci', issue: 7, prs: [12], waiting } } }),
+    [LIVE('issue-7')]: JSON.stringify({ at: 1000, wait: { id: 'waitForPR-1', tries: 4, checkedAt: 950_000, nextAt: 1_200_000, seen } }),
+  })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /waitForPR {2}PR #12 to be mergeable/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /check 4 of 12 · every 300 s · next in/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /mergeable +no \(blocked\)/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /head +a1b2c3d4/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a live file of another wait is not read as this wait', async ($, on) => {
+  world(on, {}, WT, {
+    [RECORD_AT]: JSON.stringify({ workflows: { 7: { state: 'wait', previous: 'ci', issue: 7, prs: [12], waiting } } }),
+    [LIVE('issue-7')]: JSON.stringify({ at: 1000, wait: { id: 'old', tries: 9, checkedAt: 1000, seen: { state: 'closed' } } }),
+  })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /no check yet/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /state +closed/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a wait that stopped reporting says so', async ($, on) => {
+  const w = world(on, {}, WT, {
+    [RECORD_AT]: JSON.stringify({ workflows: { 7: { state: 'wait', previous: 'ci', issue: 7, prs: [12], waiting } } }),
+    [LIVE('issue-7')]: JSON.stringify({ at: 1000, wait: { id: 'waitForPR-1', tries: 1, checkedAt: 1000 } }),
+  })
+  w.tick(30 * 60_000)
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /No report for .*the session may have ended/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a live file that cannot be parsed shows why, and the pane still draws the record', async ($, on) => {
+  world(on, {}, WT, { [RECORD_AT]: JSON.stringify({ workflows: { 7: { state: 'developing', issue: 7, prs: [12] } } }), [LIVE('issue-7')]: '{"at":' })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^developing, issue #7/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /ndev-live-issue-7\.json could not be read/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a PR record stands for the issues that it took over, and draws their calls', async ($, on) => {
+  const developed = { state: 'developed', prs: [12] }
+  world(on, {}, WT, {
+    [RECORD_AT]: JSON.stringify({ workflows: { 7: { ...developed, issue: 7 }, 9: { ...developed, issue: 9 } }, prs: { 12: { state: 'reviewing', issue: 7, pr: 12, issues: [7, 9], prs: [12], hooks: { review: { firedAt: 1000, agentId: 'a' } } } } }),
+    [LIVE('pr-12')]: JSON.stringify({ at: 1000, calls: [{ tool: 'finishedReview', args: { review: 'no findings', pr: '12' }, at: 1000, outcome: 'running' }] }),
+    [LIVE('issue-9')]: JSON.stringify({ at: 900, calls: [{ tool: 'done', args: { issue: '9' }, at: 900, endedAt: 900, outcome: 'refused', note: 'Refused: not valid' }] }),
+  })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^reviewing, PR #12 \(issues #7, #9\)/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^developed, issue/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /finishedReview/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /review +no findings/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /✖ done .*Refused: not valid/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Review {2}review running/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('an issue that finished development, with no PR record yet, still draws', async ($, on) => {
+  world(on, {}, WT, { [RECORD_AT]: JSON.stringify({ workflows: { 7: { state: 'developed', issue: 7, prs: [12] } } }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^developed, issue #7/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a record that cannot be read names the file, and the resources still draw', async ($, on) => {
+  world(on, { [`${ENV} list --json --live --worktree ${WT}`]: ok(JSON.stringify({ resources: { 'dev-servers': { docs: { pid: 1, port: 3000, command: 'c', cwd: '/w', live: true } } } })) }, WT, { [RECORD_AT]: '{' })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /\.neil-dev\.worktree\.json/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /docs +:3000/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a record with no workflow says so in one line', async ($, on) => {
+  world(on, {}, WT, { [RECORD_AT]: JSON.stringify({ version: 2, resources: {} }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^No workflow in this worktree/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('shownValue masks secrets and cuts long text, and leaves plain values alone', () => {
+  expect(shownValue('api_key', 'abc')).toBe('•••')
+  expect(shownValue('shell_command', 'TOKEN=abc curl -H "Authorization: Bearer xyz" https://u:p@x.io/a?k=v')).toBe('TOKEN=••• curl -H "Authorization: •••" https://•••@x.io/a?•••')
+  expect(shownValue('note', 'gh token ghp_abc123 and sk-abc and xoxb-1-2 --password hunter2')).toBe('gh token ••• and ••• and ••• --password •••')
+  expect(shownValue('message', `first\nsecond`)).toBe('first')
+  expect(shownValue('message', 'x'.repeat(200))).toBe(`${'x'.repeat(120)}…(200 chars)`)
+  expect(shownValue('pr', 12)).toBe('12')
+  expect(shownValue('waitOn', [7, 9])).toBe('7, 9')
+  expect(shownValue('url', 'https://x.io/a')).toBe('https://x.io/a')
+})
+
+test('an issue with its own mode and steering shows them', async ($, on) => {
+  world(on, {}, WT, { [RECORD_AT]: JSON.stringify({ workflows: { 7: { state: 'developing', issue: 7, prs: [], mode: 'heavy', steering: 'auto' } } }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^For this issue: heavy, auto/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('shownValue masks each form of a secret that a command can hold', () => {
+  for (const [value, shown] of [
+    ['psql postgres://app:hunter2@db/x', 'psql postgres://•••@db/x'],
+    ['curl -u bob:hunter2 https://x.io', 'curl -u ••• https://x.io'],
+    ['curl --user=bob:hunter2 https://x.io', 'curl --user=••• https://x.io'],
+    ['login password=hunter2 now', 'login password=••• now'],
+    ['run api_key=abc123', 'run api_key=•••'],
+    ['curl -H "X-Api-Key: abc123" https://x.io', 'curl -H "X-Api-Key: •••" https://x.io'],
+    ['curl -H "Authorization: Basic abc123 " https://x.io', 'curl -H "Authorization: •••" https://x.io'],
+    ['mysql -u root -phunter2 db', 'mysql -u root -p••• db'],
+  ] as const) expect(shownValue('shell_command', value)).toBe(shown)
+  expect(shownValue('body', { password: 'hunter2', nested: { token: 'abc' }, list: [{ secret: 'x' }], fine: 1 })).not.toMatch(/hunter2|abc|"x"/)
+  expect(shownValue('body', { fine: 1 })).toContain('"fine":1')
+  expect(shownValue('list', [{ password: 'hunter2' }])).not.toContain('hunter2')
+})
+
+test('shownValue leaves plain commands alone', () => {
+  for (const value of ['git push -u origin main', 'mkdir -p/tmp/a', 'sort -u a.txt', 'pytest -pno:cacheprovider', 'see the monkey: it is fine']) expect(shownValue('shell_command', value)).toBe(value)
 })
