@@ -26,8 +26,9 @@ stateDiagram-v2
     developing --> reviewing: finishedDevelopment, all issues of the PR are complete
     developing --> developed: finishedDevelopment, another issue of the PR is not complete
     developed --> reviewing: finishedDevelopment of the last issue
+    developed --> developing: checkpoint
     reviewing --> ci: finishedReview
-    ci --> smoke: finishedChecks, a preview, a web change or a docs change
+    ci --> smoke: finishedChecks, a web change, a docs change, or a preview in heavy mode
     ci --> finishing: finishedChecks, nothing to smoke
     smoke --> finishing: finishedSmoke
     finishing --> done: done
@@ -91,7 +92,7 @@ flowchart TD
 
     developing -->|"finishedDevelopment(issues, prs, message, files)<br/>fast, pre-commit, commit. No push."| reviewing[reviewing<br/>the plugin starts the review,<br/>REMEMBER HOOK fires]
     reviewing -->|"finishedReview(review, deadcode, remembered)<br/>pre-ready, pre-push, push, mark PR ready"| ci[ci<br/>the plugin watches the checks]
-    ci -->|"finishedChecks()<br/>green, preview, web change or docs change"| smoke[smoke<br/>browser smoke test]
+    ci -->|"finishedChecks()<br/>green, web change, docs change, or preview in heavy mode"| smoke[smoke<br/>browser smoke test]
     ci -->|"finishedChecks()<br/>green, nothing to smoke"| finishing
     ci -->|"checks red: refused, attempts + 1"| ci
     smoke -->|"finishedSmoke(report or skip reason)"| finishing[finishing]
@@ -150,7 +151,7 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `waitForSubAgent(issue or pr, claude_agent_id, period, attempts, timeout)` | Holds the agent until the subagent ends.                                                                                                                                      | See [Wait tools](#wait-tools).                                                                                                                   |
 | `waitForURL(issue or pr, url, period, attempts, timeout)`                  | Holds the agent until the URL answers with a 2xx status.                                                                                                                      | See [Wait tools](#wait-tools). The URL is not http or https.                                                                                     |
 | `waitForProcessEnd(issue or pr, pid, period, attempts, timeout)`           | Holds the agent until the process ends. It cannot read the exit code.                                                                                                         | See [Wait tools](#wait-tools).                                                                                                                   |
-| `waitForSeconds(issue or pr, secs, attempts, timeout)`                     | Holds the agent for this time. `attempts` has no effect, because no check runs.                                                                                               | See [Wa/ndeit tools](#wait-tools).                                                                                                               |
+| `waitForSeconds(issue or pr, secs, attempts, timeout)`                     | Holds the agent for this time. `attempts` has no effect, because no check runs.                                                                                               | See [Wait tools](#wait-tools).                                                                                                               |
 | `waitFor(issue or pr, shell_command, period, attempts, timeout)`           | Runs the command every `period` seconds (30 by default), in the worktree, until it exits 0. Each run may last 60 s.                                                           | See [Wait tools](#wait-tools).                                                                                                                   |
 | `waitForPR(issue, pr, state, period, attempts, timeout)`             | Holds the agent until the PR is `open`, `closed`, `merged`, `draft`, `ready` or `mergeable`. It does not wait for checks, because the workflow watches those.                 | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
 | `waitForIssue(issue or pr, waitOn, state, period, attempts, timeout)`       | Holds the agent until each issue in the list `waitOn` is `open` or `closed`.                                                                                                                        | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
@@ -272,7 +273,7 @@ An issue with no value of its own stores nothing, and it follows the worktree.
 - **The human can change either setting at any time.** `/flow mode heavy 7` or `/flow steering auto 7`. With no number, the command sets the active issue. With no value, it shows the setting. The steps that remain follow the new setting, and the steps that are complete stay complete.
 - **A PR follows the strictest of its issues.** Heavy wins over light, and interactive wins over auto. An issue with no setting of its own counts with what it inherits from the worktree. When no issue has its own setting, the PR record stores none and follows the worktree. The PR record takes these values when an issue comes to the PR. After that, `/flow mode` on that record sets the PR. `finishedDevelopment` runs `gates.sh` for each heavy issue that it finishes, and the review of the PR follows the strictest setting.
 
-**`started` loads the skill of the mode.** Its answer holds the text of `work-light` or `work-heavy`, so the agent has the method from the first step. A session gets each skill once, and again after a compaction. Steering does not change the choice, because `work-light-auto` and `work-heavy-auto` dispatch workers and an agent on one issue does not. If the file cannot be read, the workflow still starts, and the answer names the repair.
+**`started` loads the skill of the mode.** Its answer holds the text of `work-light` or `work-heavy`, so the agent has the method from the first step. A session gets each skill once, and again after a compaction. Steering does not change the choice, because `work-light-auto` and `work-heavy-auto` dispatch workers and an agent on one issue does not. If the file cannot be read, the workflow still starts, and the agent is told to call the Skill tool.
 
 `/dev mode` still sets the worktree. It does not change an issue that has its own value. `started` names the mode and the steering, and each prompt names them when they apply to an issue.
 

@@ -25,6 +25,8 @@ the next pass resumes from it. For a batched PR, write one section per member is
 - the tasks, and an **Assumptions** heading for each decision you made without the user;
 - one `Closes #<k>` line per issue the PR closes.
 
+While a workflow runs, call `mcp__ndev__finishedPlan` with the file instead: it writes the body, and `finishedDevelopment` runs `gates.sh`. With no workflow:
+
 ```bash
 gh pr edit <pr> --repo "$REPO" --body-file <file>   # write a file; do not paste inline
 ```

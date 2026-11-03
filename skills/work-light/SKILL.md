@@ -28,7 +28,7 @@ While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp
 
 Give each call its `issue`. From `reviewing` onward, you can give its `pr`. `started` takes an optional `mode`: choose `heavy` for a multi-step, cross-cutting or high-risk change, and `light` for the others. The human can change it with `/flow mode`. The mode in the answer of `started` wins over the session's mode.
 
-At any stage: `mcp__ndev__status()` reads the state. `mcp__ndev__blocked(message)` and `mcp__ndev__unblocked(message)` reach the human. `mcp__ndev__followUp(mode, message)` files other work. `mcp__ndev__addMigration(name)` adds a migration for after the merge. `mcp__ndev__requestSecret(name)` finds where a secret is set. `mcp__ndev__iNeedA(kind, description)` gives guidance on a component, library, brand style or animation. `mcp__ndev__reportWorkflowBug(title, details)` starts an agent that fixes a fault of the plugin. `mcp__ndev__waitForPR(pr, state)` and `mcp__ndev__waitForIssue(issue, state)` hold the agent until another PR or issue reaches a state. Past half of its retries, a wait tells the human.
+At any stage: `mcp__ndev__status()` reads the state. `mcp__ndev__blocked(message)` and `mcp__ndev__unblocked(message)` reach the human. `mcp__ndev__followUp(mode, message)` files other work. `mcp__ndev__addMigration(name)` adds a migration for after the merge. `mcp__ndev__requestSecret(name)` finds where a secret is set. `mcp__ndev__iNeedA(kind, description)` gives guidance on a component, library, brand style or animation. `mcp__ndev__reportWorkflowBug(title, details)` starts an agent that fixes a fault of the plugin. `mcp__ndev__waitForPR(issue, pr, state)` and `mcp__ndev__waitForIssue(waitOn, state)` hold the agent until another PR or issue reaches a state. Past half of its retries, a wait tells the human.
 
 A helper agent cannot move the workflow. It can call only `status`, `requestSecret`, `followUp` with `issue_only`, `iNeedA`, `reportWorkflowBug` and `screenshot`. The steps below say how to do the work of each stage.
 
@@ -142,7 +142,7 @@ The main agent owns the diagnosis, design, scope and result. Do not split each T
 |---|---|
 | Trace a call path | Find callers of the named interface in the named packages. Return paths, not file dumps. |
 | Diagnose a long log | Return the first causal error, its line and a short explanation. |
-| Wait for CI | Run the wait helper for the named PR and commit. Return changed check results and pending checks. |
+| Wait for CI (no workflow only) | Run the wait helper for the named PR and commit. Return changed check results and pending checks. |
 | Await an event | Run a bounded watcher for the named event or process exit. Return the evidence, failure or timeout. |
 | Simple refactor | Change the agreed symbol in the named files, run the named tests, return the diff summary. |
 | File cleanup | Remove only named, owned temporary outputs after proving no active task needs them. |

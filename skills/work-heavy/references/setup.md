@@ -5,6 +5,8 @@ Part of the `work-heavy` skill. This file covers the steps before any code. `$RE
 
 ## F0 — Resume check (do this first)
 
+While a workflow runs, `mcp__ndev__started` does this check. Go on to F0b. With no workflow:
+
 Before work on an issue or an existing branch, look for work in flight: an open PR on the
 conventional branch, or a PR whose body says `Closes #<n>`.
 

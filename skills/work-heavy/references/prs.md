@@ -51,7 +51,7 @@ session that works a PR opens no other PR.** Only a human message can authorise 
 `followUp` call with the mode `subagent` or `worktree` from the `workflow` tools (`kb/workflow.md`).
 Without this rule, one PR makes a chain of issues, each with its own PR, CI pass and review.
 
-**Related to your issue**, at any size:
+**Related to your issue**, at any size. While a workflow runs, call `followUp` with the mode `this_agent` and skip these steps. Otherwise:
 
 1. **Open it as a sub-issue of your issue.** Create the issue, then link it:
    `gh.sh subissues link <your-issue> <new-issue>`. The board then shows one chain, not two unrelated

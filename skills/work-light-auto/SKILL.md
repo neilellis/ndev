@@ -15,7 +15,7 @@ A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, s
 
 Use the settings section of `work-heavy-auto`: `REPO` and `BASE` from `gh repo view`, and `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER` and any non-default column names from the arguments or the project's `CLAUDE.md`. If the board is not set, stop and say: "Set GH_PROJECT_OWNER and GH_PROJECT_NUMBER (and any non-default column names) in CLAUDE.md or pass them as arguments."
 
-Board reads and moves use `${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh ready|awaiting|items|move <itemId> <status>`. Issue and PR queries use `${CLAUDE_PLUGIN_ROOT}/scripts/github/gh.sh`. Before each dispatch, run `${CLAUDE_PLUGIN_ROOT}/scripts/work/peer_activity.sh` and `scripts/worktree_claim.sh`. Exit 2, 3, 4 or 5 means: do not dispatch, report the issue as owned or unmeasured.
+Board reads and moves use `${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh ready|awaiting|items|move <itemId> <status>`. Issue and PR queries use `${CLAUDE_PLUGIN_ROOT}/scripts/github/gh.sh`. Before each dispatch, run `${CLAUDE_PLUGIN_ROOT}/scripts/work/peer_activity.sh` and `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh`. Exit 2, 3, 4 or 5 means: do not dispatch, report the issue as owned or unmeasured.
 
 ## Survey
 

@@ -50,7 +50,7 @@ has looked at this yet", which is false on a PR that is green or parked on purpo
 [F1](setup.md#f1--worktree-branch-and-draft-pr). Each body rewrite above replaces the `Closes #<n>` line.
 
 State the draft flag in your one-line report (`draft: yes — <reason>` / `draft: no`). For board
-work, move the card to *In review* only when green and smoked. The one-line report is:
+work, move the card to *In review* only when green and smoked. While a workflow runs, `finishedReview` moves it. The one-line report is:
 `#<n> <title> → <PR url> | tests: pass | e2e: <pass|skip> | preview: <url|n/a> | smoke: ok | wiki: <page|n/a> | docs: <page|n/a> | mergeable: yes | draft: no`.
 
 ## F6b — Act on PR review feedback (revise)
