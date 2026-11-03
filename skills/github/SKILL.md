@@ -7,10 +7,6 @@ description: "Operate GitHub issues, pull requests, checks, milestones, Actions 
 
 Use the helpers in `${CLAUDE_PLUGIN_ROOT}/scripts/github/` (the plugin's shared `scripts/` folder; other skills use them too). Pass absolute paths to other agents. `${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`. Read the matching reference before complex work:
 
-## The workflow
-
-While a workflow runs, it watches the checks and the conflicts of its PR and tells the agent, so do not run `wait-for-pr-change.sh` or `wait-for-run.sh` for that PR: the guard refuses them. Read the state with `mcp__ndev__status`. Commit and push with `mcp__ndev__checkpoint`. Mark a PR ready with `mcp__ndev__finishedReview`. File other work with `mcp__ndev__followUp`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 - `references/issues.md`: issues, sub-issues, blockers, milestones, board.
 - `references/prs.md`: PRs, closing references, merging the base into open PRs.
 - `references/checks.md`: checks and waiting.
@@ -55,3 +51,7 @@ Rules:
 - Never trust the exit code of `gh pr checks --watch` (see `references/checks.md`).
 
 To add a helper: source `${CLAUDE_PLUGIN_ROOT}/scripts/github/lib.sh`, call `gh_resolve_repo`, make it executable, list it here, and describe non-obvious behaviour in the relevant reference.
+
+## The workflow
+
+While a workflow runs, it watches the checks and the conflicts of its PR and tells the agent, so do not run `wait-for-pr-change.sh` or `wait-for-run.sh` for that PR: the guard refuses them. Read the state with `mcp__ndev__status`. Commit and push with `mcp__ndev__checkpoint`. Mark a PR ready with `mcp__ndev__finishedReview`. File other work with `mcp__ndev__followUp`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

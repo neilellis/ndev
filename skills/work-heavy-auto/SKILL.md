@@ -56,7 +56,7 @@ Tests: `${CLAUDE_PLUGIN_ROOT}/scripts/work/tests/test_gates.sh`, `test_worktree_
 - Record an explicit blocker with `gh.sh blocked-by add`. A dependency on another Ready card in the same pass means "batch together", not "wait".
 - Batch only contiguous dependent or coupled issues. Keep unrelated work and risky schema, auth or migration work separate.
 
-For each startable unit, load `work-heavy` and `testing` and run F0 → F6. Use one worktree `.claude/worktrees/issue-<lead>`, one branch `claude/issue-<lead>` and one draft PR based on the base branch. The PR body has one section and one `Closes #<n>` per batched issue, each with a `Test entry point:`. Move the card to progress after the plan. Move it to review only after `gates.sh`, the checks and the smoke test pass. Run the `deadcode` skill's sweep for code changes.
+For each startable unit, a worker in its own session follows the answers of the workflow. A subagent worker cannot move a workflow, so it loads `work-heavy` and `testing` and runs F0 → F6. Use one worktree `.claude/worktrees/issue-<lead>`, one branch `claude/issue-<lead>` and one draft PR based on the base branch. The PR body has one section and one `Closes #<n>` per batched issue, each with a `Test entry point:`. Move the card to progress after the plan. Move it to review only after `gates.sh`, the checks and the smoke test pass. Run the `deadcode` skill's sweep for code changes.
 
 A related discovery becomes a sub-issue carried in the same PR (`Carried by #<pr>`, `Closes #<child>`). An unrelated discovery becomes a separate issue with no PR.
 

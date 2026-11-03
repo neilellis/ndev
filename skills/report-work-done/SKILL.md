@@ -14,10 +14,6 @@ description: "Summarize what actually shipped by reading merged pull requests in
    It writes `prs.json` and `chunk1.md` to `chunkN.md` (to the scratchpad or `--out`) for helper summaries. It fails when it reaches the 500-PR limit; use a shorter window.
 3. Read each PR's body, diff, closing issues and merge date. Do not infer shipped work from commits, open PRs, issue titles or chat.
 
-## The workflow
-
-Read the current state of an issue with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 Write the report:
 
 - Group related PRs into a few sections led by outcomes. Each section gives the user or business result, then only the PRs that support it.
@@ -26,3 +22,7 @@ Write the report:
 - End with a full evidence table: PR number, title, author, merged date, linked issues.
 - With an author filter, state it exactly. Separate authored work from reviewed, co-authored or only related PRs.
 - Cite a PR number or link for every factual claim. Keep uncertainty. Write for the requested audience. No padding, no impact claims without evidence.
+
+## The workflow
+
+This skill only reads, so it does not move a workflow. `mcp__ndev__status` reads the state of one. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

@@ -4,11 +4,6 @@ description: "Do the requested work directly on the main branch in the main chec
 disable-model-invocation: true
 ---
 
-## The workflow
-
-If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint` and end with `mcp__ndev__done`. A project level that may merge lets `done` merge. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
-
 Use this skill only when the user invokes it by name for the current task. Never load it on your own judgement. Never carry it into a later task.
 
 ## The exception
@@ -35,3 +30,7 @@ All other rules stay in force: test first, pass the guards, record every failure
 9. Push from the main checkout with the repo's checked-push command named in its CLAUDE.md, else `git push origin <base>`.
 10. If the push fails, read the error and fix the cause. Never force-push.
 11. Report the commit SHA and the push result.
+
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint` and end with `mcp__ndev__done`. A project level that may merge lets `done` merge. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

@@ -26,4 +26,4 @@ You implement **one self-contained task** end to end, in the temporary worktree 
 
 ## The workflow
 
-A subagent cannot move a workflow. As a main-session agent (`claude --agent dev-task`) with an issue, call `mcp__ndev__started(issue, shortName)` first and follow each answer. Any agent can call `mcp__ndev__iNeedA` and `mcp__ndev__reportWorkflowBug`.
+A subagent cannot move a workflow. As a main-session agent (`claude --agent dev-task`) with an issue, call `mcp__ndev__started(issue, shortName)` first and follow each answer. Any agent can call `mcp__ndev__iNeedA` and `mcp__ndev__reportWorkflowBug`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

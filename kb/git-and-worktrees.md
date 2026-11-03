@@ -2,7 +2,7 @@
 
 [kb](README.md) › git-and-worktrees
 
-**Each unit of work has its own worktree, its own branch and one PR. Nobody commits to the main branch.** Use Orca to make and manage worktrees, terminals and handoffs.
+**Each unit of work has its own worktree, its own branch and one PR. Nobody commits to the main branch.** Use Orca to make and manage worktrees, terminals and handoffs. In a project that runs the [workflow](workflow.md), its `started` tool claims the worktree and opens the PR.
 
 ## Worktrees
 

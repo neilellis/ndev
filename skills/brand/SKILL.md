@@ -8,10 +8,6 @@ argument-hint: "create | check | apply [path or note]"
 
 The arguments are: $ARGUMENTS
 
-## The workflow
-
-To find one call on a font, colour or similar, call `mcp__ndev__iNeedA('brand-style', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 Take the first word as the action. If it is not `create`, `check` or `apply`, ask which one, in one question, and stop.
 
 ## Where the brand is
@@ -50,3 +46,7 @@ The template is `${CLAUDE_PLUGIN_ROOT}/templates/brand-site`. Its defaults come 
 
 For React projects, use shadcn/ui as the default source of owned UI primitives. Preserve its accessible interactions and basic component conventions, then map colour, typography, spacing and radii to the project brand. Apply the same foundation to public forms, admin and interview/workflow tools. Custom cinematic scenes and brand illustrations remain custom. Respect an existing Base UI or Radix choice and verify focus, keyboard operation, validation and saved state when replacing controls. For motion-rich patterns that shadcn/ui does not have, [Kokonut UI](https://kokonutui.com/) components install through the same registry. Map their colours to the brand tokens and follow `ux-principles` (`references/kokonut-ui.md`).
 For React projects, use shadcn/ui as the default source of owned UI primitives. Preserve its accessible interactions and basic component conventions, then map colour, typography, spacing and radii to the project brand. Apply the same foundation to public forms, admin and interview/workflow tools. Custom cinematic scenes and brand illustrations remain custom. Respect an existing Base UI or Radix choice and verify focus, keyboard operation, validation and saved state when replacing controls. Read `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`, choose each component from it, and map it to the brand tokens with the uniformity rules on that page.
+
+## The workflow
+
+To find one call on a font, colour or similar, call `mcp__ndev__iNeedA('brand-style', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

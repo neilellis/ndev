@@ -7,10 +7,6 @@ description: "Make any change to a narrated video built with the video kit, from
 
 The `video-*` skills hold the method. The project's instructions (`CLAUDE.md`, `AGENTS.md`) hold the facts about each video: its type, its voices, its sources and any scene-specific code.
 
-## The workflow
-
-If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, and end with `mcp__ndev__done`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 1. **Understand the request.** Translate it into the kinds of change it needs:
    - narration, voice, pronunciation or length: `video-narration`;
    - the sound of the voices: `video-podcast-effect`. The effect is shared, so change it in the plugin;
@@ -33,3 +29,7 @@ If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `
 ## The kit
 
 `scripts/video-kit/` is a copy of the plugin's engine. Never edit it in a project: `npm run check` fails on a local edit. To change the kit, change `skills/video-setup/scripts/` in the plugin, then sync it into the project with `video-setup`.
+
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, and end with `mcp__ndev__done`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

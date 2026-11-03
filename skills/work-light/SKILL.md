@@ -30,7 +30,7 @@ Give each call its `issue`. From `reviewing` onward, you can give its `pr`. `sta
 
 At any stage: `mcp__ndev__status()` reads the state. `mcp__ndev__blocked(message)` and `mcp__ndev__unblocked(message)` reach the human. `mcp__ndev__followUp(mode, message)` files other work. `mcp__ndev__addMigration(name)` adds a migration for after the merge. `mcp__ndev__requestSecret(name)` finds where a secret is set. `mcp__ndev__iNeedA(kind, description)` gives guidance on a component, library, brand style or animation. `mcp__ndev__reportWorkflowBug(title, details)` starts an agent that fixes a fault of the plugin. `mcp__ndev__waitForPR(pr, state)` and `mcp__ndev__waitForIssue(issue, state)` hold the agent until another PR or issue reaches a state. Past half of its retries, a wait tells the human.
 
-A helper agent cannot move the workflow. It can call only `status`, `requestSecret`, `followUp` with `issue_only`, `iNeedA` and `reportWorkflowBug`. The steps below say how to do the work of each stage.
+A helper agent cannot move the workflow. It can call only `status`, `requestSecret`, `followUp` with `issue_only`, `iNeedA`, `reportWorkflowBug` and `screenshot`. The steps below say how to do the work of each stage.
 
 ## Spend tokens on the fix
 
@@ -60,7 +60,7 @@ For UI work, read `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` before you write o
 
 ## Start once
 
-Collect the task status in one call, with `${CLAUDE_PLUGIN_ROOT}/scripts/work/work-status.sh`:
+While a workflow runs, `mcp__ndev__started` does the status check and the worktree claim, so go on to the task note below. With no workflow, collect the task status in one call, with `${CLAUDE_PLUGIN_ROOT}/scripts/work/work-status.sh`:
 
 ```sh
 work-status.sh --repo <repo> --task <branch-slug> --fetch --json [--owned-worktree <abs-path>] [--base <branch>]

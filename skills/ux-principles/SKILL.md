@@ -7,10 +7,6 @@ description: "Apply the project's UX guidance to navigation, disclosure, touch, 
 
 Find the project's UX pages from its wiki index file (usually under a `visual/` section). Read only the pages that apply to the decision. If the project has no UX pages, use the principles below and record the decision in the wiki.
 
-## The workflow
-
-To choose a component, call `mcp__ndev__iNeedA('react-component', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 | Decision | Principle |
 |---|---|
 | Usability and priority | Apply standard usability heuristics. Make the most important item the most visible. |
@@ -27,3 +23,7 @@ To choose a component, call `mcp__ndev__iNeedA('react-component', description)`.
 - Use `copy` for the words.
 
 Record a durable UX decision in the project's wiki, with the LLM-wiki ingest steps (the plugin's `kb/llm-wiki.md`). Do not copy project guidance into this skill.
+
+## The workflow
+
+To choose a component, call `mcp__ndev__iNeedA('react-component', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

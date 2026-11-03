@@ -93,6 +93,8 @@ The orchestrators (`work-heavy-auto`, `work-light-auto`) clear these before they
 
 ## F1 — Worktree, branch and draft PR
 
+While a workflow runs, `mcp__ndev__started` has done all of F1, so go on to F2. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. With no workflow, follow this fragment.
+
 Claim the worktree with the guard. It is the only approved way to get one:
 
 ```bash

@@ -7,10 +7,6 @@ description: "Run an independent adversarial review of a pull request: a fresh a
 
 **A fresh agent reviews the change from the repository, not from its description, and tries to break it.** Every check that the author ran came from the author's own account of the change. This review lists the surfaces that the change touches and attacks them. A review that reads the PR body and agrees with it has not happened. The rules behind it are in [verification-policy.md](../../kb/verification-policy.md).
 
-## The workflow
-
-`mcp__ndev__finishedDevelopment` starts the plugin's own code review. Use this skill for more, and give the result to `mcp__ndev__finishedReview` as `review`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 The argument is a PR number or a branch. If there is no argument, review the current branch against the main branch.
 
 ## Independence
@@ -48,3 +44,7 @@ The reviewer returns its findings in order of severity. Each finding has:
 3. For each question, answer it in the PR thread.
 4. Merge only when every finding is fixed or answered. A human merges.
 5. If a finding shows a gap that an earlier review missed, add it to the PR description too, so that the next author sees it.
+
+## The workflow
+
+`mcp__ndev__finishedDevelopment` starts the plugin's own code review. Use this skill for more, and give the result to `mcp__ndev__finishedReview` as `review`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

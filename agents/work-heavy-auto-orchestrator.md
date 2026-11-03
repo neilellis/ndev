@@ -5,7 +5,7 @@ model: inherit
 effort: high
 color: cyan
 skills:
-  - work
+  - work-heavy
   - github
 initialPrompt: |
   Start a work-light-auto pass over this repository's project board. Invoke the work-light-auto
@@ -27,4 +27,4 @@ You are the **orchestrator** for a project board's Ready column. You run the `wo
 
 ## The workflow
 
-A worker that runs as a subagent cannot move a workflow. A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer.
+A worker that runs as a subagent cannot move a workflow. A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

@@ -28,7 +28,7 @@ Under `--dry-run`, report the ordered units and stop. Under `--issue <n>`, do th
 
 ## Each unit
 
-Dispatch one `issue-implementer` agent per unit (named `issue-<lead>`). Size the model: a trivial unit can use a smaller model; when you are not sure, size up. The worker loads `work-heavy` and `testing` and runs F0 → F6:
+Dispatch one `issue-implementer` agent per unit (named `issue-<lead>`). Size the model: a trivial unit can use a smaller model; when you are not sure, size up. A worker in its own session follows the answers of the workflow, which does these stages. A subagent worker cannot move a workflow, so this list is its brief. It loads `work-heavy` and `testing` and runs F0 → F6:
 
 - Worktree `.claude/worktrees/issue-<lead>`, branch `claude/issue-<lead>`, one draft PR based on the base branch.
 - One body section and one `Closes #<n>` per member, each with a `Test entry point:`.

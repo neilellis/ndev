@@ -18,7 +18,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `dump.py` | Dumps an issue or PR to one markdown file and downloads its images. | github, command-reuse |
 | `merge-main-into-open-prs.sh` | Merges the base branch into each open PR branch. Wrapper for `merge_main_into_open_prs.py`. | github |
 | `merge_main_into_open_prs.py` | The merge logic, one worktree for each PR. | `merge-main-into-open-prs.sh` |
-| `wait-for-pr-change.sh` | Waits until a PR's status, checks, comments or reviews change. Polls every 120 s by default. | github, fix-ci, fix-all-prs, green-merge-open-prs, pick-up-prs, work-heavy, work-light, command-reuse, video-finish (`finish.mjs`) |
+| `wait-for-pr-change.sh` | Waits until a PR's status, checks, comments or reviews change. Polls every 120 s by default. | github, fix-ci, fix-all-prs, pick-up-prs, work-heavy, work-light, command-reuse, video-finish (`finish.mjs`) |
 | `wait-for-run.sh` | Waits for one GitHub Actions run to change status. Polls every 120 s by default. | github, work-heavy, video-publish |
 
 ## env/

@@ -22,7 +22,7 @@ While a workflow runs, it tells you about a failed check. Fix it, commit with `m
 
 ## Diagnose, fix and verify
 
-Wait for checks with the `github` skill's helper, once, in the foreground:
+While a workflow runs, it watches the checks and refuses a wait helper. With no workflow, wait for checks with the `github` skill's helper, once, in the foreground:
 
 ```bash
 wait-for-pr-change.sh <pr> --skip-success --json
@@ -41,7 +41,7 @@ For each failure:
 - Rerun the checks that the code, dependency or base change can affect.
 - Get the independent review that `work-light` requires for behaviour changes.
 
-Commit coherent fixes. Push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Never use `--no-verify`. Then wait for checks on the new head SHA.
+Commit coherent fixes. While a workflow runs, `mcp__ndev__checkpoint` commits and pushes them. With no workflow, push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Never use `--no-verify`. Then wait for checks on the new head SHA.
 For a local command, use `${CLAUDE_PLUGIN_ROOT}/scripts/work/wait_for_process_end.sh <pid>`, then read the final log and exit status.
 
 ## Complete with current evidence

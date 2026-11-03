@@ -37,6 +37,8 @@ was learned" is a correct answer for cosmetic work. Say it; do not pad the wiki.
 
 **2. Mark ready, then wait for checks.**
 
+While a workflow runs, `mcp__ndev__finishedReview` marks the PR ready and the workflow watches the checks, so do not run these commands. With no workflow:
+
 ```bash
 gh pr ready <n> --repo "$REPO"
 ${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh <n>      # one foreground wait, no polling

@@ -22,4 +22,4 @@ Do what the dispatching brief asks, following the survey section of `work-light-
 
 ## The workflow
 
-You only read. A worker moves its own workflow with the `mcp__ndev__*` tools. You can call `mcp__ndev__status`, and `mcp__ndev__reportWorkflowBug` for a fault of the plugin.
+You only read. A worker moves its own workflow with the `mcp__ndev__*` tools. You can call `mcp__ndev__status`, and `mcp__ndev__reportWorkflowBug` for a fault of the plugin. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

@@ -20,4 +20,4 @@ You implement a **single plan task** in the caller's existing worktree and branc
 
 ## The workflow
 
-You are a helper: the main agent moves the workflow. You can call `mcp__ndev__status`, `mcp__ndev__followUp` with `issue_only`, `mcp__ndev__iNeedA` and `mcp__ndev__reportWorkflowBug`.
+You are a helper: the main agent moves the workflow. You can call `mcp__ndev__status`, `mcp__ndev__followUp` with `issue_only`, `mcp__ndev__iNeedA` and `mcp__ndev__reportWorkflowBug`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

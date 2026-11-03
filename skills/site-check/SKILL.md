@@ -7,10 +7,6 @@ description: "Check a local, preview or live copy of a website for broken links,
 
 There are two checks. Both work on a local server, a Vercel preview or the live site. Run them in the project root: the scripts load their packages from the project's `node_modules`.
 
-## The workflow
-
-A check that is part of the smoke stage goes to `mcp__ndev__finishedSmoke(report)`, and the report names the HEAD commit. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 - **Link check.** `node "${CLAUDE_PLUGIN_ROOT}/skills/site-check/scripts/links.mjs" <url>` uses linkinator to visit every page on the site: every page in the sitemap and every page reachable by links. It checks every link and image on those pages, including links to other sites. Sites that turn checkers away (401, 403, 429, 999) are listed as warnings.
 - **Browser spider.** `node "${CLAUDE_PLUGIN_ROOT}/skills/site-check/scripts/spider.mjs" <url>` uses Crawlee to open up to 20 pages in Chrome. It picks pages from the sitemap and the links it finds, in a random order seeded from the branch name. Each branch samples different pages, and the same branch repeats its sample. It fails on a page that returns 4xx or 5xx, uncaught JavaScript errors, console errors, failed requests, and links to same-site pages that return 4xx or 5xx. Use `--branch <name>` to repeat the sample of another branch, and `--limit <n>` to change the page count.
 
@@ -64,5 +60,9 @@ Fix the cause of each problem: a wrong address, a missing page, a failing script
 ## Test the helpers
 
 `node --test tests/*.test.mjs` in `skills/site-check/scripts/` runs the helper tests offline. `node scripts/links.mjs --help`, `node scripts/spider.mjs --help` and `bash scripts/against-build.sh --help` print the usage.
+
+## The workflow
+
+A check that is part of the smoke stage goes to `mcp__ndev__finishedSmoke(report)`, and the report names the HEAD commit. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 `${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder, so the scripts are at `<skill folder>/scripts/...`.

@@ -10,6 +10,7 @@ Subagent definitions for the Ready-board and issue workflows. Skills hold the me
 | `plan-scout` | Read-only plan with a `Test entry point:` line | opus / high | Read, Grep, Glob, Bash | none | work, docs |
 | `tdd-implementer` | One plan task, test-first, on the caller's branch | sonnet / medium | all except Agent | none (shares the branch) | mattpocock-skills:tdd, mattpocock-skills:diagnosing-bugs |
 | `diff-reviewer` | Read-only review of a diff | opus / high | Read, Grep, Glob, Bash | none | mattpocock-skills:code-review |
+| `copy-editor` | Read-only copy edit of prose for users: Vale, then an editor's read. Language only | sonnet / medium | Read, Grep, Glob, Bash, WebFetch | none | copy, docs-legibility, simple-english |
 | `dev-task` | A self-contained task finished as a PR | opus / high | all | `worktree` | work-light, mattpocock-skills:tdd |
 
 ## How they fit
@@ -30,3 +31,5 @@ Subagent definitions for the Ready-board and issue workflows. Skills hold the me
 ## Adding an agent
 
 Put the file in this folder with `name`, a quoted `description` that says when to use it, and the smallest tool set the role needs. Preload only skills that exist in this plugin or in `mattpocock-skills`.
+
+The workflow guide is [kb/workflow.md](../kb/workflow.md). A subagent cannot move a workflow.

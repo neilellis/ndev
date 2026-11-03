@@ -7,10 +7,6 @@ description: "Search the codebase by parsed code shape. Use for call sites, impo
 
 Use the ast-grep CLI that the project pins (for example `pnpm exec ast-grep`). If the project pins none, use an installed `ast-grep`. Do not run a bare `sg`: on many machines that name is a different program.
 
-## The workflow
-
-While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 Use ast-grep directly to explore. Use `scripts/find.sh` in this skill's folder for a result that you will report:
 
 ```bash
@@ -64,3 +60,7 @@ ast-grep run -p 'foo($A)' -r 'bar($A)' -U <paths>
 ## Guards
 
 An architectural guard written as an ast-grep rule needs a bad fixture that the rule matches and a good fixture that it passes. Prove it both ways: break the code and see the rule fail, then restore it. Read the project's CLAUDE.md for where its rules and rule tests live.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

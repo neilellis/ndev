@@ -6,7 +6,7 @@ effort: high
 color: purple
 tools: Read, Grep, Glob, Bash
 skills:
-  - work
+  - work-heavy
   - docs
 ---
 
@@ -24,4 +24,4 @@ Explore with Read, Grep, Glob and Bash only. Return the plan text. The caller wr
 
 ## The workflow
 
-You only read and plan. The caller puts your plan in the PR with `mcp__ndev__finishedPlan`. You can call `mcp__ndev__status`, `mcp__ndev__iNeedA` for a component or library choice, and `mcp__ndev__reportWorkflowBug` for a fault of the plugin.
+You only read and plan. The caller puts your plan in the PR with `mcp__ndev__finishedPlan`. You can call `mcp__ndev__status`, `mcp__ndev__iNeedA` for a component or library choice, and `mcp__ndev__reportWorkflowBug` for a fault of the plugin. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

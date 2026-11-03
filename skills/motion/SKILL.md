@@ -7,10 +7,6 @@ description: "Add animation to a React or Next.js site with the Motion library (
 
 Movement must feel calm and professional. Use `work-light` for the change and `testing` for the checks.
 
-## The workflow
-
-To get an animation idea for one function, call `mcp__ndev__iNeedA('animation', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`) before you add movement. Follow its motion pages: durations, easing, and what can move. Where they differ from the rules below, the guide wins. Otherwise skip this section.
 
 ## Choose the moment, then the tool
@@ -65,3 +61,7 @@ Delight is motion that tells the reader something: their action landed, the work
 - Motion left on for people who asked for less.
 - A `filter: blur()` or `clip-path` animation on a control used many times a day.
 - Decoration that runs all day: a loop that does not stop when the work stops.
+
+## The workflow
+
+To get an animation idea for one function, call `mcp__ndev__iNeedA('animation', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

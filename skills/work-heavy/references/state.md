@@ -39,7 +39,7 @@ three decisions:
 
 | Your situation | What you must do |
 |---|---|
-| The work is done and green | `gh pr ready <n>`, **then** report. A finished PR left in draft gets no preview, no review and no attention. This is the usual failure, and it is silent. |
+| The work is done and green | `gh pr ready <n>` (while a workflow runs, `mcp__ndev__finishedReview` has done it), **then** report. A finished PR left in draft gets no preview, no review and no attention. This is the usual failure, and it is silent. |
 | The work is not finished (crash, no time, blocked) | Stay draft, and **rewrite the PR body** so that its first line is `**Draft because:** <what is left>`. Post the state comment with `- next: resume: …`. |
 | You decided not to ship it | Stay draft, and **rewrite the PR body** so that its first line is `**Draft because:** <the decision, and what you measured>`. Put it in the body, not only in your report: the dispatcher's context is lost; the PR survives. |
 

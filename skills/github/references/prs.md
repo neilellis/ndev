@@ -2,6 +2,8 @@
 
 ## Rules
 
+While a workflow runs, its tools claim the worktree, open the draft, commit, mark the PR ready and merge. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. These rules are the same limits for work with no workflow.
+
 1. **PR only.** Never push directly to the base branch. Every change lands through a PR from its own branch.
 2. **Worktree isolation.** Work in your own worktree (`${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh`, or an Orca worktree). Never work in the shared checkout.
 3. **Trailers.** Include every commit trailer that the repository or session requires.
