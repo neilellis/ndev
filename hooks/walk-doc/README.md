@@ -31,6 +31,8 @@ The walk starts the docs dev server on a free port. The pane shows its URL, so y
 | `ENHANCE` | Something could be better. | The main agent hears at once; the walk goes on without waiting. |
 | `RECORD` | A recording or screenshot is worth adding to the docs (`INSERT`), or should replace one there (`REPLACE`). | The main agent hears at once; the walk goes on without waiting. |
 
+The plugin also sends each docs page that the Walk agent opens to the `ndev:copy-editor` agent, once per page. That agent gets the text of the page only. It runs Vale, then reads for what Vale cannot see: slogans, clichés and machine rhythm. It reports language only, and never checks whether the instructions work. Its findings reach the main agent as a `COPY` note, and the walk goes on without waiting. A page with nothing to change adds no note and stays on the report. If a review fails or Vale did not run, the main agent hears that too. `walk_finish` waits for a review that still runs. When the last review ends after the reader has finished, the main agent is told. A review whose agent ended with no answer does not hold the finish: the report records it as lost, and the finish message names the page and the repair.
+
 The main agent fixes the cause like a developer, as it happens: on the current branch, with no new branches, worktrees or PRs. A product fault is fixed in the product, never documented as a workaround. Only a fault it cannot fix now, and that the docs flow does not need, becomes an issue, filed with the `issues` command. It commits each fix as `walk-doc <CODE>: <what changed>`. Then it calls `walk_reply`:
 
 - `CONTINUE` sends the note to the same Walk agent, which reloads the changed pages and retries the step.
@@ -38,7 +40,7 @@ The main agent fixes the cause like a developer, as it happens: on the current b
 
 The main agent can also ask the Walk agent for help at any time with `walk_ask`, and you can with `/walk-doc ask <question>`: a recording of a step, a check, or what it sees. The Walk agent does it, sends any recording with `walk_record`, and answers with `walk_answer`. The answer reaches the main agent as a message. Both show in the pane as `ASK` and `ANSWER`, and in the report under "Questions to the reader".
 
-An `ENHANCE` or `RECORD` note is answered with `walk_reply` action `NOTED` and `answers: <its number>`. The answer goes to the pane and the report; the Walk agent is not stopped or told.
+An `ENHANCE`, `RECORD` or `COPY` note is answered with `walk_reply` action `NOTED` and `answers: <its number>`. The answer goes to the pane and the report; the Walk agent is not stopped or told.
 
 ## Recordings
 

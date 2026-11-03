@@ -59,7 +59,7 @@ const engine = (on: On, opts: Opts = {}) => {
   const s = {
     now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
-    main: opts.main ?? false, names: opts.names ?? ['a.ts'], draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
+    main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
@@ -170,6 +170,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'cat-file') return s.blobSize ? ok(`${s.blobSize}\n`) : ok('', 1)
       if (a[1] === 'worktree') return ok(`worktree ${ROOT}\n`)
       if (a[1] === 'add') { s.staged = true; return ok() }
+      if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
       if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
       if (a[1] === 'diff' && a[2] === 'HEAD') return ok(s.diffText)
       if (a[1] === 'diff') return ok('', s.staged ? 1 : 0)
@@ -4010,3 +4011,136 @@ test('the map names each issue on the PR before the PR record exists, with the t
   expect(Object.keys(map.issues)).toEqual(['7', '12'])
   expect(map.issues['12'].changeTypes).toContain('database')
 })
+
+// ---- the copy editor beside the code review ----
+
+const PROSE = ['apps/docs/content/using/overview.mdx', 'README.md']
+const NOT_PROSE = ['a.ts', 'CLAUDE.md', 'AGENTS.md', 'kb/writing.md', 'skills/x/SKILL.md', 'docs/wiki/wiki.md', 'tests/fixtures/a.md', '.github/a.md']
+
+test('a change with prose for users starts the copy editor beside the code review, on those files only', async ($, on) => {
+  const w = engine(on, { names: [...PROSE, ...NOT_PROSE] })
+  const r = await toReview($, w)
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer', 'ndev:copy-editor'])
+  const prompt = w.spawns[1]!.prompt
+  for (const p of PROSE) expect(prompt).toContain(p)
+  for (const p of NOT_PROSE) expect(prompt).not.toContain(p)
+  expect(w.spawns[1]!.cwd).toBe(ROOT)
+  expect(r.text).toContain('copy editor')
+  expect(w.state()?.reviewCopy).toBeDefined()
+})
+
+test('a change with no prose for users starts no copy editor', async ($, on) => {
+  const w = engine(on, { names: NOT_PROSE })
+  const r = await toReview($, w)
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer'])
+  expect(r.text).not.toContain('copy editor')
+})
+
+test('the answer of the copy editor reaches the main agent in its own words, and the record keeps it', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'reviewer-1' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+  await start($, w)
+  await $.turn.complete({ agentId: 'copy-1', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\n1. A slogan.' } as never)
+  await settle()
+  expect(w.state()?.reviewCopy?.answer).toContain('A slogan')
+  expect(w.prompts.join('\n')).toContain('The copy edit of')
+  expect(w.prompts.join('\n')).toContain('A slogan')
+})
+
+test('a copy editor that did not start is named, and the repair names the files', async ($, on) => {
+  const w = engine(on, { names: PROSE })
+  w.s.spawnDeny = 'no such agent'
+  const r = await toReview($, w)
+  expect(r.text).toContain('The copy editor did not start: no such agent')
+  expect(r.text).toContain('ndev:copy-editor')
+  expect(r.text).toContain(PROSE[0]!)
+})
+
+test('a list of changed files that fails tells the agent why the copy editor did not start', async ($, on) => {
+  const w = engine(on, { names: PROSE })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.copyDiffFails = 'bad revision'
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'] })
+  expect(r.text).toContain('The copy editor did not start')
+  expect(r.text).toContain('exited 128')
+  expect(r.text).toContain('bad revision')
+})
+
+// Each reviewer is restarted by itself, and its answer does not depend on one write.
+const EDITING = { state: 'reviewing', prs: [12] }
+const live = (id: string, status = 'running') => ({ id, type: 't', description: 'd', status })
+
+test('a resume starts only the copy editor when only its answer was lost', async ($, on) => {
+  const w = engine(on, { names: PROSE, wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1', answer: 'code is fine' } }, reviewCopy: { agentId: 'gone' } } as never })
+  await start($, w)
+  const said = (await tool($, 'started', { issue: 7 })).text
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:copy-editor'])
+  expect(said).toContain('code is fine')
+})
+
+test('a resume starts only the code review when the copy editor still runs', async ($, on) => {
+  const w = engine(on, { names: PROSE, wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'gone' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+  w.s.agents = [live('copy-1')] as never
+  await start($, w)
+  const said = (await tool($, 'started', { issue: 7 })).text
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer'])
+  expect(w.state()?.reviewCopy?.agentId).toBe('copy-1')
+  expect(said).toContain('copy-1')
+})
+
+test('a resume takes a reviewer that has ended, with no answer, as lost', async ($, on) => {
+  const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } } } as never })
+  w.s.agents = [live('r-1', 'completed')] as never
+  await start($, w)
+  await tool($, 'started', { issue: 7 })
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer'])
+})
+
+test('a copy editor that did not start stays on the record, and a resume tries it again', async ($, on) => {
+  const w = engine(on, { names: PROSE })
+  w.s.spawnDeny = 'no such agent'
+  await toReview($, w)
+  expect((w.state()?.reviewCopy as { failed?: string }).failed).toContain('no such agent')
+  const tries = w.spawns.filter(s => s.subagentType === 'ndev:copy-editor').length
+  w.s.spawnDeny = ''
+  await tool($, 'started', { issue: 7 })
+  expect(w.spawns.filter(s => s.subagentType === 'ndev:copy-editor').length).toBe(tries + 1)
+  expect((w.state()?.reviewCopy as { failed?: string }).failed).toBeUndefined()
+})
+
+test('an answer survives a stale write', async ($, on) => {
+  const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+  await start($, w)
+  w.s.staleSaves = 1
+  await $.turn.complete({ agentId: 'copy-1', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\nA slogan.' } as never)
+  await settle()
+  expect(w.state()?.reviewCopy?.answer).toContain('A slogan')
+  expect(w.prompts.join('\n')).toContain('A slogan')
+})
+
+test('an answer that cannot be saved still reaches the main agent, which is told', async ($, on) => {
+  const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } } } as never })
+  await start($, w)
+  w.s.staleSaves = 99
+  await $.turn.complete({ agentId: 'r-1', answer: 'A real fault.' } as never)
+  await settle()
+  w.s.staleSaves = 0
+  const told = w.prompts.join('\n')
+  expect(told).toContain('A real fault.')
+  expect(told).toContain('was not saved')
+  expect(told).toContain('exited 5')
+})
+
+for (const [name, ending] of [['an empty answer', { answer: '  ' }], ['an error', { reason: 'error', answer: 'part of a rep' }]] as const) {
+  test(`a reviewer that ends with ${name} is named as a failure, and does not count as an answer`, async ($, on) => {
+    const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+    await start($, w)
+    await $.turn.complete({ agentId: 'copy-1', ...ending } as never)
+    await settle()
+    expect(w.state()?.reviewCopy?.answer).toBeUndefined()
+    const told = w.prompts.join('\n')
+    expect(told).toContain('The copy editor')
+    expect(told).toContain('failed')
+    expect(told).toContain('ndev:copy-editor')
+  })
+}

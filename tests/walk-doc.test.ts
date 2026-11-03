@@ -357,7 +357,7 @@ test('ancestorsOf walks from a folder up to the filesystem root', () => {
 
 test('each chat kind has its own colour, so a BUG never looks like a CONTINUE', () => {
   const colours = Object.values(CHAT_COLOR)
-  expect(Object.keys(CHAT_COLOR).sort()).toEqual(['ANSWER', 'ASK', 'BLOCKED', 'BUG', 'CONTINUE', 'ENHANCE', 'ESCALATED', 'INCORRECT', 'NOTED', 'OMISSION', 'RECORD', 'RESTART'])
+  expect(Object.keys(CHAT_COLOR).sort()).toEqual(['ANSWER', 'ASK', 'BLOCKED', 'BUG', 'CONTINUE', 'COPY', 'ENHANCE', 'ESCALATED', 'INCORRECT', 'NOTED', 'OMISSION', 'RECORD', 'RESTART'])
   expect(new Set(colours).size).toBe(colours.length)
 })
 

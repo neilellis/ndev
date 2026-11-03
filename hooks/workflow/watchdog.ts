@@ -126,7 +126,7 @@ export async function workflowTurn($: EngineInterface, e: { reason?: string; age
   if (e.agentId) {
     // The agent may be on another issue by now, so the search covers each record in the worktree.
     const wf = project ? await recordOfReviewer($, (await boundRoot($)) ?? project.root, e.agentId) : undefined
-    if (wf) await reviewerAnswered($, wf, e.agentId, e.answer ?? '')
+    if (wf) await reviewerAnswered($, wf, e.agentId, e.answer ?? '', e.reason)
     return
   }
   const now = await $.clock.now()

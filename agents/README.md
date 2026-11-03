@@ -30,6 +30,6 @@ Subagent definitions for the Ready-board and issue workflows. Skills hold the me
 
 ## Adding an agent
 
-Put the file in this folder with `name`, a quoted `description` that says when to use it, and the smallest tool set the role needs. Preload only skills that exist in this plugin or in `mattpocock-skills`.
+Put the file in this folder with `name`, a quoted `description` that says when to use it, and the smallest tool set the role needs. Preload only skills that exist in this plugin or in a companion plugin that the top-level [README](../README.md#companion-plugins) names.
 
 The workflow guide is [kb/workflow.md](../kb/workflow.md). A subagent cannot move a workflow.

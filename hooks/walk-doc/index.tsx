@@ -10,7 +10,7 @@ import type { EngineInterface, On, PluginOptions, TurnCompleteInput } from 'clau
 import { WALK_SYSTEM_PROMPT, walkTask } from './prompts'
 import {
   AGENT, CONFIG_FILE, MAIN_ONLY, PLUGIN, TOOL, ancestorsOf, answerAsk, applyReply, arrowAfter, arrowDwellOf, askWalk, docsNamedPaths, escalate, guardCall, imessageArgv, savedOutputs, isUrl,
-  newRun, pageUrl, parseArgs, parseConfig, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, readerValues, valuesNote, exampleConfig, addTip, cleanTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
+  newRun, pageUrl, parseArgs, parseConfig, recordCopy, docsPagesOpened, docsPagesShown, keepCopyWrites, settleCopyReviews, newCopyPages, pageProse, recordEnhance, recordMedia, castProblems, restartByPerson, recordedBash, isNonBlocking, recordReport, chatMessages, CHAT_COLOR, parseEnvFile, readerValues, valuesNote, exampleConfig, addTip, cleanTip, tipsNote, reportMarkdown, runDirOf, shellQuote,
   walkStopped, workspaceOf,
 } from './walk'
 import type { Config, Run } from './walk'
@@ -52,10 +52,10 @@ const WALK_TOOLS = [
     } } },
   { name: 'walk_done', description: 'Walk agent only. Say the docs are finished, with a short summary, then end your turn.', inputSchema: {
     type: 'object', required: ['summary'], properties: { summary: { type: 'string' } } } },
-  { name: 'walk_reply', description: 'Main agent only, during /walk-doc. Answer a Walk report after fixing it: CONTINUE resumes the same reader; RESTART starts a fresh reader in a fresh environment; NOTED answers an ENHANCE or RECORD note in the pane without touching the reader.', inputSchema: {
+  { name: 'walk_reply', description: 'Main agent only, during /walk-doc. Answer a Walk report after fixing it: CONTINUE resumes the same reader; RESTART starts a fresh reader in a fresh environment; NOTED answers an ENHANCE, RECORD or COPY note in the pane without touching the reader.', inputSchema: {
     type: 'object', required: ['action', 'note'], properties: {
       action: { type: 'string', enum: ['CONTINUE', 'RESTART', 'NOTED'] },
-      answers: { type: 'number', description: 'For NOTED: the number of the ENHANCE or RECORD note you answer.' },
+      answers: { type: 'number', description: 'For NOTED: the number of the ENHANCE, RECORD or COPY note you answer.' },
       note: { type: 'string', description: 'What you changed, or why nothing needed to.' },
       changed: { type: 'array', items: { type: 'string' }, description: 'The docs pages you changed, as URL paths.' },
       new_approach: { type: 'string', description: 'Required for CONTINUE after 10 blocks on one step: what a helper found and what changed.' },
@@ -66,7 +66,7 @@ const WALK_TOOLS = [
     type: 'object', properties: { summary: { type: 'string', description: 'What was fixed and what is left open.' } } } },
   { name: 'walk_ask', description: 'Main agent only, during /walk-doc. Ask the Walk agent for help without stopping it: a recording or screenshot of a step, a check, what it sees. The answer arrives as a message.', inputSchema: {
     type: 'object', required: ['question'], properties: { question: { type: 'string', description: 'What you want the reader to do or tell you.' } } } },
-  { name: 'walk_status', description: 'Main agent only, during /walk-doc. The walk as JSON: phase, attempt, findings (with ENHANCE and RECORD notes), denials.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'walk_status', description: 'Main agent only, during /walk-doc. The walk as JSON: phase, attempt, findings (with ENHANCE, RECORD and COPY notes), the pages sent to the copy editor, denials.', inputSchema: { type: 'object', properties: {} } },
 ] as const
 
 // Set by walkDoc (the person's plugin config) and session.start (the project root).
@@ -187,7 +187,15 @@ async function sendAsk($: EngineInterface, question: unknown): Promise<string> {
 }
 
 async function save($: EngineInterface, run: Run) {
-  await update($, runAtom, () => run)
+  let saved = run
+  await update($, runAtom, fresh => {
+    saved = fresh === null ? run : keepCopyWrites(run, fresh)
+    return saved
+  })
+  await writeRun($, saved)
+}
+
+async function writeRun($: EngineInterface, run: Run) {
   try {
     await $.fs.write(`${runDirOf(run)}/run.json`, JSON.stringify(run, null, 2))
   } catch (error) {
@@ -403,7 +411,52 @@ async function restartWalk($: EngineInterface, note: string): Promise<string> {
 async function stopWalk($: EngineInterface): Promise<string> {
   const run = await read($, runAtom)
   if (!isActive(run)) return 'No walk is running.'
-  return finish($, run, 'Stopped by /walk-doc stop.')
+  const settled = settleCopyReviews(run)
+  return `${await finish($, settled.run, 'Stopped by /walk-doc stop.')}${settled.lostNote}`
+}
+
+// One docs page the reader has opened goes to the copy editor. The reader does not wait for it.
+const COPY_AGENT = 'ndev:copy-editor'
+// A review row with no agent yet counts as running only while its send is here. After a reload of the hooks it is lost.
+const copySends = new Set<string>()
+const copySendKey = (run: Run, url: string) => `${run.runId} ${url}`
+
+async function wakeWhenReviewsEnd($: EngineInterface) {
+  const run = await read($, runAtom)
+  if (!isActive(run) || run.phase !== 'done' || (run.copyReviews ?? []).some(c => c.state === 'running')) return
+  tellMain($, 'Every copy review has ended. When each COPY note has its answer, call walk_finish.')
+}
+
+async function sendPageToCopyEditor($: EngineInterface, run: Run, url: string): Promise<void> {
+  const isRunning = (c: { url: string; state: string }) => c.url === url && c.state === 'running'
+  const failed = async (detail: string) => {
+    await update($, runAtom, r => (r === null ? r : { ...r, copyReviews: (r.copyReviews ?? []).map(c => (isRunning(c) ? { ...c, state: 'failed' as const, detail } : c)) }))
+    if (!isActive(await read($, runAtom))) return
+    tellMain($, `The copy editor did not review ${url}: ${detail} The reader carries on. Repair: fix the cause, then start the ${COPY_AGENT} agent by hand with the text of the page.`)
+    await wakeWhenReviewsEnd($)
+  }
+  try {
+    const page = await $.process.run(['curl', '--silent', '--show-error', '--fail', '--location', '--max-time', '30', url], { timeoutMs: 40_000 })
+    if (page.exitCode !== 0) return await failed(`curl exit ${page.exitCode}: ${page.stderr.trim().slice(0, 300)}.`)
+    const text = pageProse(page.stdout)
+    if (text === '') return await failed('the page has no text after the code and the navigation are removed.')
+    const file = `${runDirOf(run)}/copy/${url.replace(/^https?:\/\/[^/]+\//, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '') || 'home'}.md`
+    await $.fs.write(file, `${text}\n`)
+    const description = `Copy edit ${url}`
+    const spawned = await $.agent.spawn({
+      subagentType: COPY_AGENT, description, cwd: run.root,
+      prompt: `Edit the copy of one docs page, which is the text in ${file}. It came from ${url}. The project root is ${run.root}. The plugin root is ${$.plugin.root}. Judge the language only: another agent checks the instructions.`,
+    })
+    if (spawned.deny !== undefined) return await failed(`the agent did not start: ${spawned.deny}.`)
+    const agentId = spawned.agentId ?? (await $.agent.list()).find(a => a.description === description)?.id ?? null
+    if (agentId === null) return await failed('the agent started, but neither the spawn result nor the agent list names its id, so its answer could not be matched.')
+    await update($, runAtom, r => (r === null ? r : { ...r, copyReviews: (r.copyReviews ?? []).map(c => (isRunning(c) ? { ...c, file, agentId } : c)) }))
+  } catch (error) {
+    log($, `ERROR: copy review of ${url}: ${String(error)}`)
+    await failed(`${error instanceof Error ? error.message : String(error)}.`)
+  } finally {
+    copySends.delete(copySendKey(run, url))
+  }
 }
 
 async function finish($: EngineInterface, run: Run, summary: string): Promise<string> {
@@ -424,6 +477,29 @@ export async function walkDocTurn($: EngineInterface, e: TurnCompleteInput) {
   if (e.agentId === undefined) return
   const run = await read($, runAtom)
   if (!isActive(run)) return
+  if ((run.copyReviews ?? []).some(c => c.agentId === e.agentId)) {
+    // The answer matters more than the config, which only adds the project's issue rule to the message.
+    let issues = ''
+    try {
+      issues = (await loadConfig($, run.root)).issues
+    } catch (error) {
+      log($, `WARNING: copy answer of ${e.agentId}: cannot read the walk config: ${String(error)}`)
+    }
+    const now = await $.clock.now()
+    const out: { run: Run | null; message: string | null } = { run: null, message: null }
+    // Two editors can end together, so the answer goes on the run as it is now.
+    await update($, runAtom, r => {
+      if (r === null) return r
+      const copy = recordCopy(r, e.agentId!, e.answer, now, issues)
+      out.run = copy.run
+      out.message = copy.mainMessage
+      return copy.run
+    })
+    if (out.run !== null) await writeRun($, out.run)
+    if (out.message !== null) tellMain($, out.message)
+    await wakeWhenReviewsEnd($)
+    return
+  }
   const out = walkStopped(run, e.agentId)
   if (out.kind === 'ignore') return
   await save($, out.run)
@@ -495,6 +571,23 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     const denial = guardCall(run, config, { tool, agentId, input }, await $.clock.now())
     const isWalk = agentId !== undefined && run.agentIds.includes(agentId)
     if (isWalk && run.agentId !== null && agentId !== run.agentId) return { deny: `You were replaced: a fresh reader took over this walk (attempt ${run.attempt}). End your turn now; run nothing more.` }
+    const sendCopyPages = async (found: string[]) => {
+      const pages = newCopyPages(run, found)
+      if (pages.length === 0) return
+      const at = await $.clock.now()
+      // Two calls of the reader can open one page, so only the pages that this update adds are sent.
+      let added: string[] = []
+      await update($, runAtom, r => {
+        if (r === null) return r
+        added = newCopyPages(r, pages)
+        return { ...r, copyReviews: [...(r.copyReviews ?? []), ...added.map(url => ({ url, file: null, agentId: null, state: 'running' as const, detail: '', at }))] }
+      })
+      for (const url of added) {
+        copySends.add(copySendKey(run, url))
+        $.clock.after(0, () => void sendPageToCopyEditor($, run, url))
+      }
+    }
+    if (denial === null && isWalk) await sendCopyPages(docsPagesOpened(run, tool, input))
     // An output too long to show is saved under ~/.claude; the Walk agent may read back only its own.
     const keepSaved = async (result: Awaited<ReturnType<typeof next>>) => {
       const paths = savedOutputs(run, result)
@@ -514,6 +607,9 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     }
     if (denial === null && isWalk) {
       const result = await next(e)
+      if (tool.startsWith(`mcp__plugin_${PLUGIN}_playwright__`)) {
+        await sendCopyPages(docsPagesShown(run, result)).catch((error: unknown) => log($, `ERROR: copy review after ${tool}: ${String(error)}`))
+      }
       const armed = arrowAfter(run.arrowArmed === true, { tool, input }, result.deny === undefined && result.isError !== true)
       const dwell = tool === `mcp__plugin_${PLUGIN}_playwright__browser_evaluate` && typeof input.function === 'string' ? arrowDwellOf(input.function) : null
       if (armed && dwell !== null) {
@@ -594,7 +690,7 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     const pending = done.findings.filter(x => isNonBlocking(x) && x.resolution === null).map(x => `- #${x.n} ${x.code} at ${x.step}: ${x.actual}`)
     tellMain($, [
       `The Walk agent finished ${run.target} on attempt ${run.attempt}. Its summary: ${summary}`,
-      pending.length > 0 ? `\nENHANCE and RECORD notes not yet answered (answer each with walk_reply NOTED):\n${pending.join('\n')}` : '',
+      pending.length > 0 ? `\nENHANCE, RECORD and COPY notes not yet answered (answer each with walk_reply NOTED):\n${pending.join('\n')}` : '',
       ...(config.finish.length > 0 ? ['\nThen run the finish duties once:', ...config.finish.map(c => `- ${c}`)] : []),
       'Then call walk_finish with a summary.',
     ].join('\n'))
@@ -663,7 +759,12 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     if (e.agentId !== undefined) return refuse('walk_finish belongs to the main agent.')
     const run = await read($, runAtom)
     if (!isActive(run)) return refuse('no walk is running.')
-    return answer(await finish($, run, String((e as { summary?: unknown }).summary ?? '').trim()))
+    // A copy editor that still runs holds the walk open. One that a restart lost is recorded and does not.
+    const live = new Set((await $.agent.list()).filter(a => ['pending', 'running', 'waiting'].includes(a.status)).map(a => a.id))
+    const running = (run.copyReviews ?? []).filter(c => c.state === 'running' && (c.agentId === null ? copySends.has(copySendKey(run, c.url)) : live.has(c.agentId)))
+    if (running.length > 0) return refuse(`The copy editor still reviews ${running.map(c => c.url).join(', ')}. Each answer comes to you as a message. If none comes, call walk_finish again: a review whose agent has ended is recorded as lost.`)
+    const settled = settleCopyReviews(run)
+    return answer(`${await finish($, settled.run, String((e as { summary?: unknown }).summary ?? '').trim())}${settled.lostNote}`)
   })
 
   on('tool.call', { tool: TOOL('walk_ask') }, async ($, e) => {
@@ -698,7 +799,7 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     const { Box, Text } = $.ui.resolve(e)
     const run = await read($, runAtom)
     if (run === null) return <Text dimColor>No walk yet. /walk-doc &lt;path|url&gt;</Text>
-    const counts = ['OMISSION', 'BUG', 'INCORRECT', 'BLOCKED', 'ENHANCE', 'RECORD'].map(c => `${c} ${run.findings.filter(f => f.code === c).length}`).join(' · ')
+    const counts = ['OMISSION', 'BUG', 'INCORRECT', 'BLOCKED', 'ENHANCE', 'RECORD', 'COPY'].map(c => `${c} ${run.findings.filter(f => f.code === c).length}`).join(' · ')
     const chat = chatMessages(run)
     return (
       <Box flexDirection="column">

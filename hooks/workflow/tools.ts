@@ -12,7 +12,7 @@ import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
 import { CHECK_DIR, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check } from './effects'
-import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
+import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
 import { liveCallEnd, liveCallStart, liveName, shownArgs, shownValue, writeLive } from './live'
@@ -82,6 +82,8 @@ export type Workflow = {
   hooks?: Partial<Record<StageHook, { firedAt: number; result?: string; agentId?: string; answer?: string }>>
   // Heavy mode only: the second reviewer. hooks.review holds the standards axis, this the specification axis.
   reviewSpec?: { agentId?: string; answer?: string }
+  // The copy editor, which starts beside the code review when the change holds prose for users.
+  reviewCopy?: { agentId?: string; answer?: string; failed?: string }
   // What the change holds: the union of each type that the agent declared and that the diff showed.
   changeTypes?: ChangeType[]
   // The changed web files, for the screenshots that the next step asks for.
@@ -951,6 +953,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
     evidence: {},
     hooks: undefined,
     reviewSpec: undefined,
+    reviewCopy: undefined,
     doneMessage: undefined,
     followUps: union(o => o.followUps, f => f.hash),
     migrations: union(o => o.migrations, m => m.path),
@@ -973,12 +976,47 @@ async function backToDevelopers($: EngineInterface, carrier: Workflow, issue: nu
   carrier.evidence = {}
   carrier.hooks = carrier.hooks ? { ...carrier.hooks, review: undefined } : undefined
   carrier.reviewSpec = undefined
+  carrier.reviewCopy = undefined
   carrier.doneMessage = undefined
   await saveWorkflow($, carrier)
   return `PR #${carrier.pr} now carries #${issue} too${wasBack ? '' : ', and it goes back to its developers: its review and check results no longer count'}. When the work is complete, call finishedDevelopment with the issues.`
 }
 
 export async function startReview($: EngineInterface, wf: Workflow, facts: Facts, ui?: string): Promise<string> {
+  const code = await startCodeReview($, wf, facts, ui)
+  const copy = await startCopyEdit($, wf)
+  return copy ? `${code} ${copy}` : code
+}
+
+// The copy editor reads the prose for users in this change. Its failure to start does not stop the code review, and it is told.
+async function startCopyEdit($: EngineInterface, wf: Workflow): Promise<string> {
+  wf.reviewCopy = undefined
+  const range = wf.direct ? 'HEAD~1..HEAD' : `origin/${wf.base}...HEAD`
+  const listed = await git(wf.root, $, 'diff', '--name-only', '--diff-filter=d', range)
+  if (listed.exitCode !== 0) wf.reviewCopy = { failed: `git diff ${range} exited ${listed.exitCode}` }
+  if (listed.exitCode !== 0) return `The copy editor did not start, because the changed files were not listed: git diff ${range} exited ${listed.exitCode}: ${said(listed)}. Start the ndev:copy-editor agent yourself on the changed docs pages.`
+  const files = listed.stdout.split('\n').filter(isUserProsePath)
+  if (!files.length) return ''
+  const hand = `Start it yourself: the ndev:copy-editor agent, on ${files.join(', ')} in ${wf.root}.`
+  try {
+    const editor = await $.agent.spawn({
+      subagentType: 'ndev:copy-editor', description: `Copy edit ${wf.pr ? `PR #${wf.pr}` : `#${wf.issue}`}`, cwd: wf.root,
+      prompt: `Edit the copy of these files, which readers of the project read:\n${files.join('\n')}\n\nThe project root is ${wf.root}. The plugin root is ${$.plugin.root}. Read each whole file. Put the findings in the lines that \`git diff ${range}\` changes first, and start the Fault line of any other finding with "Already there:". Judge the language only: the code review checks the rest.`,
+    })
+    if ('deny' in editor && editor.deny) {
+      wf.reviewCopy = { failed: String(editor.deny) }
+      return `The copy editor did not start: ${String(editor.deny)}. ${hand}`
+    }
+    wf.reviewCopy = { agentId: editor.agentId }
+    return `The plugin started the copy editor on ${files.length} ${files.length === 1 ? 'page' : 'pages'}. Do not start another. Its answer comes to you when it ends.`
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+    wf.reviewCopy = { failed: why }
+    return `The copy editor did not start: ${why}. ${hand}`
+  }
+}
+
+async function startCodeReview($: EngineInterface, wf: Workflow, facts: Facts, ui?: string): Promise<string> {
   const hand = `Start it yourself: the ndev:diff-reviewer agent, on origin/${wf.base}...HEAD in ${wf.root}.`
   const unread = await readChangeTypes($, wf)
   const after = unread ? ` ${unread}` : ''
@@ -1013,31 +1051,78 @@ const AXIS_SPECIFICATION = 'Review axis: specification. Does this diff do what t
 
 export async function recordOfReviewer($: EngineInterface, root: string, agentId: string): Promise<Workflow | undefined> {
   const { issues, prs } = await readHeld($, root)
-  return [...prs, ...issues].find(o => o.hooks?.review?.agentId === agentId || o.reviewSpec?.agentId === agentId)
+  return [...prs, ...issues].find(o => o.hooks?.review?.agentId === agentId || o.reviewSpec?.agentId === agentId || o.reviewCopy?.agentId === agentId)
+}
+
+const COPY_ANSWER_STEP = `Judge each finding, and keep the facts. Fix the ones that you accept with checkpoint, which holds those commits. A finding marked "Already there" is outside this change: fix it only if it is small, and otherwise tell the human. Put what you did in the review field of finishedReview.`
+
+// Keeps the answer on the fresh record. The turn of a tool can be saving it at this moment, so this
+// takes its place in the queue and tries again after a stale write. The answer of the result is 'kept',
+// 'already' for a reviewer that has answered, or why the write failed.
+async function keepAnswer($: EngineInterface, root: string, agentId: string, reply: string): Promise<string> {
+  const answer = reply.slice(0, 20_000)
+  for (let tries = 1; ; tries += 1) {
+    await whenTurnsFree($)
+    try {
+      return await inTurn(async () => {
+        const wf = await recordOfReviewer($, root, agentId)
+        if (!wf) return 'already'
+        const copy = wf.reviewCopy
+        const spec = wf.reviewSpec
+        const review = wf.hooks?.review
+        if (copy?.agentId === agentId && copy.answer === undefined) wf.reviewCopy = { ...copy, answer }
+        else if (spec?.agentId === agentId && spec.answer === undefined) wf.reviewSpec = { ...spec, answer }
+        else if (review?.agentId === agentId && review.answer === undefined) wf.hooks = { ...wf.hooks, review: { ...review, answer } }
+        else return 'already'
+        await saveWorkflow($, wf)
+        return 'kept'
+      })
+    } catch (error) {
+      if (tries >= 3 || !isStaleWrite(error)) return error instanceof Error ? error.message : String(error)
+    }
+  }
 }
 
 // The reviewer has ended: keep its answer in the record, and give it to the main agent.
-export async function reviewerAnswered($: EngineInterface, wf: Workflow, agentId: string, reply: string): Promise<void> {
-  const review = wf.hooks?.review
-  const spec = wf.reviewSpec
-  if (spec?.agentId === agentId && spec.answer === undefined) wf.reviewSpec = { ...spec, answer: reply.slice(0, 20_000) }
-  else if (review?.agentId === agentId && review.answer === undefined) wf.hooks = { ...wf.hooks, review: { ...review, answer: reply.slice(0, 20_000) } }
-  else return
-  await saveWorkflow($, wf)
-  void $.prompt.submit({ text: `The code review of ${labelOf(wf)} has ended:\n\n${reply}\n\nFix what it found with checkpoint, which holds those commits. Then call finishedReview with the result.` }).catch((error: unknown) => {
-    $.ui.toast(`workflow: the answer of the review for ${labelOf(wf)} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
-  })
+// The main agent gets the answer even when the record does not. An empty ending or an error is not an answer.
+export async function reviewerAnswered($: EngineInterface, wf: Workflow, agentId: string, reply: string, reason?: string): Promise<void> {
+  const isCopy = wf.reviewCopy?.agentId === agentId
+  const who = isCopy ? 'copy editor' : 'code review'
+  const send = (text: string) => {
+    void $.prompt.submit({ text }).catch((error: unknown) => {
+      $.ui.toast(`workflow: the answer of the ${who} for ${labelOf(wf)} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  }
+  const isError = reason === 'error' || reason === 'aborted'
+  if (isError || reply.trim() === '') {
+    const ending = isError ? `its turn ended with the reason "${reason}"` : 'it gave no answer'
+    send(`The ${who} of ${labelOf(wf)} failed: ${ending}.${reply.trim() === '' ? '' : ` Its last text:\n\n${reply}\n\n`} Repair: start the ${isCopy ? 'ndev:copy-editor' : 'ndev:diff-reviewer'} agent yourself in ${wf.root}, or call started to restart it.`)
+    return
+  }
+  const kept = await keepAnswer($, wf.root, agentId, reply)
+  if (kept === 'already') return
+  const lost = kept === 'kept' ? '' : `\n\nThis answer was not saved, so a resume does not know it: ${kept}.`
+  if (isCopy) send(`The copy edit of ${labelOf(wf)} has ended:\n\n${reply}${lost}\n\n${COPY_ANSWER_STEP}`)
+  else send(`The code review of ${labelOf(wf)} has ended:\n\n${reply}${lost}\n\nFix what it found with checkpoint, which holds those commits. Then call finishedReview with the result.`)
 }
 
-// A resume in the review stage: the answer is known, the reviewer still runs, or a restart lost it.
+// A resume in the review stage. Each reviewer is known, still runs, or a restart lost it, and only a lost one starts again.
 async function resumeReview($: EngineInterface, wf: Workflow, facts: Facts): Promise<string> {
-  const parts = [wf.hooks?.review, ...(wf.reviewSpec ? [wf.reviewSpec] : [])]
-  const running = new Set((await $.agent.list()).map(a => a.id))
-  const lost = parts.some(p => p?.answer === undefined && !(p?.agentId && running.has(p.agentId)))
-  if (lost) return startReview($, wf, facts, await componentNote($, wf))
-  const answers = parts.filter(p => p?.answer !== undefined).map(p => `The code review answered:\n${p!.answer}`)
-  const live = parts.filter(p => p?.answer === undefined).map(p => `The code review still runs: agent ${p!.agentId}.`)
-  return [...answers, ...live].join('\n')
+  const busy = new Set((await $.agent.list()).filter(a => ['pending', 'running', 'waiting'].includes(a.status)).map(a => a.id))
+  const isLost = (p: { agentId?: string; answer?: string } | undefined) => p?.answer === undefined && !(p?.agentId && busy.has(p.agentId))
+  const code = [wf.hooks?.review, ...(wf.reviewSpec ? [wf.reviewSpec] : [])]
+  const codeLost = code.some(isLost)
+  const copyLost = wf.reviewCopy !== undefined && isLost(wf.reviewCopy)
+  const kept = [...(codeLost ? [] : code.map(p => ['code review', p] as const)), ...(wf.reviewCopy && !copyLost ? [['copy edit', wf.reviewCopy] as const] : [])]
+  const lines = kept.map(([name, p]) => (p?.answer !== undefined ? `The ${name} answered:\n${p.answer}` : `The ${name} still runs: agent ${p?.agentId}.`))
+  // The answers come first, so the note of a start is the last thing the agent reads.
+  lines.sort((a, b) => Number(a.includes('still runs')) - Number(b.includes('still runs')))
+  if (codeLost) lines.push(await startCodeReview($, wf, facts, await componentNote($, wf)))
+  if (copyLost) {
+    const started = await startCopyEdit($, wf)
+    if (started) lines.push(started)
+  }
+  return lines.join('\n')
 }
 
 async function finishedReview($: EngineInterface, c: Ctx): Promise<string> {
