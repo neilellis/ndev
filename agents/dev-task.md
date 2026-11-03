@@ -23,3 +23,7 @@ You implement **one self-contained task** end to end, in the temporary worktree 
 - **Finish as a PR.** Never merge. Never push to the default branch. Every commit carries the commit trailer that the repository or session requires.
 - **Open ONE PR, never a second.** A related discovery of any size becomes a sub-issue that your PR carries: comment `Carried by #<pr>` on it, move its card to In progress, add `Closes #<child>` to your PR body, and give it to a `tdd-implementer` teammate on your branch. An unrelated discovery becomes a plain issue with no PR.
 - Follow the repository's `CLAUDE.md` for the build, test, typecheck and lint commands.
+
+## The workflow
+
+A subagent cannot move a workflow. As a main-session agent (`claude --agent dev-task`) with an issue, call `mcp__ndev__started(issue, shortName)` first and follow each answer. Any agent can call `mcp__ndev__iNeedA` and `mcp__ndev__reportWorkflowBug`.

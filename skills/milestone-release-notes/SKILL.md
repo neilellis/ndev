@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 Use only when the user invokes it with a milestone. This skill reads GitHub and writes only the notes file. Do not comment, move cards or publish a release (that is `milestone-release`).
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## 1. Resolve the inputs
 
 1. Get the repository: `gh repo view --json nameWithOwner -q .nameWithOwner`.

@@ -32,6 +32,8 @@ const engine = async (
   // The fix-all-prs loop registers its tool and timer at session start.
   on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   on('clock.now', () => ({ value: 0 }))
+  on('session.id', () => ({ value: 'test-session' }))
+  on('clock.sleep', () => new Promise(() => {}))
   on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('env.get', () => ({ value: '/home/neil' }))
@@ -60,6 +62,8 @@ const engine = async (
     if (e.argv[0] === 'git') {
       return { value: { exitCode: 0, stdout: `${ROOT}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
+    // Session start reads the repository through gh.sh; that is no hook script.
+    if (e.argv[1]?.endsWith('scripts/github/gh.sh')) return { value: { exitCode: 0, stdout: '{"repo":""}\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     runs.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, stdin: e.init?.stdin })
     return {
       value: {
@@ -85,10 +89,10 @@ test('no config: an edit runs no hook script', async ($, on) => {
   const ran = await $.tool.call(edit)
   await $.tool.call({ tool: 'Bash', command: 'git commit -m x && claude -p hi' })
 
-  expect(runs).toHaveLength(0)
+  expect(runs.map(r => r.argv.join(' '))).toEqual([])
   // With no file the set-up dialog runs and reports; no quality hook adds a toast.
-  expect(toasts.filter(t => !t.startsWith('Set-up'))).toHaveLength(0)
-  expect(ran.context ?? []).toHaveLength(0)
+  expect(toasts.filter(t => !t.startsWith('Set-up'))).toEqual([])
+  expect(ran.context ?? []).toEqual([])
 })
 
 test('a config that lists only other hooks does not run the edited-file guards', async ($, on) => {

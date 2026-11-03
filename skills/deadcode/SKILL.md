@@ -7,6 +7,10 @@ description: "Find unused Python and TypeScript names introduced by the current 
 
 Run the sweep for each language that the branch changes. The scripts are in this skill's `scripts/` folder:
 
+## The workflow
+
+The sweep is part of the review stage. Give the result to `mcp__ndev__finishedReview` as `deadcode`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ```bash
 scripts/sweep.sh [--base REF] ROOT [ROOT...]   # Python, with the `deadcode` tool through uv
 scripts/sweep-ts.sh [base-ref]                 # TypeScript, with knip and the root knip.json

@@ -24,3 +24,7 @@ You are the **orchestrator** for a project board's Ready column. You run the `wo
 - **PR-only. Never push the default branch. Never merge.** You move cards to In review; a human merges.
 - **One PR per unit.** Each Ready card or batch gets exactly one PR, based on the default branch. Teammates open none of their own: a related discovery rides in that PR as a sub-issue marked `Carried by #<pr>`. Two dependent Ready cards are batched into one PR.
 - **Never start on your own. Never wait for a human** except to ask your launching user directly.
+
+## The workflow
+
+A worker that runs as a subagent cannot move a workflow. A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer.

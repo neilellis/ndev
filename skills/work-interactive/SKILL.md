@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 Use this for a new idea, a vague request, or an issue with no contract that you can implement. Do not use it for a specified issue or a queue of ready work.
 
+## The workflow
+
+The `mcp__ndev__*` tools carry each development session: call `mcp__ndev__started(issue, shortName)` first, and follow the next step that each tool answers with. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Prepare
 
 Before you ask questions, read the project's glossary (for example `CONTEXT.md`), its domain notes, the relevant pages of the project's wiki (start at its index) and the applicable decision records (ADRs). Look up facts in the repository; do not ask the user for them.

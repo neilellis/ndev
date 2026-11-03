@@ -131,6 +131,7 @@ the project. Every key is optional:
   "github": { "repo": "acme/app", "board": { "owner": "acme", "number": 3 } },
   "branding": { "site": "https://brand.example", "name": "Acme", "guide": "https://brand.example/guide", "path": "apps/brand" },
   "quality": { },
+  "projectLevel": "small_project",
   "worktreeStacks": { "onSessionEnd": "stop-and-delete" },
   "services": { "supabase": { "url": "https://supabase.com/dashboard/project/<ref>" }, "vercel": { "url": "https://vercel.com/<team>/<project>" } }
 }
@@ -153,7 +154,7 @@ the project. Every key is optional:
   `branding`, those skills do no branding and do not mention it. `path` is the brand site's source folder, which `/brand check` and `/brand apply` read.
 - `quality` turns on the quality-control hooks one by one (see [`kb/hooks/README.md`](kb/hooks/README.md)).
   A hook that is not listed does not run.
-- `services` names the project's web consoles, each as `{ "url": "https://..." }` (http or https only). `/ndev:view` shows them as clickable links. Take the values from the CLIs: the Supabase ref from `supabase projects list`, the Vercel team slug and project name from `vercel teams ls` and `.vercel/project.json`.
+- `services` names the project's web consoles, each as `{ "url": "https://..." }` (http or https only). `/view` shows them as clickable links. Take the values from the CLIs: the Supabase ref from `supabase projects list`, the Vercel team slug and project name from `vercel teams ls` and `.vercel/project.json`.
 - `worktreeStacks.onSessionEnd` sets what happens to the docker stacks that a worktree lists in
   `.neil-dev.worktree.json` (`resources.docker`) when a session in that worktree ends (see
   "Worktree resources" below):
@@ -218,6 +219,8 @@ and each pull request's checks in a pane.
 | `/fix-prs status` | Show where the loop is. |
 | `/fix-prs pause`, `/fix-prs resume` | Stop and continue the loop. |
 | `/fix-prs skip <pr>`, `/fix-prs retry <pr>` | Leave out a pull request, or put a blocked one back in the queue. |
+
+A running loop checks GitHub every 15 minutes (see [GitHub quota](#github-quota)), so a pushed fix can wait that long before the loop sees it. `/fix-prs status` reads at once.
 
 The loop first asks the agent that owns a pull request to fix it. It looks for the owner in this
 order:
@@ -307,7 +310,7 @@ still saved to `.neil-dev.json`.
 | `list [--json] [--worktree <dir>]` | Shows the entries. |
 | `stop-all [--on-end stop-and-delete\|stop-keep-data\|keep-running] [--worktree <dir>] [--background [--log <file>]]` | Stops each listed dev server. Then it stops each listed stack with `npx -y supabase@<cliVersion> stop --project-id <id>` (plus `--no-backup` for `stop-and-delete`), in its workdir. With `keep-running` it stops only the dev servers. |
 | `migrate [--worktree <dir>]` | Rewrites a version 1 file as version 2. A version 2 file stays as it is. |
-| `init [--worktree <dir>]` | Creates an empty record when a linked worktree has none. It never changes an existing file, and creates nothing in the main checkout. The ndev hook runs it at session start and when `/ndev:view` opens. |
+| `init [--worktree <dir>]` | Creates an empty record when a linked worktree has none. It never changes an existing file, and creates nothing in the main checkout. The ndev hook runs it at session start and when `/view` opens. |
 | `set-setting --key mode\|steering --value <value> [--worktree <dir>]` | Saves the development mode or steering of this worktree under `"settings"` (see below). It refuses in the main checkout. |
 
 | Exit code | Meaning |
@@ -328,6 +331,8 @@ pnpm --dir apps/docs dev --port 3000 > /tmp/docs-dev.log 2>&1 &
 - The file must be git-ignored. `add-stack` and `add-dev-server` refuse when it is not, and name the repair:
   add the line `.neil-dev.worktree.json` to `.gitignore` (or to the git common dir's
   `info/exclude`). The plugin does not edit `.gitignore`.
+  `set-workflow` adds the line to `info/exclude` itself, so the workflow tools start in any project.
+  It still refuses a record that git tracks, or a `.gitignore` that un-ignores it.
 - `add-stack` and `add-dev-server` refuse in the main checkout: the record belongs to a linked
   worktree.
 - `add-stack` refuses a project id that another worktree of the repository lists. Two worktrees
@@ -398,9 +403,9 @@ embed media and how to file an issue. Without the file, `/walk-doc` does nothing
 to write. A missing required key stops the walk and names the key, the file and an example value.
 The keys and the loop are in [`hooks/walk-doc/README.md`](hooks/walk-doc/README.md).
 
-## ndev view: /ndev:view
+## ndev view: /view
 
-`/ndev:view` opens a pane for the project (`hooks/view.tsx`). It refreshes every 5 s and has
+`/view` opens a pane for the project (`hooks/view.tsx`). The pane has no background of its own. If a workflow runs, the pane draws it as a chain of boxes: ✔ passed, ● current, ▲ blocked, ○ to come, – skipped. It refreshes every 5 s and has
 `r` for a refresh by hand. It shows only the worktree the session is in (the main checkout is read
 only as the source for **Copy from main**):
 
@@ -436,11 +441,25 @@ The runner writes `progress.json` in its `--out` folder and a pointer to it in
 `~/.cache/ndev/responsive-check/latest.json`. The pane reads these two files. It does not show a
 run that started before the Bash call.
 
+## The workflow: /ndev-workflow
+
+The `mcp__ndev__*` workflow tools keep an agent on one issue from `started` to `done`. Each tool records the state in `.neil-dev.worktree.json`, does the commit, push or mark-ready step, and returns the next step. The `review` and `remember` stage hooks fire when the state changes. When a turn ends and the work is not finished, the plugin prompts the agent again. After 20 minutes with no activity, it compacts the session, reads the PR status and prompts again. `blocked` sends a notification that stays until you dismiss it.
+
+The guide, with the flow chart, is [kb/workflow.md](kb/workflow.md). To show it in a session, type `/ndev-workflow guide`. `/ndev-workflow` also shows the status, skips a phase, goes to a state, ends a block and turns the workflow off. `/unblock <message>` gives the agent your answer and ends a block or a wait. It runs at once, also during a turn.
+
+A session that starts with no issue asks for the issue, a new issue, or no workflow. `iNeedA(kind, description)` gives guidance on a `react-component`, `library`, `brand-style` or `animation`. `reportWorkflowBug(title, details)` starts an Orca agent that fixes a fault of the plugin on its `main`. Each skill and agent names the tools that it needs.
+
+`checkpoint` and `finishedDevelopment` take an optional `changeTypes` list (`web`, `backend`, `database`, `docs`, `tests`, `config`). The review instructions change with the types that accumulate. `screenshot(url)` takes images of a page in the Orca browser for a web change. See [Change types](kb/workflow.md#change-types).
+
+In an Orca workspace, the workflow also sets the workspace name to `<issue>-<shortName>`, the board status, a comment with the state, and the unread dot when a human must act.
+
+While a workflow runs, it does the work of the edited-file guards, the precheck reminder, the component check and the ingest after a push, so those hooks stand aside. A project keeps its checks in `scripts/ndev/workflow/`: `fast-checks.sh`, `pre-commit-check.sh`, `pre-push-check.sh` and `pre-ready-check.sh`. `/ndev:merge` merges a PR and runs its Supabase migrations.
+
 ## Component check
 
 `hooks/component-check.ts` runs in every project and needs no setting. After a successful Edit or Write of a `.tsx`, `.jsx`, `.vue` or `.svelte` file, it asks the agent to check the change against the component map in [`kb/ui-components.md`](kb/ui-components.md). The agent then changes to a richer component where one improves the interaction, or says in one line why the basic solution is right.
 
-The hook asks once for each file in a session and never blocks. It skips tests, stories and `node_modules`. A new session, such as after `/clear`, asks again. It does not see a file changed through Bash.
+While a workflow runs, this hook stands aside, and `finishedDevelopment` lists the changed UI files for the review. The hook asks once for each file in a session and never blocks. It skips tests, stories and `node_modules`. A new session, such as after `/clear`, asks again. It does not see a file changed through Bash.
 
 ## The living wiki: ~/dev-wiki
 
@@ -516,4 +535,10 @@ The skills refer to these. Install them as well:
 
 ## GitHub quota
 
-The plugin reads and merges pull requests with the REST API (`gh api`), not `gh pr list`, `gh pr view` or `gh pr merge`: those use GraphQL, whose quota runs out first. This covers `/fix-all-prs`, `/orca-triage` and the helper scripts. The Projects v2 board still uses GraphQL, which has no REST API.
+All of the plugin reaches GitHub through `scripts/github/gh.sh`: the `gh` command first, and REST when it fails. `gh` commands spend GraphQL points and `gh api` spends REST calls, so one route still answers when the other is used up. The Projects v2 board uses GraphQL, which has no REST API.
+
+Background work is held to a budget, because each session of the plugin runs its timers:
+
+- `/fix-prs` makes no GitHub call in a session that did not start the loop. It reads when a person asks.
+- A running `/fix-prs` loop checks GitHub every 15 minutes, and reads only its current pull request (2 calls). A whole-queue read is one call. A person's request and a `blocked` report read at once. Set `NDEV_PR_CHECK_MS` to change the time.
+- `/orca-triage` hears its workers through Orca's inbox. Its safety-net timer runs every 15 minutes.

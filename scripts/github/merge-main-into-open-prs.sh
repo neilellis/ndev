@@ -6,6 +6,6 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$DIR/lib.sh"
 gh_resolve_repo || exit 1
-base="$(GH api "repos/$REPO" --jq .default_branch)" \
+base="$(GH_REPO="$REPO" "$DIR/gh.sh" default-branch | jq -r .default_branch)" \
   || { echo "merge-main-into-open-prs.sh: cannot read the default branch of $REPO; run 'gh auth status'" >&2; exit 1; }
 exec python3 "$DIR/merge_main_into_open_prs.py" --github-repo "$REPO" --base "$base" "$@"

@@ -7,6 +7,10 @@ description: "State exactly what input or approval you need from the user as cle
 
 Tell the user exactly what you need from them to continue the current task. Load `simple-english` and `i-have-adhd` before you write the reply. Do not depend on a particular question tool or command syntax.
 
+## The workflow
+
+While a workflow runs, `mcp__ndev__status` gives the next step, and `mcp__ndev__blocked(message)` tells the human what the agent needs. `mcp__ndev__requestSecret(name)` finds a secret. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Ask only what the user must supply
 
 - Read the current task, earlier answers and existing permissions first.

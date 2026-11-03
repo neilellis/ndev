@@ -12,6 +12,10 @@ Before you write or review diagram labels and captions, read the project's writi
 
 Create diagrams as self-contained HTML files with inline SVG and an editorial design system.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Forty-five visual types. Semantic patterns describe behavior; type references describe layout.
 
 ---

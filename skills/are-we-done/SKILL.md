@@ -7,13 +7,16 @@ description: "Check whether the current work is actually finished. Use for \"are
 
 Answer whether the work is finished. Do not write a general activity summary. Run the checks; do not rely on conversation memory:
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), call it first. `mcp__ndev__done(message)` runs these checks itself and lists every problem, so use it to close the work. The checks below are for work with no workflow. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ```bash
 git status --short
 git worktree list
 git log --oneline @{upstream}..HEAD
 git stash list
-gh pr list --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" --author @me \
-  --json number,title,isDraft,mergeable,statusCheckRollup
+"${CLAUDE_PLUGIN_ROOT}/scripts/github/gh.sh" pr-rows
 ```
 
 Also check the relevant background jobs, agent runs, submodules and worktrees. Remove only resources that this session made. Report resources that another session owns and leave them in place.

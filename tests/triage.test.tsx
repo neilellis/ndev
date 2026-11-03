@@ -80,9 +80,9 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     const a = [...e.argv]
     const args = a.join(' ')
     ran.push(a)
-    if (a[0] === 'gh' && a[1] === 'issue' && a[2] === 'list') return ok(JSON.stringify(opts.issues ?? []))
+    if (args.includes('gh.sh issue-search')) return ok((opts.issues ?? []).map(i => `${JSON.stringify(i)}\n`).join(''))
     if (args.includes('gh.sh board items')) return ok((opts.cards ?? []).map(c => `${JSON.stringify(c)}\n`).join(''))
-    if (a[0] === 'gh' && a[1] === 'api' && /^repos\/[^/]+\/[^/]+\/pulls\/\d+$/.test(a[2] ?? '')) return ok(JSON.stringify({ headRefName: `claude/issue-${prHeads.get(Number(a[2]!.split('/').pop()))}` }))
+    if (args.includes('gh.sh pr-read')) return ok(JSON.stringify({ head: { ref: `claude/issue-${prHeads.get(Number(a[a.length - 1]))}` } }))
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
     if (args.startsWith('orca worktree list')) return reply({ worktrees, totalCount: worktrees.length, truncated: false })
     if (args.startsWith('orca worktree create')) {
@@ -170,8 +170,8 @@ test('with no board, /orca-triage start asks the model to group the open issues 
   const r = await $.command.run(command('start'))
   expect(r.text).toMatch(/triage/i)
   await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
-  const list = w.ran.find(a => a[0] === 'gh' && a[1] === 'issue')!
-  expect(list.join(' ')).toMatch(/--search -linked:pr/)
+  const list = w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!
+  expect(list.join(' ')).toMatch(/issue-search -linked:pr/)
   expect(w.prompts[0]).toMatch(/#3\b/)
   expect(w.prompts[0]).toMatch(/#9\b/)
   expect(w.prompts[0]).not.toMatch(/#7\b/)
@@ -186,7 +186,7 @@ test('with a board, /orca-triage start takes the issues in Ready and In progress
   await started($)
   await $.command.run(command('start'))
   await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
-  expect(w.ran.some(a => a[0] === 'gh' && a[1] === 'issue')).toBe(false)
+  expect(w.ran.some(a => a.join(' ').includes('gh.sh issue-search'))).toBe(false)
   expect(w.prompts[0]).toMatch(/#3\b/)
   expect(w.prompts[0]).toMatch(/#6\b/)
   expect(w.prompts[0]).not.toMatch(/#4\b/)
@@ -329,6 +329,8 @@ test('a question goes to the model with the reply command; worker_done retains t
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /Keep the old API/ }))?.text).toBeDefined()
+  // Each issue number in the pane is a link to the issue.
+  expect((await ui.find({ type: 'Link', text: '#3' }))?.props.href).toBe('https://github.com/acme/widgets/issues/3')
   // A reply Orca refused leaves the question open on the group's row; the reply it took closes it.
   const asks = { type: 'Text', text: /^\s+asks: Keep the old API/ } as const
   const reply = () => $.tool.call({ tool: 'Bash', command: 'orca orchestration reply --id msg_1 --run run_1 --body "Yes" --json' } as never)
@@ -349,6 +351,7 @@ test('a question goes to the model with the reply command; worker_done retains t
   const after = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await until(async () => (await after.find({ type: 'Text', text: /PR #41/ })) !== undefined)
   expect((await after.find({ type: 'Text', text: /in-review/ }))?.text).toBeDefined()
+  expect((await after.find({ type: 'Link', text: '#41' }))?.props.href).toBe('https://github.com/acme/widgets/pull/41')
   await after.unmount()
 })
 
@@ -432,7 +435,7 @@ test('a failed group blocks the groups after it; the triage then ends, and /orca
   await until(async () => (await ui.find({ type: 'Text', text: /^done · Orca Run run_1/ })) !== undefined)
   await ui.unmount()
   await $.command.run(command('start'))
-  await until(() => w.ran.filter(a => a[0] === 'gh' && a[1] === 'issue').length === 2, () => w.toasts)
+  await until(() => w.ran.filter(a => a.join(' ').includes('gh.sh issue-search')).length === 2, () => w.toasts)
 })
 
 test('a bad inbox message is logged, the rest of the delivery is still handled, and the delivery is acked once', async ($, on) => {

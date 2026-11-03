@@ -88,7 +88,7 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   // `rateLimitUntil` fails every gh call before that time with GitHub's rate-limit refusal;
   // `storage` fails the checks of those pull requests on the Actions storage quota until a rerun;
   // `registry` fails each read of the session registry with that output; `prompt` drops each prompt with that reason, as a refusing hook does.
-  const fault = { outage: 0, mergeError: {} as Record<number, string>, rateLimitUntil: 0, storage: {} as Record<number, boolean>, registry: '', prompt: '' }
+  const fault = { checkEvery: '0', ghCalls: [] as string[], rowsError: '', outage: 0, mergeError: {} as Record<number, string>, rateLimitUntil: 0, storage: {} as Record<number, boolean>, registry: '', prompt: '' }
   // Each period of `$.clock.every` waits here until the test fires the timer. A fire before the next period waits
   // is kept for it: the engine arms that period only after it has handled the last one.
   const timers: (() => void)[] = []
@@ -101,7 +101,8 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   // The plugin's session start also reads ~/dev-wiki and the project file: both are in place,
   // so it runs no set-up and no wiki script, and every process call below is the loop's.
-  on('env.get', () => ({ value: '/home/neil' }))
+  // The loop's time between GitHub reads: none here, so each tick reads. A test of the budget clears it.
+  on('env.get', (_, e) => ({ value: e.name === 'NDEV_PR_CHECK_MS' ? fault.checkEvery : '/home/neil' }))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
   on('fs.read', () => ({ value: JSON.stringify({ github: { repo: 'acme/widgets', board: null } }) }))
   on('clock.every', () => new Promise(resolve => {
@@ -129,7 +130,8 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   on('tool.call', () => listing.deny ? { deny: listing.deny } : { result: { listing: '', sections: [{ kind: 'peers', total: agents.length, rows: agents }] } })
   on('process.run', (_, e) => {
     if (isGhBroken) return { value: { exitCode: 1, stdout: '', stderr: 'fatal: not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
-    const args = e.argv.join(' ')
+    // A call through scripts/github/gh.sh reads as `gh.sh <command>`.
+    const args = e.argv.join(' ').replace(/^bash \S*\/scripts\/github\/gh\.sh/, 'gh.sh')
     if (e.argv[0] === 'sh' && args.includes('/sessions/')) {
       if (fault.registry) return { value: { exitCode: 1, stdout: '', stderr: fault.registry, isStdoutTruncated: false, isStderrTruncated: false } }
       return ok(registry.map(line => `${line}\n`).join(''))
@@ -167,20 +169,22 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
     if (args === 'git rev-parse --show-toplevel') return ok('/\n')
     // The credentials check finds .neil-dev.env at session start; it is no GitHub call.
     if (args.includes('/scripts/env/neil-dev-env.mjs status')) return ok(JSON.stringify({ file: '/.neil-dev.env', copiedFrom: null, root: '/', main: '/', ignored: true, keys: [], missing: [] }))
-    if (args === 'gh api rate_limit') {
+    if (args === 'gh.sh api rate_limit') {
       const reset = Math.ceil(fault.rateLimitUntil / 1000)
       return ok(JSON.stringify({ resources: { core: { limit: 5000, remaining: 4800, reset: 60 }, graphql: { limit: 5000, remaining: 0, reset } } }))
     }
     calls.count++
+    if (args.startsWith('gh')) fault.ghCalls.push(args)
+    if (args.startsWith('gh.sh pr-rows') && fault.rowsError) return { value: { exitCode: 1, stdout: '', stderr: fault.rowsError, isStdoutTruncated: false, isStderrTruncated: false } }
     if (clock.now < fault.rateLimitUntil) {
       return { value: { exitCode: 1, stdout: '', stderr: 'HTTP 403: API rate limit exceeded for user ID 1.', isStdoutTruncated: false, isStderrTruncated: false } }
     }
-    const checkRuns = /^gh api repos\/acme\/widgets\/commits\/head-(\d+)-\d+\/check-runs.* --jq /.exec(args)
+    const checkRuns = /^gh\.sh api repos\/acme\/widgets\/commits\/head-(\d+)-\d+\/check-runs.* --jq /.exec(args)
     if (checkRuns) return ok(fault.storage[Number(checkRuns[1])] ? '901 https://github.com/acme/widgets/actions/runs/77/job/901\n' : '')
-    if (/^gh api repos\/acme\/widgets\/check-runs\/901\/annotations/.test(args)) {
+    if (/^gh\.sh api repos\/acme\/widgets\/check-runs\/901\/annotations/.test(args)) {
       return ok('Failed to CreateArtifact: Artifact storage quota has been hit. Unable to upload any new artifacts. Usage is recalculated every 6-12 hours.\n')
     }
-    if (args.startsWith('gh run rerun')) {
+    if (args.startsWith('gh.sh rerun-failed')) {
       reruns.push(args)
       // The rerun passes now that the quota is back.
       for (const p of prs.filter(x => fault.storage[x.number])) {
@@ -193,13 +197,13 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
       fault.outage--
       return { value: { exitCode: 1, stdout: '', stderr: 'HTTP 502: Bad Gateway (https://api.github.com/repos/acme/widgets/pulls)', isStdoutTruncated: false, isStderrTruncated: false } }
     }
-    // The REST answers the plugin reads; GraphQL (gh pr list, gh pr view, gh repo view, gh pr merge) is never used.
-    if (/^gh (pr|repo) /.test(args) && !args.startsWith('gh run ')) throw new Error(`GraphQL call: ${args}`)
-    if (args === 'gh api repos/{owner}/{repo}') {
+    // Every GitHub read and write goes through gh.sh. `gh pr view --web` only opens a browser.
+    if (/^gh /.test(args) && !args.endsWith('--web')) throw new Error(`raw gh call: ${args}`)
+    if (args === 'gh.sh repo-read') {
       return ok(JSON.stringify({ full_name: REPO.nameWithOwner, default_branch: REPO.defaultBranchRef.name, allow_merge_commit: REPO.mergeCommitAllowed, allow_squash_merge: REPO.squashMergeAllowed, allow_rebase_merge: REPO.rebaseMergeAllowed }))
     }
-    if (args === 'gh api user --jq .login') return ok('me')
-    if (args.startsWith('gh api repos/acme/widgets/compare/')) return ok('behind')
+    if (args === 'gh.sh me') return ok('{"login":"me"}')
+    if (args.startsWith('gh.sh api repos/acme/widgets/compare/')) return ok('behind')
     const rest = (p: Pr) => ({
       number: p.number,
       title: p.title,
@@ -213,7 +217,7 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
       user: { login: 'me' },
       head: { ref: p.headRefName, sha: p.headRefOid },
     })
-    const merge = /^gh api --method PUT repos\/acme\/widgets\/pulls\/(\d+)\/merge -f merge_method=(\w+)$/.exec(args)
+    const merge = /^gh\.sh pr-merge (\d+) --method (\w+)$/.exec(args)
     if (merge) {
       merged.push(`gh pr merge ${merge[1]} --${merge[2]}`)
       if (fault.mergeError[Number(merge[1])]) return { value: { exitCode: 1, stdout: '', stderr: fault.mergeError[Number(merge[1])]!, isStdoutTruncated: false, isStderrTruncated: false } }
@@ -221,21 +225,20 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
       Object.assign(p, { state: 'MERGED', mergeCommit: { oid: `abcdef${p.number}` } })
       return ok('{}')
     }
-    const commits = /^gh api repos\/acme\/widgets\/pulls\/(\d+)\/commits/.exec(args)
+    const commits = /^gh\.sh pr-commit-messages (\d+)/.exec(args)
     if (commits) {
       commitReads.count++
       return ok((signed[Number(commits[1])] ?? []).join('\n'))
     }
-    const statuses = /^gh api repos\/acme\/widgets\/commits\/(head-(\d+)-\d+)\/status/.exec(args)
-    if (statuses) return ok(JSON.stringify({ statuses: [] }))
-    const runsOf = /^gh api repos\/acme\/widgets\/commits\/(head-(\d+)-\d+)\/check-runs/.exec(args)
-    if (runsOf) {
-      const p = prs.find(x => x.headRefOid === runsOf[1])
-      return ok(JSON.stringify({ check_runs: (p?.statusCheckRollup ?? []).map(c => ({ name: c.name, status: c.status.toLowerCase(), conclusion: c.conclusion ? c.conclusion.toLowerCase() : null })) }))
+    const checksOf = /^gh\.sh commit-checks (head-\d+-\d+)/.exec(args)
+    if (checksOf) {
+      const p = prs.find(x => x.headRefOid === checksOf[1])
+      return ok(JSON.stringify({ statuses: [], check_runs: (p?.statusCheckRollup ?? []).map(c => ({ name: c.name, status: c.status.toLowerCase(), conclusion: c.conclusion ? c.conclusion.toLowerCase() : null })) }))
     }
-    const one = /^gh api repos\/acme\/widgets\/pulls\/(\d+)$/.exec(args)
+    const one = /^gh\.sh pr-read (\d+)$/.exec(args)
     if (one) return ok(JSON.stringify(rest(prs.find(p => p.number === Number(one[1]))!)))
-    if (args.startsWith('gh api repos/acme/widgets/pulls?')) return ok(JSON.stringify(/page=1$/.test(args) ? prs.map(rest) : []))
+    if (args.startsWith('gh.sh pr-rows')) return ok(prs.filter(p => p.state === 'OPEN').map(p => `${JSON.stringify(p)}\n`).join(''))
+    if (args.startsWith('gh.sh pr-list')) return ok(prs.map(p => `${JSON.stringify(rest(p))}\n`).join(''))
     return ok('')
   })
   return { sent, prompts, merged, clock, fault, reruns, calls, commitReads, timer, toasts, signed, registry, titles, orca, listing }
@@ -256,6 +259,9 @@ test('status lists the open pull requests oldest first', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /Not started/ }))?.text).toBe('Not started')
   expect((await ui.find({ type: 'Text', text: /#4/ }))?.text).toMatch(/^ {2}failing\s+#4 Change 4/)
   expect((await ui.find({ type: 'Text', text: /#9/ }))?.text).toMatch(/^ {2}green\s+#9 Change 9/)
+  // The number is a link to the pull request, and a failing check a link to its checks page.
+  expect((await ui.find({ type: 'Link', text: '#4' }))?.props.href).toBe('https://github.com/acme/widgets/pull/4')
+  expect((await ui.find({ type: 'Link', text: 'tests' }))?.props.href).toBe('https://github.com/acme/widgets/pull/4/checks')
   await ui.unmount()
 })
 
@@ -270,6 +276,16 @@ test('a gh failure shows its exit code, its output and the repair', async ($, on
   expect(error).toMatch(/not a git repository/)
   expect(error).toMatch(/gh auth login/)
   await ui.unmount()
+})
+
+test('the loop finds the agent of a workspace named <issue>-<short name>, and not the agent of an issue with other digits', async ($, on) => {
+  const prs = [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176')]
+  const w = world(on, prs, [{ name: '1176-other-work', status: 'idle' }, { name: '176-add-sub', status: 'waiting' }])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+
+  await until(() => w.sent.length === 1)
+  expect(w.sent[0]!.to).toBe('176-add-sub')
 })
 
 test('the loop asks the owning agent, merges once the checks pass and thanks the agent', async ($, on) => {
@@ -416,15 +432,16 @@ test('with no agent named after it, the owner is the listed session that signed 
   await $.command.run(command('pause'))
 })
 
-test('an owner found by the session-start refresh is noted again when the queue starts', async ($, on) => {
+test('an owner found by a refresh before the start is noted again when the queue starts', async ($, on) => {
   const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
   const w = world(on, prs, [{ name: 'lens-7d', status: 'idle' }])
   w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_7d']
   w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_7d' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  // The refresh that session start begins finds the owner before /fix-prs start.
+  // Asking for the status finds the owner before /fix-prs start.
+  await $.command.run(command('status'))
   const before = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await until(async () => (await before.find({ type: 'Text', text: /lens-7d/ })) !== undefined, () => 'the session-start refresh named no owner')
+  await until(async () => (await before.find({ type: 'Text', text: /lens-7d/ })) !== undefined, () => 'the status refresh named no owner')
   await before.unmount()
   await $.command.run(command('start'))
 
@@ -1038,9 +1055,7 @@ test('an owner that replies blocked passes the pull request to the model, which 
 test('a GitHub outage never pauses the loop: it backs off, retries and carries on', async ($, on) => {
   const w = world(on, [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176')], [{ name: 'issue-176', status: 'idle' }])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  // Let the start-up fetch of the idle loop finish first, so both failures meet the running loop.
   let ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await until(async () => (await ui.find({ type: 'Text', text: /#182/ })) !== undefined)
   w.fault.outage = 2
   await $.command.run(command('start'))
   await until(async () => (await ui.find({ type: 'Text', text: /GitHub error \(1 in a row\), retrying in 1 min/ })) !== undefined)
@@ -1101,7 +1116,7 @@ test('a merge GitHub keeps refusing is retried a minute apart, then recorded as 
   await until(async () => (await ui.find({ type: 'Text', text: /^Finished/ })) !== undefined)
   expect((await ui.find({ type: 'Text', text: /#185/ }))?.text).toMatch(/merged\s+#185/)
   expect((await ui.find({ type: 'Text', text: /#190/ }))?.text).toMatch(/blocked\s+#190/)
-  expect((await ui.find({ type: 'Text', text: /refused the merge/ }))?.text).toMatch(/refused the merge 3 times: gh api PUT repos\/acme\/widgets\/p/)
+  expect((await ui.find({ type: 'Text', text: /refused the merge/ }))?.text).toMatch(/refused the merge 3 times: gh\.sh pr-merge 190/)
   await ui.unmount()
 })
 
@@ -1166,7 +1181,7 @@ test('a used-up storage quota: the loop waits for GitHub to recount, then reruns
   w.clock.now = 6 * 60 * 60_000
   w.timer()
   await until(() => w.reruns.length === 1, () => w.reruns)
-  expect(w.reruns).toEqual(['gh run rerun 77 --failed'])
+  expect(w.reruns).toEqual(['gh.sh rerun-failed 77'])
   // The rerun passes; the next tick merges.
   w.clock.now += 60_000
   w.timer()
@@ -1229,4 +1244,54 @@ test('retry starts a pull request afresh: round 1, the owner asked again, its bl
   expect(JSON.stringify(await $.command.run(command('status')))).toMatch(/#200 waiting on its owner since just now · round 1\/3/)
   expect(w.prompts.length).toBe(1)
   await $.command.run(command('pause'))
+})
+
+test('budget: a session that did not start the loop makes no GitHub call, at its start or on the timer', async ($, on) => {
+  const w = world(on, [pr(4, '2026-10-26T11:00:00Z', 'FAILURE')], [])
+  w.fault.checkEvery = ''
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  w.clock.now = 60 * 60_000
+  w.timer()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(w.fault.ghCalls).toEqual([])
+})
+
+test('budget: a running loop reads GitHub every 15 minutes, and then only its current pull request', async ($, on) => {
+  const prs = [pr(4, '2026-10-26T11:00:00Z', 'FAILURE'), pr(5, '2026-10-26T12:00:00Z', 'FAILURE'), pr(6, '2026-10-26T13:00:00Z', 'FAILURE')]
+  const w = world(on, prs, [{ name: 'pr-4', status: 'idle' }])
+  w.fault.checkEvery = ''
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+  await until(() => w.sent.length === 1, () => w.fault.ghCalls)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  // The first read is one call for the whole queue, not one for each pull request.
+  expect(w.fault.ghCalls.filter(c => c.startsWith('gh.sh pr-rows')).length).toBe(1)
+  expect(w.fault.ghCalls.filter(c => c.startsWith('gh.sh pr-read') || c.startsWith('gh.sh commit-checks'))).toEqual([])
+
+  w.fault.ghCalls.length = 0
+  for (const minute of [1, 5, 14]) {
+    w.clock.now = minute * 60_000
+    w.timer()
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  expect(w.fault.ghCalls).toEqual([])
+
+  w.clock.now = 16 * 60_000
+  w.timer()
+  await until(() => w.fault.ghCalls.length >= 2, () => w.fault.ghCalls)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(w.fault.ghCalls.map(c => c.split(' ').slice(1, 3).join(' '))).toEqual(['pr-read 4', 'commit-checks head-4-1'])
+  await $.command.run(command('pause'))
+})
+
+test('budget: a person asking for the status reads at once, and a failed whole-queue read falls back to one read per pull request', async ($, on) => {
+  const w = world(on, [pr(4, '2026-10-26T11:00:00Z', 'FAILURE')], [])
+  w.fault.checkEvery = ''
+  w.fault.rowsError = 'GraphQL: API rate limit exceeded'
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('status'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await ui.find({ type: 'Text', text: /#4/ })) !== undefined, () => w.fault.ghCalls)
+  expect(w.fault.ghCalls.some(c => c.startsWith('gh.sh pr-read 4'))).toBe(true)
+  await ui.unmount()
 })

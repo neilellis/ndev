@@ -57,8 +57,17 @@ def run(command: list[str], *, cwd: Path | None = None) -> str:
     return result.stdout
 
 
+GH_SH = Path(__file__).resolve().parents[3] / "scripts" / "github" / "gh.sh"
+
+
 def gh(*args: str, cwd: Path | None = None) -> str:
+    """Raw gh, only for the listed exceptions: release *, run list, run watch (gh.sh has no route for them)."""
     return run(["gh", *args], cwd=cwd)
+
+
+def ghsh(*args: str) -> str:
+    """A gh.sh command: the gh command first, REST when it fails."""
+    return run(["bash", str(GH_SH), *args])
 
 
 def git(*args: str) -> str:
@@ -66,7 +75,7 @@ def git(*args: str) -> str:
 
 
 def repo() -> str:
-    return gh("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner").strip()
+    return json.loads(ghsh("repo"))["repo"]
 
 
 def view(tag: str) -> dict[str, Any]:
@@ -221,7 +230,7 @@ def changes(tag: str, previous: str | None, target: str | None) -> int:
     print(f"Target commit: {target}\n")
     print(f"## Pull requests since {previous}\n")
     for number in sorted(set(pulls)):
-        pull = json.loads(gh("pr", "view", str(number), "--json", "number,title"))
+        pull = json.loads(ghsh("pr-read", str(number)))
         print(f"- {pull['title']} (#{pull['number']})")
     if not pulls:
         print("- None")

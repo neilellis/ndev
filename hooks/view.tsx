@@ -1,10 +1,14 @@
+import { loadWorkflow } from './workflow/tools'
+import { flowPicture } from './workflow/machine'
+import type { FlowMark, State } from './workflow/machine'
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { ResourceView, ViewServer, ViewStack, ViewTree } from '../types'
 import { loadConfigAt } from './config'
+import { fileUrl, issueUrl, pullUrl } from './links'
 
-// The /ndev:view pane: the ndev files and the running resources of the current git worktree of the
+// The /view pane: the ndev files and the running resources of the current git worktree of the
 // project, with the controls to create or copy a file and to stop, open or copy a resource.
 // The lists come from two scripts: ndev-files.sh (files) and worktree-env.sh (resources).
 
@@ -45,6 +49,22 @@ type Record2 = {
   }
 }
 
+// The flow line in parts, so the issue and the PR can be drawn as links: text, then a number, then text.
+function workflowParts(w: NonNullable<ViewTree['workflow']>) {
+  const state = w.previous ? `${w.state} (was ${w.previous})` : w.state
+  return { head: `${state}, issue `, issue: w.issue, mid: w.prs[0] ? ', PR ' : '', pr: w.prs[0], tail: w.blocked ? `: ${w.blocked}` : '' }
+}
+
+// How each step of the flow looks: its mark, and the colour of its box.
+const MARK: Record<FlowMark, { sign: string; color: 'success' | 'claude' | 'warning' | 'subtle' }> = {
+  passed: { sign: '✔', color: 'success' },
+  current: { sign: '●', color: 'claude' },
+  blocked: { sign: '▲', color: 'warning' },
+  waiting: { sign: '◷', color: 'claude' },
+  later: { sign: '○', color: 'subtle' },
+  skipped: { sign: '–', color: 'subtle' },
+}
+
 async function readTree($: EngineInterface, t: Listed): Promise<ViewTree> {
   const tree: ViewTree = { path: t.path, branch: t.branch, isMain: t.isMain, files: t.files, problem: t.problem, servers: [], stacks: [] }
   if (!t.files.some(f => f.name === RECORD && f.present)) return tree
@@ -58,7 +78,9 @@ async function readTree($: EngineInterface, t: Listed): Promise<ViewTree> {
     const stacks: ViewStack[] = (resources.docker ?? []).map(s => ({
       kind: s.kind, projectId: s.projectId, workdir: s.workdir, live: s.live, liveError: s.liveError, lastStopOutput: s.lastStop?.output,
     }))
-    return { ...tree, servers, stacks }
+    const wf = await loadWorkflow($, t.path)
+    const workflow = wf && { state: wf.state, previous: wf.previous, issue: wf.issue, repo: wf.repo, prs: wf.prs, blocked: wf.blocked?.message, visited: (wf.history ?? []).flatMap(h => (h.from ? [h.from, h.to] : [h.to])) }
+    return { ...tree, servers, stacks, workflow }
   } catch (error) {
     return { ...tree, resourceError: `The resources of ${t.path} could not be read: worktree-env.sh list printed no JSON (${(error as Error).message}). Run: bash ${envScript($)} list --json --live --worktree ${t.path}` }
   }
@@ -138,8 +160,7 @@ export async function startView($: EngineInterface, cwd: string) {
   await $.command.register({ name: 'view', description: 'Show the ndev files and the running resources of the current worktree, in a pane' })
 }
 
-export const resourceView = (on: On) => {
-  on('command.run', { command: 'view' }, async $ => {
+async function openView($: EngineInterface) {
     // A linked worktree without a record gets an empty one, as at session start.
     const made = repo ? await $.process.run(['bash', envScript($), 'init', '--worktree', repo], { cwd: repo, timeoutMs: 20000 }) : undefined
     await refresh($)
@@ -147,10 +168,13 @@ export const resourceView = (on: On) => {
       await update($, view, v => ({ ...v, notice: { text: failure('The worktree record could not be created (worktree-env.sh init)', made), isError: true } }))
     }
     startPolling($)
-    await $.ui.open({ id: PANE, title: TITLE })
+    await $.ui.open({ id: PANE, title: TITLE, backgroundColor: 'transparent' })
     const { current, error } = await read($, view)
     return { text: error ? `ndev view opened, but the lists could not be read: ${error}` : `ndev view opened for ${current}.` }
-  })
+}
+
+export const resourceView = (on: On) => {
+  on('command.run', { command: 'view' }, $ => openView($))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
@@ -161,6 +185,50 @@ export const resourceView = (on: On) => {
     const isBusy = (key: string) => busy.includes(key)
     const stopLabel = (key: string, label: string) => (isBusy(key) ? 'Stopping…' : isArmed(key) ? `Press again: ${label}` : label)
     const word = (live: boolean | null) => (live === null ? '?' : live ? '●' : '○')
+    const heading = (label: string) => <Text color="subtle" weight="bold">{label}</Text>
+
+    const flowNode = (state: string, mark: FlowMark) => {
+      const look = MARK[mark]
+      const isHere = mark === 'current' || mark === 'blocked' || mark === 'waiting'
+      return (
+        <Box key={`node:${state}`} borderStyle="round" borderColor={look.color} borderDimColor={mark === 'later' || mark === 'skipped'} paddingX={1} flexShrink={0}>
+          <Text color={look.color} weight={isHere ? 'bold' : undefined} dimColor={mark === 'later' || mark === 'skipped'}>{`${look.sign} ${state}`}</Text>
+        </Box>
+      )
+    }
+
+    // The flow as a chain of boxes, so a look shows where this session stands. A narrow pane wraps the chain.
+    const flowChart = (w: NonNullable<ViewTree['workflow']>) => {
+      const parts = workflowParts(w)
+      const picture = flowPicture({ state: w.state as State, previous: w.previous as State | undefined }, (w.visited ?? []) as State[])
+      return (
+        <Box key="flow" flexDirection="column">
+          {heading('Workflow')}
+          <Text color={w.state === 'blocked' ? 'warning' : undefined} weight="bold">
+            {parts.head}
+            {w.repo ? <Link href={issueUrl(w.repo, parts.issue)} label={`#${parts.issue}`} /> : `#${parts.issue}`}
+            {parts.mid}
+            {parts.pr !== undefined && (w.repo ? <Link href={pullUrl(w.repo, parts.pr)} label={`#${parts.pr}`} /> : `#${parts.pr}`)}
+            {parts.tail}
+          </Text>
+          <Box flexWrap="wrap">
+            {picture.steps.map((step, i) => (
+              <Box key={`step:${step.state}`} alignItems="center" flexShrink={0}>
+                {i > 0 && <Text color="subtle">──→</Text>}
+                {flowNode(step.state, step.mark)}
+              </Box>
+            ))}
+          </Box>
+          {picture.revising && (
+            <Box alignItems="center">
+              <Text color="subtle">↺ feedback ──→</Text>
+              {flowNode('revising', picture.revising)}
+              <Text color="subtle">──→ back to ci</Text>
+            </Box>
+          )}
+        </Box>
+      )
+    }
 
     const fileRow = (t: ViewTree, f: ViewTree['files'][number]) => {
       const missingKey = (verb: string) => `${verb}:${t.path}:${f.name}`
@@ -168,7 +236,9 @@ export const resourceView = (on: On) => {
       const canCopy = !t.isMain && main?.files.some(m => m.name === f.name && m.present)
       return (
         <Box key={`${t.path}:${f.name}`} gap={2}>
-          <Text color={f.present ? 'success' : 'error'}>{f.present ? `✔ ${f.name}` : `✖ ${f.name} (missing)`}</Text>
+          {f.present
+            ? <Text color="success">✔ <Link href={fileUrl(`${t.path}/${f.name}`)} label={f.name} /></Text>
+            : <Text color="error">{`✖ ${f.name} (missing)`}</Text>}
           {!f.present && WRITABLE.includes(f.name) && canCopy && (
             <Button key={missingKey('copy')} label="Copy from main" plain onPress={() => { void act($, missingKey('copy'), `Copy ${f.name} to ${t.path}`, filesScript($), ['copy', '--file', f.name, '--worktree', t.path, '--repo', repo ?? t.path]) }} />
           )}
@@ -227,22 +297,31 @@ export const resourceView = (on: On) => {
         {servicesError && <Text color="error">{servicesError}</Text>}
         {services && Object.keys(services).length > 0 && (
           <Box gap={2}>
-            <Text color="subtle">Services</Text>
+            {heading('Services')}
             {Object.entries(services).map(([name, s]) => <Link key={`service:${name}`} href={s.url} label={name} />)}
           </Box>
         )}
         {trees.map(t => (
-          <Box key={t.path} flexDirection="column" borderStyle="round" borderColor={t.isMain ? 'claude' : 'subtle'} paddingX={1}>
-            <Text weight="bold" color="claude">{`${t.branch}  ${t.path}${t.isMain ? '  (main checkout)' : ''}`}</Text>
-            {t.problem && <Text color="error">{t.problem}</Text>}
-            {t.files.map(f => fileRow(t, f))}
+          <Box key={t.path} flexDirection="column" gap={1}>
+            <Box flexDirection="column">
+              <Text weight="bold" color="claude">{`${t.branch}  `}<Link href={fileUrl(t.path)} label={t.path} />{t.isMain ? '  (main checkout)' : ''}</Text>
+              {t.problem && <Text color="error">{t.problem}</Text>}
+            </Box>
+            {t.workflow && flowChart(t.workflow)}
+            <Box key="files" flexDirection="column">
+              {heading('Files')}
+              <Box flexWrap="wrap" columnGap={3}>{t.files.map(f => fileRow(t, f))}</Box>
+            </Box>
             {t.resourceError && <Text color="error">{t.resourceError}</Text>}
-            {t.servers.map(s => serverRow(t, s))}
-            {t.stacks.map(s => stackRow(t, s))}
             {(t.servers.length > 0 || t.stacks.length > 0) && (
-              <Box gap={2}>
-                {stopAll(t, 'keep', 'Stop all, keep data', 'stop-keep-data')}
-                {stopAll(t, 'delete', 'Stop all and delete data', 'stop-and-delete')}
+              <Box key="resources" flexDirection="column">
+                {heading('Running')}
+                {t.servers.map(s => serverRow(t, s))}
+                {t.stacks.map(s => stackRow(t, s))}
+                <Box gap={2}>
+                  {stopAll(t, 'keep', 'Stop all, keep data', 'stop-keep-data')}
+                  {stopAll(t, 'delete', 'Stop all and delete data', 'stop-and-delete')}
+                </Box>
               </Box>
             )}
           </Box>

@@ -58,8 +58,11 @@ command -v gh >/dev/null 2>&1 || die "the GitHub CLI (gh) is not installed. Fix:
 GH() { if [ -n "$KEYRING" ]; then env -u GITHUB_TOKEN gh "$@"; else gh "$@"; fi; }
 
 if [ -z "$REPO" ]; then
-  REPO="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" ||
-    die "could not find the repo from the current directory: $REPO. Fix: run inside the checkout, or pass --repo OWNER/NAME"
+  # The repo lookup goes through gh.sh (gh first, REST when it fails). release view/edit/create stay on gh.
+  GHSH="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../scripts/github/gh.sh"
+  repo_out="$(GH_USE_KEYRING="${KEYRING:+1}" "$GHSH" repo 2>&1)" ||
+    die "could not find the repo from the current directory: $repo_out. Fix: run inside the checkout, or pass --repo OWNER/NAME"
+  REPO="$(jq -r .repo <<<"$repo_out")"
 fi
 
 # title = first markdown H1; tag = filename slug (unless overridden)

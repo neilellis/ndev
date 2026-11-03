@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 Invoke with the agent name, for example `/improve-agent judge`. If the name is missing, ask for it. The output is a plan, not an implementation. Do not change data, skills, permissions, caches or pipeline state, and do not start model runs.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Find the evidence
 
 Find the repository that holds the agent's run logs. Honour an explicit path from the user. From a worktree, use `git rev-parse --git-common-dir` to find the shared checkout. Do not assume that the parent of the current directory is the project folder.

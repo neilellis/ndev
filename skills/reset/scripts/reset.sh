@@ -15,7 +15,7 @@
 # Base branch: $RESET_BASE, else origin/HEAD, else main.
 # Trailers: set COMMIT_TRAILERS to the trailer lines the session requires (for example
 # the Co-Authored-By line from the harness attribution). PR_FOOTER is appended to a new PR body.
-# Auth: GH_USE_KEYRING=1 drops GITHUB_TOKEN so the gh keyring login is used.
+# Auth: GH_USE_KEYRING=1 drops GITHUB_TOKEN so the gh keyring login is used (gh.sh does this).
 set -euo pipefail
 
 # --- serialise prune and add against every other agent --------------------
@@ -52,9 +52,9 @@ wt_lock_acquire() {
 }
 wt_lock_release() { [ -n "$WT_LOCK" ] && rm -rf "$WT_LOCK"; WT_LOCK=""; return 0; }
 
-GH() {
-  if [ "${GH_USE_KEYRING:-0}" = "1" ]; then env -u GITHUB_TOKEN gh "$@"; else gh "$@"; fi
-}
+# Every GitHub call goes through gh.sh: the gh command first, REST when it fails.
+GHSH="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../scripts/github/gh.sh"
+[ -x "$GHSH" ] || { echo "reset: gh.sh is missing at $GHSH. Repair: reinstall the ndev plugin (claude plugin update ndev); it ships scripts/github/ at its root." >&2; exit 2; }
 
 _base() {
   if [ -n "${RESET_BASE:-}" ]; then printf '%s\n' "$RESET_BASE"; return; fi
@@ -88,7 +88,8 @@ case "$cmd" in
     _paths
     dirty=no; [ -n "$(git status --porcelain)" ] && dirty=yes
     base=$(_base)
-    pr=$(GH api "repos/{owner}/{repo}/pulls?state=open&head={owner}:$BRANCH" --jq '.[0].html_url // ""' 2>/dev/null || echo "")
+    # state is informational: a failed lookup prints its reason and reads as no PR.
+    pr=$("$GHSH" pr-list --head "$BRANCH" --state open --limit 1 | jq -r '.url // empty') || pr=""
     python3 - "$IN_WORKTREE" "$BRANCH" "$WORKTREE" "$MAIN_ROOT" "$dirty" "$pr" "$base" <<'PY'
 import json, sys
 iw, branch, wt, root, dirty, pr, base = sys.argv[1:8]
@@ -133,7 +134,9 @@ PY
     git push -q -u origin "$BRANCH"
     echo "pushed $BRANCH"
 
-    pr=$(GH api "repos/{owner}/{repo}/pulls?state=open&head={owner}:$BRANCH" --jq '.[0].html_url // ""' 2>/dev/null || echo "")
+    # A failed lookup stops the save: guessing "no PR" would open a duplicate.
+    pr=$("$GHSH" pr-list --head "$BRANCH" --state open --limit 1 | jq -r '.url // empty') \
+      || { echo "reset: could not look up the open pull request for $BRANCH (see the message above). Repair: run 'gh auth status', then run save again." >&2; exit 1; }
 
     # No OPEN PR — before creating one, check whether the branch's most recent PR
     # (any state) already covers this exact commit. Squash-merges break commit-graph
@@ -143,8 +146,9 @@ PY
     # work every time `save` runs again with nothing new to commit.
     if [ -z "$pr" ]; then
       head_sha=$(git rev-parse HEAD)
-      last=$(GH api "repos/{owner}/{repo}/pulls?state=all&head={owner}:$BRANCH&per_page=100" \
-        --jq '[.[] | {number, url: .html_url, headRefOid: .head.sha, state: (if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end)}] | sort_by(.number) | reverse | .[0] // empty' 2>/dev/null || echo "")
+      last=$("$GHSH" pr-list --head "$BRANCH" --state all --limit 100 | jq -sc 'sort_by(.number) | reverse | .[0] // empty
+          | {number, url, headRefOid: .head.sha, state: (if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end)}') \
+        || { echo "reset: could not look up the earlier pull requests for $BRANCH (see the message above). Repair: run 'gh auth status', then run save again." >&2; exit 1; }
       if [ -n "$last" ]; then
         fields=$(printf '%s' "$last" | python3 -c '
 import json, sys
@@ -159,7 +163,7 @@ print(d.get("headRefOid",""), d.get("state",""), d.get("url",""), d.get("number"
               echo "branch already merged via $pr (no new commits since) — not opening a duplicate" >&2
               ;;
             CLOSED)
-              if GH api -X PATCH "repos/{owner}/{repo}/pulls/$last_num" -f state=open >/dev/null 2>&1; then
+              if "$GHSH" pr-reopen "$last_num" >/dev/null 2>&1; then
                 pr="$last_url"
                 echo "reopened $pr (no new commits since it was closed)" >&2
               fi
@@ -173,12 +177,15 @@ print(d.get("headRefOid",""), d.get("state",""), d.get("url",""), d.get("number"
       title="$BRANCH"
       if [ -n "$msg" ]; then title="${msg%%$'\n'*}"; fi
       body=$(printf 'Automated finish of `%s` via the reset skill.\n\n%s' "$BRANCH" "$(_pr_footer)")
-      if ! out=$(GH api -X POST "repos/{owner}/{repo}/pulls" -f base="$base" -f head="$BRANCH" -f title="$title" -f body="$body" --jq .html_url 2>&1); then
+      body_file=$(mktemp); printf '%s' "$body" > "$body_file"
+      out=$("$GHSH" pr-new --base "$base" --head "$BRANCH" --title "$title" --body-file "$body_file" 2>&1) && created=1 || created=0
+      rm -f "$body_file"
+      if [ "$created" -ne 1 ]; then
         echo "reset: creating the pull request for $BRANCH -> $base failed: $out" >&2
         echo "  Repair: run 'gh auth status', then 'gh pr create --base $base --head $BRANCH' by hand." >&2
         exit 1
       fi
-      pr="$out"
+      pr=$(jq -r .url <<<"$out")
     fi
     echo "PR_URL=${pr:-none}"
     echo "WORKTREE=$WORKTREE"

@@ -8,6 +8,10 @@ disable-model-invocation: false
 
 The reader has ADHD. They skim, often on a phone, often between two other things. **Attention is the scarce resource, not their intelligence.** A reply that buries the answer wastes it.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Assume they did not read your last message. Assume they read the first two lines and then decide whether to read the rest.
 
 ## The first two lines carry everything

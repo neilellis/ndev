@@ -43,10 +43,17 @@ def _env():
     return e
 
 
-def gh_json(args):
-    r = subprocess.run(["gh", *args], capture_output=True, text=True, env=_env())
+GH_SH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh.sh")
+
+
+def gh_json(args, repo=None):
+    """Run a gh.sh command (the gh command first, REST when it fails) and return its output."""
+    env = _env()
+    if repo:
+        env["GH_REPO"] = repo
+    r = subprocess.run(["bash", GH_SH, *args], capture_output=True, text=True, env=env)
     if r.returncode != 0:
-        sys.exit(f"gh {' '.join(args)} failed ({r.returncode}): {r.stderr.strip()}\n"
+        sys.exit(f"gh.sh {' '.join(args)} failed ({r.returncode}): {r.stderr.strip()}\n"
                  "Repair: check the number and run 'gh auth status'; pass --repo OWNER/REPO if needed.")
     return r.stdout
 
@@ -54,7 +61,7 @@ def gh_json(args):
 def default_repo():
     if os.environ.get("GH_REPO"):
         return os.environ["GH_REPO"]
-    return gh_json(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]).strip()
+    return json.loads(gh_json(["repo"]))["repo"]
 
 
 def gh_token():
@@ -366,11 +373,11 @@ def main():
 
     fields = "number,title,state,author,assignees,labels,milestone,createdAt,updatedAt,url,body,comments"
     view = "issue" if a.kind == "issue" else "pr"
-    data = json.loads(gh_json([view, "view", str(a.number), "--repo", a.repo, "--json", fields]))
+    data = json.loads(gh_json(["view-json", view, str(a.number), "--fields", fields], a.repo))
 
     diff = None
     if a.kind == "pr":
-        diff = gh_json(["pr", "diff", str(a.number), "--repo", a.repo])
+        diff = gh_json(["pr-diff", str(a.number)], a.repo)
 
     dest = out_dir(a.kind, a.number, a.out)
     imgs = Images(dest, gh_token())

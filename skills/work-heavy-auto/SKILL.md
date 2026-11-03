@@ -7,6 +7,10 @@ description: "The non-interactive heavyweight development skill (heavy mode, aut
 
 Do one bounded pass: read the board, sort the startable issues, work each unit in its own worktree, branch and PR, verify it, smoke-test it where the project has a preview, and leave each PR for a human to merge. Never merge. Never push the base branch.
 
+## The workflow
+
+A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Ask the user for authorisation immediately before each GitHub write and each preview deployment. Read-only discovery can run without a prompt.
 
 ## Settings

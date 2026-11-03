@@ -7,6 +7,10 @@ description: "Review schema changes, foreign keys, deletion behaviour and databa
 
 The migrations are the schema authority. Read the project's CLAUDE.md and its wiki for the migration tool and any schema notes before you change the schema.
 
+## The workflow
+
+Add a migration with `mcp__ndev__addMigration(name)`, which makes the file and lists it for `/ndev:merge`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Rules
 
 - **A reference needs a foreign key.** A column that refers to another table needs a constraint. Read the live database catalogue, including schemas that only migrations create. ORM metadata and test `create_all()` calls omit those.

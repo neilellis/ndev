@@ -56,17 +56,20 @@ set -euo pipefail
 SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BOARD_SH="$SD/../board/board.sh"
 [ -x "$BOARD_SH" ] || { echo "pr_feedback.sh: board.sh is missing or not executable at $BOARD_SH. Repair: reinstall the plugin (claude plugin update ndev) so scripts/board/ sits beside scripts/work/" >&2; exit 2; }
-GH() { if [ "${GH_USE_KEYRING:-0}" = "1" ]; then env -u GITHUB_TOKEN gh "$@"; else gh "$@"; fi; }
+GHSH="$SD/../github/gh.sh"
+[ -x "$GHSH" ] || { echo "pr_feedback.sh: gh.sh is missing or not executable at $GHSH. Repair: reinstall the plugin (claude plugin update ndev) so scripts/github/ sits beside scripts/work/" >&2; exit 2; }
 for tool in gh jq; do
   command -v "$tool" >/dev/null 2>&1 || { echo "pr_feedback.sh: $tool is not on PATH. Repair: install $tool" >&2; exit 2; }
 done
 REPO="${GH_REPO:-}"
 if [ -z "$REPO" ]; then
-  REPO="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" || {
-    echo "pr_feedback.sh: cannot find the GitHub repository: $REPO" >&2
+  repo_json="$("$GHSH" repo)" || {
+    echo "pr_feedback.sh: cannot find the GitHub repository for $(pwd) (see the message above)" >&2
     echo "  Repair: run inside the checkout, set GH_REPO=OWNER/REPO, or run 'gh auth login'" >&2
     exit 2; }
+  REPO="$(jq -r .repo <<<"$repo_json")"
 fi
+export GH_REPO="$REPO"
 COL_PROGRESS="${WORK_READY_COL_PROGRESS:-In progress}"
 COL_REVIEW="${WORK_READY_COL_REVIEW:-In review}"
 
@@ -94,24 +97,30 @@ while IFS= read -r card; do
   [ -n "$ONLY" ] && [ "$n" != "$ONLY" ] && continue
   case ",$EXCLUDE," in *",$n,"*) continue ;; esac
 
-  pr=$(GH api "repos/$REPO/pulls?head=${REPO%%/*}:claude/issue-$n&state=all&per_page=1" \
-        --jq '[.[] | {number, url: .html_url, state: (if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end), isDraft: .draft, createdAt: .created_at, headRefName: .head.ref}] | .[0] // null')
+  # A PR as {number,url,state,isDraft,createdAt,headRefName}, state OPEN, MERGED or CLOSED.
+  as_pr='{number, url, state: (if .merged then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end), isDraft: .draft, createdAt: .created_at, headRefName: .head.ref}'
+  found=$("$GHSH" pr-list --head "claude/issue-$n" --state all --limit 1) || {
+    echo "pr_feedback.sh: cannot read the PR of issue #$n in $REPO (see the message above)" >&2; exit 2; }
+  pr=$(jq -sc "(.[0] | if . == null then null else $as_pr end)" <<<"$found")
   if [ "$pr" = "null" ]; then
     # Batched work (work-heavy skill, references/prs.md): the issue may be covered by another
-    # issue's batch PR — branch claude/issue-<lead>, body "Closes #<n>". gh search is
+    # issue's batch PR — branch claude/issue-<lead>, body "Closes #<n>". The search is
     # fuzzy, so verify with a strict body regex; prefer an OPEN PR, else the newest.
-    pr=$(GH api -X GET search/issues -f q="repo:$REPO is:pr \"Closes #$n\" in:body" -f per_page=10 \
-          --jq '[.items[] | {number, body: (.body // "")}]' \
-        | jq -c '.[]' | while IFS= read -r cand; do
+    cands=$("$GHSH" pr-search "\"Closes #$n\" in:body" --limit 10) || {
+      echo "pr_feedback.sh: cannot search the PRs that close issue #$n in $REPO (see the message above)" >&2; exit 2; }
+    pr=$(while IFS= read -r cand; do
+            [ -n "$cand" ] || continue
             cnum=$(jq -r .number <<<"$cand")
-            GH api "repos/$REPO/pulls/$cnum" --jq '{number, url: .html_url, state: (if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end), isDraft: .draft, createdAt: .created_at, headRefName: .head.ref}' \
-              | jq -c --argjson c "$cand" '. + {body: $c.body}'
-          done | jq -sc --arg n "$n" '[.[]
+            "$GHSH" pr-read "$cnum" \
+              | jq -c "$as_pr" \
+              | jq -c --argjson c "$cand" '. + {body: $c.body}' || exit 1
+          done <<<"$cands" | jq -sc --arg n "$n" '[.[]
               | select(.headRefName | startswith("claude/"))
               | select(.body | test("(?i)closes #\($n)([^0-9]|$)"))]
             | sort_by(.createdAt) | reverse
             | (map(select(.state == "OPEN")) + .)
-            | (.[0] // null) | if . == null then null else del(.body) end')
+            | (.[0] // null) | if . == null then null else del(.body) end') || {
+      echo "pr_feedback.sh: cannot read a PR that may close issue #$n in $REPO (see the message above)" >&2; exit 2; }
   fi
   if [ "$pr" = "null" ]; then
     items+=("$(jq -c '{number, title, itemId, cardStatus: .status,
@@ -122,14 +131,17 @@ while IFS= read -r card; do
 
   prnum=$(jq -r .number <<<"$pr")
   prstate=$(jq -r .state <<<"$pr")
-  last=$(GH api --paginate "repos/$REPO/pulls/$prnum/commits?per_page=100" --jq '.[].commit.committer.date' | sort | tail -1)
-  headsha=$(GH api "repos/$REPO/pulls/$prnum" --jq .head.sha)
+  dates=$("$GHSH" pr-commit-dates "$prnum") || {
+    echo "pr_feedback.sh: cannot read the commits of PR #$prnum in $REPO (see the message above)" >&2; exit 2; }
+  last=$(sort <<<"$dates" | tail -1)
+  headsha=$("$GHSH" pr-read "$prnum" | jq -r .head.sha) || {
+    echo "pr_feedback.sh: cannot read PR #$prnum in $REPO (see the message above)" >&2; exit 2; }
 
   # Check status at the PR's current head: CheckRun entries ONLY (CI workflow
   # jobs). Commit StatusContext entries from third-party integrations are left out:
   # a standing account or permission failure there would resume nearly every PR on
   # every pass, and a guard that fires on healthy input teaches agents to ignore it.
-  checks=$(GH api "repos/$REPO/commits/$headsha/check-runs?per_page=100&filter=latest" --jq '
+  checks=$("$GHSH" commit-checks "$headsha" --pr "$prnum" | jq -c '
     [.check_runs[]?
       | if (.conclusion // "") != ""
         then {name: (.name // "?"), verdict: .conclusion}
@@ -145,7 +157,7 @@ while IFS= read -r card; do
                else "NONE" end),
        failing: $bad}' 2>&1) || {
       echo "pr_feedback.sh: cannot read the check status of PR #$prnum in $REPO: $checks" >&2
-      echo "  Repair: check 'gh auth status', or set GH_USE_KEYRING=1" >&2
+      echo "  Repair: run 'gh api rate_limit' to see each quota, check 'gh auth status', or set GH_USE_KEYRING=1" >&2
       exit 2; }
   prj=$(jq -c --arg lc "$last" \
         '{number, url, state, isDraft, branch: .headRefName, createdAt, lastCommit: $lc}' <<<"$pr")
@@ -158,22 +170,12 @@ while IFS= read -r card; do
   fi
 
   # All four surfaces, normalized to {id,surface,author,bot,createdAt,path,body}.
-  all=$( {
-    GH api "repos/$REPO/issues/$n/comments" --paginate \
-      | jq -c '.[] | {id, surface: "issue", author: .user.login, bot: (.user.type == "Bot"),
-                      createdAt: .created_at, path: null, body: (.body // "")}'
-    GH api "repos/$REPO/issues/$prnum/comments" --paginate \
-      | jq -c '.[] | {id, surface: "pr", author: .user.login, bot: (.user.type == "Bot"),
-                      createdAt: .created_at, path: null, body: (.body // "")}'
-    GH api "repos/$REPO/pulls/$prnum/reviews" --paginate \
-      | jq -c '.[] | select(.state != "PENDING")
-                   | select((.state == "APPROVED" and (.body // "") == "") | not)
-                   | {id, surface: "review", author: .user.login, bot: (.user.type == "Bot"),
-                      createdAt: .submitted_at, path: null, body: (.body // "")}'
-    GH api "repos/$REPO/pulls/$prnum/comments" --paginate \
-      | jq -c '.[] | {id, surface: "inline", author: .user.login, bot: (.user.type == "Bot"),
-                      createdAt: .created_at, path: .path, body: (.body // "")}'
-  } | jq -s . )
+  feedback=$("$GHSH" feedback "$n" "$prnum") || {
+    echo "pr_feedback.sh: cannot read the comments and reviews of PR #$prnum in $REPO (see the message above)" >&2; exit 2; }
+  all=$(jq -sc '[.[] | select(.state != "PENDING")
+                     | select((.state == "APPROVED" and (.body // "") == "") | not)
+                     | {id, surface, author: .user.login, bot: (.user.type == "Bot"),
+                        createdAt: (.created_at // .submitted_at), path, body: (.body // "")}]' <<<"$feedback")
 
   items+=("$(jq -cn --argjson card "$card" --argjson pr "$prj" --argjson all "$all" \
               --argjson checks "$checks" '

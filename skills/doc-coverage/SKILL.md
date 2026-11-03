@@ -7,6 +7,10 @@ description: "Audit gaps in project documentation by concept and audience, and r
 
 Take the report path from the arguments, else from the project's CLAUDE.md. A usual place is `docs/analysis/doc-coverage.md`. If no report exists, make one with the sections below.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Build the inventory
 
 1. Read the existing report. Find the concepts that changed since its last run, from code and docs history.

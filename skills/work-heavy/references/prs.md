@@ -47,7 +47,8 @@ asks for one by name.
 ## New work found while you work
 
 Planning or implementing an issue often finds work that must be done but was not requested. **A
-session that works a PR opens no other PR.** Only a human message can authorise a second one.
+session that works a PR opens no other PR.** Only a human message can authorise a second one, or a
+`followUp` call with the mode `subagent` or `orca_workspace` from the `workflow` tools (`kb/workflow.md`).
 Without this rule, one PR makes a chain of issues, each with its own PR, CI pass and review.
 
 **Related to your issue**, at any size:

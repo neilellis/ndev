@@ -7,6 +7,10 @@ description: "Render a video's stills and MP4, inspect them, show the user befor
 
 Rendering needs Node 22 or later, the project's npm dependencies (`ffmpeg-static`, `ffprobe-static`, `playwright-core`) and Google Chrome. Do not rely on a system FFmpeg. Run every command in the video's folder.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## 1. Stills
 
 Run `npm run stills`.

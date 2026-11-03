@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Wait quietly for one GitHub Actions run to change status.
-# Usage: wait-for-run.sh <run_id> [--max-polls 480] [--interval 30]
+# Usage: wait-for-run.sh <run_id> [--max-polls 120] [--interval 120]
+# The default interval is 120 seconds: each poll spends GitHub quota, once for each agent waiting.
 # Repository: GH_REPO, else the current checkout (see lib.sh).
 # Exit 0 on a change or an already complete run, 1 on error, and 2 on timeout.
 set -euo pipefail
@@ -17,8 +18,8 @@ if ! [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
 fi
 shift
 
-MAX_POLLS=480
-INTERVAL=30
+MAX_POLLS=120
+INTERVAL=120
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --max-polls|--interval)
@@ -46,11 +47,16 @@ if ! [[ "$MAX_POLLS" =~ ^[1-9][0-9]*$ ]] || ! [[ "$INTERVAL" =~ ^[1-9][0-9]*$ ]]
 fi
 
 read_status() {
-  local status
-  if ! status="$(GH api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status' 2>&1)"; then
-    echo "wait-for-run.sh: failed to read run $RUN_ID: $status; check access with 'gh auth status' (Actions calls can need GH_USE_KEYRING=1) and retry" >&2
+  local out status err code=0
+  err="$(mktemp)"
+  out="$(GH_REPO="$REPO" "$DIR/gh.sh" run-status "$RUN_ID" 2>"$err")" || code=$?
+  if [ "$code" -ne 0 ]; then
+    echo "wait-for-run.sh: failed to read run $RUN_ID (gh.sh exited $code): $(tr '\n' ' ' <"$err" | cut -c1-500); check access with 'gh auth status' (Actions calls can need GH_USE_KEYRING=1) and retry" >&2
+    rm -f "$err"
     return 1
   fi
+  rm -f "$err"
+  status="$(jq -r '.status // empty' <<<"$out")"
   case "$status" in
     requested|waiting|pending|queued|in_progress|completed) printf '%s\n' "$status" ;;
     *)

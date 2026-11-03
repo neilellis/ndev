@@ -467,6 +467,8 @@ test('a config without valuesFile asks git nothing and sends no values', async (
   const h = harness(on)
   h.flags.config = fixture()
   await start($)
+  // The workflow reads the worktrees at session start. This test is about the walk.
+  h.ran.length = 0
   await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
   expect(h.ran.some(r => r.argv.join(' ').includes('worktree list'))).toBe(false)
   expect(h.spawns[0]!.prompt).not.toContain('Values the person has given you')

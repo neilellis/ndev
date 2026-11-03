@@ -7,6 +7,10 @@ description: "Write or change a video's narration, voices, pronunciation, pacing
 
 The script is one line of narration per scene, in the file `"script"` names in `video.config.json` (by default `scripts/vo.json`). Entry N is spoken over `<section id="sN">` in the page. Each line becomes one voice clip per voice.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Writing for the ear
 
 - Follow the register of the video's type (see `video-types`). Use British English unless the project says otherwise.

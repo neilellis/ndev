@@ -7,6 +7,10 @@ description: "Bring user-facing docs pages back in line with code or wiki change
 
 Before you write or review documentation, read the project's writing rules if `CLAUDE.md` or `AGENTS.md` names them.
 
+## The workflow
+
+This skill is part of the remember hook, which fires at `mcp__ndev__finishedDevelopment`. Commit with `mcp__ndev__checkpoint`, and give the result to `mcp__ndev__finishedReview` as `remembered`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## The docs map
 
 Each docs page lists the repository files it documents in YAML front matter. By default the keys are `source` (code, configuration) and `wiki` (internal notes). A listed directory covers every file below it.

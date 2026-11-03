@@ -7,6 +7,10 @@ description: "Check a website's layout on phones, tablets and desktops, in light
 
 The check runs a matrix: **routes × viewports × colour schemes**. Each cell loads one route at one viewport in one scheme, in the engine of the real device (WebKit for Apple devices, Chromium for the rest). The probe measures the page and the script reports each defect with a CSS selector.
 
+## The workflow
+
+A check that is part of the smoke stage goes to `mcp__ndev__finishedSmoke(report)`, and the report names the HEAD commit. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 The ndev pane **Responsive matrix** follows the run live. It opens when the runner starts. `/responsive-matrix` opens it again and shows the newest run.
 
 ## 1. Run the matrix

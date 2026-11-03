@@ -4,4 +4,9 @@ description: "Alias of issue: create a GitHub issue from a description and put i
 argument-hint: "[--orca] <description of the issue>"
 ---
 
+## The workflow
+
+After you file an issue that this session will work on, call `mcp__ndev__started(issue, shortName)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
+
 Load the `ndev:issue` skill and follow it. The description is: $ARGUMENTS

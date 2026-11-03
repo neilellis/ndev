@@ -6,9 +6,13 @@
 // the file and the problem, and no quality hook runs until it is fixed.
 // register.ts reads the file once at session start (getProject); restart the
 // session to pick up an edit to it.
+//
+// While a workflow runs, its tools do the work of two hooks: each commit runs fast-checks.sh and the
+// check scripts, so edited-file-guards and precheck-reminder stand aside (workflowOwnsChecks).
 import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
+import { workflowOwnsChecks } from './workflow/tools'
 
 const PLUGIN = 'ndev'
 
@@ -183,6 +187,7 @@ export const quality = (on: On, getProject: () => LoadedConfig | undefined) => {
       const loaded = load($, state)
       const settings = loaded?.quality.editedFileGuards
       if (loaded === undefined || settings === undefined) return ran
+      if (await workflowOwnsChecks($, state.getProject())) return ran
       const filePath = (e as { file_path?: unknown }).file_path
       const result = await run($, 'editedFileGuards', loaded.root, settings, {
         hook_event_name: 'PostToolUse',
@@ -228,7 +233,7 @@ export const quality = (on: On, getProject: () => LoadedConfig | undefined) => {
 
     // precheck reminder: after a command that may have run `git commit`; the script decides.
     const precheck = config.precheckReminder
-    if (precheck !== undefined && ran.isError !== true && /\bgit\b/.test(command) && command.includes('commit')) {
+    if (precheck !== undefined && ran.isError !== true && /\bgit\b/.test(command) && command.includes('commit') && !(await workflowOwnsChecks($, state.getProject()))) {
       const result = await run($, 'precheckReminder', root, precheck, post)
       extra.push(...notes($, result, stderrText))
     }

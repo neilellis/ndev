@@ -7,6 +7,10 @@ description: "Choose the type of a narrated video (how-to, explainer or marketin
 
 Every video is one of three types. Each type has its own purpose, register, length, look and review. Choose the type before you write a word, and record it as `"type"` in `video.config.json`. Never mix two types in one video. If a request seems to need two, make two videos.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 | | How-to | Explainer | Marketing |
 |---|---|---|---|
 | Skill | `video-how-to` | `video-explainer` | `video-marketing` |

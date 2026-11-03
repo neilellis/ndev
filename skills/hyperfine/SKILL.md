@@ -7,6 +7,10 @@ description: "Benchmark and compare command durations when a speed claim or befo
 
 Use `hyperfine` to explore. Use `scripts/ab.sh` in this skill's folder for a number that you will report:
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ```bash
 hyperfine --warmup 3 --runs 20 --shell=none 'command'
 hyperfine --warmup 3 --runs 20 --shell=none 'old' 'new'

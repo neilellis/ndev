@@ -7,6 +7,10 @@ description: "Check and fix user-facing docs pages so a new reader understands t
 
 Before you write or review documentation, read the project's writing rules and its legibility standard if `CLAUDE.md` or `AGENTS.md` names them. They take precedence over this skill.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## The standard
 
 Write for a capable reader who is new to the project.

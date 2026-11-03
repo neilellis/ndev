@@ -19,3 +19,7 @@ Do what the dispatching brief asks, following the survey section of `work-light-
 - **Actionability is merge-gated.** Never build on unmerged work. A sub-issue child is actionable only when all earlier siblings are closed. A `depends on #A` or `blocked by #A` issue is actionable only when #A is closed or its PR merged. An issue whose parent is In progress or has an open PR is not a candidate. An issue with a `Carried by #` comment is not a candidate: another session works it. When #A is a Ready card in the same pass, `depends on #A` means "batch with #A" in one PR, not "wait".
 - **Size** each candidate. *Trivial* means cosmetic, copy, config or docs only, no new logic, no schema, API, auth or migration change, and a small local diff. Everything else is *non-trivial*. When you are not sure, size up. Set `complexity`.
 - Return the compact JSON array that the brief specifies, **actionable first**.
+
+## The workflow
+
+You only read. A worker moves its own workflow with the `mcp__ndev__*` tools. You can call `mcp__ndev__status`, and `mcp__ndev__reportWorkflowBug` for a fault of the plugin.

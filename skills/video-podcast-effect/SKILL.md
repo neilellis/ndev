@@ -7,6 +7,10 @@ description: "Explain or change the podcast effect that makes the synthetic narr
 
 Every voice goes through the podcast effect, so the synthetic narration sounds like a person speaking into a podcast mic. It is part of the pipeline for every video type. `npm run timeline -- --voice <id>` applies it each time it builds a voice's timeline and narration track. The settings are in the kit's `engine/podcast.mjs`.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## What it does, in order
 
 1. **Humanise each clip** (`humanise()`, before the timeline is set):

@@ -7,6 +7,10 @@ description: "Verify wiki structure, source citations and behavioural claims aga
 
 The project's wiki is a compounding, interlinked, current-state knowledge base that agents keep. The plugin's `kb/llm-wiki.md` holds the method. Read the wiki's `AGENTS.md` (its schema) and its index file first.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Honour the requested page, area or section. With no scope, choose dev pages that are likely to drift, from recent code changes and earlier lint logs. State the selection.
 
 ## Steps

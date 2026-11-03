@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { firstLine, gh, ofRepo, orca, orcaProject, orcaWorktrees, START_ORCA, type Run } from './fix-all-prs'
+import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, START_ORCA, type Run } from './fix-all-prs'
+import { pullUrl } from './links'
 import type { TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
 // /orca-triage: this session's model groups the open issues, and Orca does the work. Each group becomes one Task of one
@@ -11,7 +12,8 @@ import type { TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../
 const PANE = 'triage'
 const TITLE = 'Triage'
 const TOOL = 'mcp__ndev__triage_groups'
-const TICK_MS = 60_000
+// Orca's inbox wait hears each worker at once, so the timer is only the safety net: GitHub limits calls, and Orca may spend them.
+const TICK_MS = 15 * 60_000
 // One blocking inbox check at a time; a check that times out is an empty wait.
 const WAIT_MS = 300_000
 const LIMIT = 200
@@ -35,8 +37,7 @@ let starting: Promise<unknown> = Promise.resolve()
 const handled = new Set<string>()
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
-const runner = ($: EngineInterface, timeoutMs: number, env?: Record<string, string>): Run =>
-  argv => $.process.run(argv, { timeoutMs, env })
+const runner = ($: EngineInterface, timeoutMs: number, env?: Record<string, string>): Run => makeRun($, timeoutMs, env)
 
 async function note($: EngineInterface, text: string): Promise<void> {
   const at = await $.clock.now()
@@ -76,7 +77,7 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, is
     issues = cards.filter(c => (c.status === 'Ready' || c.status === 'In progress') && typeof c.url === 'string' && c.url.toLowerCase().startsWith(own))
       .map(({ number, title, url }) => ({ number, title, url }))
   } else {
-    issues = (await gh(run, ['issue', 'list', '--repo', repo, '--state', 'open', '--search', '-linked:pr', '--limit', String(LIMIT + 1), '--json', 'number,title,url'])) as TriageIssue[]
+    issues = await ghLines<TriageIssue>(run, ['issue-search', '-linked:pr', '--limit', String(LIMIT + 1)])
     if (issues.length > LIMIT) {
       throw new Error(`${repo} has more than ${LIMIT} open issues with no pull request, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /orca-triage start again.`)
     }
@@ -317,8 +318,8 @@ async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise
     const before = groups.find(x => x.lead === a)
     const pr = worktrees.find(w => w.id === before?.worktree)?.linkedPR ?? before?.pr
     if (!pr) continue
-    const headRefName = (await gh(runner($, 60_000), ['api', `repos/${repo}/pulls/${pr}`, '--jq', '{headRefName: .head.ref}']) as { headRefName?: string }).headRefName
-    if (!headRefName) throw new Error(`gh api repos/${repo}/pulls/${pr} answered no head branch, so the branch #${g.lead} follows is unknown`)
+    const headRefName = (await gh(runner($, 60_000), ['pr-read', String(pr)]) as { head?: { ref?: string } }).head?.ref
+    if (!headRefName) throw new Error(`gh.sh pr-read ${pr} of ${repo} answered no head branch, so the branch #${g.lead} follows is unknown`)
     return headRefName
   }
   return undefined
@@ -380,7 +381,8 @@ async function waitLoop($: EngineInterface): Promise<void> {
       await handle($, m).catch((err: unknown) => note($, `Orca message ${m.id} (${m.type} from ${m.from_handle}) not handled: ${message(err)}`))
     }
     if (got.deliveryId) await orca(runner($, 60_000), ['orchestration', 'check', '--run', v.runId, '--ack', got.deliveryId])
-    await refresh($)
+    // A wait that ended with no message changed nothing, so the timer's refresh is enough.
+    if (got.messages?.length) await refresh($)
   }
 }
 
@@ -462,7 +464,7 @@ async function jump($: EngineInterface, g: TriageGroup): Promise<void> {
   const shown = (await orca(runner($, 60_000), ['orchestration', 'worker-show', '--dispatch', g.dispatchId])) as
     { worker?: { agentTerminalHandle?: string | null }; terminal?: { handle?: string | null } }
   const handle = shown.worker?.agentTerminalHandle ?? shown.terminal?.handle ?? g.terminal
-  if (!handle) { $.ui.toast(`#${g.lead}: the worker ${g.dispatchId} has no terminal (a chat worker); open its workspace issue-${g.lead} in Orca.`); return }
+  if (!handle) { $.ui.toast(`#${g.lead}: the worker ${g.dispatchId} has no terminal (a chat worker); open its workspace for #${g.lead} in Orca.`); return }
   await orca(runner($, 60_000), ['terminal', 'switch', '--terminal', handle])
 }
 
@@ -569,7 +571,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
     const v = await read($, view)
     const columns = e.props.bodyColumns
     const width = Math.max(20, columns - 4 - 2 - 9 - 6 - 22)
@@ -614,15 +616,15 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         <Box flexDirection="column">
           {v.groups.map(g => {
             const m = word(g)
-            const facts = [g.effective ?? `${g.model} · ${g.effort}`, g.workspaceStatus, g.pr ? `PR #${g.pr}` : undefined, g.liveness]
-              .filter(Boolean).join(' · ')
+            const facts = [g.effective ?? `${g.model} · ${g.effort}`, g.workspaceStatus].filter(Boolean).join(' · ')
+            const after = g.liveness ? ` · ${g.liveness}` : ''
             return (
               // Each group is a box that lists its issues, so the grouping reads at a glance.
               <Box key={`group-${g.lead}`} flexDirection="column" borderStyle="round" borderColor={m.color} paddingX={1}>
                 <Box justifyContent="space-between">
                   <Text>
                     <Text color={m.color}>{m.word.padEnd(9)}</Text>
-                    <Text color="suggestion">#{g.lead}</Text>
+                    <Link href={url(g.lead)} label={`#${g.lead}`} />
                     <Text> {fit(g.title)}</Text>
                   </Text>
                   <Box gap={2}>
@@ -632,13 +634,13 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
                     <Button key={`issue-${g.lead}`} label="Issue" plain dimColor onPress={() => { void $.process.run(['open', url(g.lead)]) }} />
                   </Box>
                 </Box>
-                <Text color="subtle">{pad}{fit(facts, under)}</Text>
+                <Text color="subtle">{pad}{fit(facts, under)}{g.pr && v.repo ? ' · PR ' : g.pr ? ` · PR #${g.pr}` : ''}{g.pr && v.repo && <Link href={pullUrl(v.repo, g.pr)} label={`#${g.pr}`} />}{after}</Text>
                 {g.issues.map(n => (
-                  <Text key={`member-${g.lead}-${n}`}>{pad}<Text color="suggestion">#{n}</Text> {fit(titled(n), under - String(n).length - 2)}</Text>
+                  <Text key={`member-${g.lead}-${n}`}>{pad}<Link href={url(n)} label={`#${n}`} /> {fit(titled(n), under - String(n).length - 2)}</Text>
                 ))}
                 {g.question && <Text color="warning">{pad}{fit(`asks: ${g.question.text}`, under)}</Text>}
                 {g.summary && <Text color="subtle">{pad}{fit(g.summary, under)}</Text>}
-                {g.blockedBy !== undefined && <Text color="warning">{pad}{fit(`waits for #${g.blockedBy}, which failed`, under)}</Text>}
+                {g.blockedBy !== undefined && <Text color="warning">{pad}waits for <Link href={url(g.blockedBy)} label={`#${g.blockedBy}`} />, which failed</Text>}
                 {g.error && g.error.split('\n').map((line, i) => <Text key={`gerr-${g.lead}-${i}`} color="error">{pad}{line}</Text>)}
               </Box>
             )

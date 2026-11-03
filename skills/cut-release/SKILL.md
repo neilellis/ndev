@@ -9,6 +9,10 @@ disable-model-invocation: true
 A release is outward-facing. Its tag is immutable, and publication can start release workflows.
 Confirm the tag, the target commit and the notes with the user before `draft`. Confirm again before `publish`.
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 The helper is `scripts/release.py` in this skill's folder. Run it with `python3` from a clone of the repository. `gh` picks the repository from the clone. Each step refuses a bad state and names the repair. Do not work around a refusal.
 
 ## Settings

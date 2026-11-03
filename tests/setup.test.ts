@@ -14,7 +14,7 @@ const BOARDS = JSON.stringify({ projects: [{ number: 3, title: 'Roadmap' }, { nu
 // answers the dialog's questions in order; `boards` is what gh project list prints (an Error fails it).
 const engine = (
   on: On,
-  opts: { files?: Map<string, string>; answers?: string[]; boards?: string | Error } = {},
+  opts: { files?: Map<string, string>; answers?: string[]; boards?: string | Error; repoOut?: string } = {},
 ) => {
   const files = opts.files ?? new Map<string, string>()
   const answers = [...(opts.answers ?? [])]
@@ -42,8 +42,8 @@ const engine = (
   on('ui.status', () => ({ value: undefined }))
   on('process.run', (_, e) => {
     if (e.argv[0] === 'git') return ok(`${ROOT}\n`)
-    if (e.argv[0] === 'gh' && e.argv[1] === 'repo') return ok('acme/app\n')
-    if (e.argv[0] === 'gh' && e.argv[1] === 'project') {
+    if (e.argv[0] === 'bash' && e.argv[1]?.endsWith('gh.sh') && e.argv[2] === 'repo') return ok(opts.repoOut ?? '{"repo":"acme/app"}\n')
+    if (e.argv[0] === 'bash' && e.argv[1]?.endsWith('gh.sh') && e.argv[2] === 'project-list') {
       const b = opts.boards ?? BOARDS
       return b instanceof Error ? ok('', 1, b.message) : ok(b)
     }
@@ -154,7 +154,7 @@ test('a board look-up that fails names the command, its exit code and the repair
   })
   await start($)
 
-  expect(toasts.join(' ')).toContain('gh project list --owner acme exited 1: missing scope read:project')
+  expect(toasts.join(' ')).toContain('gh.sh project-list acme exited 1: missing scope read:project')
   expect(toasts.join(' ')).toContain('gh auth refresh -s read:project')
   expect(asked[1]).not.toContain('#3')
 })
@@ -235,4 +235,11 @@ test('/dev with an unknown word names the word and the choices', async ($, on) =
   expect(ran.text).toContain('"bogus"')
   expect(ran.text).toContain('/dev help')
   expect(ran.text).toContain('/dev setup')
+})
+
+test('a repository read that prints no JSON is named in the toast, with the Run line', async ($, on) => {
+  const { toasts } = engine(on, { repoOut: '' })
+  await start($)
+  expect(toasts.join(' ')).toMatch(/gh\.sh repo in .* exited 0 but printed no JSON/)
+  expect(toasts.join(' ')).toContain('/dev-setup')
 })

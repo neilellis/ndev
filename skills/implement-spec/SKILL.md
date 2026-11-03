@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 Treat the spec as a dependency graph of tickets. Read the spec, the tickets and the relevant repository guidance first. Point to those files; do not copy long explanations.
 
+## The workflow
+
+Call `mcp__ndev__started(issue, shortName)` first, and follow each answer until `mcp__ndev__done`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 1. Find the frontier (tickets with no open blocker) and the dependencies. Explore code or external documentation only as needed. Save large findings outside the repository.
 2. Make one feature branch and worktree from `origin/<base>` (`${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh`), and one draft PR that closes the spec issue and all its tickets. A ticket never gets its own branch or PR.
 3. Implement ready tickets on the shared branch. Work in parallel only when tickets touch disjoint files and share no interface, schema or fixture. Else work in dependency order. Write or change the test first, make the smallest change, and commit with the trailers the repository requires.

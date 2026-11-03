@@ -7,6 +7,10 @@ description: "Push the current video change and keep fixing its pull request unt
 
 The user may not be technical. Tell them what is happening in plain English, with clear links. Never merge. Merging needs `/publish` or "Approve and publish" (see `video-publish`).
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), call the tool for the current stage and not this skill's push and wait: `mcp__ndev__finishedDevelopment`, then `mcp__ndev__finishedReview`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## What the loop needs
 
 - `gh`, signed in (`gh auth status`), in a checkout of the video project's repository. The repository comes from `gh repo view`; pass `--repo <owner/repo>` or set `GH_REPO` to change it.

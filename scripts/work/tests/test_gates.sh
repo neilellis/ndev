@@ -22,7 +22,7 @@ if [ ! -x "$GATES" ]; then
   exit 2
 fi
 
-# gates.sh reads the pull request body through `gh`. The stub returns a body that
+# gates.sh reads the pull request body through gh.sh, which calls `gh`. The stub returns a body that
 # satisfies gates A and B, so every case below measures the pinned-test gates
 # alone. The stub lives first on PATH.
 make_stub() {
@@ -30,12 +30,8 @@ make_stub() {
   mkdir -p "$dir"
   cat > "$dir/gh" <<'STUB'
 #!/usr/bin/env bash
-# Only `gh api repos/O/R/pulls/N --jq .body` is used by gates.sh.
-cat <<'BODY'
-A real plan of record.
-
-Test entry point: `tests/` — the package's own suite.
-BODY
+# gates.sh reads the body through gh.sh pr-read, which runs `gh pr view N --json ...`.
+python3 -c 'import json; print(json.dumps({"number": 1, "title": "t", "state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "createdAt": "", "headRefOid": "a", "headRefName": "b", "baseRefName": "main", "url": "u", "author": {"login": "x"}, "mergeCommit": None, "body": "A real plan of record.\n\nTest entry point: `tests/` — the package suite.\n"}))'
 STUB
   chmod +x "$dir/gh"
 }

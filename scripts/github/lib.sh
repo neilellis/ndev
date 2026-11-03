@@ -23,11 +23,18 @@ GH() {
   fi
 }
 
-# Resolve REPO once. Fail with the repair command when it cannot be found.
+# Resolve REPO once: the environment, then the origin remote, which costs no GitHub call, then gh,
+# then REST. Fail with the repair command when it cannot be found.
 gh_resolve_repo() {
   if [ -n "${REPO:-}" ]; then return 0; fi
   if [ -n "${GH_REPO:-}" ]; then REPO="$GH_REPO"; return 0; fi
-  local out
+  local origin out
+  origin="$(git remote get-url origin 2>/dev/null || true)"
+  if [[ "$origin" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+    REPO="${BASH_REMATCH[1]%.git}"
+    return 0
+  fi
+  if out="$(GH repo view --json nameWithOwner --jq .nameWithOwner 2>&1)" && [ -n "$out" ]; then REPO="$out"; return 0; fi
   if ! out="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" || [ -z "$out" ]; then
     echo "github lib: cannot find the GitHub repository for $(pwd): ${out:-no output}" >&2
     echo "  Repair: run from inside a checkout with a GitHub origin, or set GH_REPO=OWNER/REPO, or run 'gh auth login'." >&2

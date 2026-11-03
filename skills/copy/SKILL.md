@@ -7,6 +7,10 @@ description: "Write or review user-visible copy: interface text, labels, errors,
 
 Write for the product's real reader, who has no project or insider background. Read the project's CLAUDE.md or wiki for the audience, house vocabulary and spelling. If they state nothing, use British English.
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Rules
 
 - Use sentence case, ordinary verbs and short sentences. Contractions are correct in interface text.

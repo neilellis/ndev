@@ -8,6 +8,10 @@ description: "Read and grow the living development wiki at ~/dev-wiki. Use at th
 `~/dev-wiki` is the living development wiki. The plugin creates it from its `kb/` the first time
 a session starts. It is a git repository on this computer. Its rules are in `~/dev-wiki/AGENTS.md`.
 
+## The workflow
+
+The ingest is part of the remember hook, which fires at `mcp__ndev__finishedDevelopment`. Its result goes to `mcp__ndev__finishedReview` as `remembered`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Read
 
 At the start of development work, read `~/dev-wiki/wiki.md` once. Open only the pages that fit

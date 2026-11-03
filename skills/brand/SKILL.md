@@ -8,6 +8,10 @@ argument-hint: "create | check | apply [path or note]"
 
 The arguments are: $ARGUMENTS
 
+## The workflow
+
+To find one call on a font, colour or similar, call `mcp__ndev__iNeedA('brand-style', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Take the first word as the action. If it is not `create`, `check` or `apply`, ask which one, in one question, and stop.
 
 ## Where the brand is

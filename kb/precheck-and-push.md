@@ -4,6 +4,8 @@
 
 **The local gates run the same checks as the CI guards job, on the committed tree, before the push.** The pre-push hook enforces this. A precheck script gives faster feedback on the changed paths, and a reminder hook prompts for it after each commit.
 
+In a project that runs the [workflow](workflow.md), the workflow tools run the checks. The project keeps them in `scripts/ndev/workflow/`.
+
 ## Three layers
 
 | Layer | When | Forced? | Scope |

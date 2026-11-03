@@ -38,6 +38,8 @@ class State(TypedDict):
 class UpdateError(Exception):
     """Stop the batch with evidence that identifies the failed operation."""
 
+GH_SH = Path(__file__).resolve().parent / 'gh.sh'
+
 
 class Commands:
     def __init__(self, root: Path) -> None:
@@ -78,9 +80,11 @@ class Commands:
 
 
 def read_prs(commands: Commands, slug: str, requested: list[int], base: str) -> list[PullRequest]:
-    raw: object = json.loads(commands.run(['gh', 'pr', 'list', '--repo', slug, '--state', 'open',
-        '--limit', str(LIMIT), '--json',
-        'number,headRefName,headRefOid,baseRefName,isCrossRepository']))
+    # gh.sh: the gh command first, REST when it fails. It prints one JSON object for each line.
+    commands.env['GH_REPO'] = slug
+    out = commands.run(['bash', str(GH_SH), 'view-json', 'pr', '--open', '--limit', str(LIMIT), '--fields',
+        'number,headRefName,headRefOid,baseRefName,isCrossRepository'])
+    raw: object = [json.loads(line) for line in out.splitlines() if line.strip()]
     if not isinstance(raw, list):
         raise UpdateError('The PR list is invalid. No branch was updated.')
     prs = cast(list[PullRequest], raw)

@@ -7,6 +7,10 @@ description: "Remove documentation and memory claims that code proves false afte
 
 Use with an explicit fact (`$ARGUMENTS`). If there is none, ask what became false. Use this skill when documented text contradicts the code, and after you remove, rename or deprecate behaviour.
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, and name the removal in `remembered` at `mcp__ndev__finishedReview`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 The project's wiki holds current state only (the plugin's `kb/llm-wiki.md`). A fact that is no longer true must leave every home, not only the one you found.
 
 ## 1. Prove the premise

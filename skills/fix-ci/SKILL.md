@@ -8,6 +8,10 @@ description: "Fix failed checks and merge conflicts on the associated pull reque
 Keep working until the associated PR is out of draft, green and mergeable. A human merges. Never merge the PR and never push to the base branch.
 Use `work-light` for development and `github` for PR operations. Keep diagnosis and design in one main agent context. Keep the original task, closing issue references and session constraints.
 
+## The workflow
+
+While a workflow runs, it tells you about a failed check. Fix it, commit with `mcp__ndev__checkpoint`, and call `mcp__ndev__finishedChecks` when the checks end. After three failed attempts, or when you need a human, call `mcp__ndev__blocked(message)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Identify the PR once
 
 1. Use the PR that the user names or that this session already owns.

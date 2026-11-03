@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 Take the target file or directory from the arguments. If there is none, ask for it.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Read the target code and its callers. Report only findings that have evidence. Give each finding:
 
 - the location (`file:line`)

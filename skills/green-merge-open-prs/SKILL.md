@@ -7,6 +7,10 @@ description: "Green and merge each eligible open pull request in number order, o
 
 Use this when the user asks you to make their open PRs pass CI and merge them. It does not apply to one PR, a review-only request, or PRs by another person. Running this skill is the user's authorisation to merge.
 
+## The workflow
+
+A PR that has a workflow record is resumed with `mcp__ndev__started(issue)`, and its commits go through `mcp__ndev__checkpoint`. Merge only as the project level lets you. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 At the start, create this goal with the goal tool (or a task list if there is no goal tool):
 
 > Get each eligible open PR to pass CI and merge it into `origin/<base>`. An eligible PR has the author `<login>`. Work in ascending PR number order. Finish one PR before work starts on the next. Do not pause the goal until every eligible PR is green and merged.

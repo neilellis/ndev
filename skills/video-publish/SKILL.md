@@ -7,6 +7,10 @@ description: "Merge the current video change's pull request and confirm the prod
 
 When the user types `/publish`, that is their approval to merge the pull request for the current change. Use `video-finish` to get it ready. Never push to the base branch directly.
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## What you need from the project
 
 Read these from the project's instructions. If one is missing, ask the user once and suggest they record it there:

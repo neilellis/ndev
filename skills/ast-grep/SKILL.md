@@ -7,6 +7,10 @@ description: "Search the codebase by parsed code shape. Use for call sites, impo
 
 Use the ast-grep CLI that the project pins (for example `pnpm exec ast-grep`). If the project pins none, use an installed `ast-grep`. Do not run a bare `sg`: on many machines that name is a different program.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Use ast-grep directly to explore. Use `scripts/find.sh` in this skill's folder for a result that you will report:
 
 ```bash

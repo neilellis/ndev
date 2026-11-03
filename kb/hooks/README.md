@@ -4,6 +4,8 @@
 
 **These scripts are reusable copies of the hooks and push scripts that the method needs. Copy each into a repository, set its few settings, and wire it in.** Each script's header says what it guards and how to wire it.
 
+While a [workflow](../workflow.md) runs in a worktree, the plugin's edited-file guards and precheck reminder stand aside, because the workflow tools run the checks.
+
 ## The scripts
 
 | Script | Kind | Copy to | What it guards |

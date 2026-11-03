@@ -17,6 +17,10 @@ disable-model-invocation: true
 6. Run only the checks that the changed code can affect. Push with the repo's checked-push command, else `git push` (never `--no-verify`). Wait with `${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh <n> --skip-success --json`.
 7. Report each PR's state: passed, failed, skipped (with reason) and not run as separate states.
 
+## The workflow
+
+Call `mcp__ndev__started(issue)` for each PR's issue: it resumes the state in the record. Commit with `mcp__ndev__checkpoint`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Options: `--dry-run` reports candidates and changes nothing. `--pr <n>` limits the survey.
 
 Never create a second PR for a branch. Never merge, and never push the base branch. Use the project's own terminal and agent tools (for example the `orca-cli` skill) to run work; do not depend on one terminal app or model runtime.

@@ -10,6 +10,26 @@ This is the everyday coding workflow. Use the `work-heavy` skill for multi-step 
 Repository safety rules, required gates and domain rules still apply.
 Do not chain planning, TDD, review and board skills automatically. Read a specialist skill only when its rules apply.
 
+## The workflow
+
+While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp__ndev__*` tools carry this method. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. Each tool records the state in `.neil-dev.worktree.json` and answers with the next step. Follow that answer. If it differs from this skill, the answer wins.
+
+| Stage | Tool | What the tool does |
+|---|---|---|
+| Start or resume | `mcp__ndev__started(issue, shortName)` | Claims the worktree and opens the draft PR. Call it first. |
+| Plan (heavy) | `mcp__ndev__finishedPlan(markdown_file)` | Puts the plan in the PR body. |
+| Save work | `mcp__ndev__checkpoint(message, files, changeTypes)` | Runs the checks, commits the named files, and pushes. `changeTypes` adds to the types that set the review instructions. Use it and not `git commit` or `git push`. |
+| Development ends | `mcp__ndev__finishedDevelopment(prs, message, files)` | Commits and starts the code review at once. Do not start another review. |
+| Review ends | `mcp__ndev__finishedReview(review, deadcode, remembered)` | Needs the review result, the dead-code result and the remember result. Then it pushes and marks the PR ready. |
+| Checks end | `mcp__ndev__finishedChecks()` | The workflow watches CI and conflicts and tells you. Do not start a wait helper while it watches. |
+| Smoke ends | `mcp__ndev__finishedSmoke(report or skipped)` | Posts the report. |
+| Feedback answered | `mcp__ndev__finishedRevision()` | Goes back to the checks. |
+| All complete | `mcp__ndev__done(message)` | Checks everything and marks it done. |
+
+At any stage: `mcp__ndev__status()` reads the state. `mcp__ndev__blocked(message)` and `mcp__ndev__unblocked(message)` reach the human. `mcp__ndev__followUp(mode, message)` files other work. `mcp__ndev__addMigration(name)` adds a migration for after the merge. `mcp__ndev__requestSecret(name)` finds where a secret is set. `mcp__ndev__iNeedA(kind, description)` gives guidance on a component, library, brand style or animation. `mcp__ndev__reportWorkflowBug(title, details)` starts an agent that fixes a fault of the plugin. `mcp__ndev__waitForPR(pr, state)` and `mcp__ndev__waitForIssue(issue, state)` hold the agent until another PR or issue reaches a state. Past half of its retries, a wait tells the human.
+
+A helper agent cannot move the workflow. It can call only `status`, `requestSecret`, `followUp` with `issue_only`, `iNeedA` and `reportWorkflowBug`. The steps below say how to do the work of each stage.
+
 ## Spend tokens on the fix
 
 - Batch independent reads and searches into one tool call. Keep dependent steps in order.
@@ -20,7 +40,7 @@ Do not chain planning, TDD, review and board skills automatically. Read a specia
 - In a long interactive run, put the coloured log level first. Never colour JSON or redirected logs.
 
 Never poll PR checks, deployments or local processes by hand: no loops of status calls, sleeps or log tails.
-Run the wait helper once in the foreground. Read its result when it returns. Then resume, do other useful work, or leave a pickup note.
+While a workflow runs, it watches the PR for you. Otherwise run the wait helper once in the foreground. Read its result when it returns. Then resume, do other useful work, or leave a pickup note.
 
 ## Find the starting point
 
@@ -77,7 +97,7 @@ If baseline health matters, check it once on the base commit. An unrelated basel
 ## Finish once
 
 Inspect the final diff for scope, accidental changes and missing acceptance criteria.
-For behaviour changes, get one independent review of specification and correctness. Give the reviewer the requirements, diff, constraints and test evidence, not your defence of the solution. A self-review is not an independent review; if no reviewer is available, report the review as pending.
+For behaviour changes, get one independent review of specification and correctness. While a workflow runs, `mcp__ndev__finishedDevelopment` starts it. Give the reviewer the requirements, diff, constraints and test evidence, not your defence of the solution. A self-review is not an independent review; if no reviewer is available, report the review as pending.
 
 Choose the checks from the affected behaviour. Use the commands named in the project's CLAUDE.md or AGENTS.md:
 
@@ -91,11 +111,11 @@ Choose the checks from the affected behaviour. Use the commands named in the pro
 
 Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states.
 
-One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body: problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `r` skill before the PR leaves draft.
+One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body: problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `r` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
 
-Push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Hooks run. Never use `--no-verify` and never change the hooks path to skip them. Resolve base conflicts and commit before you continue.
+While a workflow runs, push with `mcp__ndev__checkpoint`. Otherwise push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Hooks run. Never use `--no-verify` and never change the hooks path to skip them. Resolve base conflicts and commit before you continue.
 
-Wait for CI with `${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh`. Always pass `--skip-success`:
+While a workflow runs, do not wait for CI: the workflow watches it, tells you the result, and refuses the wait helper. With no workflow, wait for CI with `${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh`. Always pass `--skip-success`:
 
 ```sh
 wait-for-pr-change.sh <pr> --skip-success --json

@@ -7,6 +7,10 @@ description: "Continuously receive React Grab selections and act on their attach
 
 Run on the same machine as the browser: the watcher reads that machine's clipboard. Use this skill for a watch loop that the user asked for, not for one pasted selection.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ```bash
 npx react-grab@latest pull --max-age 0
 ```

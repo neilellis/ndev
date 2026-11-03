@@ -747,7 +747,7 @@ test('stop-all with only dev servers listed stops them', () => {
   assert.deepEqual(servers(p), {})
 })
 
-// --- stop: one resource, for the /ndev:view pane ---
+// --- stop: one resource, for the /view pane ---
 
 test('stop --name stops that dev server only, removes its entry, and leaves the others and the stacks', () => {
   const p = project()
@@ -955,4 +955,120 @@ test('a record whose settings hold an unknown value is refused and names the fil
   assert.equal(r.status, 2, r.out)
   assert.match(r.out, /settings\.mode/)
   assert.match(r.out, /light, heavy/)
+})
+
+// ---- the workflow state (set-workflow) ----
+const workflowRepo = () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'wf-env-')))
+  sh(dir, 'git', 'init', '-q', '-b', 'main')
+  sh(dir, 'git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init')
+  writeFileSync(join(dir, '.git', 'info', 'exclude'), `${FILE}\n`)
+  sh(dir, 'git', 'worktree', 'add', '-q', '-b', 'feature', join(dir, 'wt'))
+  return join(dir, 'wt')
+}
+const setWorkflow = (wt, rev, value) => spawnSync(SCRIPT, ['set-workflow', '--expect-rev', String(rev), '--worktree', wt], { input: JSON.stringify(value), encoding: 'utf8' })
+const onDisk = wt => JSON.parse(readFileSync(join(wt, FILE), 'utf8'))
+
+test('set-workflow writes the state and counts the revision', () => {
+  const wt = workflowRepo()
+  const first = setWorkflow(wt, 0, { issue: 7, state: 'developing' })
+  assert.equal(first.status, 0, first.stderr)
+  assert.deepEqual(onDisk(wt).workflow, { issue: 7, state: 'developing', rev: 1 })
+  const second = setWorkflow(wt, 1, { issue: 7, state: 'reviewing' })
+  assert.equal(second.status, 0, second.stderr)
+  assert.equal(onDisk(wt).workflow.rev, 2)
+})
+
+test('set-workflow refuses a stale writer (exit 5) and names both revisions', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { state: 'developing' }).status, 0)
+  const stale = setWorkflow(wt, 0, { state: 'ci' })
+  assert.equal(stale.status, 5)
+  assert.match(stale.stderr, /revision 1/)
+  assert.match(stale.stderr, /expected 0/)
+  assert.equal(onDisk(wt).workflow.state, 'developing')
+})
+
+test('set-workflow refuses text that is not a JSON object', () => {
+  const wt = workflowRepo()
+  const r = spawnSync(SCRIPT, ['set-workflow', '--expect-rev', '0', '--worktree', wt], { input: 'not json', encoding: 'utf8' })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /JSON/)
+})
+
+test('the other commands keep the workflow state', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { state: 'ci' }).status, 0)
+  sh(wt, SCRIPT, 'set-setting', '--key', 'mode', '--value', 'heavy')
+  assert.equal(onDisk(wt).workflow.state, 'ci')
+  const sleeper = spawn('sleep', ['30'], { stdio: 'ignore' })
+  try {
+    sh(wt, SCRIPT, 'add-dev-server', '--name', 'ui', '--pid', String(sleeper.pid), '--port', '3999')
+    assert.equal(onDisk(wt).workflow.state, 'ci')
+    assert.equal(onDisk(wt).settings.mode, 'heavy')
+  } finally {
+    sleeper.kill()
+  }
+})
+
+test('a record with a workflow that is not an object is refused', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, FILE), JSON.stringify({ version: 2, resources: { docker: [], 'dev-servers': {} }, workflow: 3 }))
+  const r = spawnSync(SCRIPT, ['list', '--json', '--worktree', wt], { encoding: 'utf8' })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /workflow/)
+})
+
+// A linked worktree of a project that has never been told about the record.
+const unpreparedWorkflowRepo = () => {
+  const wt = workflowRepo()
+  const common = dirname(wt)
+  writeFileSync(join(common, '.git', 'info', 'exclude'), '')
+  return { wt, common }
+}
+
+test('set-workflow in a project that does not ignore the record ignores it locally and writes', () => {
+  const { wt, common } = unpreparedWorkflowRepo()
+  const r = setWorkflow(wt, 0, { issue: 260, state: 'planning' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(onDisk(wt).workflow.issue, 260)
+  assert.equal(sh(wt, 'git', 'status', '--porcelain'), '', 'neither the record nor .gitignore shows as a change')
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `${FILE}\n`)
+  assert.equal(setWorkflow(wt, 1, { issue: 260, state: 'developing' }).status, 0)
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `${FILE}\n`, 'the line is added once')
+})
+
+test('set-workflow keeps the text of an exclude file that has no last newline', () => {
+  const { wt, common } = unpreparedWorkflowRepo()
+  writeFileSync(join(common, '.git', 'info', 'exclude'), '*.log')
+  assert.equal(setWorkflow(wt, 0, { state: 'planning' }).status, 0)
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `*.log\n${FILE}\n`)
+})
+
+test('set-workflow refuses a record that git tracks, names the repair and leaves the exclude file', () => {
+  const { wt, common } = unpreparedWorkflowRepo()
+  writeFileSync(join(wt, FILE), '{}\n')
+  sh(wt, 'git', 'add', FILE)
+  const r = setWorkflow(wt, 0, { state: 'planning' })
+  assert.equal(r.status, 3, r.stderr)
+  assert.match(r.stderr, /git rm --cached/)
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), '')
+  assert.equal(readFileSync(join(wt, FILE), 'utf8'), '{}\n')
+})
+
+test('set-workflow refuses when .gitignore un-ignores the record, and writes nothing', () => {
+  const { wt } = unpreparedWorkflowRepo()
+  writeFileSync(join(wt, '.gitignore'), `!${FILE}\n`)
+  const r = setWorkflow(wt, 0, { state: 'planning' })
+  assert.equal(r.status, 3, r.stderr)
+  assert.match(r.stderr, /not git-ignored/)
+  assert.equal(existsSync(join(wt, FILE)), false)
+})
+
+test('set-workflow writes in the main checkout, for a straw_man project on main', () => {
+  const main = dirname(workflowRepo())
+  const r = setWorkflow(main, 0, { issue: 7, state: 'developing' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(onDisk(main).workflow.issue, 7)
+  assert.equal(onDisk(main).workflow.rev, 1)
 })

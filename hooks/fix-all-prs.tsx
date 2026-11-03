@@ -1,11 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, TurnCompleteInput } from 'claude-code'
 
+import { checksUrl, pullUrl } from './links'
 import type { Comm, Loop, Outcome, PrRow, Quota, Snapshot } from '../types'
 
 const PANE = 'fix-all-prs'
 const TITLE = 'PR queue'
 const TICK_MS = 60_000
+// GitHub limits calls, and each session of the plugin runs this timer. The timer reads GitHub only while the loop
+// runs, and at most this often. A person's request or a block reads at once. NDEV_PR_CHECK_MS changes the time.
+const CHECK_MS = 15 * 60_000
 // Fix rounds on one pull request before the loop records it as blocked.
 const MAX_ROUNDS = 3
 // How long an owning agent has to answer before this session's model takes the pull request.
@@ -84,7 +88,13 @@ function toRow(pr: GhPr): PrRow {
   }
 }
 
-export type Run = (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+type RunFn = (argv: readonly string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+// ghScript is scripts/github/gh.sh, through which every GitHub call goes.
+export type Run = RunFn & { ghScript: string }
+export function makeRun($: EngineInterface, timeoutMs: number, env?: Record<string, string>): Run {
+  const fn: RunFn = argv => $.process.run(argv, { timeoutMs, ...(env ? { env } : {}) })
+  return Object.assign(fn, { ghScript: `${$.plugin.root}/scripts/github/gh.sh` })
+}
 
 // What a failed call names: the first words of a gh command, or the endpoint of a gh api call.
 const label = (args: string[]) => {
@@ -96,17 +106,21 @@ const label = (args: string[]) => {
 }
 
 export async function gh(run: Run, args: string[], isJson = true): Promise<unknown> {
-  const out = await run(['gh', ...args])
+  const out = await run(['bash', run.ghScript, ...args])
   if (out.exitCode !== 0) {
     const detail = out.stderr.trim() || out.stdout.trim()
     throw new Error(
-      `gh ${label(args)} exited ${out.exitCode}: ${detail}\n` +
+      `gh.sh ${label(args)} exited ${out.exitCode}: ${detail}\n` +
         (/rate limit/i.test(detail)
-          ? 'Repair: wait for the quota to reset (`gh api rate_limit` shows the reset times). This plugin reads pull requests through the REST API, not GraphQL; a GraphQL `gh` call elsewhere (`gh pr list`, `gh pr view`) uses the smaller quota.'
+          ? 'Repair: wait for the quota to reset (`gh api rate_limit` shows the reset times). gh.sh tries the gh command and then REST, so both quotas are out, or a call with only one route was refused.'
           : 'Repair: run Claude Code inside a clone of a GitHub repository, and `gh auth login` if gh is not signed in.'),
     )
   }
   return isJson ? JSON.parse(out.stdout) : out.stdout.trim()
+}
+// For the gh.sh commands that print one JSON object per line.
+export async function ghLines<T>(run: Run, args: string[]): Promise<T[]> {
+  return String(await gh(run, args, false)).split('\n').filter(Boolean).map(line => JSON.parse(line) as T)
 }
 
 // When a used-up API quota is back, from GitHub's own reset times; none when no quota is at zero
@@ -142,8 +156,7 @@ async function storageQuotaHit(run: Run, repo: string, head: string): Promise<{ 
   return runs.size ? { runs: [...runs], message } : undefined
 }
 
-// The pull request calls use the REST API (`gh api`), never `gh pr list` or `gh pr view`: those
-// are GraphQL, which has its own, smaller quota and runs out first.
+// gh.sh prints the REST shape, by whichever route answered.
 type RestPull = {
   number: number
   title: string
@@ -160,30 +173,24 @@ type RestPull = {
 type RestListed = Pick<RestPull, 'number' | 'state' | 'created_at' | 'user'>
 
 // The signed-in user's login.
-const login = async (run: Run) => String(await gh(run, ['api', 'user', '--jq', '.login'], false))
+const login = async (run: Run) => ((await gh(run, ['me'])) as { login: string }).login
 
-// The signed-in user's pull requests in a state, newest first, at most `pages` pages of 100.
+// The signed-in user's pull requests in a state, newest first, from at most `pages` hundreds.
 async function listPulls(run: Run, repo: string, state: 'open' | 'all', pages: number, me: string): Promise<RestListed[]> {
-  const mine: RestListed[] = []
-  for (let page = 1; page <= pages; page++) {
-    const got = (await gh(run, ['api', `repos/${repo}/pulls?state=${state}&per_page=100&page=${page}`])) as RestListed[]
-    mine.push(...got.filter(p => p.user.login === me))
-    if (got.length < 100) break
-  }
-  return mine
+  const got = await ghLines<RestListed>(run, ['pr-list', '--state', state, '--limit', String(pages * 100)])
+  return got.filter(p => p.user.login === me)
 }
 
 // One pull request in the shape the loop reads: its own call, and, while it is open, the check runs
 // and commit statuses of its head (a merged or closed one needs no checks).
 async function readPull(run: Run, repo: string, n: number): Promise<GhPr> {
-  const p = (await gh(run, ['api', `repos/${repo}/pulls/${n}`])) as RestPull
+  const p = (await gh(run, ['pr-read', String(n)])) as RestPull
   let checks: Check[] | null = null
   if (p.state === 'open') {
-    const runs = (await gh(run, ['api', `repos/${repo}/commits/${p.head.sha}/check-runs?per_page=100&filter=latest`])) as { check_runs: { name: string; status: string; conclusion: string | null }[] }
-    const combined = (await gh(run, ['api', `repos/${repo}/commits/${p.head.sha}/status?per_page=100`])) as { statuses: { context: string; state: string }[] }
+    const { check_runs: runs, statuses } = (await gh(run, ['commit-checks', p.head.sha, '--pr', String(n)])) as { check_runs: { name: string; status: string; conclusion: string | null }[]; statuses: { context: string; state: string }[] }
     checks = [
-      ...runs.check_runs.map(c => ({ name: c.name, status: c.status.toUpperCase(), conclusion: (c.conclusion ?? '').toUpperCase() })),
-      ...combined.statuses.map(s => ({ context: s.context, state: s.state.toUpperCase() })),
+      ...runs.map(c => ({ name: c.name, status: c.status.toUpperCase(), conclusion: (c.conclusion ?? '').toUpperCase() })),
+      ...statuses.map(s => ({ context: s.context, state: s.state.toUpperCase() })),
     ]
   }
   return {
@@ -201,19 +208,23 @@ async function readPull(run: Run, repo: string, n: number): Promise<GhPr> {
   }
 }
 
-// Lists the open pull requests by the signed-in user, oldest first.
-async function openQueue(run: Run, repo: string): Promise<PrRow[]> {
-  const listed = (await listPulls(run, repo, 'open', 1, await login(run))).sort((a, b) => a.created_at.localeCompare(b.created_at))
-  return Promise.all(listed.map(async p => toRow(await readPull(run, repo, p.number))))
+// The open pull requests of the signed-in user, oldest first, in one call. When that call fails (GraphQL is used up,
+// or the query is too large), REST answers with two calls for each pull request.
+async function openRows(run: Run, repo: string): Promise<PrRow[]> {
+  const prs = await ghLines<GhPr>(run, ['pr-rows', '--limit', '100']).catch(async () => {
+    const listed = await listPulls(run, repo, 'open', 1, await login(run))
+    return Promise.all(listed.map(p => readPull(run, repo, p.number)))
+  })
+  return prs.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(toRow)
 }
 
-// Reads the queued pull requests again, so merged and closed ones stay in the pane,
-// and adds those opened since, oldest first after the queue.
-async function refreshQueue(run: Run, repo: string, queue: number[]): Promise<PrRow[]> {
-  const all = await listPulls(run, repo, 'all', 2, await login(run))
-  const queued = await Promise.all(queue.map(async n => toRow(await readPull(run, repo, n))))
-  const opened = all.filter(p => p.state === 'open' && !queue.includes(p.number)).sort((a, b) => a.created_at.localeCompare(b.created_at))
-  return [...queued, ...(await Promise.all(opened.map(async p => toRow(await readPull(run, repo, p.number)))))]
+// Reads the whole queue. A merged or closed pull request stays in the pane and is read once, when it leaves the open
+// list. Those opened since go after the queue.
+async function readQueue(run: Run, repo: string, queue: number[], known: PrRow[]): Promise<PrRow[]> {
+  const open = await openRows(run, repo)
+  const queued = await Promise.all(queue.map(async n =>
+    open.find(r => r.number === n) ?? known.find(r => r.number === n && r.state !== 'OPEN') ?? toRow(await readPull(run, repo, n))))
+  return [...queued, ...open.filter(r => !queue.includes(r.number))]
 }
 
 type Agent = { name: string; status: string }
@@ -237,7 +248,7 @@ function matchOwner(row: PrRow, agents: Agent[]): Agent | undefined {
   const issue = /issue-(\d+)$/.exec(row.branch)?.[1]
   const fits = (name: string) =>
     name === `pr-${row.number}` || name.startsWith(`pr-${row.number}-`) ||
-    (issue !== undefined && (name === `issue-${issue}` || name.startsWith(`issue-${issue}-`)))
+    (issue !== undefined && (name === `issue-${issue}` || name.startsWith(`issue-${issue}-`) || name.startsWith(`${issue}-`)))
   return agents
     .filter(a => fits(a.name))
     .sort((a, b) => (RANK[a.status] ?? 3) - (RANK[b.status] ?? 3))[0]
@@ -304,7 +315,7 @@ async function sessionTitles(run: Run, registry: Registry, names: string[]): Pro
 // newest commit first; `isFinal` false when the search should run again.
 async function signedOwner(run: Run, repoName: string, n: number, agents: Agent[], registry: Registry):
   Promise<{ owner?: string; isFinal: boolean }> {
-  const bodies = String(await gh(run, ['api', `repos/${repoName}/pulls/${n}/commits?per_page=100`, '--jq', '.[].commit.message'], false))
+  const bodies = String(await gh(run, ['pr-commit-messages', String(n)], false))
   const sessions = [...bodies.matchAll(SESSION_TRAILER)].map(m => m[1]!).reverse()
   const owner = sessions.map(id => registry.sessions.find(x => x.bridgeSessionId === id)?.name)
     .find(name => name !== undefined && agents.some(a => a.name === name))
@@ -407,13 +418,19 @@ type Repo = {
 }
 
 // `isQuiet` keeps a failed background read out of a toast: it still shows in the pane.
-async function refresh($: EngineInterface, isQuiet = false): Promise<Snapshot> {
-  const run: Run = argv => $.process.run(argv, { timeoutMs: 60_000 })
-  const { queue } = await read($, snapshot)
+// `only`: read that pull request alone, as the rows of the others do not decide this step.
+async function refresh($: EngineInterface, isQuiet = false, only?: number): Promise<Snapshot> {
+  const run = makeRun($, 60_000)
+  const was = await read($, snapshot)
   await update($, snapshot, s => ({ ...s, isBusy: true }))
   try {
-    const repo = (await gh(run, ['api', 'repos/{owner}/{repo}'])) as Repo
-    const rows = queue.length > 0 ? await refreshQueue(run, repo.full_name, queue) : await openQueue(run, repo.full_name)
+    // The repository's settings are read once for each start of the queue.
+    const repo = was.repo && was.defaultBranch && was.mergeMethod
+      ? { full_name: was.repo, default_branch: was.defaultBranch, allow_merge_commit: was.mergeMethod === 'merge', allow_squash_merge: was.mergeMethod === 'squash', allow_rebase_merge: was.mergeMethod === 'rebase' }
+      : (await gh(run, ['repo-read'])) as Repo
+    const rows = only !== undefined && was.rows.some(r => r.number === only)
+      ? await Promise.all(was.rows.map(async r => (r.number === only ? toRow(await readPull(run, repo.full_name, only)) : r)))
+      : await readQueue(run, repo.full_name, was.queue, was.rows)
     let agentsError: string | undefined
     const agents = await listAgents($).catch((err: unknown) => {
       agentsError = err instanceof Error ? err.message : String(err) // shown in the pane
@@ -539,7 +556,7 @@ async function settle($: EngineInterface, n: number, outcome: Outcome): Promise<
 async function nameAt($: EngineInterface, to: string): Promise<string> {
   const path = /^uds:(.+)$/.exec(to)?.[1]
   if (path === undefined) return to
-  const { sessions, isPartial } = await readRegistry(argv => $.process.run(argv, { timeoutMs: 60_000 }))
+  const { sessions, isPartial } = await readRegistry(makeRun($, 60_000))
   const name = sessions.find(x => x.messagingSocketPath === path)?.name
   if (name === undefined) {
     const partial = isPartial ? ', and a registry file did not parse (a session may have been writing it)' : ''
@@ -656,7 +673,7 @@ const NO_OWNER = 'no agent is named after it, no listed session signed its commi
 async function startInOrca($: EngineInterface, run: Run, r: PrRow, snap: Snapshot, why: string, c: Comm | undefined): Promise<boolean> {
   const { isNoMerge } = await read($, loop)
   // A start can run the workspace's setup first, so it gets the longest wait a command can have.
-  const start: Run = argv => $.process.run(argv, { timeoutMs: 600_000 })
+  const start = makeRun($, 600_000)
   const unanswered = (workspace: string) =>
     `\nOrca may still start the agent in workspace ${workspace}.\nRepair: look at Orca workspace ${workspace}; when no agent runs in it, retry #${r.number}.`
   let workspace: string
@@ -710,7 +727,9 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
     await refresh($, true)
     return false
   }
-  const snap = await refresh($, true)
+  const before = await read($, loop)
+  const isOnOne = before.current !== undefined && !before.outcomes[before.current]
+  const snap = await refresh($, true, isOnOne ? before.current : undefined)
   let state = await read($, loop)
   const row = snap.rows.find(r => r.number === state.current && !state.outcomes[r.number]) ??
     snap.rows.find(r => !state.outcomes[r.number])
@@ -733,7 +752,7 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
     await note($, `#${n}: started`)
     state = await read($, loop)
   }
-  const run: Run = argv => $.process.run(argv, { timeoutMs: 120_000 })
+  const run = makeRun($, 120_000)
   const c = (await read($, comms))[n]
   const now = await $.clock.now()
 
@@ -774,7 +793,7 @@ async function advance($: EngineInterface, isForced = false): Promise<boolean> {
     const prior = state.step === 'merging' ? state.preMerge : state
     await update($, loop, (l): Loop => ({ ...l, step: 'merging', stepAt: now, preMerge: { step: prior?.step, stepAt: prior?.stepAt, askedHead: prior?.askedHead } }))
     try {
-      await gh(run, ['api', '--method', 'PUT', `repos/${snap.repo}/pulls/${n}/merge`, '-f', `merge_method=${snap.mergeMethod ?? 'merge'}`], false)
+      await gh(run, ['pr-merge', String(n), '--method', snap.mergeMethod ?? 'merge'], false)
     } catch (err) {
       // GitHub can refuse a merge it reported clean (the base moved, a rule changed): try again next tick.
       const failures = (state.mergeFailures ?? 0) + 1
@@ -895,7 +914,7 @@ async function waitsForStorage(
       if (now - q.rerunAt < RERUN_GRACE_MS) return true
     } else {
       if (now < q.until && !isForced) return true
-      for (const id of q.runs ?? []) await gh(run, ['run', 'rerun', String(id), '--failed'], false)
+      for (const id of q.runs ?? []) await gh(run, ['rerun-failed', String(id)], false)
       await update($, loop, (l): Loop => ({ ...l, quota: { ...q, rerunAt: now } }))
       await note($, `#${n}: reran the failed jobs of run ${(q.runs ?? []).join(', ')} after the storage quota wait`)
       return true
@@ -923,20 +942,32 @@ function clockTime(at: number): string {
 
 let isTicking = false
 // A tick asked for while one runs: it runs again when that one ends, so no request is lost.
-let isTickAgain = false
+type TickAgain = { isForced: boolean; isStep: boolean }
+let tickAgain: TickAgain | undefined
+
+// The time between the timer's reads of GitHub.
+async function checkEvery($: EngineInterface): Promise<number> {
+  const raw = await $.env.get('NDEV_PR_CHECK_MS')
+  return raw && Number(raw) >= 0 ? Number(raw) : CHECK_MS
+}
 
 // Runs the loop until it must wait. A failure pauses the loop and shows why.
 // `isForced`: the person asked (start, resume, retry, refresh), so a backoff does not hold the tick back.
-async function tick($: EngineInterface, isForced = false): Promise<void> {
+// `isStep`: a pull request left the loop's hands, so the next one need not wait for the next check.
+async function tick($: EngineInterface, isForced = false, isStep = false): Promise<void> {
   if (isTicking) {
-    isTickAgain = true
+    tickAgain = { isForced: isForced || !!tickAgain?.isForced, isStep: isStep || !!tickAgain?.isStep }
     return
   }
   // Claim the tick before the first await, so two ticks never run side by side.
   isTicking = true
-  isTickAgain = false
+  tickAgain = undefined
   try {
-    if (!isForced && (await $.clock.now()) < ((await read($, loop)).ghRetryAt ?? 0)) return
+    const now = await $.clock.now()
+    const held = await read($, loop)
+    if (!isForced && held.phase !== 'running') return
+    if (!isForced && now < (held.ghRetryAt ?? 0)) return
+    if (!isForced && !isStep && now - (await read($, snapshot)).checkedAt < (await checkEvery($))) return
     for (let i = 0; i < 50 && (await advance($, isForced && i === 0)); i++);
     const wasLimited = (await read($, loop)).quota?.kind === 'api'
     await update($, loop, (l): Loop => (l.ghFailures || l.quota?.kind === 'api'
@@ -949,7 +980,7 @@ async function tick($: EngineInterface, isForced = false): Promise<void> {
     const l = await read($, loop)
     // A used-up API quota has a known end: wait for it rather than guess with a backoff.
     const back = l.phase === 'running' && RATE_LIMIT.test(error.split('\n')[0]!)
-      ? await apiQuotaBack(argv => $.process.run(argv, { timeoutMs: 60_000 })).catch(async (why: unknown) => {
+      ? await apiQuotaBack(makeRun($, 60_000)).catch(async (why: unknown) => {
         await note($, `GitHub rate limit hit, and gh api rate_limit failed, so the loop backs off instead: ${firstLine(why instanceof Error ? why.message : String(why))}`)
         return undefined
       })
@@ -973,11 +1004,13 @@ async function tick($: EngineInterface, isForced = false): Promise<void> {
   } finally {
     isTicking = false
   }
-  if (isTickAgain) await tick($)
+  // A tick that came while this one ran has set it: the narrowing from above does not know.
+  const again = tickAgain as TickAgain | undefined
+  if (again) await tick($, again.isForced, again.isStep)
 }
 
-function tickLater($: EngineInterface, isForced = false): void {
-  void tick($, isForced) // tick records its own failures
+function tickLater($: EngineInterface, isForced = false, isStep = false): void {
+  void tick($, isForced, isStep) // tick records its own failures
 }
 
 // `isNoMerge`: fix each pull request until it is green, and leave the merge to a human.
@@ -1150,7 +1183,7 @@ export async function startFixAllPrs($: EngineInterface) {
   })
   const now = await $.clock.now()
   await update($, activity, a => (a.at === undefined ? { at: now } : a))
-  // Pick the loop up where it stood, and keep the list current.
+  // Pick the loop up where it stood. An idle loop reads nothing until the person asks.
   tickLater($)
   $.clock.every(TICK_MS, () => tickLater($))
 }
@@ -1210,7 +1243,7 @@ export const fixAllPrs = (on: On) => {
       await update($, loop, (s): Loop => ({ ...s, isRoundDone: true }))
       await note($, `#${input.pr}: this session's model pushed a fix`)
     }
-    tickLater($)
+    tickLater($, false, input.outcome === 'blocked')
     return { result: `Recorded #${input.pr} as ${input.outcome}. The loop takes it from here.` }
   })
 
@@ -1244,13 +1277,13 @@ export const fixAllPrs = (on: On) => {
         for (const [n] of hits) copy[n] = { ...copy[n], heardAt: now, heard, isBlocked }
         return copy
       })
-      if ((await read($, loop)).phase === 'running') tickLater($)
+      if ((await read($, loop)).phase === 'running') tickLater($, false, isBlocked)
     }
     return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
     const { repo, rows, checkedAt, error, isBusy, agentsError, orcaError } = await read($, snapshot)
     const owners = await read($, comms)
     const l = await read($, loop)
@@ -1311,7 +1344,7 @@ export const fixAllPrs = (on: On) => {
                   <Text weight={isCurrent ? 'bold' : 'regular'}>
                     <Text color="claude">{isCurrent ? '▶ ' : '  '}</Text>
                     <Text color={m.color}>{m.word.padEnd(9)}</Text>
-                    <Text color="suggestion">#{r.number}</Text>
+                    {repo ? <Link href={pullUrl(repo, r.number)} label={`#${r.number}`} /> : <Text color="suggestion">#{r.number}</Text>}
                     <Text color={isSettled ? 'subtle' : 'text'}> {fit(r.title)}</Text>
                   </Text>
                   <Box gap={2}>
@@ -1324,7 +1357,7 @@ export const fixAllPrs = (on: On) => {
                 {o && <Text color={o.kind === 'blocked' ? 'error' : 'subtle'}>
                   {pad}{fit(`${o.detail}${o.by ? ` · by ${o.by}` : ''}`, under)}
                 </Text>}
-                {!o && r.state === 'OPEN' && r.failing.length > 0 && <Text color="error">{pad}{fit(r.failing.join(', '), under)}</Text>}
+                {!o && r.state === 'OPEN' && r.failing.length > 0 && <Text color="error">{pad}{repo ? r.failing.map((name, i) => <Text key={`failing-${r.number}-${i}`}>{i > 0 ? ', ' : ''}<Link href={checksUrl(repo, r.number)} label={name} /></Text>) : fit(r.failing.join(', '), under)}</Text>}
                 {!o && r.state === 'OPEN' && c?.title && <Text color="merged" italic>{pad}{fit(`“${c.title}”`, under)}</Text>}
                 {!o && r.state === 'OPEN' && <Text color={line.color ?? 'subtle'}>{pad}{fit(line.text, under)}</Text>}
               </Box>

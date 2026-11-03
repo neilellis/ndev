@@ -142,7 +142,7 @@ test('a missing wiki is created from the plugin by init.sh', async ($, on) => {
   await start($)
   await new Promise(resolve => setTimeout(resolve, 50))
 
-  const init = runs.filter(argv => argv[0] === 'bash' && !argv.includes('init'))
+  const init = runs.filter(argv => argv[0] === 'bash' && !argv.includes('init') && !argv[1]?.endsWith('gh.sh'))
   expect(init).toHaveLength(1)
   expect(init[0]?.[1]).toContain('scripts/wiki/init.sh')
   expect(init[0]?.[2]).toBe('/home/neil/dev-wiki')

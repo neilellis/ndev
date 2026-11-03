@@ -2,6 +2,9 @@
 // design and copywriting lessons go to ~/dev-wiki, the way a project wiki ingests on completion.
 import type { Register } from 'claude-code'
 
+import type { LoadedConfig } from './config'
+import { workflowOwnsChecks } from './workflow/tools'
+
 type On = Parameters<Register>[0]
 
 // `git push` (with options such as -C before it) or a push wrapper script such as push-checked.sh.
@@ -18,11 +21,13 @@ export const ingestText = (background: boolean) =>
 
 export const isPush = (command: string) => PUSH.test(command) && !DRY_RUN.test(command)
 
-export const learnAfterPush = (on: On) => {
-  on('tool.call', { tool: 'Bash' }, async (_$, e, next) => {
+// While a workflow runs, its finishing step asks for the ingest instead.
+export const learnAfterPush = (on: On, getProject: () => LoadedConfig | undefined = () => undefined) => {
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
     const command = String((e as { command?: unknown }).command ?? '')
     if (ran.deny !== undefined || ran.isError === true || !isPush(command)) return ran
+    if (await workflowOwnsChecks($, getProject())) return ran
     const background = (e as { run_in_background?: unknown }).run_in_background === true
     return { ...ran, context: [...(ran.context ?? []), ingestText(background)] }
   })

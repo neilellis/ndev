@@ -7,6 +7,10 @@ description: "Write and review a marketing film of about 60 seconds that tells a
 
 A marketing film tells a prospective client, in about a minute, why to talk to you. It moves from a question, to the problem, to the offer, to evidence, to one action. This skill gives the rules the kit enforces. The shared rules are in `video-types`.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Shape
 
 - About 60 seconds of narration, never more than 90. The kit fails the timeline above 90 s.

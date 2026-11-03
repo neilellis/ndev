@@ -1,0 +1,237 @@
+// /ndev-workflow <command>: the human's controls over the workflow. These outrank the state machine:
+// a skip or a goto is the human's decision, so it holds at any project level, and the PR records it.
+import { read } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
+
+import { saveSetting } from '../config'
+import type { LoadedConfig } from '../config'
+import { comment, git, head, markReady, readPr, withdrawAlert } from './effects'
+import { afterSkip } from './machine'
+import type { State } from './machine'
+import { boundRoot, factsFor, inTurn, isWaitRunning, loadWorkflow, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
+import type { Workflow } from './tools'
+import { watcherNote } from './watchdog'
+
+const HELP = [
+  '/ndev-workflow status: the state and the next step.',
+  '/ndev-workflow guide: show the guide to the workflow, with its flow chart.',
+  '/ndev-workflow skip [reason]: leave the current phase and go to the next one.',
+  '/ndev-workflow goto <state> [reason]: go to any state.',
+  '/ndev-workflow unblock [message]: end a block and withdraw its notification.',
+  '/unblock <message>: give the agent your answer and end a block or a wait. It runs at once, also during a turn.',
+  '/ndev-workflow off [reason]: stop the tools and the reminders for this worktree. The record stays.',
+  '/ndev-workflow on: turn them back on.',
+  '/ndev-workflow off project, /ndev-workflow on project: the same for the whole project, in .neil-dev.json.',
+].join('\n')
+
+const GOTO: State[] = ['setup', 'planning', 'developing', 'reviewing', 'ci', 'smoke', 'finishing', 'revising', 'done']
+
+type Project = LoadedConfig | undefined
+
+async function clearBlock($: EngineInterface, wf: Workflow, notes: string[]) {
+  if (!wf.blocked) return
+  const problem = await withdrawAlert($, wf.root, wf.blocked)
+  if (problem) notes.push(problem)
+  wf.blocked = undefined
+}
+
+// The agent learns the new state by a prompt: a command's text goes to the human.
+async function tellAgent($: EngineInterface, wf: Workflow, project: Project, what: string) {
+  const facts = await factsFor($, wf.root, project)
+  const text = `${what} Issue #${wf.issue} is now in the state "${wf.state}". ${stepOf(wf, facts)}`
+  // A command hook holds the turn, and the host refuses a prompt from inside it: submit just after.
+  void $.clock.after(100, async () => {
+    try {
+      await $.prompt.submit({ text })
+    } catch (error) {
+      $.ui.toast(`workflow: the agent was not told of the change: ${error instanceof Error ? error.message : String(error)}. Tell it: ${text}`.slice(0, 400))
+    }
+  })
+}
+
+async function record($: EngineInterface, wf: Workflow, what: string, notes: string[]) {
+  if (!wf.prs[0] || wf.direct) return
+  try {
+    await comment($, wf.root, wf.repo, wf.prs[0], `<!-- work-heavy-auto:workflow -->\n**work-heavy-auto:** The human ran /ndev-workflow: ${what}`)
+  } catch (error) {
+    notes.push(`The PR does not record this: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+const said = (notes: string[]) => (notes.length ? `\n${notes.join('\n')}` : '')
+
+async function guide($: EngineInterface): Promise<string> {
+  const path = `${$.plugin.root}/kb/workflow.md`
+  if (!(await $.fs.exists(path))) return `The guide is missing: ${path} does not exist. Run: claude plugin update ndev`
+  return $.fs.read(path)
+}
+
+async function run($: EngineInterface, args: string, getProject: () => Project, setProject: (p: LoadedConfig) => void): Promise<string> {
+  const [verb = 'status', ...rest] = args.trim().split(/\s+/).filter(Boolean)
+  const tail = rest.join(' ')
+  if (verb === 'help') return HELP
+  if (verb === 'guide') return guide($)
+  const project = getProject()
+  if ((verb === 'off' || verb === 'on') && rest[0] === 'project') {
+    if (!project) return 'Not saved: the project folder is not known yet.'
+    if (project.error) return `Not saved: ${project.path} has an error (${project.error}). Fix the file, then run the command again.`
+    const value = verb === 'on'
+    await saveSetting($, project, 'workflow', value)
+    setProject({ ...project, exists: true, config: { ...project.config, workflow: value } })
+    return `The workflow is ${verb} for this project. Saved to ${project.path}; commit it to share the setting.`
+  }
+  if (verb === 'on' && (await hasDeclined($))) {
+    await setDeclined($, false)
+    return 'The workflow is on for this session. The agent starts it with mcp__ndev__started.'
+  }
+  const root = (await boundRoot($)) ?? project?.root
+  const wf = root ? await loadWorkflow($, root) : undefined
+  if (verb === 'status') {
+    const off = project?.config.workflow === false ? `The workflow is off for this project (${project.path}). ` : ''
+    if (!wf) return `${off}No workflow in ${root ?? 'this session'}. The agent starts one with mcp__ndev__started.\n\n${HELP}`
+    const facts = await factsFor($, wf.root, project)
+    const last = wf.history.slice(-5).map(h => `${h.tool}: ${h.from ?? 'none'} to ${h.to}`).join('; ')
+    const watch = await watcherNote($)
+    const watched = `\n\nWatcher: ${watch.why}${watch.at ? ` (${Math.round(((await $.clock.now()) - watch.at) / 1000)} s ago)` : ''}.`
+    return `${off}${wf.off ? `Off for this worktree: ${wf.off.reason}. ` : ''}Issue #${wf.issue} in ${wf.root} is in the state "${wf.state}"${wf.previous ? ` (before the block: ${wf.previous})` : ''}.${wf.blocked ? ` Blocked: ${wf.blocked.message}` : ''}\nNext: ${stepOf(wf, facts)}\nLast moves: ${last || 'none'}${watched}`
+  }
+  if (!['skip', 'goto', 'unblock', 'off', 'on'].includes(verb)) return `/ndev-workflow does not know "${verb}".\n\n${HELP}`
+  if (!wf && verb === 'off') {
+    await setDeclined($, true)
+    return 'The workflow is off for this session: started refuses and no reminder comes. /ndev-workflow on turns it back on.'
+  }
+  if (!wf) return `No workflow in ${root ?? 'this session'}, so there is nothing to change. /ndev-workflow off project turns the workflow off for the whole project.`
+  const now = await $.clock.now()
+  const notes: string[] = []
+
+  if (verb === 'off') {
+    await clearBlock($, wf, notes)
+    wf.off = { at: now, reason: tail || 'no reason given' }
+    await saveWorkflow($, wf)
+    await record($, wf, `off (${wf.off.reason}).`, notes)
+    return `The workflow of #${wf.issue} is off: its tools refuse and no reminder comes. The state stays "${wf.state}".${said(notes)}`
+  }
+  if (verb === 'on') {
+    if (!wf.off) return `The workflow of #${wf.issue} is already on, in the state "${wf.state}".`
+    wf.off = undefined
+    wf.nudges = { count: 0 }
+    await saveWorkflow($, wf)
+    await tellAgent($, wf, project, 'The human turned the workflow back on.')
+    return `The workflow of #${wf.issue} is on, in the state "${wf.state}".`
+  }
+  if (verb === 'unblock' && wf.state === 'wait' && wf.previous) {
+    const previous = wf.previous
+    const id = wf.waiting?.id
+    // A running wait tool reads the answer from the record and gives it to the agent as its result.
+    const running = !!id && isWaitRunning(id)
+    if (running) wf.waitAnswer = { id, message: tail }
+    // A live wait withdraws its own notice. The notice of a wait that died with its session is for this command to withdraw.
+    if (!running && wf.waiting?.alert) {
+      const problem = await withdrawAlert($, wf.root, wf.waiting.alert)
+      if (problem) notes.push(problem)
+    }
+    moved(wf, 'human:unblock', { state: previous }, now)
+    wf.nudges = { count: 0 }
+    await saveWorkflow($, wf)
+    if (!running) await tellAgent($, wf, project, `The human ended the wait${tail ? `: ${tail}` : ''}.`)
+    return `Issue #${wf.issue} is back in the state "${previous}".`
+  }
+  if (verb === 'unblock') {
+    if (wf.state !== 'blocked' || !wf.previous) return `Issue #${wf.issue} is not blocked: it is in the state "${wf.state}".`
+    await clearBlock($, wf, notes)
+    const previous = wf.previous
+    moved(wf, 'human:unblock', { state: previous }, now)
+    wf.nudges = { count: 0 }
+    await saveWorkflow($, wf)
+    await tellAgent($, wf, project, `The human ended the block${tail ? `: ${tail}` : ''}.`)
+    return `Issue #${wf.issue} is back in the state "${previous}".${said(notes)}`
+  }
+
+  const facts = await factsFor($, wf.root, project)
+  let to: State
+  if (verb === 'skip') {
+    const move = afterSkip({ state: wf.state, previous: wf.previous }, facts.mode)
+    if ('refused' in move) return move.refused
+    to = move.state
+  } else {
+    const wanted = rest[0] as State | undefined
+    if (!wanted || !GOTO.includes(wanted)) return `/ndev-workflow goto needs one of: ${GOTO.join(', ')}.`
+    to = wanted
+  }
+  const reason = (verb === 'skip' ? tail : rest.slice(1).join(' ')) || 'no reason given'
+  const from = wf.state
+  if (to === 'done') {
+    if (!wf.direct && !wf.prs.length) return `/ndev-workflow goto done: issue #${wf.issue} has no PR, so nothing is ready for a human. Nothing changed. Have the agent call started: it opens the draft PR.`
+    const pushed = await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)
+    if (pushed.stdout.trim() !== (await head(wf.root, $))) return `/ndev-workflow goto done: HEAD is not pushed to origin/${wf.branch}. Nothing changed. Use goto finishing, and have the agent call checkpoint with no files.`
+  }
+  await clearBlock($, wf, notes)
+  // Only finishedReview marks the PR ready and pushes, so a human move past it does that part here.
+  const pastReview = from === 'reviewing' && to !== 'developing' && to !== 'planning' && to !== 'reviewing'
+  let holds = ''
+  if (pastReview) {
+    if (wf.prs[0]) {
+      try {
+        const pr = await readPr($, wf.root, wf.repo, wf.prs[0])
+        if (pr.draft) await markReady($, wf.root, wf.repo, pr.number)
+      } catch (error) {
+        notes.push(`PR #${wf.prs[0]} was not marked ready: ${error instanceof Error ? error.message : String(error)}. Repair: gh pr ready ${wf.prs[0]}.`)
+      }
+    }
+    if ((await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)).stdout.trim() !== (await head(wf.root, $))) holds = ' A commit is held and not pushed: call checkpoint with no files.'
+  }
+  // A skip of the phase's check leaves evidence for `done`, marked as the human's decision.
+  const sha = await head(wf.root, $)
+  if (from === 'setup' && verb === 'skip') wf.noChecks = true
+  if ((from === 'ci' && verb === 'skip') || (verb === 'goto' && ['finishing', 'smoke', 'done'].includes(to) && wf.evidence.checks?.sha !== sha)) {
+    wf.evidence.checks = { sha, text: `skipped by the human: ${reason}`, byHuman: true }
+  }
+  if (from === 'smoke' && verb === 'skip') wf.evidence.smoke = { sha, text: `skipped by the human: ${reason}` }
+  wf.attempts = 0
+  wf.nudges = { count: 0 }
+  moved(wf, `human:${verb}`, { state: to }, now)
+  await saveWorkflow($, wf)
+  if (to === 'reviewing') {
+    notes.push(await startReview($, wf, facts))
+    await saveWorkflow($, wf)
+  }
+  const what = verb === 'skip' ? `skip "${from}", at ${sha.slice(0, 8)}: ${reason}` : `goto "${to}" from "${from}", at ${sha.slice(0, 8)}: ${reason}`
+  await record($, wf, what, notes)
+  if (to !== 'done') await tellAgent($, wf, project, from === 'setup' && !wf.direct && !wf.prs.length ? `The human moved the workflow past setup (${reason}), and it has no PR yet: call started with issue ${wf.issue} now, which opens the draft PR.` : `The human moved the workflow from "${from}" (${reason}). Do not go back to that phase.${holds}`)
+  return `Issue #${wf.issue} moved from "${from}" to "${to}".${said(notes)}`
+}
+
+async function answerCommand($: EngineInterface, args: string, getProject: () => Project, setProject: (p: LoadedConfig) => void) {
+  try {
+    return { text: await inTurn(() => run($, args, getProject, setProject)) }
+  } catch (error) {
+    return { text: `/ndev-workflow ${args} failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+// The message is compulsory: it is the answer that the agent waits for.
+async function answerUnblock($: EngineInterface, args: string, getProject: () => Project, setProject: (p: LoadedConfig) => void) {
+  try {
+    if (args.trim()) {
+      await whenTurnsFree($)
+      return { text: await inTurn(() => run($, `unblock ${args}`, getProject, setProject)) }
+    }
+    const project = getProject()
+    const root = (await boundRoot($)) ?? project?.root
+    const wf = root ? await loadWorkflow($, root) : undefined
+    const held = wf?.blocked ? ` The block says: ${wf.blocked.message}` : wf?.waiting ? ` It waits for ${wf.waiting.what}.` : ''
+    return { text: `Nothing changed. Usage: /unblock <message>, where the message is your answer to the agent.${held}` }
+  } catch (error) {
+    return { text: `/unblock ${args} failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+export async function startWorkflowCommand($: EngineInterface): Promise<void> {
+  await $.command.register({ name: 'unblock', description: 'ndev: give the agent your answer and end its block or wait', argumentHint: '<message>', immediate: true })
+  await $.command.register({ name: 'ndev-workflow', description: 'ndev: control the workflow of this worktree: status, guide, skip, goto, unblock, off, on', argumentHint: '[status|guide|skip [reason]|goto <state>|unblock|off [project]|on [project]]' })
+}
+
+export const workflowCommand = (on: Parameters<Register>[0], getProject: () => Project, setProject: (p: LoadedConfig) => void) => {
+  on('command.run', { command: 'ndev-workflow' }, ($, e) => answerCommand($, e.args, getProject, setProject))
+  on('command.run', { command: 'unblock' }, ($, e) => answerUnblock($, e.args, getProject, setProject))
+}

@@ -10,6 +10,11 @@ import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
 import { askCredentials, credentialsSection, startCredentials } from './credentials'
 import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index'
+import { releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowTools } from './workflow/tools'
+import { startWatchdog, workflowTurn, workflowWatchdog } from './workflow/watchdog'
+import { startWorkflowCommand, workflowCommand } from './workflow/command'
+import { askForIssue } from './workflow/ask-issue'
+import { reportFault } from './workflow/bug-report'
 import { startWorktreeStacks, stopWorktreeStacks, worktreeStacksSection } from './worktree-stacks'
 import { learnAfterPush } from './learn'
 import { componentCheck, startComponentCheck } from './component-check'
@@ -244,25 +249,35 @@ async function startFeature($: EngineInterface, name: string, start: () => Promi
   try {
     await start()
   } catch (error) {
-    $.ui.toast(`ndev: ${name} did not start: ${String(error).slice(0, 300)}. Its command is not available in this session: fix the cause, then /reload-plugins.`)
+    $.ui.toast(`ndev: ${name} did not start: ${String(error).slice(0, 300)}. It is not available in this session: fix the cause, then /reload-plugins.`)
   }
 }
 
 export const register: Register = (on, options) => {
   // walk-doc first: its guard is then the outer tool.call hook, so a failing quality hook cannot skip it.
   walkDoc(on, options)
+  // Before quality: a commit that is refused gets no quality notes.
+  workflowGitGuard(on, () => project)
   quality(on, () => project)
-  learnAfterPush(on)
-  componentCheck(on)
+  learnAfterPush(on, () => project)
+  componentCheck(on, () => project)
   fixAllPrs(on)
   responsiveCheck(on)
   resourceView(on)
   triage(on, () => project)
+  workflowTools(on, () => project)
+  workflowWatchdog(on)
+  workflowCommand(on, () => project, next => { project = next })
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     await fixAllPrsTurn($, e)
     await walkDocTurn($, e)
+    try {
+      await workflowTurn($, e, project)
+    } catch (error) {
+      $.ui.toast(`workflow: the turn-end check failed: ${String(error instanceof Error ? error.message : error).slice(0, 240)}`)
+    }
     return result
   })
   // One session.end hook for the same reason. The walk's dev server stops first; then the
@@ -274,6 +289,11 @@ export const register: Register = (on, options) => {
       $.ui.toast(`walk-doc: the dev server was not stopped at session end: ${String(error).slice(0, 200)}. Run /walk-doc stop in the next session.`)
     }
     await stopWorktreeStacks($, e.reason, project)
+    try {
+      await releaseWorkflow($, project)
+    } catch (error) {
+      $.ui.toast(`workflow: this session still owns the record: ${String(error).slice(0, 200)}. Another session takes it with started and takeOver true.`)
+    }
     return next(e)
   })
   on('session.start', async ($, e, next) => {
@@ -325,6 +345,11 @@ export const register: Register = (on, options) => {
         $.ui.toast(`ndev: ${String(error instanceof Error ? error.message : error).slice(0, 240)}. Its mode and steering are ignored until it is fixed.`)
       }
     }
+    const began = await $.clock.now()
+    // Each part starts alone: another plugin can own the command's name, and that must not stop the watcher.
+    await startFeature($, 'workflow tools', () => startWorkflow($, e.cwd))
+    await startFeature($, '/ndev-workflow', () => startWorkflowCommand($))
+    await startFeature($, 'workflow watcher', () => startWatchdog($, () => project))
     await startInitProject($, e.cwd)
     await startCredentials($, e.cwd)
     try {
@@ -344,6 +369,11 @@ export const register: Register = (on, options) => {
     void setupIfMissing($, e.isInteractive)
       .catch(error => $.ui.toast(`ndev: the GitHub set-up failed: ${String(error instanceof Error ? error.message : error).slice(0, 200)}. Run /dev-setup to try again.`))
       .then(() => askCredentials($, e.isInteractive))
+      .then(() => askForIssue($, () => project, e.isInteractive, began))
+      .catch(async error => {
+        const message = String(error instanceof Error ? error.message : error)
+        $.ui.toast(`workflow: the question for the issue failed: ${message.slice(0, 200)}. Tell the agent which issue to work on.${await reportFault($, 'the session-start question', message, `the session at ${e.cwd}`)}`)
+      })
 
     return next(e)
   })
@@ -400,11 +430,13 @@ export const register: Register = (on, options) => {
       .filter(Boolean)
       .join('\n\n')
 
+    const line = await workflowLine($, project).catch(error => `Workflow: the state was not read: ${String(error instanceof Error ? error.message : error).slice(0, 200)}`)
     return {
       sections: [
         ...composed.sections,
         { id: `${PLUGIN}:dev-mode`, text, scope: 'session' },
         ...[initProjectSection(), credentialsSection(), worktreeStacksSection()].filter(s => s !== undefined),
+        ...(line ? [{ id: `${PLUGIN}:workflow`, text: line, scope: 'session' as const }] : []),
       ],
     }
   })

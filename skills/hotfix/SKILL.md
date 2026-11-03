@@ -4,6 +4,11 @@ description: "Do the requested work directly on the main branch in the main chec
 disable-model-invocation: true
 ---
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint` and end with `mcp__ndev__done`. A project level that may merge lets `done` merge. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
+
 Use this skill only when the user invokes it by name for the current task. Never load it on your own judgement. Never carry it into a later task.
 
 ## The exception

@@ -60,7 +60,7 @@ function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, curr
   on('fs.read', (_, e) => ({ value: files[e.path] ?? '' }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
-  on('ui.open', (_, e) => { opened.push(e.id); return { value: { isPlaced: true } } })
+  on('ui.open', (_, e) => { opened.push(e.id); backgrounds.push(e.backgroundColor); return { value: { isPlaced: true } } })
   on('ui.copy', (_, e) => { copied.push(e.text); return { value: { isCopied: true } } })
   on('process.run', (_, e) => {
     // The plugin's own folder differs per run: name the scripts as PLUGIN/scripts/... .
@@ -87,6 +87,18 @@ test('/view opens the pane for the current worktree only: its branch and path, n
   expect(await ui.find({ type: 'Text', text: /main checkout/ })).toBeUndefined()
   expect(w.ran.some(l => !l.includes(' init ') && /--worktree \/proj( |$)/.test(l))).toBe(false)
   await ui.unmount()
+})
+
+test('a worktree that runs a workflow shows its state and its issue', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'reviewing', issue: 7, prs: [12] } }) })
+  const ui = await start($)
+  expect((await ui.find({ type: 'Text', text: /^reviewing, issue #7, PR #12/ }))).toBeTruthy()
+})
+
+test('a blocked workflow shows the state it keeps and the message', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'blocked', previous: 'ci', issue: 7, prs: [], blocked: { message: 'Which API key?' } } }) })
+  const ui = await start($)
+  expect((await ui.find({ type: 'Text', text: /^blocked \(was ci\), issue #7: Which API key\?/ }))).toBeTruthy()
 })
 
 test('the worktree shows its ndev files as present or missing, and any other .neil-dev* file', async ($, on) => {
@@ -295,5 +307,71 @@ test('a .neil-dev.json that cannot be read shows its error and the file, and the
   const ui = await start($)
   expect((await ui.find({ type: 'Text', text: /\.neil-dev\.json.*services\.vercel\.url/ }))?.text).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.worktree\.json$/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+const backgrounds: unknown[] = []
+
+const flowText = async (ui: Awaited<ReturnType<typeof start>>) =>
+  (await ui.findAll({ type: 'Text', text: /^[✔●▲○–] (setup|planning|developing|reviewing|ci|smoke|finishing|done|revising)$/ })).map(t => t.text)
+
+test('the flow chart marks the steps passed, the current step and the steps to come', async ($, on) => {
+  const history = [{ at: 1, tool: 'started', to: 'developing' }, { at: 2, tool: 'finishedDevelopment', from: 'developing', to: 'reviewing' }]
+  world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'reviewing', issue: 7, prs: [12], history } }) })
+  const ui = await start($)
+  // Light mode went straight to development, so the plan shows as skipped, not as passed.
+  expect(await flowText(ui)).toEqual(['✔ setup', '– planning', '✔ developing', '● reviewing', '○ ci', '○ smoke', '○ finishing', '○ done'])
+})
+
+test('a blocked workflow marks the step it stopped at', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'blocked', previous: 'ci', issue: 7, prs: [], blocked: { message: 'x' }, history: [{ at: 1, tool: 'started', to: 'planning' }] } }) })
+  const ui = await start($)
+  expect(await flowText(ui)).toEqual(['✔ setup', '✔ planning', '✔ developing', '✔ reviewing', '▲ ci', '○ smoke', '○ finishing', '○ done'])
+})
+
+test('revising shows as a side loop that goes back to ci, and done shows every step passed', async ($, on) => {
+  const history = [{ at: 1, tool: 'started', to: 'planning' }, { at: 2, tool: 'x', from: 'ci', to: 'smoke' }]
+  world(on, {}, WT, {
+    [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'revising', issue: 7, prs: [12], history } }),
+  })
+  const ui = await start($)
+  expect(await flowText(ui)).toEqual(['✔ setup', '✔ planning', '✔ developing', '✔ reviewing', '○ ci', '○ smoke', '○ finishing', '○ done', '● revising'])
+  expect(await ui.find({ type: 'Text', text: /back to ci/ })).toBeTruthy()
+})
+
+test('done marks every step passed', async ($, on) => {
+  const history = [{ at: 1, tool: 'started', to: 'planning' }, { at: 2, tool: 'x', from: 'ci', to: 'smoke' }]
+  world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'done', issue: 7, prs: [12], history } }) })
+  const ui = await start($)
+  expect(await flowText(ui)).toEqual(['✔ setup', '✔ planning', '✔ developing', '✔ reviewing', '✔ ci', '✔ smoke', '✔ finishing', '✔ done'])
+})
+
+test('the pane paints no background of its own', async ($, on) => {
+  backgrounds.length = 0
+  world(on, {}, WT, {})
+  await start($)
+  expect(backgrounds).toEqual(['transparent'])
+})
+
+test('a present ndev file is a link that opens the file, by its absolute path', async ($, on) => {
+  world(on)
+  const ui = await start($)
+  expect((await ui.find({ type: 'Link', text: '.neil-dev.worktree.json' }))?.props.href).toBe(`file://${WT}/.neil-dev.worktree.json`)
+  expect((await ui.find({ type: 'Link', text: '.neil-dev.local' }))?.props.href).toBe(`file://${WT}/.neil-dev.local`)
+  await ui.unmount()
+})
+
+test('the worktree path is a link that opens the folder', async ($, on) => {
+  world(on)
+  const ui = await start($)
+  expect((await ui.find({ type: 'Link', text: WT }))?.props.href).toBe(`file://${WT}`)
+  await ui.unmount()
+})
+
+test('the issue and the pull request of a workflow are links to GitHub', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.neil-dev.worktree.json`]: JSON.stringify({ workflow: { state: 'reviewing', issue: 7, repo: 'acme/widgets', prs: [12] } }) })
+  const ui = await start($)
+  expect((await ui.find({ type: 'Link', text: '#7' }))?.props.href).toBe('https://github.com/acme/widgets/issues/7')
+  expect((await ui.find({ type: 'Link', text: '#12' }))?.props.href).toBe('https://github.com/acme/widgets/pull/12')
   await ui.unmount()
 })

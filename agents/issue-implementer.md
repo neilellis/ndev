@@ -26,3 +26,7 @@ Rules you must keep:
 - **Board writes** use `${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh`. Set `GH_USE_KEYRING=1` when the ambient token lacks the `project` scope.
 - **Record knowledge** on completion (`work-heavy` F5): the project's wiki and docs, if it has them. The preloaded `docs` skill is the map.
 - **Post the `<!-- work-heavy-auto:state -->` continuation** before you exit, and **return your result in the exact shape the brief requires**: a one-line summary, or the structured output when a schema is set.
+
+## The workflow
+
+A subagent cannot move a workflow. If you run as a subagent, follow the stages of your brief, and use `git` and `gh.sh` as the brief says. If `followUp` started you, your brief names your worktree: do not claim another, and commit and push only with `mcp__ndev__checkpoint` and that `worktree`. You can call `mcp__ndev__status`, `mcp__ndev__followUp` with `issue_only`, `mcp__ndev__iNeedA` and `mcp__ndev__reportWorkflowBug`. If you run as the main agent of a session, call `mcp__ndev__started(issue, shortName)` first and follow each answer.

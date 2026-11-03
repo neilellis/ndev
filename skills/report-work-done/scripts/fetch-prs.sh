@@ -46,13 +46,13 @@ if [ -z "$SINCE" ]; then
 fi
 
 # --- resolve the author ------------------------------------------------------
-# GH_USE_KEYRING=1 drops GITHUB_TOKEN so the gh keyring login is used.
-GH() {
-  if [ "${GH_USE_KEYRING:-0}" = "1" ]; then env -u GITHUB_TOKEN gh "$@"; else gh "$@"; fi
-}
+# Every GitHub call goes through gh.sh: the gh command first, REST when it fails.
+# GH_USE_KEYRING=1 drops GITHUB_TOKEN so the gh keyring login is used (gh.sh does this).
+GHSH="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../../../scripts/github/gh.sh"
+[ -x "$GHSH" ] || { echo "fetch-prs.sh: gh.sh is missing at $GHSH. Repair: reinstall the ndev plugin (claude plugin update ndev); it ships scripts/github/ at its root." >&2; exit 2; }
 
 if [ -z "$REPO_ARG" ]; then
-  REPO_ARG="$(GH api 'repos/{owner}/{repo}' --jq .full_name)" || {
+  REPO_ARG="$("$GHSH" repo | jq -r .repo)" || {
     echo "fetch-prs.sh: cannot find the GitHub repository for $(pwd). Pass --repo OWNER/REPO or run 'gh auth status'." >&2
     exit 2
   }
@@ -60,15 +60,16 @@ fi
 
 case "$AUTHOR" in
   all)  AUTHOR_Q="" ;;
-  me|"") AUTHOR_Q="author:$(GH api user --jq .login)" ;;
+  me|"") AUTHOR_Q="author:$("$GHSH" me | jq -r .login)" ;;
   *)    AUTHOR_Q="author:$AUTHOR" ;;
 esac
 
 QUERY="merged:>=$SINCE $AUTHOR_Q"
+export GH_REPO="$REPO_ARG"
 
 # --- fetch -------------------------------------------------------------------
 if [ "$COUNT_ONLY" = "1" ]; then
-  GH api -X GET search/issues -f q="repo:$REPO_ARG is:pr is:merged $QUERY" -f per_page=100 --paginate --jq '.items[] | {number}' | jq -s . | python3 -c \
+  "$GHSH" pr-search "is:merged $QUERY" --limit 500 | jq -s . | python3 -c \
     'import json,sys; n=len(json.load(sys.stdin)); print(n); sys.exit("fetch-prs.sh: reached the 500-PR limit; the count is a lower bound. Use a shorter --since window.") if n>=500 else None'
   exit 0
 fi
@@ -78,10 +79,9 @@ if [ -z "$OUT" ]; then
 fi
 mkdir -p "$OUT"
 
-# REST search (its own quota, not GraphQL); the search API returns at most 1000 results.
-GH api -X GET search/issues -f q="repo:$REPO_ARG is:pr is:merged $QUERY" -f per_page=100 --paginate \
-  --jq '.items[] | {number, title, mergedAt: .pull_request.merged_at, author: {login: .user.login}, body: (.body // "")}' \
-  | jq -s . > "$OUT/prs.json"
+# gh.sh pr-search: gh first, REST search when it fails. The search API returns at most 1000 results.
+"$GHSH" pr-search "is:merged $QUERY" --limit 500 \
+  | jq -s 'map({number, title, mergedAt: .merged_at, author: {login: .user.login}, body: (.body // "")})' > "$OUT/prs.json"
 
 # --- chunk (stride, so every chunk sees a mix of dates and topics) -----------
 python3 - "$OUT" "$CHUNKS" "$SINCE" "$QUERY" <<'PY'

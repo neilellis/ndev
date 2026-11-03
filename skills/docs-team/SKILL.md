@@ -7,6 +7,10 @@ description: "Coordinate a hierarchy of agents (coordinator, unit leads, module 
 
 A repeatable workflow that writes a documentation site from the code and the project's internal docs, then audits it with agents that did not write it. Use `docs` for one page; use this skill when the work spans many units.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Files
 
 This skill holds the method:

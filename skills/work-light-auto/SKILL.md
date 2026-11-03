@@ -7,6 +7,10 @@ description: "The non-interactive lightweight development skill (light mode, aut
 
 This is the attended, native-dispatch form of `work-heavy-auto`. Survey and order the Ready column, then give each independent issue or dependency batch to one disposable worker. Report one line per unit. A human merges.
 
+## The workflow
+
+A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Settings
 
 Use the settings section of `work-heavy-auto`: `REPO` and `BASE` from `gh repo view`, and `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER` and any non-default column names from the arguments or the project's `CLAUDE.md`. If the board is not set, stop and say: "Set GH_PROJECT_OWNER and GH_PROJECT_NUMBER (and any non-default column names) in CLAUDE.md or pass them as arguments."

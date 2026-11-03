@@ -8,10 +8,10 @@ After any watch, read the explicit status and conclusion of each run or check.
 ## Wait for PR checks
 
 ```bash
-wait-for-pr-change.sh <pr> --skip-success [--json] [--interval 30] [--timeout <s>]
+wait-for-pr-change.sh <pr> --skip-success [--json] [--interval 120] [--timeout <s>]
 ```
 
-- The script checks every 30 seconds inside itself. Do not poll from the agent.
+- The script checks every 120 seconds inside itself (each check spends GitHub quota). Do not poll from the agent.
 - `--skip-success` is required in skill workflows. It ignores intermediate successes and unrelated PR changes, and returns on a failure or on completion of CI for the current revision.
 - A revision that already failed or completed returns at once. No checks is not completion.
 - Read the result before you claim success. Do not restart the waiter for a completed revision.
@@ -19,10 +19,10 @@ wait-for-pr-change.sh <pr> --skip-success [--json] [--interval 30] [--timeout <s
 ## Wait for one Actions run
 
 ```bash
-wait-for-run.sh <run_id> [--max-polls 480] [--interval 30]
+wait-for-run.sh <run_id> [--max-polls 120] [--interval 120]
 ```
 
-It reads the run once, then checks every 30 seconds with no progress output. It returns on a status change, or exits 2 after more than `--max-polls` unchanged checks. A completed run returns at once. A changed status is not a pass: read the conclusion.
+It reads the run once, then checks every 120 seconds with no progress output (each check spends GitHub quota, once for each agent waiting). It returns on a status change, or exits 2 after more than `--max-polls` unchanged checks. A completed run returns at once. A changed status is not a pass: read the conclusion.
 
 ## Read check state directly
 

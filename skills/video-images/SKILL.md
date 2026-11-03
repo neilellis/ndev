@@ -7,6 +7,10 @@ description: "Find, add, credit or remove the images in a video: product assets,
 
 ## Sources
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 - **Product assets.** Logos, client logos, product screenshots and wordmarks come from the project's own website or product repositories, as the project's instructions name them. Copy them into the video project's `assets/`. Never change the source repository from a video project.
 - **Diagrams.** Use the project's diagram tool, or the `diagram-design` skill. Keep diagrams as files in the project.
 - **Essay or article imagery.** Use the header image of the published piece the scene cites. Keep the piece's source text in the project (for example `research/`), so the claims can be checked.

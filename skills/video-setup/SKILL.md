@@ -7,6 +7,10 @@ description: "Set up the video kit in a project, start a new narrated video, upd
 
 The plugin holds the shared engine in `skills/video-setup/scripts/`. A project keeps a copy of the engine, so its own checks, CI and hosting work without the plugin:
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 - `scripts/video-kit/`: the engine. Never edit it in a project. Change the plugin, then sync.
 - `scripts/video-kit/kit.lock.json`: the kit version (from `scripts/kit.json`) and a hash of every copied file.
 

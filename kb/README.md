@@ -26,6 +26,8 @@ This knowledge base holds the development method that the plugin's skills and ag
 | [testing.md](testing.md) | Test first, the test taxonomy, the ways a test passes without proof, where each test lives, live tests, browser checks. |
 | [guards.md](guards.md) | Guard design, "never in a position to fail", hollow gates, the guard pathology catalogue, edited-file guards, shell guards. |
 | [verification-policy.md](verification-policy.md) | Verify against what the change touches: list entry points and siblings, close plan rows on evidence, adversarial review. |
+| [libraries.md](libraries.md) | The approved libraries. The `iNeedA` tool reads this page. |
+| [workflow.md](workflow.md) | The workflow tools: the state machine and its flow chart, stage hooks, checks, project levels, the heartbeat. Shown by `/ndev-workflow guide`. |
 | [precheck-and-push.md](precheck-and-push.md) | The precheck script, the pre-push hook, the shared hook dispatcher, the checked push. |
 | [git-and-worktrees.md](git-and-worktrees.md) | One worktree per unit of work, the shared main checkout, branch rules, `git mv` and `git rm`, Orca. |
 | [ci.md](ci.md) | The gates and what each proves, proof that each test ran, local gate versus CI, diff scoping, main health, cost, preview and deploy gates, self-hosted runners. |

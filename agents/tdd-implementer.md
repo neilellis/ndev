@@ -17,3 +17,7 @@ You implement a **single plan task** in the caller's existing worktree and branc
 - You are a **leaf**. The `Agent` tool is not allowed; do the work yourself.
 - You **share the caller's branch and worktree**, so this agent must not use `isolation: worktree`: your changes must land on that branch. Touch **only the files your task owns**. The caller may run several of these agents in parallel and relies on them being file-disjoint.
 - Commit your task with the commit trailer that the caller, the repository or the session requires. Never push to the default branch.
+
+## The workflow
+
+You are a helper: the main agent moves the workflow. You can call `mcp__ndev__status`, `mcp__ndev__followUp` with `issue_only`, `mcp__ndev__iNeedA` and `mcp__ndev__reportWorkflowBug`.

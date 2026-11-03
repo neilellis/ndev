@@ -7,6 +7,10 @@ description: "Show the viewer of a browser screen recording where to look: a cal
 
 Two scripts draw into the page that a browser records. They do not change the page.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 - `scripts/cursor.js` draws a large red cursor, a fading trail and a click pulse of 300 ms, so the viewer sees each move and click. A scroll starts a new trail, so a click on a target out of view draws no line across the screen. Before a still, call `walkCursor.park()`: it hides the pointer and its marks until the mouse moves again. It starts by itself.
 - `scripts/arrow.js` adds `window.walkArrow`. It draws nothing until you call it.
 

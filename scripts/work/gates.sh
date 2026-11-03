@@ -20,7 +20,7 @@
 #
 # Usage: gates.sh <issue-number> <git-ref> <pr-number>
 #   e.g. gates.sh 42 origin/claude/issue-42 1300
-# Repository: $GH_REPO (OWNER/REPO), else `gh repo view` in the current checkout.
+# Repository: $GH_REPO (OWNER/REPO), else the origin remote of the current checkout.
 # Token: GH_USE_KEYRING=1 drops GITHUB_TOKEN so the gh keyring login is used.
 # Prints one JSON object {number, pass, missing[]}.
 # Exit 0 = pass, 1 = fail, 2 = could not measure (never a silent pass).
@@ -35,16 +35,19 @@ die2() { printf '{"number": %s, "pass": null, "error": %s}\n' "$n" "$(json_str "
 
 [ -n "$pr" ] || die2 "pr number required: the plan of record lives in the PR body (usage: gates.sh <issue> <ref> <pr>)"
 
-GH() { if [ "${GH_USE_KEYRING:-0}" = "1" ]; then env -u GITHUB_TOKEN gh "$@"; else gh "$@"; fi; }
+GHSH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/../github/gh.sh"
+[ -x "$GHSH" ] || die2 "gh.sh is missing or not executable at $GHSH. Repair: reinstall the plugin (claude plugin update ndev) so scripts/github/ sits beside scripts/work/"
 
 repo="${GH_REPO:-}"
 if [ -z "$repo" ]; then
-  repo="$(GH api 'repos/{owner}/{repo}' --jq .full_name 2>&1)" \
-    || die2 "cannot find the GitHub repository: $repo. Repair: run inside the checkout, set GH_REPO=OWNER/REPO, or run 'gh auth login'"
+  repo_err="$(mktemp)"
+  repo="$("$GHSH" repo 2>"$repo_err" | jq -r .repo)" \
+    || die2 "cannot find the GitHub repository: $(cat "$repo_err"). Repair: run inside the checkout, set GH_REPO=OWNER/REPO, or run 'gh auth login'"
+  rm -f "$repo_err"
 fi
 
 body_err="$(mktemp)"; trap 'rm -f "$body_err"' EXIT
-body=$(GH api "repos/$repo/pulls/$pr" --jq '.body // ""' 2>"$body_err") \
+body=$(GH_REPO="$repo" "$GHSH" pr-read "$pr" 2>"$body_err" | jq -r '.body // ""') \
   || die2 "could not read the body of PR #${pr} in ${repo}: $(cat "$body_err"). Repair: check 'gh auth status' or set GH_USE_KEYRING=1"
 
 files=$(git ls-tree -r --name-only "$ref" 2>&1) \

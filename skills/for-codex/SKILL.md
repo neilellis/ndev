@@ -7,6 +7,10 @@ description: "Make this plugin's skills available to the OpenAI Codex CLI in one
 
 Evidence: codex-cli 0.164.0 `codex debug prompt-input` lists skills from `<repo>/.codex/skills/` and follows symlinked skill folders (tested 2026-10-27). The docs (https://learn.chatgpt.com/docs/build-skills, was developers.openai.com/codex/skills) name only `.agents/skills`; they also say Codex follows symlinks.
 
+## The workflow
+
+The `mcp__ndev__*` tools are in Claude Code only. Under Codex, follow the stages of the work skills by hand, with the check scripts in `scripts/ndev/workflow/`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## What it links
 
 - Each `skills/<name>/` that has a `SKILL.md` becomes `<project>/.codex/skills/<name>`, a symlink to the absolute plugin folder. This includes `for-codex`.

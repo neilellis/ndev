@@ -1,7 +1,42 @@
 #!/usr/bin/env bash
-# Compact GitHub reads and writes. Each read prints one JSON object per line.
+# Compact GitHub reads and writes. Each read prints one JSON object per line. All of ndev reaches
+# GitHub through this script, so the rule below holds in one place.
+#
+# The rule: the gh command first, and REST when it fails. The two use separate quotas (gh commands
+# spend GraphQL points, gh api spends REST calls), so one still answers when the other is used up.
+# Both routes print the same shape, the shape of REST. A note on stderr says when REST answered.
+#   A read, or a write that changes nothing when repeated, goes to REST on any failure.
+#   A post (comment, review, new issue or PR) goes to REST on a rate limit only: after another
+#   failure it may already be on GitHub, and a second try would post it twice.
 #
 # Usage:
+#   gh.sh repo                                         # {repo}. Reads the origin remote: no GitHub call
+#   gh.sh default-branch                               # {default_branch}
+#   gh.sh issue-read <n>                               # {number,title,state,body,url}
+#   gh.sh pr-read <n>                                  # {number,state,merged,draft,mergeable,mergeable_state,...}
+#   gh.sh pr-list [--head <branch>] [--state open|closed|all] [--limit <n>]     # one line per PR
+#   gh.sh pr-rows [--limit <n>]     # your open PRs with merge state and checks, in one call; gh's shape; no REST route
+#   gh.sh commit-checks <sha> [--pr <n>]               # {check_runs,statuses}. --pr makes it one gh call
+#   gh.sh feedback <issue> <pr>                        # one line per comment, review and inline comment
+#   gh.sh comment <n> --body <t>                       # issue or PR
+#   gh.sh pr-review <n> --commit <sha> --body <t>      # a comment review
+#   gh.sh pr-ready <n>                                 # leave draft. REST has no way to do this
+#   gh.sh label <n> <label>                            # issue or PR
+#   gh.sh pr-merge <n> --method merge|squash|rebase
+#   gh.sh me                                           # {login} of the signed-in user
+#   gh.sh repo-read                                    # {full_name,default_branch,allow_merge_commit,...}
+#   gh.sh pr-commit-messages <n>                       # the commit messages of a PR
+#   gh.sh rerun-failed <run id>                        # rerun the failed jobs of an Actions run
+#   gh.sh issue-search <query> [--limit <n>]           # open issues: one line of {number,title,url} each
+#   gh.sh view-json pr|issue <n|branch|url> --fields <f>   # gh's own shape for fields REST lacks. No REST route
+#   gh.sh view-json pr --open [--limit <n>] --fields <f>    # one line per open PR, gh's shape. No REST route
+#   gh.sh run-status <run id>                          # {status} of an Actions run
+#   gh.sh pr-diff <n>                                  # the diff of a PR
+#   gh.sh pr-commit-dates <n>                          # one committer date per line
+#   gh.sh pr-search <query> [--limit <n>]              # PRs of any state: {number,title,state,merged,created_at,merged_at,url,user,body}
+#   gh.sh pr-reopen <n>
+#   gh.sh project-list <owner>                         # the owner's project boards. GraphQL only: no REST route
+#   gh.sh api <arguments of gh api>                    # for an endpoint that has no gh command
 #   gh.sh milestones                                   # all milestones with exact titles
 #   gh.sh issues-by-milestone "<title>"                # issues in a milestone (exact title)
 #   gh.sh issue-new --title <t> --body-file <f> [--label <l>]... [--assignee <login>]... [--milestone <n>] [--type <t>]
@@ -152,8 +187,385 @@ board_items() {
       | select($want == "" or .status == $want)'
 }
 
+# --- the gh command first, then REST ---------------------------------------
+REPAIR_QUOTA="Repair: run 'gh api rate_limit' to see each quota and when it is back; run 'gh auth status' if neither quota is used up."
+one_line() { tr '\n' ' ' <"$1" | cut -c1-500; }
+# The error text of a command: its stderr, or its stdout when stderr is empty.
+said() {
+  local text
+  text="$(one_line "$1")"
+  [ -n "$text" ] || text="$(tr '\n' ' ' <<<"$2" | cut -c1-500)"
+  printf '%s' "${text:-no output}"
+}
+
+# gh_first <what> <jq filter, or "" to print as it came> <REST function> <arguments of gh>...
+# The REST function prints the same shape. GH_FIRST_POST=1 sends a rate-limit failure only to REST.
+gh_first() {
+  local what="$1" filter="$2" rest="$3" err out code=0 why rcode=0 rwhy
+  shift 3
+  err="$(mktemp)"
+  out="$(GH "$@" 2>"$err")" || code=$?
+  if [ "$code" -eq 0 ]; then
+    rm -f "$err"
+    if [ -z "$filter" ]; then [ -z "$out" ] || printf '%s\n' "$out"; return 0; fi
+    jq -c "$filter" <<<"$out" || die "$what: gh $1 $2 printed output that this script cannot read: ${out:0:300}" 1
+    return 0
+  fi
+  why="$(said "$err" "$out")"
+  if [ "${GH_FIRST_POST:-0}" = 1 ] && ! grep -qi 'rate limit' <"$err"; then
+    rm -f "$err"
+    die "$what: gh $1 $2 exited $code: $why. REST was not tried, because this may already be posted. Repair: look in $REPO on GitHub for it ($what), then run this again if it is not there." 1
+  fi
+  echo "gh.sh: $what: gh $1 $2 exited $code ($why). Trying REST." >&2
+  out="$("$rest" 2>"$err")" || rcode=$?
+  if [ "$rcode" -eq 0 ]; then
+    rm -f "$err"
+    echo "gh.sh: $what: REST answered." >&2
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return 0
+  fi
+  rwhy="$(said "$err" "$out")"
+  rm -f "$err"
+  die "$what failed both ways. gh $1 $2 exited $code: $why. REST exited $rcode: $rwhy. $REPAIR_QUOTA" 1
+}
+
+# rest_first <what> <REST function> <GraphQL function>: for a read that has no gh command.
+rest_first() {
+  local what="$1" err out code=0 why gcode=0 gwhy
+  err="$(mktemp)"
+  out="$("$2" 2>"$err")" || code=$?
+  if [ "$code" -ne 0 ]; then
+    why="$(said "$err" "$out")"
+    echo "gh.sh: $what: no gh command exists and REST exited $code ($why). Trying GraphQL." >&2
+    out="$("$3" 2>"$err")" || gcode=$?
+    if [ "$gcode" -ne 0 ]; then
+      gwhy="$(said "$err" "$out")"
+      rm -f "$err"
+      die "$what failed both ways. REST exited $code: $why. GraphQL exited $gcode: $gwhy. $REPAIR_QUOTA" 1
+    fi
+  fi
+  rm -f "$err"
+  [ -z "$out" ] || printf '%s\n' "$out"
+}
+
+PR_FIELDS="number,state,isDraft,mergeable,mergeStateStatus,body,createdAt,headRefOid,headRefName,baseRefName,title,url,author,mergeCommit"
+PR_FROM_GH='{number, title, state: (if .state == "MERGED" then "closed" else (.state | ascii_downcase) end), merged: (.state == "MERGED"), draft: .isDraft,
+  mergeable: (if .mergeable == "MERGEABLE" then true elif .mergeable == "CONFLICTING" then false else null end),
+  mergeable_state: (.mergeStateStatus | ascii_downcase), body, created_at: .createdAt, head: {sha: .headRefOid, ref: .headRefName},
+  base: {ref: .baseRefName}, url, user: {login: .author.login}, merge_commit_sha: .mergeCommit.oid}'
+PR_FROM_REST='{number, title, state, merged: (.merged // false), draft, mergeable, mergeable_state, body, created_at, head: {sha: .head.sha, ref: .head.ref},
+  base: {ref: .base.ref}, url: .html_url, user: {login: .user.login}, merge_commit_sha}'
+LISTED_OBJ_GH='{number, title, state: (if .state == "MERGED" then "closed" else (.state | ascii_downcase) end), merged: (.state == "MERGED"), draft: .isDraft,
+  created_at: .createdAt, head: {sha: .headRefOid, ref: .headRefName}, url, user: {login: .author.login}}'
+LISTED_OBJ_REST='{number, title, state, merged: (.merged_at != null), draft, created_at, head: {sha: .head.sha, ref: .head.ref}, url: .html_url, user: {login: .user.login}}'
+LISTED_FROM_GH=".[] | $LISTED_OBJ_GH"
+LISTED_FROM_REST=".[] | $LISTED_OBJ_REST"
+# A search finds a PR without its branch. It carries the body and the merge time.
+FOUND_FROM_GH='.[] | {number, title, state: (if .state == "MERGED" then "closed" else (.state | ascii_downcase) end), merged: (.state == "MERGED"),
+  created_at: .createdAt, merged_at: .mergedAt, url, user: {login: .author.login}, body: (.body // "")}'
+FOUND_FROM_REST='.items[] | {number, title, state, merged: (.pull_request.merged_at != null), created_at, merged_at: .pull_request.merged_at, url: .html_url, user: {login: .user.login}, body: (.body // "")}'
+
+ROLLUP_TO_CHECKS='{check_runs: [.[] | select(.__typename == "CheckRun")
+    | {name, status: (.status | ascii_downcase), conclusion: (if (.conclusion // "") == "" then null else (.conclusion | ascii_downcase) end)}],
+  statuses: [.[] | select(.__typename == "StatusContext") | {context, state: (.state | ascii_downcase)}]}'
+
+rest_default_branch() { GH api "repos/$REPO" | jq -c '{default_branch}'; }
+default_branch() {
+  gh_first "default branch of $REPO" '{default_branch: .defaultBranchRef.name}' rest_default_branch repo view "$REPO" --json defaultBranchRef
+}
+
+rest_checks() {
+  local runs statuses
+  runs="$(GH api "repos/$REPO/commits/$sha/check-runs?per_page=100&filter=latest")" || return $?
+  statuses="$(GH api "repos/$REPO/commits/$sha/status?per_page=100")" || return $?
+  jq -cn --argjson runs "$runs" --argjson statuses "$statuses" \
+    '{check_runs: [$runs.check_runs[] | {name, status, conclusion}], statuses: [$statuses.statuses[] | {context, state}]}'
+}
+
+graph_checks() {
+  GH api graphql -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F sha="$sha" -f query='query($owner: String!, $name: String!, $sha: GitObjectID!) { repository(owner: $owner, name: $name) { object(oid: $sha) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } } } } }' \
+    | jq -c '[.data.repository.object.statusCheckRollup.contexts.nodes[]?] | '"$ROLLUP_TO_CHECKS"
+}
+checks_of_commit() { rest_first "read the checks of $sha in $REPO" rest_checks graph_checks; }
+
+FEEDBACK_QUERY='query($owner: String!, $name: String!, $issue: Int!, $pr: Int!) { repository(owner: $owner, name: $name) {
+  issue(number: $issue) { comments(first: 100) { nodes { databaseId body createdAt author { __typename login } } } }
+  pullRequest(number: $pr) {
+    comments(first: 100) { nodes { databaseId body createdAt author { __typename login } } }
+    reviews(first: 100) { nodes { databaseId body state submittedAt author { __typename login }
+      comments(first: 100) { nodes { databaseId body createdAt author { __typename login } } } } }
+  } } }'
+FEEDBACK_FROM_GRAPH='def who: {login: (if .author == null then "unknown" elif .author.__typename == "Bot" then "\(.author.login)[bot]" else .author.login end),
+    type: (if .author.__typename == "Bot" then "Bot" else "User" end)};
+  def note($surface): {id: .databaseId, surface: $surface, path: (.path // null), body, user: who, created_at: .createdAt};
+  .data.repository as $r | ($r.issue.comments.nodes[] | note("issue")), ($r.pullRequest.comments.nodes[] | note("pr")),
+  ($r.pullRequest.reviews.nodes[] | ({id: .databaseId, surface: "review", path: null, body, user: who, submitted_at: .submittedAt, state}), (.comments.nodes[] | note("inline")))'
+FEEDBACK_FROM_REST='.[] | {id, surface: $surface, path: (.path // null), body, user: {login: .user.login, type: .user.type}} + (if .submitted_at then {submitted_at, state} else {created_at} end)'
+rest_feedback() {
+  local path
+  local pair
+  for pair in "issue:issues/$issue/comments" "pr:issues/$pr/comments" "review:pulls/$pr/reviews" "inline:pulls/$pr/comments"; do
+    GH api "repos/$REPO/${pair#*:}?per_page=100" | jq -c --arg surface "${pair%%:*}" "$FEEDBACK_FROM_REST" || return 1
+  done
+}
+
+graph_deps() {
+  GH api graphql -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F n="$n" -f query="query(\$owner: String!, \$name: String!, \$n: Int!) { repository(owner: \$owner, name: \$name) { issue(number: \$n) { $field(first: 100) { nodes { number title state url } } } } }" \
+    | jq -c --arg f "$field" '.data.repository.issue[$f].nodes[] | {number, title, state: (.state | ascii_downcase), url}'
+}
+rest_deps() { GH api "repos/$REPO/issues/$n/dependencies/$path?per_page=100" | jq -c '.[] | {number, title, state, url: .html_url}'; }
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
+  repo)
+    need_repo
+    jq -cn --arg repo "$REPO" '{repo: $repo}'
+    ;;
+
+  default-branch)
+    need_repo
+    default_branch
+    ;;
+
+  issue-read)
+    need_repo
+    n="${1:?issue number required}"
+    rest_issue() { GH api "repos/$REPO/issues/$n" | jq -c '{number, title, state, body, url: .html_url}'; }
+    gh_first "read issue #$n of $REPO" '{number, title, state: (.state | ascii_downcase), body, url}' rest_issue issue view "$n" --repo "$REPO" --json number,title,state,body,url
+    ;;
+
+  pr-read)
+    need_repo
+    n="${1:?PR number required}"
+    rest_pr() { GH api "repos/$REPO/pulls/$n" | jq -c "$PR_FROM_REST"; }
+    gh_first "read PR #$n of $REPO" "$PR_FROM_GH" rest_pr pr view "$n" --repo "$REPO" --json "$PR_FIELDS"
+    ;;
+
+  pr-list)
+    need_repo
+    head=""; state="open"; limit="100"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --head)  head="$2"; shift 2 ;;
+        --state) state="$2"; shift 2 ;;
+        --limit) limit="$2"; shift 2 ;;
+        *) die "usage: gh.sh pr-list [--head <branch>] [--state open|closed|all] [--limit <n>]" ;;
+      esac
+    done
+    args=(pr list --repo "$REPO" --state "$state" --limit "$limit" --json number,title,state,isDraft,createdAt,headRefOid,headRefName,url,author)
+    [ -z "$head" ] || args+=(--head "$head")
+    rest_list() {
+      local query="state=$state&per_page=100"
+      [ -z "$head" ] || query="$query&head=${REPO%%/*}:$head"
+      GH api --paginate "repos/$REPO/pulls?$query" | jq -c "$LISTED_FROM_REST" | head -n "$limit"
+    }
+    gh_first "list the PRs of $REPO" "$LISTED_FROM_GH" rest_list "${args[@]}"
+    ;;
+
+  pr-rows)
+    need_repo
+    limit="100"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --limit) limit="$2"; shift 2 ;;
+        *) die "usage: gh.sh pr-rows [--limit <n>]" ;;
+      esac
+    done
+    err="$(mktemp)"; code=0
+    out="$(GH pr list --repo "$REPO" --state open --author "@me" --limit "$limit" \
+      --json number,title,headRefName,state,isDraft,mergeable,mergeStateStatus,mergeCommit,headRefOid,createdAt,statusCheckRollup 2>"$err")" || code=$?
+    why="$(one_line "$err")"; rm -f "$err"
+    [ "$code" -eq 0 ] || die "list the open PRs of $REPO with their checks: gh pr list exited $code: $why. REST has no one-call route: read each with gh.sh pr-read and gh.sh commit-checks."
+    jq -c '.[]' <<<"$out"
+    ;;
+
+  commit-checks)
+    need_repo
+    sha="${1:?commit sha required}"; shift
+    pr=""
+    if [ "${1:-}" = "--pr" ]; then pr="${2:?PR number required}"; fi
+    if [ -z "$pr" ]; then
+      # gh has no command for the checks of a commit.
+      checks_of_commit
+    else
+      # The rollup belongs to the PR head. A PR that moved says nothing about this commit, so REST reads it.
+      rollup="$(gh_first "read the checks of PR #$pr of $REPO" '.' rest_checks pr view "$pr" --repo "$REPO" --json headRefOid,statusCheckRollup)"
+      case "$(jq -r 'if has("check_runs") then "rest" elif .headRefOid == $sha then "same" else "moved" end' --arg sha "$sha" <<<"$rollup")" in
+        rest) printf '%s\n' "$rollup" ;;
+        moved) checks_of_commit ;;
+        same) jq -c '.statusCheckRollup | '"$ROLLUP_TO_CHECKS" <<<"$rollup" ;;
+      esac
+    fi
+    ;;
+
+  feedback)
+    # One GraphQL query reads all four lists. `gh pr view` cannot do this: its comments have no
+    # numeric id and do not mark a bot, and no gh command reads inline comments.
+    need_repo
+    issue="${1:?issue number required}"; pr="${2:?PR number required}"
+    gh_first "read the feedback of PR #$pr of $REPO" "$FEEDBACK_FROM_GRAPH" rest_feedback api graphql -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F issue="$issue" -F pr="$pr" -f query="$FEEDBACK_QUERY"
+    ;;
+
+  comment)
+    need_repo
+    n="${1:?issue or PR number required}"; shift
+    [ "${1:-}" = "--body" ] || die "usage: gh.sh comment <n> --body <t>"
+    body="${2:-}"; [ -n "$body" ] || die "comment: the body is empty"
+    rest_comment() { GH api -X POST "repos/$REPO/issues/$n/comments" -f "body=$body" --jq .html_url; }
+    GH_FIRST_POST=1 gh_first "comment on #$n" "" rest_comment issue comment "$n" --repo "$REPO" --body "$body"
+    ;;
+
+  pr-review)
+    need_repo
+    n="${1:?PR number required}"; shift
+    commit=""; body=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --commit) commit="$2"; shift 2 ;;
+        --body)   body="$2"; shift 2 ;;
+        *) die "usage: gh.sh pr-review <n> --commit <sha> --body <t>" ;;
+      esac
+    done
+    [ -n "$commit" ] && [ -n "$body" ] || die "pr-review: --commit and --body are both required"
+    rest_review() { GH api -X POST "repos/$REPO/pulls/$n/reviews" -f event=COMMENT -f "commit_id=$commit" -f "body=$body" --jq .html_url; }
+    GH_FIRST_POST=1 gh_first "review of #$n" "" rest_review pr review "$n" --repo "$REPO" --comment --body "$body"
+    ;;
+
+  pr-ready)
+    need_repo
+    n="${1:?PR number required}"
+    err="$(mktemp)"; code=0
+    GH pr ready "$n" --repo "$REPO" 2>"$err" || code=$?
+    why="$(one_line "$err")"; rm -f "$err"
+    [ "$code" -eq 0 ] || die "mark PR #$n of $REPO ready: gh pr ready exited $code: $why. REST has no way to leave draft, so there is no second route. $REPAIR_QUOTA" 1
+    ;;
+
+  label)
+    need_repo
+    n="${1:?issue or PR number required}"; lab="${2:?label required}"
+    rest_label() { GH api -X POST "repos/$REPO/issues/$n/labels" -f "labels[]=$lab" --jq 'length'; }
+    gh_first "label #$n" "" rest_label pr edit "$n" --repo "$REPO" --add-label "$lab"
+    ;;
+
+  pr-merge)
+    need_repo
+    n="${1:?PR number required}"; shift
+    [ "${1:-}" = "--method" ] || die "usage: gh.sh pr-merge <n> --method merge|squash|rebase"
+    method="${2:-}"
+    case "$method" in merge|squash|rebase) ;; *) die "pr-merge: --method is merge, squash or rebase, not '$method'" ;; esac
+    rest_merge() { GH api -X PUT "repos/$REPO/pulls/$n/merge" -f "merge_method=$method" --jq .sha; }
+    gh_first "merge PR #$n of $REPO" "" rest_merge pr merge "$n" --repo "$REPO" "--$method"
+    ;;
+
+  me)
+    rest_me() { GH api user | jq -c '{login}'; }
+    gh_first "read the signed-in user" '{login: .data.viewer.login}' rest_me api graphql -f query='{viewer{login}}'
+    ;;
+
+  repo-read)
+    need_repo
+    rest_repo() { GH api "repos/$REPO" | jq -c '{full_name, default_branch, allow_merge_commit, allow_squash_merge, allow_rebase_merge}'; }
+    gh_first "read $REPO" '{full_name: .nameWithOwner, default_branch: .defaultBranchRef.name, allow_merge_commit: .mergeCommitAllowed, allow_squash_merge: .squashMergeAllowed, allow_rebase_merge: .rebaseMergeAllowed}' \
+      rest_repo repo view "$REPO" --json nameWithOwner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed
+    ;;
+
+  pr-commit-messages)
+    need_repo
+    n="${1:?PR number required}"
+    rest_messages() { GH api "repos/$REPO/pulls/$n/commits?per_page=100" --jq '.[].commit.message'; }
+    gh_first "read the commits of PR #$n of $REPO" "" rest_messages pr view "$n" --repo "$REPO" --json commits --jq '.commits[] | .messageHeadline + "\n\n" + .messageBody'
+    ;;
+
+  rerun-failed)
+    need_repo
+    n="${1:?run id required}"
+    rest_rerun() { GH api -X POST "repos/$REPO/actions/runs/$n/rerun-failed-jobs"; }
+    gh_first "rerun the failed jobs of run $n of $REPO" "" rest_rerun run rerun "$n" --repo "$REPO" --failed
+    ;;
+
+  issue-search)
+    need_repo
+    q="${1:?search query required}"; shift
+    limit=100
+    if [ "${1:-}" = "--limit" ]; then limit="${2:?--limit needs a number}"; fi
+    rest_search() { GH api -X GET search/issues -f "q=repo:$REPO is:issue is:open $q" -f "per_page=$limit" | jq -c '.items[] | {number, title, url: .html_url}'; }
+    gh_first "search the issues of $REPO" '.[] | {number, title, url}' rest_search issue list --repo "$REPO" --state open --search "$q" --limit "$limit" --json number,title,url
+    ;;
+
+  view-json)
+    # gh's own shape, for a caller that needs fields REST does not give (reviewDecision, the check rollup, closing issues). No REST route.
+    need_repo
+    kind="${1:?pr or issue required}"; shift
+    case "$kind" in pr|issue) ;; *) die "usage: gh.sh view-json pr|issue <number|branch|url> --fields <f> | view-json pr --open [--limit <n>] --fields <f>" ;; esac
+    sel=""; fields=""; open=0; limit=100
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --fields) fields="${2:?--fields needs a list}"; shift 2 ;;
+        --open)   open=1; shift ;;
+        --limit)  limit="${2:?--limit needs a number}"; shift 2 ;;
+        *) sel="$1"; shift ;;
+      esac
+    done
+    [ -n "$fields" ] || die "view-json: --fields is required"
+    err="$(mktemp)"; code=0
+    if [ "$open" = 1 ]; then
+      [ "$kind" = pr ] || die "view-json: --open is for pr only"
+      out="$(GH pr list --repo "$REPO" --state open --limit "$limit" --json "$fields" 2>"$err")" || code=$?
+    else
+      [ -n "$sel" ] || die "view-json: give a number, a branch or a URL"
+      out="$(GH "$kind" view "$sel" --repo "$REPO" --json "$fields" 2>"$err")" || code=$?
+    fi
+    why="$(said "$err" "$out")"; rm -f "$err"
+    [ "$code" -eq 0 ] || die "read $kind ${sel:-list} of $REPO as gh json ($fields): gh exited $code: $why. REST has no route for these fields: use pr-read, issue-read or commit-checks for the REST shape. $REPAIR_QUOTA" 1
+    if [ "$open" = 1 ]; then jq -c '.[]' <<<"$out"; else jq -c . <<<"$out"; fi
+    ;;
+
+  run-status)
+    need_repo
+    n="${1:?run id required}"
+    rest_run() { GH api "repos/$REPO/actions/runs/$n" | jq -c '{status}'; }
+    gh_first "read run $n of $REPO" '{status}' rest_run run view "$n" --repo "$REPO" --json status
+    ;;
+
+  pr-diff)
+    need_repo
+    n="${1:?PR number required}"
+    rest_diff() { GH api -H "Accept: application/vnd.github.diff" "repos/$REPO/pulls/$n"; }
+    gh_first "read the diff of PR #$n of $REPO" "" rest_diff pr diff "$n" --repo "$REPO"
+    ;;
+
+  pr-commit-dates)
+    need_repo
+    n="${1:?PR number required}"
+    rest_dates() { GH api --paginate "repos/$REPO/pulls/$n/commits?per_page=100" --jq '.[].commit.committer.date'; }
+    gh_first "read the commit dates of PR #$n of $REPO" "" rest_dates pr view "$n" --repo "$REPO" --json commits --jq '.commits[].committedDate'
+    ;;
+
+  pr-search)
+    need_repo
+    q="${1:?search query required}"; shift
+    limit=100
+    if [ "${1:-}" = "--limit" ]; then limit="${2:?--limit needs a number}"; fi
+    rest_found() { GH api -X GET search/issues --paginate -f "q=repo:$REPO is:pr $q" -f per_page=100 | jq -c "$FOUND_FROM_REST" | head -n "$limit"; }
+    gh_first "search the PRs of $REPO" "$FOUND_FROM_GH" rest_found pr list --repo "$REPO" --state all --search "$q" --limit "$limit" --json number,title,state,createdAt,mergedAt,url,author,body
+    ;;
+
+  pr-reopen)
+    need_repo
+    n="${1:?PR number required}"
+    rest_reopen() { GH api -X PATCH "repos/$REPO/pulls/$n" -f state=open --jq .html_url; }
+    gh_first "reopen PR #$n of $REPO" "" rest_reopen pr reopen "$n" --repo "$REPO"
+    ;;
+
+  project-list)
+    owner="${1:?owner required}"
+    GH project list --owner "$owner" --format json --limit 30
+    ;;
+
+  api)
+    GH api "$@"
+    ;;
+
   milestones)
     need_repo
     GH api "repos/$REPO/milestones?state=all&per_page=100" \
@@ -172,24 +584,30 @@ case "$cmd" in
 
   issue-new)
     need_repo
-    title=""; bodyfile=""; extra=()
+    title=""; bodyfile=""; extra=(); ghextra=(); milestone=""; type=""
     usage="usage: gh.sh issue-new --title <t> --body-file <f> [--label <l>]... [--assignee <login>]... [--milestone <n>] [--type <t>]"
     while [ $# -gt 0 ]; do
       case "$1" in
         --title)     title="$2"; shift 2 ;;
         --body-file) bodyfile="$2"; shift 2 ;;
-        --label)     extra+=(-f "labels[]=$2"); shift 2 ;;
-        --assignee)  extra+=(-f "assignees[]=$2"); shift 2 ;;
+        --label)     extra+=(-f "labels[]=$2"); ghextra+=(--label "$2"); shift 2 ;;
+        --assignee)  extra+=(-f "assignees[]=$2"); ghextra+=(--assignee "$2"); shift 2 ;;
         --milestone) [[ "$2" =~ ^[0-9]+$ ]] || die "issue-new: --milestone takes the milestone number (gh.sh milestones), not '$2'"
-                     extra+=(-F "milestone=$2"); shift 2 ;;
-        --type)      extra+=(-f "type=$2"); shift 2 ;;
+                     extra+=(-F "milestone=$2"); milestone="$2"; shift 2 ;;
+        --type)      extra+=(-f "type=$2"); type="$2"; shift 2 ;;
         *) die "$usage" ;;
       esac
     done
     [ -n "$title" ] && [ -n "$bodyfile" ] || die "issue-new: --title and --body-file are both required"
     check_body "$bodyfile"
-    GH api -X POST "repos/$REPO/issues" -f "title=$title" -F "body=@$bodyfile" ${extra[@]+"${extra[@]}"} \
-      --jq '{number, url: .html_url}' | jq -c .
+    rest_issue_new() { GH api -X POST "repos/$REPO/issues" -f "title=$title" -F "body=@$bodyfile" ${extra[@]+"${extra[@]}"} --jq .html_url; }
+    if [ -n "$milestone$type" ]; then
+      # gh takes a milestone by title and has no flag for a type, so these go to REST.
+      url="$(rest_issue_new)" || die "create the issue '$title' in $REPO: REST failed. $REPAIR_QUOTA" 1
+    else
+      url="$(GH_FIRST_POST=1 gh_first "create the issue '$title' in $REPO" "" rest_issue_new issue create --repo "$REPO" --title "$title" --body-file "$bodyfile" ${ghextra[@]+"${ghextra[@]}"} | tail -n 1)"
+    fi
+    jq -cn --arg url "$url" '{number: ($url | split("/") | last | tonumber), url: $url}'
     ;;
 
   issue-edit)
@@ -224,11 +642,12 @@ case "$cmd" in
     done
     [ -n "$title" ] && [ -n "$bodyfile" ] || die "pr-new: --title and --body-file are both required"
     [ -n "$head" ] || head="$(git rev-parse --abbrev-ref HEAD)"
-    [ -n "$base" ] || base="$(GH api "repos/$REPO" --jq .default_branch)"
+    [ -n "$base" ] || base="$(default_branch | jq -r .default_branch)"
     check_body "$bodyfile"
-    url="$(GH api -X POST "repos/$REPO/pulls" -f "title=$title" -F "body=@$bodyfile" \
-             -f "head=$head" -f "base=$base" -F "draft=$draft" --jq '.html_url')"
-    echo "{\"url\": \"$url\"}"
+    rest_pr_new() { GH api -X POST "repos/$REPO/pulls" -f "title=$title" -F "body=@$bodyfile" -f "head=$head" -f "base=$base" -F "draft=$draft" --jq '.html_url'; }
+    ghdraft=(--draft); [ "$draft" = true ] || ghdraft=()
+    url="$(GH_FIRST_POST=1 gh_first "create the PR '$head' -> '$base' in $REPO" "" rest_pr_new pr create --repo "$REPO" --head "$head" --base "$base" --title "$title" --body-file "$bodyfile" ${ghdraft[@]+"${ghdraft[@]}"} | tail -n 1)"
+    jq -cn --arg url "$url" '{url: $url}'
     ;;
 
   pr-edit)
@@ -293,7 +712,9 @@ if n == 0:
         ;;
       list)
         parent="${1:?parent issue number required}"
-        GH api "repos/$REPO/issues/$parent/sub_issues?per_page=100" --jq '.[] | {number, title, state, url: .html_url}'
+        n="$parent"; path=""; field=subIssues
+        rest_subs() { GH api "repos/$REPO/issues/$n/sub_issues?per_page=100" | jq -c '.[] | {number, title, state, url: .html_url}'; }
+        rest_first "read the sub-issues of #$n of $REPO" rest_subs graph_deps
         ;;
       *) die "usage: gh.sh subissues link <parent> <child>... | list <parent>" ;;
     esac
@@ -320,8 +741,9 @@ if n == 0:
         ;;
       list|blocking)
         n="${1:?issue number required}"
-        path=blocked_by; [ "$sub" = blocking ] && path=blocking
-        GH api "repos/$REPO/issues/$n/dependencies/$path?per_page=100" --jq '.[] | {number, title, state, url: .html_url}'
+        path=blocked_by; field=blockedBy
+        if [ "$sub" = blocking ]; then path=blocking; field=blocking; fi
+        rest_first "read the dependencies of #$n of $REPO" rest_deps graph_deps
         ;;
       *) die "usage: gh.sh blocked-by add|remove <n> <blocker>... | list <n> | blocking <n>" ;;
     esac
@@ -352,7 +774,7 @@ if n == 0:
     ;;
 
   help|--help|-h)
-    sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,61p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     ;;
 
   *)

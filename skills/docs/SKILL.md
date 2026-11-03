@@ -7,6 +7,10 @@ description: "Locate and maintain project documentation, wiki knowledge and huma
 
 The project's knowledge lives in its wiki: a compounding, interlinked, current-state knowledge base that agents keep. The plugin's `kb/llm-wiki.md` holds the method. Start at the project's wiki index file. Read the wiki's `AGENTS.md` (its schema) before you change a wiki file.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Where a fact goes
 
 | Home | Content |

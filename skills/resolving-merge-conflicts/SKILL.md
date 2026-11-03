@@ -4,6 +4,10 @@ description: "Use when you need to resolve an in-progress git merge/rebase confl
 ---
 
 # Resolve merge conflicts
+## The workflow
+
+The workflow tells you about a merge conflict on its PR. Commit the resolved files with `mcp__ndev__checkpoint`. The new commit sends the state back to the checks. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 
 1. **See the current state** of the merge or rebase: `git status`, the recent history on both sides, and the conflicting files.
 2. **Find the primary sources** for each conflict. Learn why each change was made and what its intent was. Read the commit messages, the PRs and the original issues.

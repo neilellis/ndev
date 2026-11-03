@@ -7,6 +7,10 @@ description: "Change what a video shows: layout, on-screen text, animation, colo
 
 The kit renders a film page: an HTML file (`"page"` in `video.config.json`, by default `film/index.html`) that draws any frame on request. For a new film, start from the template in `skills/video-setup/scripts/templates/film/` (see `video-setup`). The page holds one section per scene, the credits page and the CSS. Its script file (`film/film.js` in the template) holds the animation.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## The page contract
 
 The page must provide:

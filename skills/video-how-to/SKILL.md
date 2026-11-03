@@ -7,6 +7,10 @@ description: "Write and review a how-to video that shows one task from start to 
 
 A how-to video shows one task, from its start to a result the viewer can check. It is documentation in moving form. It must be accurate enough that a viewer can follow it with the product open beside it. The shared rules are in `video-types`.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Purpose and scope
 
 - One task per video, named in its title: "Sign in for the first time", not "Getting started with the product".

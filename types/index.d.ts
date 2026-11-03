@@ -183,9 +183,18 @@ declare module 'claude-code' {
       walkRun: Shaped<WalkRun | null>
       // The responsive-check matrix pane (hooks/responsive-check.tsx).
       responsiveView: Shaped<ResponsiveView>
+      // The worktree of this session's workflow, and when the session was last active (hooks/workflow/).
+      workflowRoot: Shaped<string | null>
+      workflowDoneWaitsFor: Shaped<string | null>
+      workflowFollowUpWorktrees: Shaped<string[]>
+      workflowDeclined: Shaped<boolean>
+      workflowIssueAsked: Shaped<boolean>
+      workflowCheckRead: Shaped<{ at: number }>
+      workflowWatchNote: Shaped<{ at: number; why: string }>
+      workflowActivity: Shaped<{ at: number; isTurnRunning: boolean }>
       // The /triage run (hooks/triage.tsx).
       triage: Shaped<TriageView>
-      // The /ndev:view pane (hooks/view.tsx).
+      // The /view pane (hooks/view.tsx).
       resourceView: Shaped<ResourceView>
     }
   }
@@ -292,7 +301,7 @@ export type ResponsiveView = {
   since?: number
 }
 
-// The /ndev:view pane: the ndev files and the running resources of every git worktree.
+// The /view pane: the ndev files and the running resources of every git worktree.
 export type ViewFile = { name: string; isKnown: boolean; present: boolean; isIgnored: boolean }
 export type ViewServer = { name: string; pid: number; port: number; command: string; cwd: string; live: boolean; lastStopOutput?: string }
 export type ViewStack = { kind: string; projectId: string; workdir: string; live: boolean | null; liveError?: string; lastStopOutput?: string }
@@ -307,6 +316,8 @@ export type ViewTree = {
   problem?: string
   // Why this worktree's record could not be read, with the repair.
   resourceError?: string
+  // The workflow of this worktree, when one runs here.
+  workflow?: { state: string; previous?: string; issue: number; repo?: string; prs: number[]; blocked?: string; visited?: string[] }
 }
 export type ResourceView = {
   // The services of .neil-dev.json (the current worktree's, else the main checkout's), shown as links.

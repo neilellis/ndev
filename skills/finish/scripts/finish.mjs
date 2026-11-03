@@ -26,6 +26,8 @@ import path from "node:path";
 import { MAX_ROUNDS, blockedMessage, checkPage, evaluate, failureSignature, firstErrorLine, nextRound, pagesForFiles, readyMessage } from "./finish-lib.mjs";
 
 const HERE = import.meta.dirname;
+// Every GitHub call goes through gh.sh: the gh command first, REST when it fails.
+const GHSH = path.resolve(realpathSync(HERE), "../../../scripts/github/gh.sh");
 const WAITER = path.resolve(realpathSync(HERE), "../../../scripts/github/wait-for-pr-change.sh");
 const PUSH = path.join(HERE, "push-checked.sh");
 const SETTLE_TRIES = 12;
@@ -52,7 +54,8 @@ function must(command, args) {
   return result.stdout.trim();
 }
 
-const ghJson = (args) => JSON.parse(must("gh", args));
+const ghsh = (args) => must("bash", [GHSH, ...args]);
+const ghJson = (args) => JSON.parse(ghsh(args));
 const sleep = (seconds) => sleepFor(seconds * 1000);
 
 function parseArgs(argv) {
@@ -76,7 +79,7 @@ function parseArgs(argv) {
 
 const PR_FIELDS = "number,url,state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup";
 function findPr(branch) {
-  const result = run("gh", ["pr", "view", branch, "--repo", REPO, "--json", PR_FIELDS]);
+  const result = run("bash", [GHSH, "view-json", "pr", branch, "--fields", PR_FIELDS]);
   if (result.status !== 0) return null;
   const pr = JSON.parse(result.stdout);
   return pr.state === "OPEN" ? pr : null;
@@ -111,7 +114,12 @@ async function main() {
   ROOT = top.stdout.trim();
   BASE = options.base;
   PRODUCTION_ENV = options.productionEnv;
-  REPO = options.repo || run("gh", ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]).stdout.trim();
+  REPO = options.repo || process.env.GH_REPO || "";
+  if (!REPO) {
+    const found = run("bash", [GHSH, "repo"]);
+    if (found.status === 0) REPO = JSON.parse(found.stdout).repo;
+  }
+  env.GH_REPO = REPO;
   if (!REPO) {
     agent("Cannot find the GitHub repository. Run `gh auth status`, or pass --repo <owner/repo> or set GH_REPO.");
     process.exit(2);
@@ -164,7 +172,7 @@ async function main() {
   const head = must("git", ["rev-parse", "HEAD"]);
 
   if (!pr) {
-    must("gh", ["pr", "create", "--repo", REPO, "--draft", "--base", BASE, "--head", branch, "--title", options.title, "--body-file", options.bodyFile]);
+    ghsh(["pr-new", "--draft", "--base", BASE, "--head", branch, "--title", options.title, "--body-file", options.bodyFile]);
     pr = findPr(branch);
     if (!pr) throw new Error("the pull request was created but cannot be read back");
   }
@@ -220,7 +228,7 @@ async function main() {
 
   let markedReady = false;
   if (pr.isDraft) {
-    must("gh", ["pr", "ready", String(pr.number), "--repo", REPO]);
+    ghsh(["pr-ready", String(pr.number)]);
     markedReady = true;
   }
   rmSync(stateFile, { force: true });

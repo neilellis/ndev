@@ -2,11 +2,11 @@
 # Wait inside this script until a GitHub pull request's status, checks, comments, or reviews change.
 #
 # Usage:
-#   wait-for-pr-change.sh <pr_number> [--interval 30] [--timeout <secs>] [--json] [--verbose] [--skip-success]
+#   wait-for-pr-change.sh <pr_number> [--interval 120] [--timeout <secs>] [--json] [--verbose] [--skip-success]
 #
 # Options:
 #   <pr_number>            PR number (e.g. 1724 or #1724) or GitHub PR URL
-#   --interval <seconds>   Polling interval in seconds (default: 30)
+#   --interval <seconds>   Polling interval in seconds (default: 120; each poll spends GitHub quota)
 #   --timeout <seconds>    Max duration in seconds before giving up (default: 0 = no timeout)
 #   --repo <owner/repo>    Repository (default: GH_REPO, else the current checkout)
 #   --json                 Output detected change in JSON format
@@ -26,7 +26,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/lib.sh"
 
 PR_RAW=""
-INTERVAL=30
+INTERVAL=120
 TIMEOUT=0
 REPO_NAME=""
 OUTPUT_JSON=false
@@ -101,7 +101,7 @@ fi
 trap 'echo ""; echo "wait-for-pr-change.sh: interrupted by user" >&2; exit 130' INT TERM
 
 # Run python engine to manage snapshots, polling, and diff detection
-python3 - "$PR_NUM" "$INTERVAL" "$TIMEOUT" "$REPO_NAME" "$OUTPUT_JSON" "$VERBOSE" "$SKIP_SUCCESS" <<'EOF'
+WAIT_DIR="$DIR" python3 - "$PR_NUM" "$INTERVAL" "$TIMEOUT" "$REPO_NAME" "$OUTPUT_JSON" "$VERBOSE" "$SKIP_SUCCESS" <<'EOF'
 import sys
 import os
 import time
@@ -116,20 +116,18 @@ output_json = (sys.argv[5].lower() == "true")
 verbose = (sys.argv[6].lower() == "true")
 skip_success = (sys.argv[7].lower() == "true")
 
+# Every GitHub call goes through gh.sh: the gh command first, REST when it fails.
+GH_SH = os.path.join(os.environ["WAIT_DIR"], "gh.sh")
+
 def gh_env():
     e = dict(os.environ)
-    if e.get("GH_USE_KEYRING") == "1":
-        e.pop("GITHUB_TOKEN", None)
+    e["GH_REPO"] = repo
     return e
 
 FIELDS = "state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,headRefName,title,labels,comments,reviews,statusCheckRollup,updatedAt"
 
 def fetch_pr():
-    cmd = [
-        "gh", "pr", "view", pr_num,
-        "--repo", repo,
-        "--json", FIELDS
-    ]
+    cmd = ["bash", GH_SH, "view-json", "pr", pr_num, "--fields", FIELDS]
     res = subprocess.run(cmd, capture_output=True, text=True, env=gh_env())
     if res.returncode != 0:
         return None, res.stderr.strip()
@@ -139,10 +137,8 @@ def fetch_pr():
         return None, str(e)
 
 def fetch_workflows(head_sha, head_branch, pr_number):
-    cmd = [
-        "gh", "api", "--paginate", "--slurp",
-        f"repos/{repo}/actions/runs?head_sha={head_sha}&per_page=100",
-    ]
+    cmd = ["bash", GH_SH, "api", "--paginate", "--slurp",
+           f"repos/{repo}/actions/runs?head_sha={head_sha}&per_page=100"]
     res = subprocess.run(cmd, capture_output=True, text=True, env=gh_env())
     if res.returncode != 0:
         return None, res.stderr.strip()

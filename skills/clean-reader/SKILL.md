@@ -7,6 +7,10 @@ description: "Review supplied documentation or video narration as a first-time r
 
 A clean reader has no project or conversation context. It reads only the prose you give it and reports where a first-time reader gets stuck.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Requirements
 
 - macOS with `/usr/bin/sandbox-exec`. On any other host the helper refuses to run. Do not run it without the sandbox and do not claim source isolation on Linux. Report the limit, keep the goal and the prose, and say that no review ran.

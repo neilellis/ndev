@@ -8,6 +8,10 @@ license: MIT
 
 This skill makes raster images with an image-generation tool. It does not draw SVG or HTML. For diagrams that are code (architecture, flows, sequences, data charts), use `diagram-design` or `archify`.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Choose a layout for the structure of the information and a style for its appearance. Use the combination, aspect, language and backend that the user asks for. Otherwise, choose from the content: `bento-grid` with `craft-handmade` suits an overview. Ask only when a missing choice changes the result a lot.
 
 ## Brand

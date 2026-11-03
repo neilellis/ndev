@@ -7,6 +7,10 @@ description: "Push the current change in a website or app project and keep fixin
 
 The user may not be technical. Tell them what is happening in plain English, with clear links. Never merge. Merging needs `/publish` or "Approve and publish" (see `publish`).
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), do not use this skill's push and wait: call the tool for the current stage. `mcp__ndev__finishedDevelopment`, then `mcp__ndev__finishedReview`, push and mark the PR ready, and the workflow watches the checks. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Writing rules
 
 If `<project root>/.neil-dev.json` has a `branding` key, follow the project's brand copy rules for progress and ready reports. Use the `copy` skill for those rules, and when a fix changes text on the site. Find the root with `git rev-parse --show-toplevel`.

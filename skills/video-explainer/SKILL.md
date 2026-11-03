@@ -7,6 +7,10 @@ description: "Write and review an explainer video of 2 to 5 minutes that shows h
 
 An explainer shows how something works and why it matters to the viewer's organisation. It teaches first. The sales angle is slight: the viewer should finish understanding the idea, and only then hear one soft invitation. The shared rules are in `video-types`.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Purpose and shape
 
 Use this shape, one point per scene:

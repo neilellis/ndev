@@ -42,7 +42,7 @@ case "$1 $2" in
 ]}}}}
 JSON
   ;;
-  "api -X") echo '{"number":42,"html_url":"https://github.com/acme/app/issues/42"}' | jq -c '{number, url: .html_url}' ;;
+  "api -X") echo "https://github.com/acme/app/issues/42" ;;  # gh.sh asks for --jq .html_url
   *) echo "stub gh: unexpected: $*" >&2; exit 9 ;;
 esac
 STUB

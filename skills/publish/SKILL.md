@@ -7,6 +7,10 @@ description: "Merge the current change's pull request in a website or app projec
 
 When the user types `/publish`, that is their approval to merge the pull request for the current change. Use `finish` to get it ready and `github` for pull request operations. Never push to the base branch directly. Report only results that tools confirm.
 
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, and end with `mcp__ndev__done`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 If `<project root>/.neil-dev.json` has a `branding` key, follow the project's brand copy rules for the publication report. Use the `copy` skill for those rules. Find the root with `git rev-parse --show-toplevel`.
 
 ## What you need from the project

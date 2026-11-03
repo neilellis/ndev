@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 In a repository that serves both harnesses, Claude reads `.claude/`, and Codex reads `.agents/` and `.codex/`. Some facts live in a different file in each tree, and **neither harness reads the other notation**.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 | Fact | Claude reads | Codex reads |
 |---|---|---|
 | skill body | `.claude/skills/<skill>/SKILL.md` | `.agents/skills/<skill>/SKILL.md` |

@@ -12,7 +12,7 @@ import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
 import { CHECK_DIR, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check } from './effects'
-import { CHANGE_TYPES, inferChangeTypes, isDocsPath, isWebPath, reviewerBrief, type ChangeType } from './change-types'
+import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isWebPath, reviewerBrief, type ChangeType } from './change-types'
 import { takeScreenshots } from './screenshot'
 import { ATTEMPT_LIMIT, afterStarted, afterTool, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
@@ -66,6 +66,8 @@ export type Workflow = {
   history: { at: number; tool: string; from?: State; to: State }[]
   // The stage hooks that a change of state fired, and the result that the tool leaving the stage took.
   hooks?: Partial<Record<StageHook, { firedAt: number; result?: string; agentId?: string; answer?: string }>>
+  // Heavy mode only: the second reviewer. hooks.review holds the standards axis, this the specification axis.
+  reviewSpec?: { agentId?: string; answer?: string }
   // What the change holds: the union of each type that the agent declared and that the diff showed.
   changeTypes?: ChangeType[]
   // The changed web files, for the screenshots that the next step asks for.
@@ -668,21 +670,33 @@ export async function startReview($: EngineInterface, wf: Workflow, facts: Facts
     ...reviewerBrief(reviewTypes(wf)),
     'Report only. Do not edit, commit or push. Give each finding with its file and line, Critical and Important first.',
   ].filter(Boolean).join('\n')
+  // A heavy change gets two reviewers, because one who holds both questions lets each hide the other (work-heavy F3c).
+  const twoAxes = facts.mode === 'heavy' && !isDocsOnly(reviewTypes(wf))
+  wf.reviewSpec = undefined
   try {
-    const spawned = await $.agent.spawn({ subagentType: 'ndev:diff-reviewer', description: `Review #${wf.issue}`, prompt, cwd: wf.root })
-    if ('deny' in spawned && spawned.deny) return `The code review did not start: ${String(spawned.deny)}. ${hand}${after}`
-    wf.hooks = { ...wf.hooks, review: { firedAt: wf.hooks?.review?.firedAt ?? (await $.clock.now()), agentId: spawned.agentId } }
-    return `The plugin started the code review${spawned.agentId ? `: agent ${spawned.agentId}` : ''}. Do not start another. Its answer comes to you when it ends.${after}`
+    const first = await $.agent.spawn({ subagentType: 'ndev:diff-reviewer', description: `Review #${wf.issue}${twoAxes ? ': standards' : ''}`, prompt: twoAxes ? `${prompt}\n${AXIS_STANDARDS}` : prompt, cwd: wf.root })
+    if ('deny' in first && first.deny) return `The code review did not start: ${String(first.deny)}. ${hand}${after}`
+    wf.hooks = { ...wf.hooks, review: { firedAt: wf.hooks?.review?.firedAt ?? (await $.clock.now()), agentId: first.agentId } }
+    if (!twoAxes) return `The plugin started the code review${first.agentId ? `: agent ${first.agentId}` : ''}. Do not start another. Its answer comes to you when it ends.${after}`
+    const second = await $.agent.spawn({ subagentType: 'ndev:diff-reviewer', description: `Review #${wf.issue}: specification`, prompt: `${prompt}\n${AXIS_SPECIFICATION}`, cwd: wf.root })
+    if ('deny' in second && second.deny) return `The standards review started, and the specification review did not: ${String(second.deny)}. Start it yourself: the ndev:diff-reviewer agent, with this question. ${AXIS_SPECIFICATION}${after}`
+    wf.reviewSpec = { agentId: second.agentId }
+    return `The plugin started the two-axis code review: two agents, one for standards and one for the specification. Do not start another. Each answer comes to you when it ends. Keep the two reports apart.${after}`
   } catch (error) {
     return `The code review did not start: ${error instanceof Error ? error.message : String(error)}. ${hand}${after}`
   }
 }
 
+const AXIS_STANDARDS = 'Review axis: standards. Where does this diff break a rule that this repository wrote down? Cite the file and the rule. Read AGENTS.md or CLAUDE.md, and the F3c section of skills/work-heavy/references/implement.md in the plugin. Do not judge whether the change meets the issue: another reviewer does that.'
+const AXIS_SPECIFICATION = 'Review axis: specification. Does this diff do what the issue and the plan in the PR body ask, and all of it? Name each requirement that is missing, partial or wrong, and each change that nothing asked for. Do not judge the code style: another reviewer does that.'
+
 // The reviewer has ended: keep its answer in the record, and give it to the main agent.
 export async function reviewerAnswered($: EngineInterface, wf: Workflow, agentId: string, reply: string): Promise<void> {
   const review = wf.hooks?.review
-  if (review?.agentId !== agentId || review.answer !== undefined) return
-  wf.hooks = { ...wf.hooks, review: { ...review, answer: reply.slice(0, 20_000) } }
+  const spec = wf.reviewSpec
+  if (spec?.agentId === agentId && spec.answer === undefined) wf.reviewSpec = { ...spec, answer: reply.slice(0, 20_000) }
+  else if (review?.agentId === agentId && review.answer === undefined) wf.hooks = { ...wf.hooks, review: { ...review, answer: reply.slice(0, 20_000) } }
+  else return
   await saveWorkflow($, wf)
   void $.prompt.submit({ text: `The code review of issue #${wf.issue} has ended:\n\n${reply}\n\nFix what it found with checkpoint, which holds those commits. Then call finishedReview with the result.` }).catch((error: unknown) => {
     $.ui.toast(`workflow: the answer of the review for #${wf.issue} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
@@ -691,10 +705,13 @@ export async function reviewerAnswered($: EngineInterface, wf: Workflow, agentId
 
 // A resume in the review stage: the answer is known, the reviewer still runs, or a restart lost it.
 async function resumeReview($: EngineInterface, wf: Workflow, facts: Facts): Promise<string> {
-  const review = wf.hooks?.review
-  if (review?.answer !== undefined) return `The code review answered:\n${review.answer}`
-  if (review?.agentId && (await $.agent.list()).some(a => a.id === review.agentId)) return `The code review still runs: agent ${review.agentId}.`
-  return startReview($, wf, facts, await componentNote($, wf))
+  const parts = [wf.hooks?.review, ...(wf.reviewSpec ? [wf.reviewSpec] : [])]
+  const running = new Set((await $.agent.list()).map(a => a.id))
+  const lost = parts.some(p => p?.answer === undefined && !(p?.agentId && running.has(p.agentId)))
+  if (lost) return startReview($, wf, facts, await componentNote($, wf))
+  const answers = parts.filter(p => p?.answer !== undefined).map(p => `The code review answered:\n${p!.answer}`)
+  const live = parts.filter(p => p?.answer === undefined).map(p => `The code review still runs: agent ${p!.agentId}.`)
+  return [...answers, ...live].join('\n')
 }
 
 async function finishedReview($: EngineInterface, c: Ctx): Promise<string> {

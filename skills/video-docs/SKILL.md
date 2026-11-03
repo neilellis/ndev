@@ -7,6 +7,10 @@ description: "Keep documentation videos true to the documentation they cite: tra
 
 A documentation video repeats claims from documentation pages. When a page changes, the video can become wrong. This skill keeps each video traceable to its sources and its evidence tied to the files it reviewed. Use the `video-*` skills for the method of making the video, and `video-how-to` or `video-explainer` for its words. Work from the repository root. This skill does not authorise publishing or deployment.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Inputs
 
 Each video has an authored content file, for example `<videos folder>/<id>/content.json`. Each scene names its supporting pages in `sources`, and can name a diagram in `visual.diagram`. Edit the content file, never a generated script copy. The project's instructions name the videos folder, the IDs, and the commands of its build.

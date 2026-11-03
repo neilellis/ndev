@@ -16,6 +16,8 @@ from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 PR_LIMIT = 1000
+# All GitHub reads go through gh.sh: the gh command first, REST when it fails (see scripts/github/gh.sh).
+GH_SH = Path(__file__).resolve().parent.parent / "github" / "gh.sh"
 ATTENTION_LIMIT = 10
 PR_FIELDS = (
     "number,title,url,state,headRefName,headRefOid,isDraft,mergeable,mergeStateStatus,"
@@ -52,8 +54,16 @@ class Commands:
     def git(self, *args: str, cwd: Path | None = None) -> str:
         return self.run(["git", *args], cwd)
 
-    def gh(self, *args: str) -> Any:
-        return json.loads(self.run(["gh", *args]))
+    def gh_lines(self, slug: str, *args: str) -> list[Any]:
+        """One JSON value for each line gh.sh prints."""
+        self.env["GH_REPO"] = slug
+        return [json.loads(line) for line in self.run(["bash", str(GH_SH), *args]).splitlines() if line.strip()]
+
+    def gh(self, slug: str, *args: str) -> Any:
+        values = self.gh_lines(slug, *args)
+        if len(values) != 1:
+            raise StatusError(f"gh.sh {args[0]} printed {len(values)} values, expected one")
+        return values[0]
 
 
 def require_object(value: Any, label: str) -> dict[str, Any]:
@@ -137,10 +147,9 @@ def issue_reference_matches(value: Any, number: int, slug: str) -> bool:
 def pull_requests(commands: Commands, slug: str, args: argparse.Namespace) -> list[dict[str, Any]]:
     logger.info("Reading GitHub work status for %s", slug)
     if args.pr:
-        values = [commands.gh("pr", "view", str(args.pr), "--repo", slug, "--json", PR_FIELDS)]
+        values = [commands.gh(slug, "view-json", "pr", str(args.pr), "--fields", PR_FIELDS)]
     else:
-        values = require_list(commands.gh("pr", "list", "--state", "open", "--limit", str(PR_LIMIT),
-                                         "--repo", slug, "--json", PR_FIELDS), "PR list")
+        values = commands.gh_lines(slug, "view-json", "pr", "--open", "--limit", str(PR_LIMIT), "--fields", PR_FIELDS)
         if len(values) >= PR_LIMIT:
             raise StatusError("PR query reached its 1000-result limit. Use --pr for an exact snapshot.")
     matches: list[dict[str, Any]] = []
@@ -210,8 +219,9 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                               "observed_at": datetime.now(timezone.utc).isoformat(),
                               "prs": [], "branches": [], "worktrees": [], "ownership_probe": "caller confirmation only"}
     if args.issue:
-        issue = require_object(commands.gh("issue", "view", str(args.issue), "--repo", slug,
-                                           "--json", "number,title,url,state"), "issue")
+        issue = require_object(commands.gh(slug, "issue-read", str(args.issue)), "issue")
+        issue = {"number": issue.get("number"), "title": issue.get("title"), "url": issue.get("url"),
+                 "state": str(issue.get("state", "")).upper()}
         if issue.get("number") != args.issue or issue.get("state") not in {"OPEN", "CLOSED"}:
             raise StatusError("Invalid issue number or state")
         report["issue"] = issue

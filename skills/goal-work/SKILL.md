@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 `$ARGUMENTS` selects a set of issues. If it is empty, ask for the condition. This skill is for an attended set. Use `work-heavy-auto` for the Ready column and `work-light` or `work-heavy` for one issue that is already specified.
 
+## The workflow
+
+Call `mcp__ndev__started(issue, shortName)` for each issue, and follow each answer until `mcp__ndev__done`. The workflow keeps the agent on track, so do not add a second loop for it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 Load `work-heavy` and `testing` first. They define worktree isolation, PR-only delivery, commit trailers, TDD, test tiers, verification and knowledge ingest. This skill adds selection, duplicate detection, grouping and user handoffs. Never close an issue that seems solved without the user's decision.
 
 ## Settings

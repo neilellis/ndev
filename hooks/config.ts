@@ -13,9 +13,17 @@ export type NeilDevConfig = {
   github?: GitHub
   worktreeStacks?: WorktreeStacks
   services?: Services
+  projectLevel?: ProjectLevel
+  workflow?: boolean
 }
 
-// The project's web consoles, by name ("supabase", "vercel"), that /ndev:view shows as links.
+// How much risk the workflow tools take. straw_man: the agent may commit to main and merge PRs.
+// poc: the agent may merge PRs. small_project and formal_project: a human merges, and
+// formal_project also refuses a skipped review. Absent: a human merges, as in small_project.
+export const PROJECT_LEVELS = ['straw_man', 'poc', 'small_project', 'formal_project'] as const
+export type ProjectLevel = (typeof PROJECT_LEVELS)[number]
+
+// The project's web consoles, by name ("supabase", "vercel"), that /view shows as links.
 export type Services = Record<string, { url: string }>
 
 // What the session-end hook does with the docker stacks a worktree lists in .neil-dev.worktree.json
@@ -43,7 +51,7 @@ export type LoadedConfig = {
   error?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const MODES: readonly string[] = ['light', 'heavy']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
@@ -61,6 +69,8 @@ const validate = (raw: unknown): string | undefined => {
   if (unknown.length > 0) return `unknown key ${unknown.map(k => `"${k}"`).join(', ')}; the keys are ${KEYS.join(', ')}`
   if (value.mode !== undefined && !MODES.includes(value.mode as string)) return `"mode" is ${JSON.stringify(value.mode)}; use "light" or "heavy"`
   if (value.steering !== undefined && !STEERINGS.includes(value.steering as string)) return `"steering" is ${JSON.stringify(value.steering)}; use "interactive" or "auto"`
+  if (value.projectLevel !== undefined && !(PROJECT_LEVELS as readonly unknown[]).includes(value.projectLevel)) return `"projectLevel" is ${JSON.stringify(value.projectLevel)}; use ${PROJECT_LEVELS.map(l => `"${l}"`).join(', ')}`
+  if (value.workflow !== undefined && typeof value.workflow !== 'boolean') return `"workflow" is ${JSON.stringify(value.workflow)}; use true or false`
   if (value.quality !== undefined && (typeof value.quality !== 'object' || value.quality === null || Array.isArray(value.quality))) return '"quality" must be an object'
   if (value.branding !== undefined) {
     const b = value.branding as Record<string, unknown>
@@ -135,7 +145,7 @@ export async function loadConfigAt($: EngineInterface, root: string): Promise<Lo
 export async function saveSetting(
   $: EngineInterface,
   loaded: LoadedConfig,
-  key: 'mode' | 'steering' | 'github',
+  key: 'mode' | 'steering' | 'github' | 'workflow',
   value: unknown,
 ) {
   const current = loaded.exists && !loaded.error ? (JSON.parse(await $.fs.read(loaded.path)) as Record<string, unknown>) : {}

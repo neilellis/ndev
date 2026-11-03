@@ -7,6 +7,14 @@ description: "Apply the testing taxonomy and verification rules across Python an
 
 Choose the tier that can observe the changed behaviour, and keep the test at that boundary. The plugin's `kb/testing.md` and `kb/guards.md` hold the full method.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
+## The workflow
+
+The check scripts in `scripts/ndev/workflow/` run these tests when the workflow commits, pushes or marks a PR ready. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 | Tier | Use |
 |---|---|
 | Unit | Deterministic pure logic. No network, database, file storage, object store, LLM, heavy model, browser or external process. |

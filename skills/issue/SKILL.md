@@ -8,6 +8,10 @@ argument-hint: "[--orca] <description of the issue>"
 
 The description is: $ARGUMENTS
 
+## The workflow
+
+After you file an issue that this session will work on, call `mcp__ndev__started(issue, shortName)`. While a workflow runs, file other work with `mcp__ndev__followUp(mode, message)`, which also links it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 If the arguments contain `--orca`, remove it from the description. After the issue is created and on the board (steps 1 to 5), do step 6. Never open the workspace before the issue exists, because the workspace needs the issue number.
 
 If the description is empty, ask what the issue is, in one question, and stop.

@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 Take the ratings file from the arguments, else from the project's CLAUDE.md. A usual place is `docs/analysis/ratings.md`.
 
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Read
 
 Read the current repository: `README.md`, `CLAUDE.md` / `AGENTS.md`, the main source packages, the tests, the migrations and the docs. Use the paths that exist now, not remembered ones.

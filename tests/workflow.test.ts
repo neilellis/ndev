@@ -36,6 +36,7 @@ const engine = (on: On, opts: Opts = {}) => {
   }))
   const s = {
     now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
+    prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     clockSleeps: 0, staleSaves: 0, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
@@ -2395,6 +2396,15 @@ test('in heavy mode the reviewer is told to check the work-heavy requirements to
   expect(w.spawns[0]!.prompt).toContain('work-heavy')
 })
 
+test('in heavy mode two reviewers start, one for each axis, and in light mode one', async ($, on) => {
+  const w = engine(on, { config: { mode: 'heavy' } })
+  await toReview($, w)
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer', 'ndev:diff-reviewer'])
+  expect(w.spawns[0]!.prompt).toContain('axis: standards')
+  expect(w.spawns[1]!.prompt).toContain('axis: specification')
+  expect(w.spawns[1]!.prompt).not.toContain('axis: standards')
+})
+
 test('a reviewer that is refused leaves a clear instruction, and the commit stays', async ($, on) => {
   const w = engine(on)
   w.s.spawnDeny = 'a limit of the host'
@@ -2413,6 +2423,25 @@ test('the answer of the reviewer is recorded and reaches the agent', async ($, o
   expect(w.state()?.hooks?.review?.answer).toContain('a.ts:3')
   expect(w.prompts.join('\n')).toContain('a.ts:3')
   expect(w.prompts.join('\n')).toContain('finishedReview')
+})
+
+test('the second reviewer has its own answer, and it reaches the agent too', async ($, on) => {
+  const w = engine(on, { config: { mode: 'heavy' }, wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'r-1', answer: 'standards are fine' } }, reviewSpec: { agentId: 'r-2' } } as never })
+  await start($, w)
+  await $.turn.complete({ agentId: 'r-2', answer: 'Critical: the issue asks for b.ts:9' } as never)
+  await settle()
+  expect((w.state() as unknown as { reviewSpec: { answer?: string } }).reviewSpec.answer).toContain('b.ts:9')
+  expect(w.state()?.hooks?.review?.answer).toBe('standards are fine')
+  expect(w.prompts.join('\n')).toContain('b.ts:9')
+})
+
+test('a resume in heavy mode gives both answers, and does not start the reviewers again', async ($, on) => {
+  const w = engine(on, { config: { mode: 'heavy' }, wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'r-1', answer: 'standards are fine' } }, reviewSpec: { agentId: 'r-2', answer: 'the spec is met' } } as never })
+  await start($, w)
+  const said = (await tool($, 'started', { issue: 7 })).text
+  expect(said).toContain('standards are fine')
+  expect(said).toContain('the spec is met')
+  expect(w.spawns).toHaveLength(0)
 })
 
 test('the turn of another agent is not taken for the review', async ($, on) => {
@@ -2607,6 +2636,19 @@ test('status names the change types', async ($, on) => {
 
 const orcaVerbs = (w: W) => w.orcaCalls.map(c => (c[0] === 'tab' ? `tab ${c[1]}` : c[0]))
 const SHOTS = `${ROOT}/.git/worktrees/x/ndev-screenshots/${SHA.slice(0, 8)}`
+
+test('screenshot reads a login page from the host and path of the address, not from its query', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing', prs: [12] } })
+  await start($, w)
+  w.s.pageUrl = 'https://app.test/login'
+  const went = await tool($, 'screenshot', { url: 'https://app.test/go?to=https://app.test/login', viewports: ['390x844'], schemes: ['light'] })
+  expect(went.isError).toBe(true)
+  expect(went.text).toContain('went to the login page')
+  w.s.pageUrl = 'https://app.test/help?from=/login'
+  const help = await tool($, 'screenshot', { url: 'https://app.test/help?from=/login', viewports: ['390x844'], schemes: ['light'] })
+  expect(help.text).toContain('Saved 1 image of')
+  expect(help.isError).toBe(false)
+})
 
 test('screenshot takes each viewport in each scheme, saves under the git folder and closes its tab', async ($, on) => {
   const w = engine(on)

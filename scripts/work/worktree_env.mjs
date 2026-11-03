@@ -4,6 +4,7 @@
 // the plugin's session-end hook can stop them:
 //   { "version": 2, "settings": { "mode": ..., "steering": ... }, "resources": { "docker": [<stack>...], "dev-servers": { "<name>": <server> } } }
 // "settings" is optional: the development mode and steering this worktree chose (/dev mode, /dev steering).
+// "workflow" is optional: the state of the workflow tools (hooks/workflow/machine.ts owns its meaning).
 //
 //   worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z>
 //                             [--workdir <dir holding supabase/>] [--worktree <dir>]
@@ -20,6 +21,7 @@
 //   worktree-env.sh migrate [--worktree <dir>]
 //   worktree-env.sh init [--worktree <dir>]
 //   worktree-env.sh set-setting --key mode|steering --value <value> [--worktree <dir>]
+//   worktree-env.sh set-workflow --expect-rev <n> [--worktree <dir>]   (the state as JSON on stdin)
 //
 // add-dev-server names a running server by what it shows ("docs", "ui"); the same name again
 // replaces the entry. It reads the command line and start time of the pid from ps. stop-all stops
@@ -29,7 +31,8 @@
 //
 // Exit codes: 0 done; 1 a stop failed (its entry stays); 2 bad usage, an unreadable file or a
 // held lock; 3 refused (the main checkout, a file that is not git-ignored, or an id or pid that
-// another worktree lists); 4 remove-stack or remove-dev-server: not listed.
+// another worktree lists); 4 remove-stack or remove-dev-server: not listed; 5 set-workflow: a stale
+// revision.
 import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -112,6 +115,31 @@ function refuseNotIgnored(root, common) {
   throw new Fail(2, `git check-ignore exited ${r.status} in ${root}: ${r.stderr.trim()}`)
 }
 
+// The workflow tools start in any project, and an issue branch should not carry a .gitignore change,
+// so set-workflow ignores its own record in the local info/exclude. .gitignore is not edited. A
+// tracked record, or a .gitignore that un-ignores it, is still refused.
+function ignoreLocally(root, common) {
+  const tracked = git(root, ['ls-files', '--', FILE])
+  if (tracked.status !== 0) throw new Fail(2, `git ls-files ${FILE} exited ${tracked.status} in ${root}: ${tracked.stderr.trim()}`)
+  if (tracked.stdout.trim() !== '') {
+    throw new Fail(3, [
+      `worktree-env: git tracks ${FILE} in ${root}, so it could be committed. Nothing was recorded.`,
+      `Repair: run \`git rm --cached ${FILE}\` and commit, then run this command again.`,
+    ].join('\n'))
+  }
+  const ignored = git(root, ['check-ignore', '-q', FILE])
+  if (ignored.status !== 1) return refuseNotIgnored(root, common)
+  const exclude = join(common, 'info', 'exclude')
+  try {
+    const text = existsSync(exclude) ? readFileSync(exclude, 'utf8') : ''
+    mkdirSync(dirname(exclude), { recursive: true })
+    appendFileSync(exclude, `${text === '' || text.endsWith('\n') ? '' : '\n'}${FILE}\n`)
+  } catch (error) {
+    throw new Fail(2, `worktree-env: could not add ${FILE} to ${exclude}: ${error.message}. Nothing was recorded. Repair: add the line to the project's .gitignore and commit it, then run this command again.`)
+  }
+  refuseNotIgnored(root, common)
+}
+
 const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isText = v => typeof v === 'string' && v !== ''
 const keysOutside = (value, allowed) => Object.keys(value).filter(k => !allowed.includes(k))
@@ -121,7 +149,7 @@ const SERVER_KEYS = ['pid', 'port', 'command', 'cwd', 'started', 'lastStop']
 const empty = () => ({ version: VERSION_NOW, settings: {}, resources: { docker: [], 'dev-servers': {} } })
 
 // The file's content: settings only when there are some, so an empty record stays as before.
-const content = (settings, resources) => ({ version: VERSION_NOW, ...(Object.keys(settings).length > 0 ? { settings } : {}), resources })
+const content = (settings, resources, workflow) => ({ version: VERSION_NOW, ...(Object.keys(settings).length > 0 ? { settings } : {}), resources, ...(workflow ? { workflow } : {}) })
 
 function settingsProblem(settings) {
   if (!isObject(settings)) return 'must hold "settings" as an object'
@@ -160,12 +188,13 @@ function serverProblem(name, d) {
 // The problem with a parsed record, or undefined.
 function shapeProblem(raw) {
   if (!isObject(raw)) return 'must hold a JSON object'
-  const extra = keysOutside(raw, ['version', 'settings', 'resources'])
-  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, settings, resources`
+  const extra = keysOutside(raw, ['version', 'settings', 'resources', 'workflow'])
+  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, settings, resources, workflow`
   if (raw.settings !== undefined) {
     const problem = settingsProblem(raw.settings)
     if (problem) return problem
   }
+  if (raw.workflow !== undefined && !isObject(raw.workflow)) return 'must hold "workflow" as an object'
   if (raw.version !== VERSION_NOW) return `has "version" ${JSON.stringify(raw.version)}; this script reads version ${VERSION_NOW}`
   if (!isObject(raw.resources)) return 'must hold a "resources" object'
   const kinds = keysOutside(raw.resources, ['docker', 'dev-servers'])
@@ -208,7 +237,7 @@ function readRecord(root) {
   }
   const problem = shapeProblem(raw)
   if (problem) throw new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed or stopped. Repair: fix the file (see the plugin README, "Worktree resources"), or delete it if nothing it lists still runs.`)
-  return { version: VERSION_NOW, settings: raw.settings ?? {}, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} } }
+  return { version: VERSION_NOW, settings: raw.settings ?? {}, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} }, workflow: raw.workflow }
 }
 
 // Write a temporary file, then rename it, so a reader never sees half a file.
@@ -280,7 +309,7 @@ function withLock(root, fn) {
 function change(root, edit) {
   withLock(root, () => {
     const record = readRecord(root)
-    writeRecord(join(root, FILE), content(record.settings, edit(record.resources)))
+    writeRecord(join(root, FILE), content(record.settings, edit(record.resources), record.workflow))
   })
 }
 
@@ -322,9 +351,33 @@ function setSetting(values) {
   refuseNotIgnored(root, common)
   withLock(root, () => {
     const record = readRecord(root)
-    writeRecord(join(root, FILE), content({ ...record.settings, [key]: value }, record.resources))
+    writeRecord(join(root, FILE), content({ ...record.settings, [key]: value }, record.resources, record.workflow))
   })
   console.log(`worktree-env: saved ${key} ${value} in ${join(root, FILE)}.`)
+}
+
+// Saves the workflow state (hooks/workflow), read from stdin as a JSON object. --expect-rev is the
+// revision the caller read: a stale writer gets exit 5 and changes nothing. The record is allowed
+// in the main checkout here only, for a straw_man project that works directly on main.
+function setWorkflow(values) {
+  const expected = Number(need(values, 'expect-rev'))
+  if (!Number.isInteger(expected) || expected < 0) throw new Fail(2, `worktree-env: --expect-rev "${values['expect-rev']}" is not a revision number.`)
+  let workflow
+  try {
+    workflow = JSON.parse(readFileSync(0, 'utf8'))
+  } catch (error) {
+    throw new Fail(2, `worktree-env: set-workflow reads a JSON object from stdin, and the text is not valid JSON (${error.message}). Nothing was changed.`)
+  }
+  if (!isObject(workflow)) throw new Fail(2, 'worktree-env: set-workflow reads a JSON object from stdin, and the text is another JSON value. Nothing was changed.')
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
+  ignoreLocally(root, gitDirs(root).common)
+  withLock(root, () => {
+    const record = readRecord(root)
+    const current = record.workflow?.rev ?? 0
+    if (current !== expected) throw new Fail(5, `worktree-env: the workflow in ${join(root, FILE)} is at revision ${current}, and this writer expected ${expected}. Nothing was changed. Repair: read the state again (the status tool) and retry.`)
+    writeRecord(join(root, FILE), content(record.settings, record.resources, { ...workflow, rev: expected + 1 }))
+  })
+  console.log(String(expected + 1))
 }
 
 // Rewrites a version 1 file ({ version: 1, stacks: [...] }) as version 2, with the stacks under
@@ -753,7 +806,7 @@ function stopStacks(root, stacks, policy, at) {
 }
 
 // Stops one resource: a dev server (--name) or a docker stack (--kind --project-id [--on-end]).
-// The pane /ndev:view calls this for its stop buttons.
+// The pane /view calls this for its stop buttons.
 function stopResource(values) {
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
@@ -856,6 +909,7 @@ function main(argv) {
         cwd: { type: 'string' },
         key: { type: 'string' },
         value: { type: 'string' },
+        'expect-rev': { type: 'string' },
       },
       strict: true,
     }))
@@ -880,6 +934,9 @@ function main(argv) {
       return 0
     case 'migrate':
       migrate(values)
+      return 0
+    case 'set-workflow':
+      setWorkflow(values)
       return 0
     case 'set-setting':
       setSetting(values)

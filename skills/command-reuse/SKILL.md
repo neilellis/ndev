@@ -8,6 +8,10 @@ description: "Reuse tested commands for local checks, saved logs, PR waits, and 
 Use a tested command for a known procedure. Keep the reasoning in the main agent and the repeated mechanics in scripts.
 This is a command guide, not a development workflow. Do not load every linked skill or audit history for each fix.
 
+## The workflow
+
+A wait or a commit in a running workflow belongs to the `mcp__ndev__*` tools, so do not script those. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Find the command once
 
 Use this table before you search the repository or write inline shell or Python. Run commands from the task worktree. If a script is missing, report its path. Do not invent a silent replacement.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The ndev files of a repository's git worktrees, for the /ndev:view pane.
+// The ndev files of a repository's git worktrees, for the /view pane.
 //
 //   ndev-files.sh list --json [--repo <dir>]
 //   ndev-files.sh create --file .neil-dev.json|.neil-dev.env --worktree <dir> [--repo <dir>]

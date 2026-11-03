@@ -8,6 +8,10 @@ description: "Fix and merge every outstanding open pull request one at a time, o
 Fix each open PR one at a time, oldest first. Merge it when it is fixed. Then merge `origin/<base>` into the next PR, fix it and merge it. Repeat until no open PRs remain.
 Where an agent has already worked on a PR, work with that agent. It has context that you do not have.
 
+## The workflow
+
+A worker on a PR calls `mcp__ndev__started(issue)` to resume its record, commits with `mcp__ndev__checkpoint`, and ends with `mcp__ndev__done`. This pass reads GitHub at most each 15 minutes. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 ## Before you start
 
 1. Read the repository's CLAUDE.md and AGENTS.md. Where they name a push script, a wait helper, a precheck or a fix-CI skill, use it. The repository's rules win over this skill, but this skill authorises the merge.

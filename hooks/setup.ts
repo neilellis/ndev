@@ -28,21 +28,29 @@ async function ask($: EngineInterface, question: string, header: string, options
 }
 
 async function detectRepo($: EngineInterface, root: string) {
-  const ran = await $.process.run(['gh', 'repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], {
+  const ran = await $.process.run(['bash', `${$.plugin.root}/scripts/github/gh.sh`, 'repo'], {
     cwd: root,
     timeoutMs: 15000,
   })
-  const repo = ran.stdout.trim()
-  return ran.exitCode === 0 && REPO.test(repo) ? repo : undefined
+  if (ran.exitCode !== 0) return undefined
+  // Exit 0 with no JSON is a broken script: say which, and what it printed.
+  let parsed: { repo?: string }
+  try {
+    parsed = JSON.parse(ran.stdout) as { repo?: string }
+  } catch {
+    throw new Error(`gh.sh repo in ${root} exited 0 but printed no JSON: "${ran.stdout.trim().slice(0, 160)}" ${ran.stderr.trim().slice(0, 160)}`)
+  }
+  const repo = parsed.repo ?? ''
+  return REPO.test(repo) ? repo : undefined
 }
 
 async function listBoards($: EngineInterface, owner: string, root: string): Promise<Found> {
-  const ran = await $.process.run(['gh', 'project', 'list', '--owner', owner, '--format', 'json', '--limit', '30'], {
+  const ran = await $.process.run(['bash', `${$.plugin.root}/scripts/github/gh.sh`, 'project-list', owner], {
     cwd: root,
     timeoutMs: 15000,
   })
   if (ran.exitCode !== 0) {
-    return { boards: [], error: `gh project list --owner ${owner} exited ${ran.exitCode}: ${ran.stderr.trim().slice(0, 160)}` }
+    return { boards: [], error: `gh.sh project-list ${owner} exited ${ran.exitCode}: ${ran.stderr.trim().slice(0, 160)}` }
   }
   try {
     const parsed = JSON.parse(ran.stdout) as { projects?: { number: number; title: string; closed?: boolean }[] }
