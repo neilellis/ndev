@@ -14,6 +14,7 @@ If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `b
 Delight is motion that tells the reader something: their action landed, the work moves, something changed, it is their turn. Start from those moments, not from a library's catalogue. [references/delight.md](references/delight.md) lists the moments and their patterns, the tests each idea must pass, a verdict and licence for each library, and a review checklist.
 
 - Use CSS first: transitions on the brand's tokens, `@starting-style` for entries, `::details-content` for disclosures. Use Motion only where CSS cannot do the job.
+- Before you install or write a component, read `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` and choose it from there.
 - For a motion-rich control that shadcn/ui lacks (hold to confirm, a progress ring), look at [Kokonut UI](https://kokonutui.com/) (MIT). It installs through the shadcn registry. Change its timing and colours to the brand before it ships.
 - Use [Aceternity UI](https://ui.aceternity.com/), Magic UI and Motion Primitives to study purpose, timing and state changes. Adapt the idea to the project's brand and content. Aceternity's licence does not allow its source files to be redistributed, so copy no code from it.
 - Use Motion’s official docs to check supported APIs, accessibility and performance. Check the installed version before adopting an API.

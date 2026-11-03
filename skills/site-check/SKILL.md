@@ -55,7 +55,7 @@ When you review page text, use `copy`. If `.neil-dev.json` at the project root (
 
 ## Failures
 
-Fix the cause of each problem: a wrong address, a missing page, a failing script or a moved external page. Do not skip links or relax the checks to get a pass. If a fix needs a new or replaced UI component, choose it from the plugin's `kb/ui-components.md`. If an external site is down or blocks checkers, tell the user and name the link. Report every problem to the user in plain English, with the page where you found it.
+Fix the cause of each problem: a wrong address, a missing page, a failing script or a moved external page. Do not skip links or relax the checks to get a pass. If a fix needs a new or replaced UI component, read `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` and choose it from there. If an external site is down or blocks checkers, tell the user and name the link. Report every problem to the user in plain English, with the page where you found it.
 
 ## Test the helpers
 

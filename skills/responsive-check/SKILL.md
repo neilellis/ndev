@@ -48,7 +48,7 @@ The default viewports are iPhone SE (320), iPhone 15 Pro (393), Pixel 7 (412), i
 ## 3. Fix
 
 - Fix the cause in the shared CSS or component, not with a media query for one device.
-- If a fix needs a new or replaced component, choose it from the plugin's `kb/ui-components.md`.
+- If a fix needs a new or replaced component, read `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` and choose it from there.
 - Use the patterns in [references/checks.md](references/checks.md): `min-width: 0` on flex and grid children, `svh`/`dvh`, `clamp()` type, container queries, safe-area insets, `overflow-x: auto` on a wide table.
 - For a redesign of a section, or when a fix needs a layout decision, use OpenDesign. See [references/open-design.md](references/open-design.md).
 - Run the matrix again. A fix is done only when the cell is green and its screenshot looks right.
