@@ -429,8 +429,12 @@ In an Orca workspace, each save of the state updates the workspace. Tools, the h
 | ---------------- | -------------------------------------------------------------------------------------------------------- |
 | `this_agent`     | A sub-issue that this PR closes. The state goes back to `developing`, because the evidence is now stale. |
 | `subagent`       | A new issue, and the reply tells the agent to start `issue-implementer` in its own worktree.             |
-| `orca_workspace` | A new issue, and a new Orca workspace with an agent on it.                                               |
+| `worktree`       | A new issue, and a new Orca workspace with a supervised worker on it. It has its own PR.                 |
 | `issue_only`     | A new issue only.                                                                                        |
+
+The mode `worktree` also takes `issues`, a list of existing issues. It then files nothing. One worker in one workspace carries them all on one PR, and the first line of `message` names the workspace. To give each issue its own PR, call `followUp` once for each issue.
+
+A closed or unreadable issue refuses the call by number, and nothing starts. An issue that a worker from this workflow already carries refuses too. The same call again starts no second worker. Orca wakes this session when the worker asks or ends. Each issue also becomes a sub-issue of the calling issue. A link that fails, for example because the issue has another parent, is a note with the repair and does not stop the worker.
 
 
 ## /flow

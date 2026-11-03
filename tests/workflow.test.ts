@@ -223,7 +223,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[2] === 'issue-new') return ok('{"number":31}\n')
       if (a[2] === 'pr-list') return ok(s.noOpenPr ? '' : '{"number":12}\n')
       if (a[2] === 'pr-edit') return ok('')
-      if (a[2] === 'subissues') return ok('')
+      if (a[2] === 'subissues') return s.linkFails ? ok('', 1, s.linkFails) : ok('')
       if (a[2] === 'commit-checks') return ok(JSON.stringify({ statuses: [], ...(s.checks as object) }))
       if (a[2] === 'feedback') return ok((s.comments as unknown[]).map(c => JSON.stringify(c)).join('\n'))
       if (a[2] === 'pr-ready') { ready.push(line); s.pr = { ...s.pr, draft: false }; return ok() }
@@ -260,6 +260,7 @@ const engine = (on: On, opts: Opts = {}) => {
         return answer({ result: expression.includes('innerWidth') ? String(s.pageWidth ?? s.viewportWidth) : expression.includes('location') ? s.pageUrl : String(s.dark) })
       }
       if (a[1] === 'screenshot' || a[1] === 'full-screenshot') return answer({ format: 'png', path: `/tmp/orca-shots/${orcaCalls.length}.png` })
+      if (a[2] === 'worker-start') return s.workerReceipt ? ok(JSON.stringify(s.workerReceipt), 1) : answer({ state: 'ready', dispatchId: 'ctx_1', runId: 'run_1', taskId: 'task_1' })
       if (a[1] === 'wait' || (a[1] === 'tab' && a[2] === 'close')) return answer({})
       if (a[2] === 'launch' && s.orcaFails) return ok('', 1, s.orcaFails)
       if (a[2] === 'show' && !s.orcaFails) return ok(JSON.stringify({ ok: true, result: { worktree: { linkedIssue: s.orcaLinked } } }))
@@ -953,16 +954,122 @@ test('a project that commits to its base branch keeps the name of its main check
   expect(w.orcaCalls.flat()).not.toContain('--display-name')
 })
 
-test('an Orca follow-up names its workspace <issue>-<short name>, and tells its agent that short name', async ($, on) => {
+// ---- followUp with the mode worktree ----
+const workerStarts = (w: W) => w.orcaCalls.filter(c => c[0] === 'orchestration' && c[1] === 'worker-start')
+const onDeveloping = async ($: Dollar, on: On) => {
   const w = engine(on, { wf: { state: 'developing', shortName: 'add-sub' } })
   inOrca(w)
   await start($, w)
-  await tool($, 'followUp', { mode: 'orca_workspace', message: 'Tidy: the old Config loader\nbody' })
-  const made = w.orcaCalls.find(c => c[0] === 'worktree' && c[1] === 'create')!
-  const name = arg(made, '--name')!
-  expect(name).toMatch(/^\d+-tidy-the-old-config-loader$/)
-  expect(arg(made, '--prompt')).toContain('shortName')
-  expect(arg(made, '--prompt')).toContain('tidy-the-old-config-loader')
+  return w
+}
+
+test('a worktree follow-up files one issue and starts one worker in a new workspace named <issue>-<short name>', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const r = await tool($, 'followUp', { mode: 'worktree', message: 'Tidy: the old Config loader\nbody' })
+  expect(w.gh.filter(c => c.includes('issue-new')).length).toBe(1)
+  const started = workerStarts(w)
+  expect(started.length).toBe(1)
+  expect(arg(started[0], '--worktree')).toBe('new-top-level')
+  expect(arg(started[0], '--name')).toBe('31-tidy-the-old-config-loader')
+  expect(started[0]).toContain('--keep-open')
+  expect(arg(started[0], '--spec')).toContain('shortName "tidy-the-old-config-loader"')
+  expect(arg(started[0], '--spec')).toContain('body')
+  expect(w.gh.some(c => c.includes('subissues link 7 31'))).toBe(true)
+  expect(r.text).toContain('run_1')
+})
+
+test('the old mode name orca_workspace is refused, and the refusal names worktree', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const r = await tool($, 'followUp', { mode: 'orca_workspace', message: 'Tidy\nbody' })
+  expect(r.text).toContain('worktree')
+  expect(r.text).toContain('Refused')
+  expect(w.gh.filter(c => c.includes('issue-new'))).toEqual([])
+  expect(workerStarts(w)).toEqual([])
+})
+
+test('a worktree follow-up with issues files nothing and starts one worker that carries them all on one PR', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [200, 166], message: 'Retire the runner\nThe brief' })
+  expect(r.text).not.toContain('Refused')
+  expect(w.gh.filter(c => c.includes('issue-new'))).toEqual([])
+  const started = workerStarts(w)
+  expect(started.length).toBe(1)
+  expect(arg(started[0], '--name')).toBe('166-retire-the-runner')
+  const spec = arg(started[0], '--spec')!
+  expect(spec).toContain('The brief')
+  expect(spec).toContain('issue 166')
+  expect(spec).toContain('#200')
+  expect(spec).toContain('same worktree and PR')
+  expect(w.gh.some(c => c.includes('subissues link 7 166'))).toBe(true)
+  expect(w.gh.some(c => c.includes('subissues link 7 200'))).toBe(true)
+  expect(r.text).toContain('/issues/166')
+  expect(r.text).toContain('/issues/200')
+})
+
+test('issues with a closed or unreadable issue are refused by number, and nothing starts', async ($, on) => {
+  const w = await onDeveloping($, on)
+  w.s.issueReadsFor = { 200: [{ state: 'closed', title: 'Old' }], 201: ['Could not resolve to an issue'] }
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [166, 200, 201], message: 'Stage\nbrief' })
+  expect(r.text).toContain('Refused')
+  expect(r.text).toContain('#200 is closed')
+  expect(r.text).toContain('#201')
+  expect(r.text).toContain('Could not resolve')
+  expect(workerStarts(w)).toEqual([])
+  expect(w.gh.some(c => c.includes('subissues link'))).toBe(false)
+})
+
+test('bad issues are refused before any read: another mode, an empty list, a non-number and the calling issue', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const reads = () => w.gh.filter(c => c.includes('issue-read 166')).length
+  const before = reads()
+  const refused = async (args: Record<string, unknown>, says: string) => {
+    const r = await tool($, 'followUp', { message: 'Stage\nbrief', ...args })
+    expect(r.text).toContain('Refused')
+    expect(r.text).toContain(says)
+  }
+  await refused({ mode: 'issue_only', issues: [166] }, 'worktree')
+  await refused({ mode: 'worktree', issues: [] }, 'issues')
+  await refused({ mode: 'worktree', issues: ['abc'] }, 'abc')
+  await refused({ mode: 'worktree', issues: [166, 7] }, '#7')
+  expect(reads()).toBe(before)
+  expect(workerStarts(w)).toEqual([])
+})
+
+test('the same worktree call again starts no second worker, and an issue with a worker is not started by another call', async ($, on) => {
+  const w = await onDeveloping($, on)
+  await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  const again = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  expect(again.text).not.toContain('Refused')
+  expect(again.text).toContain('ctx_1')
+  expect(workerStarts(w).length).toBe(1)
+  const other = await tool($, 'followUp', { mode: 'worktree', issues: [166, 200], message: 'Another\nbrief' })
+  expect(other.text).toContain('Refused')
+  expect(other.text).toContain('#166')
+  expect(workerStarts(w).length).toBe(1)
+})
+
+test('a sub-issue link that fails is said with its repair, and the worker still counts as started', async ($, on) => {
+  const w = await onDeveloping($, on)
+  w.s.linkFails = 'Issue may not contain duplicate sub-issues'
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\\nbrief' })
+  expect(r.text).toContain('#166 is not a sub-issue of #7')
+  expect(r.text).toContain('duplicate sub-issues')
+  expect(r.text).toContain('subissues link 7 166')
+  expect(r.text).toContain('ctx_1')
+})
+
+test('a worker that does not start is refused with what Orca said, by its receipt and not its exit code, and a retry starts it', async ($, on) => {
+  const w = await onDeveloping($, on)
+  w.s.workerReceipt = { ok: true, result: { state: 'failed', lastError: 'agent_prompt_blocked', failedStage: 'launch', recovery: 'Answer the prompt' } }
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  expect(r.text).toContain('agent_prompt_blocked')
+  expect(r.text).toContain('Answer the prompt')
+  expect(r.text).toContain('#166')
+  expect(w.gh.some(c => c.includes('subissues link'))).toBe(false)
+  w.s.workerReceipt = undefined
+  const retry = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  expect(retry.text).not.toContain('Refused')
+  expect(workerStarts(w).length).toBe(2)
 })
 
 // ---- a follow-up agent works in its own worktree ----

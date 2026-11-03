@@ -61,7 +61,9 @@ export type Workflow = {
   prsClosed?: boolean
   attempts: number
   nudges: { count: number; fingerprint?: string }
-  followUps: { hash: string; mode: string; issue: number; title: string; worktree?: string }[]
+  // issues and dispatchId belong to the mode worktree: the existing issues its worker carries, lead first,
+  // and the Orca dispatch that shows the worker started.
+  followUps: { hash: string; mode: string; issue: number; title: string; worktree?: string; issues?: number[]; dispatchId?: string }[]
   // The record of a followUp subagent's own worktree: the issue it came from. The session's Orca
   // workspace shows the session's workflow, not this one.
   followUpOf?: number
@@ -1249,7 +1251,7 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
     }
   }
   const followUps = wf.followUps.filter(f => f.mode !== 'this_agent')
-  if (followUps.length) notes.push(`Follow-ups elsewhere: ${followUps.map(f => `#${f.issue} (${f.mode})`).join(', ')}.`)
+  if (followUps.length) notes.push(`Follow-ups elsewhere: ${followUps.map(f => `${(f.issues ?? [f.issue]).map(i => `#${i}`).join(', ')} (${f.mode})`).join(', ')}.`)
   wf.doneMessage = message
   wf.hooks = { ...wf.hooks, remember: { firedAt: wf.hooks?.remember?.firedAt ?? (await $.clock.now()), result: remembered.slice(0, 2000) } }
   await move($, c, wf, 'done', facts)
@@ -1309,12 +1311,73 @@ async function addComment($: EngineInterface, { args, project }: Ctx): Promise<s
   return `Posted on ${isPr ? 'PR' : 'issue'} #${n}: https://github.com/${repo}/${isPr ? 'pull' : 'issues'}/${n}`
 }
 
+// The existing issues of a worktree follow-up, lowest first. The lowest one names the workspace.
+function namedIssues(raw: unknown, own: number): number[] {
+  if (!Array.isArray(raw) || !raw.length) throw new Refuse(`Refused: issues must list at least one issue number, and it got ${JSON.stringify(raw)}. Nothing changed.`)
+  const bad = raw.filter(x => !Number.isInteger(Number(x)) || Number(x) <= 0 || x === null || x === '')
+  if (bad.length) throw new Refuse(`Refused: issues holds ${JSON.stringify(bad)}, which is not an issue number. Nothing changed.`)
+  const numbers = [...new Set(raw.map(Number))].sort((a, b) => a - b)
+  if (numbers.includes(own)) throw new Refuse(`Refused: issues names #${own}, the issue that this call comes from. Nothing changed.`)
+  return numbers
+}
+
+// Each problem is named at once, so one retry can repair them all.
+async function mustBeOpen($: EngineInterface, wf: Workflow, issues: number[]): Promise<void> {
+  const problems: string[] = []
+  for (const n of issues) {
+    try {
+      const { state } = JSON.parse(await gh($, wf.root, wf.repo, ['issue-read', String(n)])) as { state?: string }
+      if (state !== 'open') problems.push(`#${n} is ${state ?? 'of no known state'}`)
+    } catch (error) {
+      problems.push(`#${n} could not be read: ${String(error).slice(-300)}`)
+    }
+  }
+  if (problems.length) throw new Refuse(`Refused: ${problems.join('; ')}. Nothing started.`)
+}
+
+// One supervised worker, so Orca wakes this session when it asks or ends. worker-start prints its receipt with
+// ok: true even when the start failed and it exits 1, so the state in the receipt decides, not the exit code.
+async function startWorktreeWorker($: EngineInterface, wf: Workflow, entry: Workflow['followUps'][number], message: string): Promise<string[]> {
+  const issues = entry.issues ?? [entry.issue]
+  const who = issues.map(i => `#${i}`).join(', ')
+  if (entry.dispatchId) return [`The worker ${entry.dispatchId} already carries ${who}, so nothing new started.`]
+  const lead = issues[0]!
+  const slug = entry.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').split('-').filter(Boolean).slice(0, 5).join('-').slice(0, 40).replace(/-$/, '') || 'follow-up'
+  const others = issues.slice(1)
+  const join = others.length ? ` Then call started for ${others.map(i => `#${i}`).join(', ')}: each joins the same worktree and PR, with its own closing line.` : ''
+  const spec = `Use the ndev plugin to work on ${who} of ${wf.repo}, in this new workspace with one PR. Call started with issue ${lead} and shortName "${slug}".${join} It came up during #${wf.issue}.\n\n${message}`
+  const { main } = await paths($, wf.root)
+  const out = await run($, ['orca', 'orchestration', 'worker-start', '--spec', spec, '--task-title', entry.title, '--worktree', 'new-top-level', '--repo', `path:${main}`, '--name', `${lead}-${slug}`, '--agent', 'claude', '--keep-open', '--timeout-ms', '120000', '--json'], { cwd: wf.root, timeoutMs: 180_000 })
+  const retry = `Call followUp again with the same text to retry: it reuses what exists.`
+  let reply: { ok?: boolean; result?: { state?: string; dispatchId?: string; runId?: string; lastError?: string; failedStage?: string; recovery?: string }; error?: { code?: string; message?: string } } | undefined
+  try {
+    reply = JSON.parse(out.stdout) as typeof reply
+  } catch {
+    throw new Refuse(`orca orchestration worker-start for ${who} exited ${out.exitCode} and printed no JSON: ${said(out)}\nIf Orca is closed, run orca open. ${retry}`)
+  }
+  const receipt = reply?.result
+  if (!reply?.ok || !receipt) throw new Refuse(`orca orchestration worker-start for ${who} refused: ${reply?.error?.code ?? ''}: ${reply?.error?.message ?? JSON.stringify(reply).slice(0, 300)}\n${retry}`)
+  if (receipt.state !== 'ready') throw new Refuse(`The worker for ${who} did not start: ${receipt.lastError ?? receipt.state ?? 'no state'} at ${receipt.failedStage ?? 'an unknown stage'}. ${receipt.recovery ?? 'Orca gave no recovery.'}\n${retry}`)
+  entry.dispatchId = receipt.dispatchId
+  await saveWorkflow($, wf)
+  const notes = [`The Orca worker ${receipt.dispatchId} carries ${who} in the workspace ${lead}-${slug}, on one PR. Run ${receipt.runId}: Orca wakes this session when it asks or ends.`]
+  for (const i of issues) {
+    try {
+      await gh($, wf.root, wf.repo, ['subissues', 'link', String(wf.issue), String(i)])
+    } catch (error) {
+      notes.push(`#${i} is not a sub-issue of #${wf.issue}: ${String(error).slice(-300)}\nRepair: scripts/github/gh.sh subissues link ${wf.issue} ${i}`)
+    }
+  }
+  return notes
+}
+
 async function followUp($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const mode = text(args, 'mode')
   const message = text(args, 'message')
-  if (!['this_agent', 'subagent', 'orca_workspace', 'issue_only'].includes(mode)) throw new Refuse(`Refused: mode is ${JSON.stringify(mode)}; use this_agent, subagent, orca_workspace or issue_only.`)
+  if (!['this_agent', 'subagent', 'worktree', 'issue_only'].includes(mode)) throw new Refuse(`Refused: mode is ${JSON.stringify(mode)}; use this_agent, subagent, worktree or issue_only.`)
   if (!message) throw new Refuse('Refused: followUp needs a message: its first line is the issue title.')
+  if (args.issues !== undefined && mode !== 'worktree') throw new Refuse(`Refused: issues goes only with the mode worktree, and the mode is ${mode}. Nothing changed.`)
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, project, wf)
   const tool: Tool = mode === 'this_agent' ? 'followUpThisAgent' : mode === 'issue_only' ? 'followUpIssue' : 'followUpOther'
@@ -1322,13 +1385,22 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
   if (mode === 'this_agent' && wf.direct) throw new Refuse('Refused: a project that commits directly to the base branch has no PR to carry a sub-issue. Use issue_only, or do the work and commit it.')
   if (mode === 'this_agent' && wf.prs[0]) {
     const prState = wf.merged ? 'merged' : (await readPr($, wf.root, wf.repo, wf.prs[0])).state
-    if (prState !== 'open') throw new Refuse(`Refused: PR #${wf.prs[0]} is ${prState}, so it cannot carry a new issue. Nothing was filed. Repair: use the mode issue_only, or orca_workspace to start the work in its own worktree.`)
+    if (prState !== 'open') throw new Refuse(`Refused: PR #${wf.prs[0]} is ${prState}, so it cannot carry a new issue. Nothing was filed. Repair: use the mode issue_only, or worktree to start the work in its own worktree.`)
   }
+  const named = args.issues === undefined ? undefined : namedIssues(args.issues, wf.issue)
 
   // A retry after a failed Orca call or a crash reuses the issue, so nothing is filed twice.
-  const hash = hashOf(`${mode}\n${message}`)
+  const hash = hashOf(named ? `${mode}\n${message}\n${named.join(',')}` : `${mode}\n${message}`)
   let entry = wf.followUps.find(f => f.hash === hash)
   const [title, ...rest] = message.split('\n')
+  if (!entry && named) {
+    const taken = named.filter(n => wf.followUps.some(f => f.dispatchId && (f.issues ?? [f.issue]).includes(n)))
+    if (taken.length) throw new Refuse(`Refused: a worker from an earlier followUp already carries ${taken.map(n => `#${n}`).join(', ')}. Nothing started.`)
+    await mustBeOpen($, wf, named)
+    entry = { hash, mode, issue: named[0]!, issues: named, title: title! }
+    wf.followUps.push(entry)
+    await saveWorkflow($, wf)
+  }
   if (!entry) {
     const { gitDir } = await paths($, wf.root)
     const bodyFile = `${gitDir}/ndev-follow-up.md`
@@ -1341,7 +1413,7 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
     await saveWorkflow($, wf)
   }
   const n = entry.issue
-  const notes = [`Issue: https://github.com/${wf.repo}/issues/${n}`]
+  const notes = (entry.issues ?? [n]).map(i => `Issue: https://github.com/${wf.repo}/issues/${i}`)
   if (mode === 'this_agent') {
     await gh($, wf.root, wf.repo, ['subissues', 'link', String(wf.issue), String(n)])
     await editBody($, wf, old => (hasIssueRef(old, n) ? old : `${old.trimEnd()}\n\nCloses #${n}\n`))
@@ -1382,12 +1454,7 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
     if ('deny' in spawned && spawned.deny) throw new Refuse(`The issue #${n} and the worktree ${worktree} exist, and the agent did not start: ${String(spawned.deny)}\nCall followUp again with the same text to retry: it reuses both.`)
     notes.push(`An agent works on #${n} in its own worktree ${worktree} and PR, by this followUp call. It commits there through checkpoint with issue ${n}, which refuses until that worktree has the check scripts.`)
   }
-  if (mode === 'orca_workspace') {
-    const slug = title!.toLowerCase().replace(/[^a-z0-9]+/g, '-').split('-').filter(Boolean).slice(0, 5).join('-').slice(0, 40).replace(/-$/, '') || 'follow-up'
-    const made = await run($, ['orca', 'worktree', 'create', '--name', `${n}-${slug}`, '--no-parent', '--issue', String(n), '--agent', 'claude', '--prompt', `Use the ndev plugin to work on issue #${n}. Call started with shortName "${slug}".`, '--json'], { cwd: wf.root, timeoutMs: 120_000 })
-    if (made.exitCode !== 0) throw new Refuse(`The issue #${n} exists, and orca worktree create exited ${made.exitCode}: ${said(made)}\nCall followUp again with the same text to retry: it reuses the issue.`)
-    notes.push(`An Orca workspace works on #${n}.`)
-  }
+  if (mode === 'worktree') notes.push(...(await startWorktreeWorker($, wf, entry, message)))
   await move($, c, wf, tool, facts, `followUp:${mode}`)
   await saveWorkflow($, wf)
   return answer($, wf, facts, notes)
@@ -1482,7 +1549,7 @@ const SPEC_LIST: Spec[] = [
   { name: 'blocked', description: 'Nothing can go on without the human. This raises a persistent notification and an Orca flag, and stops the reminders. Say what the human must do.', properties: { message: STR }, required: ['message'] },
   { name: 'unblocked', description: 'The block is resolved: withdraw the notification and go back to the earlier state.', properties: { message: STR }, required: [] },
   { name: 'done', description: 'All the work is complete. The tool checks all of it, lists every problem, and marks it done. It merges only when the project level lets the agent merge. remembered is needed only when the review stage was skipped: what you recorded in the docs and the wiki, or "nothing: <reason>".', properties: { message: STR, remembered: STR }, required: ['message'] },
-  { name: 'followUp', description: 'File a new issue for work that does not belong to this issue, and act by mode: this_agent (this PR carries it), subagent, orca_workspace or issue_only.', properties: { mode: { type: 'string', enum: ['this_agent', 'subagent', 'orca_workspace', 'issue_only'] }, message: { ...STR, description: 'The first line is the issue title' } }, required: ['mode', 'message'], forSubagents: true },
+  { name: 'followUp', description: 'File a new issue for work that does not belong to this issue, and act by mode: this_agent (this PR carries it), subagent, worktree (a new Orca workspace with a supervised worker and its own PR) or issue_only. With the mode worktree, issues names existing issues instead: nothing is filed, and one worker carries them all on one PR.', properties: { mode: { type: 'string', enum: ['this_agent', 'subagent', 'worktree', 'issue_only'] }, message: { ...STR, description: 'The first line is the issue title. With issues, it names the workspace, and the whole message is the brief for the worker' }, issues: { type: 'array', items: { type: 'number' }, description: 'Only with the mode worktree: the open issues that the one worker and PR carry' } }, required: ['mode', 'message'], forSubagents: true },
   { name: 'addMigration', description: 'Add a named Supabase migration, to run after the merge. This makes the empty migration file and lists it in the PR body. /ndev:merge runs it.', properties: { name: { ...STR, description: 'Lower-case letters, digits and underscores' }, workdir: { ...STR, description: 'The folder that holds supabase/, when it is not the root' } }, required: ['name'] },
   { name: 'reportWorkflowBug', description: 'The ndev workflow or plugin itself did something wrong: a tool answered wrongly, crashed, or refused for no reason. This starts an Orca agent that fixes it on main of the plugin, so go on with your own work. Not for a bug in the project, and not for a refusal that is correct.', properties: { title: { type: 'string', description: 'One line that names the bug' }, details: { type: 'string', description: 'The tool and arguments, what it answered, and what you expected' } }, required: ['title', 'details'], forSubagents: true },
   { name: 'iNeedA', description: 'Ask the plugin for guidance before you choose or write one of these, so that the work keeps to the approved set: react-component, library, brand-style (a call on a font, a colour and so on) or animation (a micro-interaction, a simple animation or a full showy one). The answer gives suggestions and where to get them. It is guidance: you can still choose otherwise and say why.', properties: { kind: { type: 'string', enum: [...NEED_KINDS] }, description: { type: 'string', description: 'What it is for: the component type, the job of the library, the style question or the moment to animate' } }, required: ['kind', 'description'], forSubagents: true },
