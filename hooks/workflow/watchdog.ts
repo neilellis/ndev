@@ -64,7 +64,7 @@ async function ready($: EngineInterface, project: LoadedConfig | undefined): Pro
   const root = (await boundRoot($)) ?? project?.root
   const wf = root ? await loadWorkflow($, root) : undefined
   if (!isWatched(wf)) {
-    await note($, `quiet: no workflow to watch at ${root ?? 'an unknown root'} (state ${wf?.state ?? 'none'})`)
+    await note($, `quiet: no workflow to watch at ${root ?? 'an unknown root'} (state ${(wf as Workflow | undefined)?.state ?? 'none'})`)
     return undefined
   }
   const session = await $.session.id()
@@ -220,7 +220,7 @@ async function prHealth($: EngineInterface, wf: Workflow): Promise<{ problems: s
     return { problems: [] }
   }
   const read0 = all[0]?.checks
-  return { problems: all.flatMap(h => h.problems), checks: read0 && { sha: all[0].sha, checks: read0 }, seen: all[0]?.seen }
+  return { problems: all.flatMap(h => h.problems), checks: read0 && { sha: all[0]!.sha, checks: read0 }, seen: all[0]?.seen }
 }
 
 // A turn runs, or ran, since this time: a prompt reached the session.

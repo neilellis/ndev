@@ -15,6 +15,7 @@ import type { Check } from './effects'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
+import { shellCode } from '../shell-code'
 import { liveCallEnd, liveCallStart, liveName, shownArgs, shownValue, writeLive } from './live'
 import { ATTEMPT_LIMIT, afterStarted, afterTool, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
@@ -797,7 +798,8 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   const hold = wf.state === 'reviewing' || wf.state === 'developed' || holders.length > 0
   // With no files, a checkpoint only pushes a held commit, such as after a human skips the review.
   const held = (await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)).stdout.trim() !== before
-  if (!files.length && (!held || hold)) throw new Refuse('Refused: checkpoint needs the files to commit, each by name.')
+  if (!files.length && held && hold) throw new Refuse(`Refused: the commit ${before.slice(0, 7)} is held for the review, so checkpoint does not push it. finishedReview pushes it. To commit more now, name the files.`)
+  if (!files.length && !held) throw new Refuse(`Refused: checkpoint needs the files to commit, each by name.${wf.state === 'reviewing' ? ' With nothing more to commit, finishedReview goes on.' : ''}`)
   const notes = await commitAndPush($, wf, 'checkpoint', message, files, !hold, declared)
   if (holders.length) notes.push(`This commit is held and not pushed, because ${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review.`)
   addTypes(wf, declared)
@@ -1578,30 +1580,90 @@ export async function workflowOwnsChecks($: EngineInterface, project: LoadedConf
 
 // A raw commit runs no check script, and a raw push gets past the review. Each comes through
 // checkpoint while the workflow owns the checks, which is not so in setup, off, done or with checks skipped.
-const RAW_GIT = /(?:^|[;&|(\n]\s*|\s)git((?:\s+-[cC]\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--\S+)*)\s+(?:commit|push)(?=\s|$)/g
-// The text of a commit message can name a git command. The message is no command, so it is taken out first.
-const COMMIT_MESSAGE = /(\s-[a-zA-Z]*m\s*)(?:"(?:[^"\\]|\\.)*"|'[^']*')/g
+const RAW_GIT = /(?:^|[;&|(\n`'"\s/\\])git((?:\s+-[cC]\s+(?:"[^"]*"|'[^']*'|(?:\\\s|\S)+)|\s+--(?:git-dir|work-tree|namespace|exec-path|config-env|super-prefix)\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--\S+|\s+-[a-zA-Z])*)\s+(commit|push)(?=[\s;&|)`'"<>]|$)/g
+// A commit message from a heredoc, which the shell code has already emptied. It runs nothing.
+const HEREDOC_TEXT = /"\$\(cat <<-?\s*(?:'[^']*'|"[^"]*"|\\?[\w.-]+)\s*\)"/g
+const gitCode = (command: string) => shellCode(command).replace(HEREDOC_TEXT, '""')
 // A wait of the agent's own. A single read of the checks is not one, and stays allowed.
 const OWN_WAIT = /wait-for-pr-change\.sh|wait-for-run\.sh|\bgh\s+run\s+watch\b|\bgh\s+pr\s+checks\b[^\n;&|]*--watch/
-// Each worktree of a repository has the same common directory. Undefined when git cannot read the folder.
-async function commonDir($: EngineInterface, cwd: string, dir: string): Promise<string | undefined> {
+// A worktree's own git folder, and the one that each worktree of the repository shares. Undefined when git cannot read the folder.
+async function gitDirs($: EngineInterface, cwd: string, dir: string): Promise<{ own: string; common: string } | undefined> {
   const out = await git(cwd, $, '-C', dir, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir')
-  return out.exitCode === 0 ? out.stdout.trim().split('\n').at(-1) : undefined
+  if (out.exitCode !== 0) return undefined
+  const [own, common] = out.stdout.trim().split('\n')
+  return own && common ? { own, common } : undefined
 }
 
-// The guard is for the workflow's own repository: the wiki and each other repository have no checks here.
-// Only a single -C with a full path can show another repository. Anything else counts as the workflow's.
-async function reachesWorkflowRepo($: EngineInterface, wf: Workflow, command: string): Promise<boolean> {
-  const own = await commonDir($, wf.root, wf.root)
+// Git's environment wins over its folder.
+const GIT_ENV = /\bGIT_(?:DIR|WORK_TREE|COMMON_DIR)\b/
+// A word that can change the folder, or run the next words in another shell.
+const FOLDER_WORDS = /(?:^|[\s;&|(`'"])(?:cd|pushd|popd|chdir|exec|eval|source|if|for|while|until|case|then|do)(?=[\s;&|)`'"]|$)|(?:^|[\s;&|(`'"/])(?:ba|z|da|k)?sh(?=[\s;&|)`'"]|$)|(?:^|[;&|(\n`]\s*)\.\s|(?:^|[\s;&|(])env\s[^;&|\n]*(?:-C\b|--chdir\b)/
+// A part of an && chain that does one plain thing: no other command, group or redirection.
+const NOT_PLAIN = /[;|&()\n{}`<>]|\$\(/
+const ONLY_CD = /^\s*cd\s+("[^"]*"|'[^']*'|(?:\\\s|\S)+)\s*$/
+// Quoted words are text, unless a substitution in them runs.
+const unquoted = (code: string) => code.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, w => (w[0] === '"' && /\$\(|`/.test(w) ? w : '""'))
+// The parts of an && chain. An && in quotes is text.
+const chain = (code: string) => {
+  const parts = ['']
+  for (const [word] of code.matchAll(/"(?:[^"\\]|\\.)*"|'[^']*'|&&|[^"'&]+|[\s\S]/g)) {
+    if (word === '&&') parts.push('')
+    else parts[parts.length - 1] += word
+  }
+  return parts
+}
+
+const plainPath = (word: string, home: string | undefined) =>
+  word.replace(/^["']|["']$/g, '').replace(/\\(\s)/g, '$1').replace(/^(~|\$HOME|\$\{HOME\})(?=\/|$)/, home ?? '$&')
+
+// The folder that this git runs in. Undefined when the command does not show it for sure, which counts as the workflow's.
+// A cd counts only in a plain && chain up to the git, because only there the git runs if the cd works, and in that folder.
+async function gitFolder($: EngineInterface, code: string, before: string, options: string, agentId: string | undefined, home: string | undefined): Promise<string | undefined> {
+  if (GIT_ENV.test(code)) return undefined
+  const parts = [...options.matchAll(/\s+(-C\s+|--\S+)("[^"]*"|'[^']*'|(?:\\\s|\S)+)?/g)]
+  if (parts.length > 1 || parts[0]?.[1]?.startsWith('--')) return undefined
+  const named = parts[0] ? plainPath(parts[0][2] ?? '', home) : undefined
+  if (named !== undefined) return named.startsWith('/') ? named : undefined
+  // In a hook, a subagent reads its own folder. The main agent's folder shows nothing, as it can be the main checkout.
+  if (!FOLDER_WORDS.test(unquoted(code))) return agentId ? $.session.cwd() : undefined
+  let folder: string | undefined
+  for (const part of chain(before)) {
+    const plain = unquoted(part)
+    if (NOT_PLAIN.test(plain)) return undefined
+    const cd = part.match(ONLY_CD)
+    if (cd) folder = plainPath(cd[1] ?? '', home)
+    else if (FOLDER_WORDS.test(plain)) return undefined
+  }
+  if (folder !== undefined) return folder.startsWith('/') ? folder : undefined
+  return agentId ? $.session.cwd() : undefined
+}
+
+// The push can reach the branch of the workflow or the base, from any worktree: it names one, it names all, or the name is not shown.
+const pushNames = (words: string, wf: Workflow) => {
+  if (/(?:^|\s)--(?:all|mirror|branches)(?=\s|$)|[*$`]/.test(words)) return true
+  const names = words.split(/[\s:'"+]+/).map(w => w.replace(/^(?:refs\/)?heads\//, ''))
+  return names.includes(wf.branch) || names.includes(wf.base)
+}
+
+// The guard is for the workflow's own worktree, and for the worktrees that followUp started, which have the
+// checkpoint tool. A helper's own worktree and each other repository have no checks here, so they pass.
+// The main checkout of the repository does not pass. A command that does not show its folder for sure counts as the workflow's.
+async function reachesWorkflowRepo($: EngineInterface, wf: Workflow, command: string, agentId: string | undefined): Promise<boolean> {
+  const own = await gitDirs($, wf.root, wf.root)
   if (!own) return true
   const home = await $.env.get('HOME')
-  for (const [, options] of command.replace(COMMIT_MESSAGE, '$1""').matchAll(RAW_GIT)) {
-    const parts = [...options.matchAll(/\s+(-C\s+|--\S+)("[^"]*"|'[^']*'|\S+)?/g)]
-    if (parts.length !== 1 || !parts[0][1].startsWith('-C')) return true
-    const dir = (parts[0][2] ?? '').replace(/^["']|["']$/g, '').replace(/^(~|\$HOME|\$\{HOME\})(?=\/|$)/, home ?? '$&')
-    if (!dir.startsWith('/')) return true
-    const common = await commonDir($, wf.root, dir)
-    if (!common || common === own) return true
+  const code = gitCode(command)
+  for (const match of code.matchAll(RAW_GIT)) {
+    const dir = await gitFolder($, code, code.slice(0, match.index), match[1] ?? '', agentId, home)
+    if (!dir) return true
+    const there = await gitDirs($, wf.root, dir)
+    if (!there) return true
+    if (there.common !== own.common) continue
+    if (match[2] === 'push' && pushNames(code.slice(match.index + match[0].length).split(/[;&|)\n]/)[0] ?? '', wf)) return true
+    if (there.own === own.own || there.own === there.common) return true
+    for (const f of wf.followUps) {
+      if (f.worktree && (await gitDirs($, wf.root, f.worktree))?.own === there.own) return true
+    }
   }
   return false
 }
@@ -1614,15 +1676,14 @@ export const workflowGitGuard = (on: Parameters<Register>[0], getProject: () => 
       if (project?.config.workflow === false) return next(e)
       const root = (await read($, workflowRoot)) ?? project?.root
       const wf = root ? await loadWorkflow($, root) : undefined
-      if (!wf || !(await watchesChecks($, wf))) return next(e)
-      return { deny: `workflow: The workflow watches the checks and merge conflicts of issue #${wf.issue} and prompts you when they end or when one fails, so this wait only spends GitHub calls. If nothing else is open, end your turn. A human can stop this with /flow off.` }
+      if (wf && (await watchesChecks($, wf))) return { deny: `workflow: The workflow watches the checks and merge conflicts of issue #${wf.issue} and prompts you when they end or when one fails, so this wait only spends GitHub calls. If nothing else is open, end your turn. A human can stop this with /flow off.` }
     }
-    if (!command.match(RAW_GIT)) return next(e)
+    if (!gitCode(command).match(RAW_GIT)) return next(e)
     const project = getProject()
     if (!(await workflowOwnsChecks($, project))) return next(e)
     const root = (await read($, workflowRoot)) ?? project?.root
     const wf = root ? await guardedRecord($, root) : undefined
-    if (!wf || !(await reachesWorkflowRepo($, wf, command))) return next(e)
+    if (!wf || !(await reachesWorkflowRepo($, wf, command, (e as { agentId?: string }).agentId))) return next(e)
     const own = wf.followUps.filter(f => f.worktree)
     if ((e as { agentId?: string }).agentId && own.length) return { deny: `workflow: a commit or push here runs no check script. An agent that followUp started calls mcp__ndev__checkpoint with its own issue and worktree: ${own.map(f => `#${f.issue} in ${f.worktree}`).join(', ')}. Any other helper reports to the agent that started it.` }
     return { deny: `workflow: issue #${wf.issue} is in the state "${wf.state}", so this commit or push goes through the checkpoint tool, which runs the check scripts. It also ends a merge. With no files it pushes a held commit. A commit in another repository, such as ~/dev-wiki, passes when each git in the command names it with -C and a full path. A human can turn this off with /flow off.` }

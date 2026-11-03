@@ -68,7 +68,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
-| `orca-shot.sh` | Opens a URL in Orca's built-in browser (new tab, or `--page <id>`), sets and checks the viewport, and saves a PNG screenshot. It names the repair when Orca is not running or the page is missing. | kb `testing.md`, finish, responsive-check, mobile-testing, motion, command-reuse |
+| `orca-shot.sh` | Opens a URL in Orca's built-in browser, sets and checks the viewport, and saves a PNG screenshot. A new tab closes after the screenshot (or stays with `--keep-tab`); a `--page <id>` tab stays open. It names the repair when Orca is not running or the page is missing. | kb `testing.md`, finish, responsive-check, mobile-testing, motion, command-reuse |
 | `tests/test_orca_shot.sh` | Proves `orca-shot.sh` with a fake `orca`. | |
 
 ## walk-doc/

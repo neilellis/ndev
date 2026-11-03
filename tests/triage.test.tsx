@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { settled } from '../hooks/triage'
 
 const PANE = {
   plugin: 'ndev',
@@ -470,3 +471,10 @@ test('a launch that fails part way names /orca-triage reset, which clears the tr
   expect((await $.command.run(command(''))).text).toMatch(/No triage yet/)
 })
 
+test('detached work ends quietly only when the engine has dropped the module', async () => {
+  await settled(Promise.reject(new Error('$.clock.now refused: no hooks module of that name is loaded, so there is no scan to allow it (host rule)')))
+  await settled(Promise.resolve('value'))
+  let said = ''
+  await settled(Promise.reject(new Error('orca exited 3'))).catch((err: unknown) => { said = String(err) })
+  expect(said).toContain('orca exited 3')
+})

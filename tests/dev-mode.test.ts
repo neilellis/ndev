@@ -1,8 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 
+declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
+
 const SECTION = 'ndev:dev-mode'
 
-type On = Parameters<Parameters<typeof test>[1]>[1]
+type On = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[1]
 
 const ROOT = '/proj'
 const CONFIG = `${ROOT}/.neil-dev.json`
@@ -48,10 +50,10 @@ const engine = (on: On, files: Map<string, string> = new Map(), wiki = true, ref
   return { toasts, runs }
 }
 
-const start = ($: Parameters<Parameters<typeof test>[1]>[0]) =>
+const start = ($: Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0]) =>
   $.session.start({ cwd: `${ROOT}/src`, surface: 'terminal', isInteractive: true })
 
-const section = async ($: Parameters<Parameters<typeof test>[1]>[0]) => {
+const section = async ($: Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0]) => {
   const { sections } = await $.prompt.compose({
     model: 'm',
     promptModel: 'm',
@@ -77,11 +79,11 @@ test('/dev-mode toggles to heavy and back', async ($, on) => {
   engine(on)
   await start($)
 
-  const ran = await $.command.run({ command: 'dev-mode', args: '' })
+  const ran = await $.command.run({ command: 'dev-mode', args: '' } as never)
   expect(ran.text).toContain('Development mode is now heavy.')
   expect(await section($)).toContain('ndev:work-heavy')
 
-  await $.command.run({ command: 'dev-mode', args: '' })
+  await $.command.run({ command: 'dev-mode', args: '' } as never)
   expect(await section($)).toContain('LIGHT')
 })
 
@@ -89,13 +91,13 @@ test('/dev-steering auto tells the model not to stop for questions', async ($, o
   engine(on)
   await start($)
 
-  await $.command.run({ command: 'dev-steering', args: 'auto' })
+  await $.command.run({ command: 'dev-steering', args: 'auto' } as never)
   const text = await section($)
   expect(text).toContain('AUTO')
   expect(text).not.toContain('INTERACTIVE')
   expect(text).toContain('ndev:work-light-auto')
 
-  await $.command.run({ command: 'dev-mode', args: 'heavy' })
+  await $.command.run({ command: 'dev-mode', args: 'heavy' } as never)
   expect(await section($)).toContain('ndev:work-heavy-auto')
 })
 
@@ -103,7 +105,7 @@ test('an unknown value is refused and changes nothing', async ($, on) => {
   engine(on)
   await start($)
 
-  const ran = await $.command.run({ command: 'dev-mode', args: 'medium' })
+  const ran = await $.command.run({ command: 'dev-mode', args: 'medium' } as never)
   expect(ran.text).toContain('"medium" is not a mode')
   expect(await section($)).toContain('LIGHT')
 })
@@ -121,7 +123,7 @@ test('/learn hands the model the review instruction', async ($, on) => {
   engine(on)
   await start($)
 
-  const ran = await $.command.run({ command: 'learn', args: '' })
+  const ran = await $.command.run({ command: 'learn', args: '' } as never)
   expect(ran.context?.[0]).toContain('/learn section')
 })
 
@@ -130,10 +132,10 @@ test('a correction gets the record-the-lesson nudge; a plain prompt does not', a
   on('prompt.submit', (_, e) => ({ text: e.text, context: e.context }))
   await start($)
 
-  const corrected = await $.prompt.submit({ text: "No, don't poll the CI run." })
+  const corrected = await $.prompt.submit({ text: "No, don't poll the CI run." } as never)
   expect(corrected.context?.join(' ')).toContain('ndev:dev-wiki')
 
-  const plain = await $.prompt.submit({ text: 'Add a date column to the table.' })
+  const plain = await $.prompt.submit({ text: 'Add a date column to the table.' } as never)
   expect(plain.context ?? []).toHaveLength(0)
 })
 
@@ -163,7 +165,7 @@ test('/dev-mode writes the project file and keeps its other keys', async ($, on)
   engine(on, files)
   await start($)
 
-  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' })
+  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' } as never)
   expect(ran.text).toContain('Saved to .neil-dev.json')
   expect(JSON.parse(files.get(CONFIG) ?? '{}')).toEqual({
     steering: 'auto',
@@ -177,7 +179,7 @@ test('with no project file, /dev-steering creates one', async ($, on) => {
   engine(on, files)
   await start($)
 
-  await $.command.run({ command: 'dev-steering', args: 'auto' })
+  await $.command.run({ command: 'dev-steering', args: 'auto' } as never)
   expect(JSON.parse(files.get(CONFIG) ?? '{}')).toEqual({ steering: 'auto' })
 })
 
@@ -190,7 +192,7 @@ test('a bad project file is shown, not used and not overwritten', async ($, on) 
   expect(toasts.join(' ')).toContain('"mode" is "medium"')
   expect(await section($)).toContain('LIGHT')
 
-  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' })
+  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' } as never)
   expect(ran.text).toContain('Not saved')
   expect(files.get(CONFIG)).toBe(bad)
 })
@@ -233,11 +235,11 @@ test('/dev mode toggles and sets the mode like /dev-mode', async ($, on) => {
   engine(on, files)
   await start($)
 
-  const ran = await $.command.run({ command: 'dev', args: 'mode' })
+  const ran = await $.command.run({ command: 'dev', args: 'mode' } as never)
   expect(ran.text).toContain('Development mode is now heavy.')
   expect(await section($)).toContain('ndev:work-heavy')
 
-  await $.command.run({ command: 'dev', args: 'Mode light' })
+  await $.command.run({ command: 'dev', args: 'Mode light' } as never)
   expect(await section($)).toContain('LIGHT')
   expect(JSON.parse(files.get(CONFIG) ?? '{}').mode).toBe('light')
 })
@@ -246,7 +248,7 @@ test('/dev steering auto sets the steering like /dev-steering', async ($, on) =>
   engine(on)
   await start($)
 
-  const ran = await $.command.run({ command: 'dev', args: 'steering auto' })
+  const ran = await $.command.run({ command: 'dev', args: 'steering auto' } as never)
   expect(ran.text).toContain('Steering is now auto.')
   expect(await section($)).toContain('ndev:work-light-auto')
 })
@@ -255,7 +257,7 @@ test('/dev mode with an unknown value names /dev mode in the refusal', async ($,
   engine(on)
   await start($)
 
-  const ran = await $.command.run({ command: 'dev', args: 'mode medium' })
+  const ran = await $.command.run({ command: 'dev', args: 'mode medium' } as never)
   expect(ran.text).toContain('"medium" is not a mode')
   expect(ran.text).toContain('/dev mode heavy')
   expect(await section($)).toContain('LIGHT')
@@ -265,7 +267,7 @@ test('the /dev help lists /dev mode and /dev steering', async ($, on) => {
   engine(on)
   await start($)
 
-  const ran = await $.command.run({ command: 'dev', args: 'help' })
+  const ran = await $.command.run({ command: 'dev', args: 'help' } as never)
   expect(ran.text).toContain('/dev mode [light|heavy]')
   expect(ran.text).toContain('/dev steering [interactive|auto]')
 })
@@ -276,7 +278,7 @@ test('a command the engine refuses stops only its own feature: the toast names i
 
   expect(await section($)).toContain('HEAVY')
   expect(toasts.join(' ')).toMatch(/ndev: orca-triage did not start: \S.*\/reload-plugins/)
-  const ran = await $.command.run({ command: 'dev-mode', args: '' })
+  const ran = await $.command.run({ command: 'dev-mode', args: '' } as never)
   expect(ran.text).toContain('Development mode is now light.')
 })
 
@@ -315,7 +317,7 @@ test('/dev-mode in a worktree with a record saves through worktree-env.sh set-se
   ])
   const { runs } = engine(on, files)
   await start($)
-  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' })
+  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' } as never)
   expect(ran.text).toContain('Development mode is now heavy.')
   expect(ran.text).toContain('Saved to .neil-dev.worktree.json')
   expect(ran.text).not.toContain('commit it')
@@ -328,7 +330,7 @@ test('a failed set-setting is reported with its exit code and output, and the mo
   const files = new Map([[RECORD, JSON.stringify({ version: 2, resources: { docker: [], 'dev-servers': {} } })]])
   engine(on, files, true, undefined, undefined, { exitCode: 2, stderr: 'worktree-env: lock held' })
   await start($)
-  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' })
+  const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' } as never)
   expect(ran.text).toContain('Not saved')
   expect(ran.text).toContain('exited 2')
   expect(ran.text).toContain('lock held')

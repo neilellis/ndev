@@ -39,17 +39,26 @@ const handled = new Set<string>()
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
 const runner = ($: EngineInterface, timeoutMs: number, env?: Record<string, string>): Run => makeRun($, timeoutMs, env)
 
-async function note($: EngineInterface, text: string): Promise<void> {
-  const at = await $.clock.now()
-  await update($, view, v => ({ ...v, log: [...v.log, { at, text }].slice(-50) }))
+// The engine answers this when it has dropped this copy of the module (a reload, the end of a test run).
+const MODULE_GONE = /refused: no hooks module/
+
+// For work that no hook waits for. When the module is gone nothing can show a failure and nothing needs the
+// work, so that ending is quiet. Any other failure rejects, so that the engine reports it.
+export const settled = (work: Promise<unknown>): Promise<void> =>
+  work.then(() => undefined, (err: unknown) => {
+    if (!MODULE_GONE.test(message(err))) throw err
+  })
+
+function note($: EngineInterface, text: string): Promise<void> {
+  return settled($.clock.now().then(at => update($, view, v => ({ ...v, log: [...v.log, { at, text }].slice(-50) }))))
 }
 
 // Sends a prompt to this session's model; a prompt the engine drops is shown, never lost.
 function ask($: EngineInterface, what: string, text: string): void {
-  void $.prompt.submit({ text }).catch((err: unknown) => {
+  void settled($.prompt.submit({ text }).catch((err: unknown) => {
     $.ui.toast(`/orca-triage could not send ${what} to the model: ${message(err)}`)
     return update($, view, v => ({ ...v, error: `${what} was not sent to the model: ${message(err)}` }))
-  })
+  }))
 }
 
 const setGroup = ($: EngineInterface, lead: number, change: Partial<TriageGroup>) =>
@@ -364,8 +373,8 @@ type Message = { id: string; from_handle: string; type: string; body: string; pa
 function waitLater($: EngineInterface): void {
   if (isWaiting) return
   isWaiting = true
-  void waitLoop($).catch((err: unknown) => note($, `the Orca inbox wait stopped: ${message(err)}. The next tick starts it again.`))
-    .finally(() => { isWaiting = false })
+  void settled(waitLoop($).catch((err: unknown) => note($, `the Orca inbox wait stopped: ${message(err)}. The next tick starts it again.`))
+    .finally(() => { isWaiting = false }))
 }
 
 async function waitLoop($: EngineInterface): Promise<void> {
@@ -470,7 +479,7 @@ async function jump($: EngineInterface, g: TriageGroup): Promise<void> {
 
 const fail = ($: EngineInterface, what: string) => (err: unknown) => {
   $.ui.toast(`/orca-triage ${what} failed: ${message(err)}`)
-  return update($, view, v => ({ ...v, error: message(err) }))
+  return settled(update($, view, v => ({ ...v, error: message(err) })))
 }
 
 export async function startTriage($: EngineInterface) {
@@ -508,7 +517,7 @@ export async function startTriage($: EngineInterface) {
     },
     isDeferred: false,
   })
-  $.clock.every(TICK_MS, () => { void tick($) })
+  $.clock.every(TICK_MS, () => { void settled(tick($)) })
 }
 
 export const triage = (on: On, project: () => LoadedConfig | undefined) => {
@@ -518,7 +527,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     const [verb = 'status'] = words.filter(w => !w.startsWith('--'))
     const unknown = words.find(w => w.startsWith('--') && (w !== '--dry-run' || verb !== 'start'))
     if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The one option is /orca-triage start --dry-run.` }
-    void openPane($)
+    void settled(openPane($))
     if (verb === 'start') {
       void collect($, project(), words.includes('--dry-run'))
         .then(text => $.ui.toast(text), fail($, 'start'))

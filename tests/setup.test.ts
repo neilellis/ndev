@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-type On = Parameters<Parameters<typeof test>[1]>[1]
-type Dollar = Parameters<Parameters<typeof test>[1]>[0]
+declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
+
+type On = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[1]
+type Dollar = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0]
 
 const ROOT = '/proj'
 const CONFIG = `${ROOT}/.neil-dev.json`
@@ -165,7 +167,7 @@ test('/dev-setup asks again even when the values are set', async ($, on) => {
   await start($)
   expect(asked).toHaveLength(0)
 
-  const ran = await $.command.run({ command: 'dev-setup', args: '' })
+  const ran = await $.command.run({ command: 'dev-setup', args: '' } as never)
   expect(asked).toHaveLength(2)
   expect(ran.text).toContain('Saved github')
   expect(saved(files).github).toEqual({ repo: 'acme/app', board: null })
@@ -186,7 +188,7 @@ test('/dev in a project that is not set up runs the set-up dialog', async ($, on
   await start($)
   asked.length = 0
 
-  const ran = await $.command.run({ command: 'dev', args: '' })
+  const ran = await $.command.run({ command: 'dev', args: '' } as never)
   expect(asked[0]).toContain('Repository')
   expect(ran.text).toContain('Set-up skipped')
   expect(files.has(CONFIG)).toBe(false)
@@ -197,7 +199,7 @@ test('/dev in a project that is set up shows the help and asks nothing', async (
   const { asked } = engine(on, { files })
   await start($)
 
-  const ran = await $.command.run({ command: 'dev', args: '' })
+  const ran = await $.command.run({ command: 'dev', args: '' } as never)
   expect(asked).toHaveLength(0)
   for (const name of ['/dev help', '/dev setup', '/dev-mode', '/dev-steering', '/learn']) expect(ran.text).toContain(name)
   expect(ran.text).toContain('light · interactive')
@@ -209,7 +211,7 @@ test('/dev help shows the help even when the project is not set up', async ($, o
   await start($)
   asked.length = 0
 
-  const ran = await $.command.run({ command: 'dev', args: 'help' })
+  const ran = await $.command.run({ command: 'dev', args: 'help' } as never)
   expect(asked).toHaveLength(0)
   expect(ran.text).toContain('/dev setup')
   expect(ran.text).toContain('not set up')
@@ -220,7 +222,7 @@ test('/dev setup asks again even when the values are set', async ($, on) => {
   const { asked } = engine(on, { files, answers: ['acme/app', 'No project board'] })
   await start($)
 
-  const ran = await $.command.run({ command: 'dev', args: 'setup' })
+  const ran = await $.command.run({ command: 'dev', args: 'setup' } as never)
   expect(asked).toHaveLength(2)
   expect(saved(files).github).toEqual({ repo: 'acme/app', board: null })
   expect(ran.text).toContain('Saved github')
@@ -231,7 +233,7 @@ test('/dev with an unknown word names the word and the choices', async ($, on) =
   engine(on, { files })
   await start($)
 
-  const ran = await $.command.run({ command: 'dev', args: 'bogus' })
+  const ran = await $.command.run({ command: 'dev', args: 'bogus' } as never)
   expect(ran.text).toContain('"bogus"')
   expect(ran.text).toContain('/dev help')
   expect(ran.text).toContain('/dev setup')
