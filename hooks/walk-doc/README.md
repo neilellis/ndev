@@ -52,7 +52,7 @@ After 10 blocks on the same step, `CONTINUE` must describe a new approach. `BLOC
 
 If the Walk agent fails to start, or the Claude session ends, the dev server is stopped.
 
-When the Walk agent calls `walk_done`, the main agent runs the finish commands and then calls `walk_finish`. That writes `walk-run/<run>/report.md`, stops the dev server, removes the walk's machines and sends the summary text.
+When the Walk agent calls `walk_done`, the main agent runs the finish commands and then calls `walk_finish`. A page edit can make a documentation film false, so a project with films reviews each changed page against the scenes that cite it before the film check: allow for that when you plan the end of a walk. That writes `walk-run/<run>/report.md`, stops the dev server, removes the walk's machines and sends the summary text.
 
 ## What the Walk agent may do
 
