@@ -123,7 +123,8 @@ One row for each component type. shadcn/ui is the choice when it has the exact t
 | Badge overflow ("+3") | Dice UI | `badge-overflow`: `npx shadcn@latest add https://diceui.com/r/badge-overflow.json` | The "+N" badge opens a popover or tooltip that lists the hidden items. |
 | Keyboard shortcut hint | shadcn/ui | `kbd`: `npx shadcn@latest add kbd` | Show the platform key (⌘ on macOS, Ctrl elsewhere). Monospace font from the project type scale. |
 | Onboarding tour | Dice UI | `tour`: `npx shadcn@latest add https://diceui.com/r/tour.json` | Five steps or fewer; always give Skip. Do not start it again after the user closes it. |
-| Relative time ("3 min ago") | Kibo UI | `relative-time`: `npx shadcn@latest add https://www.kibo-ui.com/r/relative-time.json` | Wrap the value in `<time datetime>` and show the full date in a tooltip. |
+| Relative time ("3 min ago") | Write your own | None. Kibo UI `relative-time` shows the time in several time zones, not a time ago. | Use `Intl.RelativeTimeFormat` for the words. Wrap the value in `<time datetime>` and show the full date in a tooltip. |
+| Time in several time zones | Kibo UI | `relative-time`: `npx shadcn@latest add https://www.kibo-ui.com/r/relative-time.json` | Label each row with its zone. Wrap each value in `<time datetime>`. |
 | **Navigation** | | | |
 | Sidebar navigation | shadcn/ui | `sidebar`: `npx shadcn@latest add sidebar` | Use its CSS variables (`--sidebar-*`) mapped to the project tokens. The active item uses the accent-subtle background and `aria-current="page"`. |
 | Top navigation with dropdowns | shadcn/ui | `navigation-menu`: `npx shadcn@latest add navigation-menu` | Use for marketing pages; app pages use the sidebar. On mobile, move the links to a sheet. |
