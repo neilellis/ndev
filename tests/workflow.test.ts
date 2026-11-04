@@ -133,6 +133,7 @@ const engine = (on: On, opts: Opts = {}) => {
   on('ui.status', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }) as never)
   on('session.cwd', () => ({ value: ROOT }) as never)
+  let refReads = 0
   on('process.run', (_, e) => {
     const a = e.argv.map(String)
     const line = a.join(' ')
@@ -152,6 +153,9 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === '-C' && a[2]?.startsWith('/home/neil/dev-wiki')) return ok('/home/neil/dev-wiki/.git\n')
       if (a[1] === '-C' && a[2] === '/nowhere') return ok('', 128, 'fatal: cannot change to /nowhere')
       if (line.includes('--path-format=absolute')) return ok(s.main ? '/main/.git\n/main/.git\n' : `${ROOT}/.git/worktrees/x\n/main/.git\n`)
+      // Each read of the remote refs differs, so a Bash call that names a push lands.
+      if (a[1] === 'for-each-ref') return ok(`refs/remotes/origin/issue-7 ${++refReads}\n`)
+      if (a[1] === 'reflog') return ok('update by push\n')
       if (a[1] === 'fetch') return ok()
       if (line.includes('--abbrev-ref')) return ok(`${s.branch ?? 'issue-7'}\n`)
       if (a[1] === 'rev-parse' && a[2] === 'HEAD') return ok(`${s.sha}\n`)
