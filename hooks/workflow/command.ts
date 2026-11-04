@@ -8,7 +8,7 @@ import type { LoadedConfig } from '../config'
 import { comment, git, head, markReady, readPr, withdrawAlert } from './effects'
 import { afterSkip } from './machine'
 import type { State } from './machine'
-import { boundRoot, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
+import { boundRoot, endAsking, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
 import type { Workflow } from './tools'
 import { watcherNote } from './watchdog'
 
@@ -26,7 +26,7 @@ const HELP = [
   '/flow off project, /flow on project: the same for the whole project, in .neil-dev.json.',
 ].join('\n')
 
-const GOTO: State[] = ['setup', 'planning', 'developing', 'reviewing', 'ci', 'smoke', 'finishing', 'revising', 'done']
+const GOTO: State[] = ['setup', 'interviewing', 'planning', 'developing', 'reviewing', 'ci', 'smoke', 'finishing', 'revising', 'done']
 
 type Project = LoadedConfig | undefined
 
@@ -166,7 +166,7 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
   const facts = await factsFor($, wf.root, project, wf)
   let to: State
   if (verb === 'skip') {
-    const move = afterSkip({ state: wf.state, previous: wf.previous }, facts.mode)
+    const move = afterSkip({ state: wf.state, previous: wf.previous }, facts.mode, facts.steering)
     if ('refused' in move) return move.refused
     to = move.state
   } else {
@@ -175,7 +175,7 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
     to = wanted
   }
   // Past development a PR has one record. One issue alone cannot go there while the PR has others.
-  if (!wf.pr && wf.prs[0] && !['setup', 'planning', 'developing'].includes(to)) {
+  if (!wf.pr && wf.prs[0] && !['setup', 'interviewing', 'planning', 'developing'].includes(to)) {
     const others = (await readHeld($, wf.root)).issues.filter(o => o.issue !== wf.issue && o.prs[0] === wf.prs[0] && o.state !== 'done')
     if (others.length) {
       const all = [wf, ...others].map(o => o.issue).sort((a, b) => a - b).join(', ')
@@ -213,6 +213,7 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
   if (from === 'smoke' && verb === 'skip') wf.evidence.smoke = { sha, text: `skipped by the human: ${reason}` }
   wf.attempts = 0
   wf.nudges = { count: 0 }
+  if (from === 'interviewing') notes.push(...(await endAsking($, wf)))
   moved(wf, `human:${verb}`, { state: to }, now)
   await saveWorkflow($, wf)
   if (to === 'reviewing') {

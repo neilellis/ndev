@@ -56,4 +56,4 @@ Suppress a finding only narrowly, and write down the dynamic mechanism that make
 
 ## The workflow
 
-The sweep is part of the review stage. Give the result to `mcp__ndev__finishedReview` as `deadcode`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+The plugin runs the sweep when the review stage starts, and its result is in the answer of `mcp__ndev__finishedDevelopment`. Triage each finding, and give the triage to `mcp__ndev__finishedReview` as `deadcode`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

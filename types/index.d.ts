@@ -186,8 +186,13 @@ declare module 'claude-code' {
       // The worktree of this session's workflow, and when the session was last active (hooks/workflow/).
       workflowRoot: Shaped<string | null>
       workflowIssue: Shaped<number | null>
+      workflowSessionHasHuman: Shaped<boolean>
+      // PaneCall in hooks/workflow/interview.tsx. This file must stay self-contained.
+      interviewView: Shaped<{ call?: { id: string; issue: number; [field: string]: unknown } }>
       workflowDoneWaitsFor: Shaped<string | null>
       workflowFollowUpWorktrees: Shaped<string[]>
+      workflowHotfixWorktrees: Shaped<string[]>
+      workflowHotfixPrs: Shaped<number[]>
       workflowDeclined: Shaped<boolean>
       workflowSkillsLoaded: Shaped<string[]>
       workflowIssueAsked: Shaped<boolean>

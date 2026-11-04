@@ -17,6 +17,7 @@ While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp
 | Stage | Tool | What the tool does |
 |---|---|---|
 | Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree and opens the draft PR. Call it first. |
+| Interview (interactive) | `mcp__ndev__interview(interviewJson)`, then `mcp__ndev__interview()` | Asks the human in a pane, then goes on. Load the `interview` skill. |
 | Plan (heavy) | `mcp__ndev__finishedPlan(markdown_file)` | Puts the plan in the PR body. |
 | Save work | `mcp__ndev__checkpoint(message, files, changeTypes)` | Runs the checks, commits the named files, and pushes. `changeTypes` adds to the types that set the review instructions. Use it and not `git commit` or `git push`. |
 | Development ends | `mcp__ndev__finishedDevelopment(issues, prs, message, files)` | Commits and starts the code review at once. Do not start another review. |
@@ -28,7 +29,7 @@ While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp
 
 Give each call its `issue`. From `reviewing` onward, you can give its `pr`. `started` takes an optional `mode`: choose `heavy` for a multi-step, cross-cutting or high-risk change, and `light` for the others. The human can change it with `/flow mode`. The mode in the answer of `started` wins over the session's mode.
 
-At any stage: `mcp__ndev__status()` reads the state. `mcp__ndev__blocked(message)` and `mcp__ndev__unblocked(message)` reach the human. `mcp__ndev__followUp(mode, message)` files other work. `mcp__ndev__addMigration(name)` adds a migration for after the merge. `mcp__ndev__requestSecret(name)` finds where a secret is set. `mcp__ndev__iNeedA(kind, description)` gives guidance on a component, library, brand style or animation. `mcp__ndev__reportWorkflowBug(title, details)` starts an agent that fixes a fault of the plugin. `mcp__ndev__waitForPR(issue, pr, state)` and `mcp__ndev__waitForIssue(waitOn, state)` hold the agent until another PR or issue reaches a state. Past half of its retries, a wait tells the human.
+At any stage: `mcp__ndev__status()` reads the state. `mcp__ndev__setSteering(steering, reason)` sets auto when no human can answer. `mcp__ndev__blocked(message)` and `mcp__ndev__unblocked(message)` reach the human. `mcp__ndev__followUp(mode, message)` files other work. `mcp__ndev__addMigration(name)` adds a migration for after the merge. `mcp__ndev__requestSecret(name)` finds where a secret is set. `mcp__ndev__iNeedA(kind, description)` gives guidance on a component, library, brand style or animation. `mcp__ndev__reportWorkflowBug(title, details)` starts an agent that fixes a fault of the plugin. `mcp__ndev__waitForPR(issue, pr, state)` and `mcp__ndev__waitForIssue(waitOn, state)` hold the agent until another PR or issue reaches a state. Past half of its retries, a wait tells the human.
 
 A helper agent cannot move the workflow. It can call only `status`, `requestSecret`, `followUp` with `issue_only`, `iNeedA`, `reportWorkflowBug` and `screenshot`. The fragments below say how to do the work of each stage.
 

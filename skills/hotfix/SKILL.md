@@ -33,4 +33,6 @@ All other rules stay in force: test first, pass the guards, record every failure
 
 ## The workflow
 
+The `mcp__ndev__hotfix` tool is another route: it gives an urgent fix its own issue, worktree and PR, and its answer gives the steps. This skill commits directly and has no PR. Use it only when the user names it.
+
 If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, follow each answer and end with `mcp__ndev__done`. Only a `straw_man` project commits to the base branch. At another level, the hotfix goes through the PR. A project level that may merge lets `done` merge. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
