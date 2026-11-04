@@ -2,7 +2,7 @@
 # Report the dead TypeScript code THIS BRANCH created, not what the repo already had.
 #
 # Usage: sweep-ts.sh [base-ref]       default base-ref = origin/HEAD, else origin/main
-# Needs: a pnpm workspace with knip installed and a knip.json at the repository root.
+# Needs: knip at node_modules/.bin/knip and a knip.json at the repository root.
 # Exit:  0 = this branch added no dead code
 #        1 = this branch added dead code (listed on stdout — triage every line)
 #        2 = could not measure. NEVER a pass.
@@ -81,9 +81,22 @@ if [ ! -d "$REPO/node_modules" ]; then
 # Fields are tab separated. knip names hold spaces and commas — `unlisted`,
 # `unresolved` and `duplicates` all produce them — and splitting the report on
 # whitespace put half a name in the File column and dropped the path.
+#
+# ⚠️ Run the binary, never `pnpm exec knip`. pnpm 11 checks the install before
+# exec, and its state file names absolute paths. In the base worktree of any pnpm
+# workspace, the check finds a "changed" workspace and starts `pnpm install`. That
+# install wants to purge the symlinked node_modules. With no TTY it aborts: exit 1,
+# with the abort text on stdout, which looks like a knip report. With a TTY it
+# prompts, and with CI=true it purges without a prompt. Setting CI=true is no fix.
 scan() {
   local dir="$1" label="$2" status
-  ( cd "$dir" && pnpm exec knip --no-progress --reporter json 2>"$TMP/$label.err" )   \
+  if [ ! -x "$dir/node_modules/.bin/knip" ]; then
+    echo "sweep-ts.sh: $dir/node_modules/.bin/knip is absent at the $label, so there is" >&2
+    echo "  nothing to scan with. Fix: run pnpm install. If the $label's package.json does" >&2
+    echo "  not list knip, run pnpm add -D -w knip (no -w in a single-package repository)." >&2
+    return 2
+  fi
+  ( cd "$dir" && ./node_modules/.bin/knip --no-progress --reporter json 2>"$TMP/$label.err" )   \
     > "$TMP/$label.json"
   status=$?
   echo "$status" > "$TMP/$label.status"
@@ -123,6 +136,9 @@ for entry in issues:
     echo "sweep-ts.sh: could not read knip's report at the $label." >&2
     sed 's/^/  /' "$TMP/$label.parse.err" >&2
     sed 's/^/  knip: /' "$TMP/$label.err" >&2
+    # The text that failed to parse is the diagnosis: a tool that fails can write
+    # its error to stdout, and then the stderr above is empty.
+    head -n 20 "$TMP/$label.json" | cut -c1-300 | sed 's/^/  stdout: /' >&2
     return 2
   fi
   return 0
@@ -137,7 +153,7 @@ scan "$REPO" head > "$TMP/head.txt" || exit 2
 # failed read must never reach the subtraction.
 [ -s "$TMP/head.txt" ] || [ "$(cat "$TMP/head.status")" = "0" ] || {
   echo "sweep-ts.sh: knip produced no output at HEAD. That is a failed run, not a" >&2
-  echo "  clean repository. Check that pnpm exec knip runs here." >&2
+  echo "  clean repository. Check that node_modules/.bin/knip runs here." >&2
   exit 2; }
 
 git worktree add --detach "$TMP/base" "$MERGE_BASE" >/dev/null 2>&1 || {
