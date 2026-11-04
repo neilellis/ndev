@@ -8,7 +8,7 @@ import type { LoadedConfig } from '../config'
 import { comment, git, head, markReady, readPr, withdrawAlert } from './effects'
 import { afterSkip } from './machine'
 import type { State } from './machine'
-import { boundRoot, endAsking, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
+import { boundRoot, endAsking, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, waitHolder, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
 import type { Workflow } from './tools'
 import { watcherNote } from './watchdog'
 
@@ -93,9 +93,10 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
     if (!wf) return `${off}No workflow in ${root ?? 'this session'}. The agent starts one with mcp__ndev__started.\n\n${HELP}`
     const facts = await factsFor($, wf.root, project, wf)
     const last = wf.history.slice(-5).map(h => `${h.tool}: ${h.from ?? 'none'} to ${h.to}`).join('; ')
+    const holder = wf.state === 'wait' ? await waitHolder($, wf) : undefined
     const watch = await watcherNote($)
     const watched = `\n\nWatcher: ${watch.why}${watch.at ? ` (${Math.round(((await $.clock.now()) - watch.at) / 1000)} s ago)` : ''}.`
-    return `${off}${wf.off ? `Off for this issue: ${wf.off.reason}. ` : ''}${labelOf(wf)} in ${wf.root} is in the state "${wf.state}"${wf.previous ? ` (before the block: ${wf.previous})` : ''}.${wf.blocked ? ` Blocked: ${wf.blocked.message}` : ''}\nNext: ${stepOf(wf, facts)}\nLast moves: ${last || 'none'}${watched}`
+    return `${off}${wf.off ? `Off for this issue: ${wf.off.reason}. ` : ''}${labelOf(wf)} in ${wf.root} is in the state "${wf.state}"${wf.previous ? ` (before the block: ${wf.previous})` : ''}.${wf.blocked ? ` Blocked: ${wf.blocked.message}` : ''}${holder ? `\n${holder.detail}` : ''}\nNext: ${holder?.next ?? stepOf(wf, facts)}\nLast moves: ${last || 'none'}${watched}`
   }
   if (verb === 'mode' || verb === 'steering') {
     const allowed = verb === 'mode' ? ['light', 'heavy'] : ['interactive', 'auto']

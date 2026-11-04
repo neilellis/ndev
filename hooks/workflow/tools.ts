@@ -398,12 +398,12 @@ const reviewTypes = (wf: Workflow): ChangeType[] => (wf.changeTypes ?? []).filte
 
 export const stepOf = (wf: Workflow, facts: Facts) => nextStep(wf.state, { ...facts, merged: wf.merged, remembered: !!wf.hooks?.remember?.result, changeTypes: reviewTypes(wf), webFiles: wf.webFiles, baseChecked: isBaseChecked(wf) })
 
-async function answer($: EngineInterface, wf: Workflow, facts: Facts, detail: string[] = []): Promise<string> {
+async function answer($: EngineInterface, wf: Workflow, facts: Facts, detail: string[] = [], next?: string): Promise<string> {
   const lines = [`State: ${wf.state}. ${whoOf(wf)}. Worktree: ${wf.root}.`, ...detail.filter(Boolean)]
   if (wf.prs[0]) lines.push(`PR: https://github.com/${wf.repo}/pull/${wf.prs[0]}`)
   const others = (await readEffective($, wf.root)).filter(o => !sameRecord(o, wf) && o.state !== 'done')
   if (others.length) lines.push(`Other issues in this worktree: ${others.map(o => `${o.pr ? `PR #${o.pr}` : `#${o.issue}`} ("${o.state}"${!o.pr && o.prs[0] && o.prs[0] === wf.prs[0] ? `, same PR #${o.prs[0]}` : ''})`).join(', ')}.`)
-  lines.push(`Next: ${stepOf(wf, facts)}`)
+  lines.push(`Next: ${next ?? stepOf(wf, facts)}`)
   return lines.join('\n')
 }
 
@@ -837,6 +837,11 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     const failed = await withdrawAlert($, root, record.asking)
     if (failed) claimNotes.push(`The old interview notification stays on screen: ${failed}`)
     record.asking = undefined
+  }
+  // A running wait withdraws its own notice. The notice of a wait that nothing holds is for this call to withdraw.
+  if (record.waiting?.alert && !isWaitRunning(record.waiting.id)) {
+    const failed = await withdrawAlert($, root, record.waiting.alert)
+    if (failed) claimNotes.push(`The notice of the old wait stays on screen: ${failed}`)
   }
   claimNotes.push(...(await prepareInterview($, root, issue)))
   if (shortName) record.shortName = shortName
@@ -1968,8 +1973,21 @@ async function status($: EngineInterface, c: Ctx): Promise<string> {
   const wf = !root ? undefined : pr !== undefined ? await loadPrRecord($, root, pr) : await loadWorkflow($, root, named)
   if (!wf || !root) return `No workflow${pr ? ` for PR #${pr}` : named ? ` for issue #${named}` : ''} in this session. Next: call started with the issue number.`
   const facts = await factsFor($, root, project, wf)
-  const extra = [wf.off ? `Off: ${wf.off.reason}. /flow on turns it back on.` : '', project?.config.workflow === false ? `Off for this project: ${project.path}.` : '', wf.blocked ? `Blocked: ${wf.blocked.message}` : '', wf.waiting ? `Waiting for ${wf.waiting.what}. /unblock <message> ends it.` : '', wf.changeTypes?.length ? `Change types: ${wf.changeTypes.join(', ')}.` : '', wf.migrations.length ? `Migrations after merge: ${wf.migrations.map(m => m.path).join(', ')}` : '']
-  return answer($, wf, facts, extra)
+  const holder = wf.state === 'wait' ? await waitHolder($, wf) : undefined
+  const extra = [wf.off ? `Off: ${wf.off.reason}. /flow on turns it back on.` : '', project?.config.workflow === false ? `Off for this project: ${project.path}.` : '', wf.blocked ? `Blocked: ${wf.blocked.message}` : '', holder?.detail ?? '', wf.changeTypes?.length ? `Change types: ${wf.changeTypes.join(', ')}.` : '', wf.migrations.length ? `Migrations after merge: ${wf.migrations.map(m => m.path).join(', ')}` : '']
+  return answer($, wf, facts, extra, holder?.next)
+}
+
+// Says what holds a record in "wait". Only a wait tool in this process, or another session that is still live, can.
+export async function waitHolder($: EngineInterface, wf: Workflow): Promise<{ detail: string; next?: string }> {
+  const what = wf.waiting?.what ?? 'a condition that the record does not name'
+  // /unblock reads the record that this session is on, and that can be another one.
+  const bound = await loadWorkflow($, wf.root)
+  const canUnblock = !!bound && sameRecord(bound, wf)
+  if (wf.waiting && isWaitRunning(wf.waiting.id)) return { detail: `Waiting for ${what}.${canUnblock ? ' /unblock <message> ends it.' : ''}` }
+  const other = wf.owner && wf.owner.session !== (await $.session.id()) && (await $.clock.now()) - wf.owner.at < OWNER_LIVE_MS ? wf.owner.session : undefined
+  if (other) return { detail: `Waiting for ${what} in the session ${other}.`, next: `The session ${other} holds this wait, so leave it to that session. If that session is dead, call started with issue ${wf.issue} and takeOver true.` }
+  return { detail: `No wait tool runs: ${wf.waiting?.tool ?? 'the wait'} for ${what} ended without an answer, or its session died.`, next: `Call started with issue ${wf.issue} to go back to the state "${wf.previous ?? 'developing'}"${canUnblock ? ', or the human types /unblock <message>' : ''}.` }
 }
 
 // Works with or without a workflow, for any agent. The answer never holds the value.
@@ -2084,6 +2102,7 @@ export async function startWorkflow($: EngineInterface, cwd: string): Promise<vo
 
 // The session has ended, so another session may take the workflow at once.
 export async function releaseWorkflow($: EngineInterface, project: LoadedConfig | undefined): Promise<void> {
+  await endDeadWaits($, project, true)
   const root = (await read($, workflowRoot)) ?? project?.root
   const wf = root ? await loadWorkflow($, root) : undefined
   if (!wf?.owner || wf.owner.session !== (await $.session.id())) return
@@ -2391,16 +2410,76 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
 
 const isStaleWrite = (error: unknown) => error instanceof Error && error.message.includes('set-workflow exited 5')
 
+// The record that a wait is on. The agent can go to another issue during the wait, so a wait names its own record.
+type WaitWho = { issue: number; pr?: number }
+const WAIT_RECORD_READS = 3
+class WaitRecordLost extends Error {}
+
+const readWaitRecord = ($: EngineInterface, root: string, who: WaitWho) => (who.pr ? loadPrRecord($, root, who.pr) : loadWorkflow($, root, who.issue))
+
+// A plugin update or a move of the record can hide it for a moment, so a missing record is read again before the wait fails.
+async function waitRecord($: EngineInterface, root: string, who: WaitWho): Promise<Workflow> {
+  for (let reads = 1; ; reads += 1) {
+    const wf = await readWaitRecord($, root, who)
+    if (wf) return wf
+    if (reads >= WAIT_RECORD_READS) break
+    await run($, ['sleep', '1'], { cwd: root, timeoutMs: 11_000 })
+  }
+  const there = async (name: string) => `${name} ${(await $.fs.exists(`${root}/${name}`)) ? 'exists' : 'is absent'}`
+  const held = await readEffective($, root).then(all => (all.length ? all.map(labelOf).join(', ') : 'none'), (e: unknown) => `unreadable: ${e instanceof Error ? e.message : String(e)}`)
+  throw new WaitRecordLost(`the workflow record of ${who.pr ? `PR #${who.pr} (issue #${who.issue})` : `issue #${who.issue}`} was not found in ${root} after ${WAIT_RECORD_READS} reads: ${await there('.neil-dev.worktree.json')}, ${await there(interviewFileName(who.issue))}, and the records read there are: ${held}. A plugin update can leave this session on older code that reads another layout, so a new session may read it. Repair: call started with issue ${who.issue}.`)
+}
+
+// Only the main agent can call a wait tool, so at the end of its turn a record of this session in "wait"
+// has no holder, unless the wait tool still runs. After an interrupt the host goes on without the hook, and
+// the wait tool may never run again, so `isOver` ends a running wait too. Its late code finds the wait over.
+export async function endDeadWaits($: EngineInterface, project: LoadedConfig | undefined, isOver: boolean): Promise<void> {
+  const root = (await read($, workflowRoot)) ?? project?.root
+  if (!root) return
+  const session = await $.session.id()
+  // An agent that went to another issue during the wait released this record, and the wait is still its own.
+  const isOurs = (wf: Workflow) => wf.owner?.session === session || (!wf.owner && wf.lastSession === session)
+  const isDead = (wf: Workflow) => wf.state === 'wait' && isOurs(wf) && (isOver || !wf.waiting || !isWaitRunning(wf.waiting.id))
+  // Each record: a PR back with its developers can hold a wait that no issue record shows.
+  const records = async () => {
+    const { issues, prs } = await readHeld($, root)
+    return [...issues, ...prs]
+  }
+  // Only the waits of the turn that ended: a new turn can start a wait while this hook waits for the queue.
+  const ended = new Set((await records()).filter(isDead).map(wf => wf.waiting?.id))
+  if (!ended.size) return
+  for (let tries = 1; ; tries += 1) {
+    await whenTurnsFree($)
+    try {
+      const problems = await inTurn(async () => {
+        const notes: string[] = []
+        for (const wf of (await records()).filter(wf => isDead(wf) && ended.has(wf.waiting?.id))) {
+          if (wf.waiting) activeWaits.delete(wf.waiting.id)
+          const failed = wf.waiting?.alert && (await withdrawAlert($, root, wf.waiting.alert))
+          if (failed) notes.push(failed)
+          moved(wf, 'waitAbandoned', { state: wf.previous ?? 'developing' }, await $.clock.now())
+          await saveWorkflow($, wf)
+        }
+        return notes
+      })
+      if (problems.length) await $.ui.toast(`ndev: the notice of an ended wait stays on screen: ${problems.join(' ')}`)
+      return
+    } catch (error) {
+      if (tries >= 3 || !isStaleWrite(error)) throw error
+    }
+  }
+}
+
 // Whether the record still holds this wait. It reads and does not take a human's answer.
-async function waitGoesOn($: EngineInterface, root: string, id: string): Promise<boolean> {
-  const wf = await loadWorkflow($, root)
-  if (wf?.state !== 'wait' || wf.waiting?.id !== id) return false
+async function waitGoesOn($: EngineInterface, root: string, who: WaitWho, id: string): Promise<boolean> {
+  const wf = await waitRecord($, root, who)
+  if (wf.state !== 'wait' || wf.waiting?.id !== id) return false
   // The owner stays live through a long wait, or another session could take the workflow over.
   // A busy queue or a lost write only puts this off until the next slice.
   const now = await $.clock.now()
   if (wf.owner && now - wf.owner.at > OWNER_LIVE_MS / 2 && !turnsQueued) {
     await inTurn(async () => {
-      const fresh = await loadWorkflow($, root)
+      const fresh = await readWaitRecord($, root, who)
       if (fresh?.owner && fresh.state === 'wait' && fresh.waiting?.id === id) {
         fresh.owner = { ...fresh.owner, at: now }
         await saveWorkflow($, fresh)
@@ -2413,13 +2492,12 @@ async function waitGoesOn($: EngineInterface, root: string, id: string): Promise
 }
 
 // Ends the wait in one step: the state goes back, or the human's answer is taken if a human came first.
-async function waitEnds($: EngineInterface, c: Ctx, root: string, id: string, label: string): Promise<string> {
+async function waitEnds($: EngineInterface, c: Ctx, root: string, who: WaitWho, id: string, label: string): Promise<string> {
   for (let tries = 1; ; tries += 1) {
     await whenTurnsFree($)
     try {
       return await inTurn(async () => {
-        const wf = await loadWorkflow($, root)
-        if (!wf) throw new Error(`the workflow record in ${root} is gone`)
+        const wf = await waitRecord($, root, who)
         const isHeld = wf.state === 'wait' && wf.waiting?.id === id
         const given = wf.waitAnswer?.id === id ? wf.waitAnswer.message : undefined
         if (isHeld) moved(wf, label, { state: wf.previous ?? 'developing' }, await $.clock.now())
@@ -2445,14 +2523,14 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
   // A set time is not a retry, so waitForSeconds never raises the notice.
   const most = Math.min(attempts, Math.floor(timeoutS / spec.period))
   await whenTurnsFree($)
-  const { root, live } = await inTurn(async () => {
+  const { root, live, who } = await inTurn(async () => {
     const wf = await current($, c)
     legal(wf, 'wait', await factsFor($, wf.root, c.project, wf))
     wf.waiting = { id, tool: name, what: shownValue('what', spec.what), at: startedAt, period: spec.period, ...(Number.isFinite(most) ? { most } : {}), timeoutS, args: shownArgs(c.args) }
     wf.waitAnswer = undefined
     moved(wf, name, { state: 'wait', previous: wf.state }, startedAt)
     await saveWorkflow($, wf)
-    return { root: wf.root, live: liveName(wf) }
+    return { root: wf.root, live: liveName(wf), who: { issue: wf.issue, pr: wf.pr } }
   })
   activeWaits.add(id)
   let alert: { group: string; pid?: number } | undefined
@@ -2463,36 +2541,37 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
     let tries = 0
     const pastHalf = async () => name !== 'waitForSeconds' && (tries * 2 > most || ((await $.clock.now()) - startedAt) * 2 > timeoutS * 1000)
     for (;;) {
-      if (!(await waitGoesOn($, root, id))) return told(await waitEnds($, c, root, id, name))
-      if (limits.signal.aborted) throw new Refuse(`Refused: ${name} for ${spec.what} was interrupted.\n${await waitEnds($, c, root, id, 'waitInterrupted')}`)
-      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts, because the host's time budget for one hook is nearly spent. Repair: call it again.\n${await waitEnds($, c, root, id, 'waitGaveUp')}`)
+      if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name))
+      if (limits.signal.aborted) throw new Refuse(`Refused: ${name} for ${spec.what} was interrupted.\n${await waitEnds($, c, root, who, id, 'waitInterrupted')}`)
+      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts, because the host's time budget for one hook is nearly spent. Repair: call it again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp')}`)
       const check = await waitCheck($, name, c.args, root, startedAt)
       tries += 1
       const checkedAt = await $.clock.now()
       await writeLive($, root, live, l => ({ ...l, wait: { id, tries, checkedAt, nextAt: Math.min(deadline, checkedAt + spec.period * 1000), detail: shownValue('detail', check.detail), seen: check.seen } }))
       // A human can come during a check, which can last a minute. The answer goes first.
-      if (!(await waitGoesOn($, root, id))) return told(await waitEnds($, c, root, id, name))
-      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}\n${await waitEnds($, c, root, id, 'waitEnded')}`)
+      if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name))
+      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}\n${await waitEnds($, c, root, who, id, 'waitEnded')}`)
       if (tries < attempts && !alert && (await pastHalf())) {
-        const raised = await waitAlert($, root, id, name, spec.what, tries, most, check.detail)
+        const raised = await waitAlert($, root, who, id, name, spec.what, tries, most, check.detail)
         alert = raised.alert
         problem = raised.problem
       }
-      if (tries >= attempts) throw new Refuse(`${name} gave up on ${spec.what} after ${tries} attempts. The last check: ${check.detail}. Repair: call it again with more attempts, or call blocked if only the human can go on.\n${await waitEnds($, c, root, id, 'waitGaveUp')}`)
-      if ((await $.clock.now()) >= deadline) throw new Refuse(`${name} gave up on ${spec.what} after its timeout of ${timeoutS} s and ${tries} attempts. The last check: ${check.detail}. Repair: call it again with a longer timeout, or call blocked if only the human can go on.\n${await waitEnds($, c, root, id, 'waitGaveUp')}`)
+      if (tries >= attempts) throw new Refuse(`${name} gave up on ${spec.what} after ${tries} attempts. The last check: ${check.detail}. Repair: call it again with more attempts, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp')}`)
+      if ((await $.clock.now()) >= deadline) throw new Refuse(`${name} gave up on ${spec.what} after its timeout of ${timeoutS} s and ${tries} attempts. The last check: ${check.detail}. Repair: call it again with a longer timeout, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp')}`)
       const nextAt = Math.min(deadline, (await $.clock.now()) + spec.period * 1000)
       for (let now = await $.clock.now(); now < nextAt; now = await $.clock.now()) {
         const secs = Math.min(WAIT_SLICE_S, (nextAt - now) / 1000)
         const pause = await run($, ['sleep', String(secs)], { cwd: root, timeoutMs: Math.ceil((secs + 10) * 1000) })
         if (pause.exitCode !== 0) throw new Error(`sleep ${secs} exited ${pause.exitCode}: ${pause.stderr.trim().slice(0, 300)}`)
-        if (limits.signal.aborted || !(await waitGoesOn($, root, id))) break
+        if (limits.signal.aborted || !(await waitGoesOn($, root, who, id))) break
       }
     }
   } catch (error) {
     if (error instanceof Refuse) throw error
     // An unexpected failure must not leave the record in "wait", and if it does, the agent is told.
     const message = error instanceof Error ? error.message : String(error)
-    const stuck = await waitEnds($, c, root, id, 'waitFailed').then(() => '', (e: unknown) => ` The state stays "wait", because going back also failed: ${e instanceof Error ? e.message : String(e)}. Repair: the human types /unblock <message>, or call started.`)
+    if (error instanceof WaitRecordLost) throw new Error(`${name} for ${spec.what}: ${message}`)
+    const stuck = await waitEnds($, c, root, who, id, 'waitFailed').then(() => '', (e: unknown) => ` The state stays "wait", because going back also failed: ${e instanceof Error ? e.message : String(e)}. Repair: the human types /unblock <message>, or call started.`)
     throw new Error(`${name} for ${spec.what}: ${message}.${stuck}`)
   } finally {
     activeWaits.delete(id)
@@ -2505,12 +2584,12 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
 
 // Past half the retries the wait may never end, so the human hears of it the way a block does. The
 // wait goes on, and it withdraws the notice when it ends.
-async function waitAlert($: EngineInterface, root: string, id: string, name: string, what: string, tries: number, most: number, last: string): Promise<{ alert?: { group: string; pid?: number }; problem?: string }> {
-  const issue = (await loadWorkflow($, root))?.issue ?? 0
+async function waitAlert($: EngineInterface, root: string, who: WaitWho, id: string, name: string, what: string, tries: number, most: number, last: string): Promise<{ alert?: { group: string; pid?: number }; problem?: string }> {
+  const { issue } = who
   const raised = await raiseAlert($, root, issue, `${name} for ${what} has run ${tries} of ${most} checks. Last: ${last} /unblock ends the wait.`, `ndev: #${issue}: a wait is past half its retries`)
   const alert = { group: raised.group, pid: raised.pid }
   await inTurn(async () => {
-    const wf = await loadWorkflow($, root)
+    const wf = await readWaitRecord($, root, who)
     if (wf?.waiting?.id === id) {
       wf.waiting.alert = alert
       await saveWorkflow($, wf)

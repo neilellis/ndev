@@ -2496,6 +2496,256 @@ test('started on a record left in "wait" by a dead session goes back to the earl
   expect(w.state()?.waiting).toBeUndefined()
 })
 
+// What a reader sees once a wait is over: the earlier state, and no word of a wait that holds the agent.
+const expectBackIn = async ($: Dollar, w: W, state: string) => {
+  expect(w.state()?.state).toBe(state)
+  expect(w.state()?.waiting).toBeUndefined()
+  const said = (await tool($, 'status')).text
+  expect(said).toContain(`State: ${state}.`)
+  expect(said).not.toContain('A wait tool holds')
+}
+
+test('a wait whose check throws goes back to the earlier state', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  // One read of the record fails during the wait, and the reads after it work.
+  let isBroken = false
+  w.s.failRead = (path: string) => {
+    if (!isBroken || !path.includes('.neil-dev.')) return false
+    isBroken = false
+    return true
+  }
+  w.s.probe = () => {
+    isBroken = true
+    return { exitCode: 1 }
+  }
+  const r = await tool($, 'waitFor', { shell_command: 'check' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('waitFor for')
+  await expectBackIn($, w, 'developing')
+})
+
+test('an interrupt that the host goes on from without the hook still ends the wait at the end of the turn', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  // The host lets a hook linger for 5 s after an interrupt, so this hook never gets its own say.
+  w.s.probe = () => ({ exitCode: 1 })
+  let release!: () => void
+  w.s.sleepHold = new Promise<void>(resolve => { release = resolve })
+  const call = tool($, 'waitFor', { shell_command: 'false', period: 30 })
+  await settle()
+  expect(w.state()?.state).toBe('wait')
+  await turnEnds($, 'aborted')
+  await expectBackIn($, w, 'developing')
+  // A later wait is legal again, and the lingering hook that wakes at last changes nothing.
+  w.s.sleepAdvances = true
+  release()
+  await call
+  await expectBackIn($, w, 'developing')
+  w.s.probe = () => ({ exitCode: 0 })
+  expect((await tool($, 'waitFor', { shell_command: 'check' })).isError).toBe(false)
+})
+
+test('a normal end of a turn ends a wait of this session that no wait tool holds', async ($, on) => {
+  const w = engine(on, { wf: { state: 'wait', previous: 'ci', waiting: { id: 'old', tool: 'waitFor', what: 'old', at: 0 } } })
+  await start($, w)
+  await turnEnds($)
+  await expectBackIn($, w, 'ci')
+})
+
+test('the end of a session ends its wait, and withdraws its notice', async ($, on) => {
+  const alert = { group: 'g1', pid: 42 }
+  const w = engine(on, { wf: { state: 'wait', previous: 'ci', waiting: { id: 'old', tool: 'waitFor', what: 'old', at: 0, alert } } })
+  await start($, w)
+  await $.session.end({ reason: 'other', sessionId: 's1' } as never)
+  await settle()
+  expect(w.state()?.state).toBe('ci')
+  expect(w.state()?.waiting).toBeUndefined()
+  expect(w.alerts.join('\n')).toContain('withdraw')
+})
+
+test('status names a wait with no holder in this session, and started takes the state back and withdraws its notice', async ($, on) => {
+  const w = engine(on, { wf: { state: 'wait', previous: 'ci', waiting: { id: 'old', tool: 'waitFor', what: '`check` to exit 0', at: 0, alert: { group: 'g1', pid: 42 } } } })
+  await start($, w)
+  const said = (await tool($, 'status')).text
+  expect(said).not.toContain('A wait tool holds')
+  expect(said).toContain('No wait tool runs')
+  expect(said).toContain('waitFor')
+  expect(said).toContain('started')
+  expect(w.state()?.state).toBe('wait') // status changes nothing.
+  expect(w.alerts).toEqual([])
+  await tool($, 'started', { issue: 7 })
+  expect(w.alerts).toEqual(['withdraw'])
+  await expectBackIn($, w, 'ci')
+})
+
+test('status says that a wait whose owner died has no holder, and started takes the state back', async ($, on) => {
+  const w = engine(on, { wf: { state: 'wait', previous: 'ci', waiting: { id: 'old', tool: 'waitFor', what: 'old', at: 0 }, owner: { session: 'dead', at: -3_600_000 } } })
+  await start($, w)
+  const said = (await tool($, 'status')).text
+  expect(said).not.toContain('A wait tool holds')
+  expect(said).toContain('No wait tool runs')
+  expect(said).toContain('Call started with issue 7')
+  await tool($, 'started', { issue: 7 })
+  await expectBackIn($, w, 'ci')
+})
+
+test('status leaves a wait of another live session as it is, and names that session', async ($, on) => {
+  const w = engine(on, { wf: { state: 'wait', previous: 'ci', waiting: { id: 'theirs', tool: 'waitFor', what: 'theirs', at: 0 }, owner: { session: 'other', at: 0 } } })
+  await start($, w)
+  const said = (await tool($, 'status')).text
+  expect(said).toContain('the session other')
+  expect(said).toContain('takeOver true')
+  expect(said).not.toContain('A wait tool holds')
+  expect(said).not.toContain('No wait tool runs')
+  await turnEnds($, 'aborted')
+  expect(w.state()?.state).toBe('wait')
+})
+
+test('status says that a running wait holds the agent', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.probe = () => ({ exitCode: 1 })
+  let release!: () => void
+  w.s.sleepHold = new Promise<void>(resolve => { release = resolve })
+  const call = tool($, 'waitFor', { shell_command: 'false', period: 30 })
+  await settle()
+  const said = (await tool($, 'status')).text
+  expect(said).toContain('A wait tool holds')
+  expect(said).not.toContain('No wait tool runs')
+  await unblock($, 'go on')
+  release()
+  await call
+})
+
+test('a wait finds its record when the record moves files mid-wait', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  const issueFile = `${ROOT}/.neil-dev.issue-7.json`
+  w.s.probe = () => {
+    // The old keys of the worktree file and the issue file are the two places a record can be.
+    const held = JSON.parse(w.files.get(issueFile)!) as { workflow: unknown }
+    w.files.set(RECORD, JSON.stringify({ workflows: { 7: held.workflow } }))
+    w.files.delete(issueFile)
+    return { exitCode: 0 }
+  }
+  const r = await tool($, 'waitFor', { shell_command: 'check' })
+  expect(r.isError).toBe(false)
+  expect(r.text).not.toContain('is gone')
+  await expectBackIn($, w, 'developing')
+})
+
+test('a wait outlasts a record that is away for a moment, and goes on', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  const issueFile = `${ROOT}/.neil-dev.issue-7.json`
+  w.s.probe = () => {
+    const body = w.files.get(issueFile)!
+    w.files.delete(issueFile)
+    // The record comes back while the wait sleeps before its next read.
+    w.s.sleepHold = { then: (done: () => void) => { w.files.set(issueFile, body); w.s.sleepHold = undefined; done() } } as unknown as Promise<void>
+    return { exitCode: 0 }
+  }
+  const r = await tool($, 'waitFor', { shell_command: 'check' })
+  expect(r.isError).toBe(false)
+  expect(r.text).not.toContain('is gone')
+  await expectBackIn($, w, 'developing')
+})
+
+test('a wait follows its own record when the agent goes to another issue mid-wait', async ($, on) => {
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.issue-8.json`]: JSON.stringify({ version: 1, issue: 8, workflow: flow({ issue: 8, branch: 'issue-8', prs: [13], owner: undefined }) }) } })
+  await start($, w)
+  await tool($, 'started', { issue: 7 })
+  let finish!: (v: { exitCode: number }) => void
+  w.s.probe = () => new Promise(resolve => { finish = resolve })
+  const call = tool($, 'waitFor', { issue: 7, shell_command: 'check' })
+  await settle()
+  expect(w.state(7)?.state).toBe('wait')
+  await tool($, 'started', { issue: 8 })
+  expect(w.state(8)?.owner?.session).toBe('s1')
+  finish({ exitCode: 0 })
+  const r = await call
+  expect(r.text).not.toContain('A human moved')
+  expect(r.text).toContain('ended after 1 checks')
+  expect(w.state(7)?.state).toBe('developing')
+})
+
+test('an interrupt ends a wait whose record this agent left for another issue', async ($, on) => {
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.issue-8.json`]: JSON.stringify({ version: 1, issue: 8, workflow: flow({ issue: 8, branch: 'issue-8', prs: [13], owner: undefined }) }) } })
+  await start($, w)
+  await tool($, 'started', { issue: 7 })
+  let finish!: (v: { exitCode: number }) => void
+  w.s.probe = () => new Promise(resolve => { finish = resolve }) // The host goes on without this hook.
+  const call = tool($, 'waitFor', { issue: 7, shell_command: 'check' })
+  await settle()
+  await tool($, 'started', { issue: 8 })
+  expect(w.state(7)?.owner).toBeUndefined()
+  await turnEnds($, 'aborted')
+  expect(w.state(7)?.state).toBe('developing')
+  expect(w.state(7)?.waiting).toBeUndefined()
+  finish({ exitCode: 1 })
+  await call
+  expect(w.state(7)?.state).toBe('developing')
+})
+
+test('the end of a turn ends a stopped wait on a PR record that no issue shows', async ($, on) => {
+  const waiting = { id: 'old', tool: 'waitFor', what: 'old', at: 0 }
+  const seven = flow({ state: 'developing', prs: [13] })
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.issue-7.json`]: JSON.stringify({ version: 1, issue: 7, workflow: seven, prs: { 13: flow({ pr: 13, issues: [7], state: 'wait', previous: 'developing', waiting }) } }) } })
+  await start($, w)
+  await turnEnds($)
+  expect(w.prRecord(13)?.state).toBe('developing')
+  expect(w.prRecord(13)?.waiting).toBeUndefined()
+})
+
+test('/flow status tells the truth about a wait that nothing holds', async ($, on) => {
+  engine(on, { wf: { state: 'wait', previous: 'ci', waiting: { id: 'old', tool: 'waitFor', what: 'old', at: 0 } } })
+  await start($)
+  const out = await command($, 'status')
+  expect(out).not.toContain('A wait tool holds')
+  expect(out).toContain('No wait tool runs')
+  expect(out).toContain('started')
+})
+
+test('status names /unblock only for the record that /unblock reads', async ($, on) => {
+  const waiting = { id: 'old', tool: 'waitFor', what: 'old', at: 0 }
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.issue-8.json`]: JSON.stringify({ version: 1, issue: 8, workflow: flow({ issue: 8, branch: 'issue-8', prs: [13], owner: undefined, state: 'wait', previous: 'ci', waiting }) }) } })
+  await start($, w)
+  await tool($, 'started', { issue: 7 })
+  const other = (await tool($, 'status', { issue: 8 })).text
+  expect(other).toContain('No wait tool runs')
+  expect(other).toContain('started with issue 8')
+  expect(other).not.toContain('/unblock')
+})
+
+test('a failed read at the end of a turn does not claim that a wait is stuck', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.files.set(`${ROOT}/.neil-dev.issue-9.json`, '{ not json')
+  await turnEnds($)
+  const said = w.toasts.join('\n')
+  expect(said).toContain('.neil-dev.issue-9.json')
+  expect(said).not.toContain('the state stays "wait"')
+  w.files.delete(`${ROOT}/.neil-dev.issue-9.json`)
+})
+
+test('a wait whose record does not come back says what it read and names the repair', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.probe = () => {
+    w.files.delete(`${ROOT}/.neil-dev.issue-7.json`)
+    w.files.delete(RECORD)
+    return { exitCode: 0 }
+  }
+  const r = await tool($, 'waitFor', { shell_command: 'check' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('issue #7')
+  expect(r.text).toContain(ROOT)
+  expect(r.text).toContain('.neil-dev.worktree.json')
+  expect(r.text).toContain('call started with issue 7')
+  expect(r.text).not.toContain('The state stays "wait"')
+})
+
 test('/flow goto goes to any state and refuses an unknown one', async ($, on) => {
   const w = engine(on)
   await start($, w)

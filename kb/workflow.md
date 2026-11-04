@@ -50,7 +50,7 @@ stateDiagram-v2
     active --> blocked: blocked, 3 failed attempts, or a stall
     blocked --> active: unblocked, or /unblock message
     active --> wait: a wait tool
-    wait --> active: the wait ends or gives up, /unblock message, an interrupt, or started in a new session
+    wait --> active: the wait ends or gives up, /unblock message, an interrupt, the end of the turn or session, or started
     done --> [*]
 
     state "any state from setup to revising" as active
@@ -116,7 +116,7 @@ flowchart TD
     active["any active state"] -->|"blocked(message)<br/>or 3 failed attempts<br/>or stalled with no progress"| blocked[[blocked<br/>keeps the previous state]]
     blocked -->|"unblocked(message) or /unblock message<br/>goes back to the previous state"| active
     active -->|"waitFor, waitForURL, waitForProcessEnd,<br/>waitForSubAgent, waitForSeconds,<br/>waitForPR, waitForIssue"| wait[[wait<br/>the tool call holds the agent,<br/>keeps the previous state]]
-    wait -->|"the condition is true, attempts or timeout run out,<br/>/unblock message, or an interrupt<br/>goes back to the previous state"| active
+    wait -->|"the condition is true, attempts or timeout run out,<br/>/unblock message, an interrupt, or the end of the turn<br/>or session goes back to the previous state"| active
 
     classDef start fill:#475569,stroke:#94a3b8,color:#ffffff
     classDef build fill:#1d4ed8,stroke:#93c5fd,color:#ffffff
@@ -433,7 +433,7 @@ A wait ends in one of these ways:
 | The condition is true                | The result of the last check, and the next step.                                        |
 | `attempts` or `timeout` run out      | An error that names the attempts, the last exit code and its output, and the next step. |
 | The human types `/unblock <message>` | The message, and the next step.                                                         |
-| The human interrupts the turn        | An error that says so. The state goes back at the next check, at most 2 seconds later.  |
+| The human interrupts the turn        | An error that says so, if the host still waits for the hook. The state goes back at the next check, at most 2 seconds later, or at the end of the turn. |
 
 
 - A check always runs at the deadline, so a wait that ends at its timeout does not fail.
@@ -441,7 +441,9 @@ A wait ends in one of these ways:
 - `/unblock` runs at once, also during a turn. `/flow unblock` and the other `/flow` commands run after the turn, so they cannot end a wait that is running.
 - While the state is `wait`, the other phase tools refuse and no reminder comes. The reason is that the agent is not idle. `status` still answers.
 - Only the main agent can call a wait tool, because a helper does not move the state.
-- A session that dies or reloads during a wait leaves the state `wait` in the record, and no reminder comes. The next `started` goes back to the previous state. `/unblock <message>` also does this, and it prompts the agent with the message.
+- Only the main agent can call a wait tool. So the end of its turn ends each wait of that session that no running wait tool holds. An interrupt, an error or the end of the session also ends a wait that still runs, because the host goes on without the hook, and the wait tool may not run again. This covers a record that the agent left for another issue in the same worktree, and a PR record that no issue record shows. A record in another worktree waits for `started` or `status`.
+- A process that dies cannot change the record, so the state stays `wait`, and no reminder comes. `status` then says that no wait tool runs, and it names the repair. The next `started` goes back to the previous state, and it withdraws the notice of the wait. `/unblock <message>` also does this, and it prompts the agent. While another live session holds the wait, `status` names that session, and a dead one is taken with `started` and `takeOver` true.
+- A wait reads its own record, so a change of issue during the wait does not lose it. If the record is missing, the wait reads it 3 times, 1 second apart, and then fails with the files it read and the repair.
 - `waitFor` runs the command that the agent gives, with the same rights as the Bash tool.
 - A wait that passes half of its retries tells the human as `blocked` does: a persistent notification and the Orca flag. The retries are `attempts`, or as many as `timeout` allows at this `period`. Half of `timeout` counts too. The wait goes on, and it withdraws the notice when it ends. `waitForSeconds` has no retries, so it never does this.
 - In `ci`, the plugin still watches the checks. Use a wait tool for something else, not for the checks.

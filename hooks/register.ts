@@ -10,7 +10,7 @@ import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
 import { askCredentials, credentialsSection, startCredentials } from './credentials'
 import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index'
-import { noteSessionHuman, releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowSkillReset, workflowTools } from './workflow/tools'
+import { endDeadWaits, noteSessionHuman, releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowSkillReset, workflowTools } from './workflow/tools'
 import { startWatchdog, workflowTurn, workflowWatchdog } from './workflow/watchdog'
 import { startWorkflowCommand, workflowCommand } from './workflow/command'
 import { askForIssue } from './workflow/ask-issue'
@@ -284,6 +284,11 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     await fixAllPrsTurn($, e)
     await walkDocTurn($, e)
+    try {
+      if (!e.agentId) await endDeadWaits($, project, e.reason !== 'answer')
+    } catch (error) {
+      $.ui.toast(`workflow: the check for a stopped wait failed at the end of the turn: ${String(error instanceof Error ? error.message : error).slice(0, 240)}. A wait of this session may stay in the state "wait", and status says if so. Repair: fix what that message names, then call started with the issue number, or type /unblock <message>.`)
+    }
     try {
       await workflowTurn($, e, project)
     } catch (error) {
