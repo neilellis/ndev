@@ -88,4 +88,8 @@ The answers go to the file, to one comment on the issue and to one comment on th
 
 Under auto steering, the state does not ask, and a round refuses. If you run with no human and the steering is interactive, call `mcp__ndev__setSteering({ steering: "auto", reason })`. The tool puts the reason on the issue and on the PR and tells the human. You cannot change back. Never use it to avoid a question that a human can answer.
 
+## The workflow
+
+This skill is the method of the state `interviewing`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
 The method of the design tree and the frontier is adapted from the grilling skill by Matt Pocock (MIT licence, copyright 2026 Matt Pocock).
