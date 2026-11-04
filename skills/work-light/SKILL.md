@@ -17,10 +17,11 @@ While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp
 | Stage | Tool | What the tool does |
 |---|---|---|
 | Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree and opens the draft PR. Call it first. |
-| Plan (heavy) | `mcp__ndev__finishedPlan(markdown_file)` | Puts the plan in the PR body. |
+| Plan (heavy) | `mcp__ndev__finishedPlan(markdown_file)` | Puts the plan in the PR body and runs `pre-push-check.sh` on the base. |
+| Interview ends (light) | `mcp__ndev__finishedInterview()` | Call it after the last question and before any code. It runs `pre-commit-check.sh` on the base. A failure does not stop you: fix it if small, or use `followUp` or `blocked`. |
 | Save work | `mcp__ndev__checkpoint(message, files, changeTypes)` | Runs the checks, commits the named files, and pushes. `changeTypes` adds to the types that set the review instructions. Use it and not `git commit` or `git push`. |
-| Development ends | `mcp__ndev__finishedDevelopment(issues, prs, message, files)` | Commits and starts the code review at once. Do not start another review. |
-| Review ends | `mcp__ndev__finishedReview(review, deadcode, remembered)` | Needs the review result, the dead-code result and the remember result. Then it pushes and marks the PR ready. |
+| Development ends | `mcp__ndev__finishedDevelopment(issues, prs, message, files, body_file)` | Commits and starts the code review and the dead-code sweep at once. Do not start another review. `body_file` is optional: the PR body. |
+| Review ends | `mcp__ndev__finishedReview(review, deadcode, remembered)` | Needs the review result, your triage of the sweep and the remember result. Then it pushes and marks the PR ready. |
 | Checks end | `mcp__ndev__finishedChecks()` | The workflow watches CI and conflicts and tells you. Do not start a wait helper while it watches. |
 | Smoke ends | `mcp__ndev__finishedSmoke(report or skipped)` | Posts the report. |
 | Feedback answered | `mcp__ndev__finishedRevision()` | Goes back to the checks. |
@@ -113,7 +114,7 @@ Choose the checks from the affected behaviour. Use the commands named in the pro
 
 Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states.
 
-One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body: problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `r` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
+One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `r` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
 
 While a workflow runs, push with `mcp__ndev__checkpoint`. Otherwise push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Hooks run. Never use `--no-verify` and never change the hooks path to skip them. Resolve base conflicts and commit before you continue.
 

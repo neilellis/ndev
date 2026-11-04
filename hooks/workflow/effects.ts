@@ -9,6 +9,12 @@ export const MARKER = '<!-- work-heavy-auto:workflow -->'
 
 // A refusal: nothing changed or the tool stopped here, and the message says why and what to do.
 export class Refuse extends Error {}
+// A check script that stopped a tool, with its parts for a caller that words the failure in another way.
+export class CheckFailed extends Refuse {
+  constructor(message: string, readonly detail: { path: string; exitCode: number; log: string; output: string }) {
+    super(message)
+  }
+}
 
 export type Ran = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated?: boolean; isStderrTruncated?: boolean }
 export const said = (r: Ran) => (r.stderr.trim() || r.stdout.trim() || 'no output').slice(-1500)
@@ -104,10 +110,11 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   if (r.exitCode !== 0) {
     const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').slice(-20).join('\n').slice(-4000)
     const cut = outputCut(r, path)
-    throw new Refuse(`${path} exited ${r.exitCode} (a run longer than 10 minutes is stopped). Nothing was pushed. Fix the cause and call the tool again. Log: ${log}\n${cut ? `${cut}\n` : ''}${tail}`)
+    const output = `${cut ? `${cut}\n` : ''}${tail}`
+    throw new CheckFailed(`${path} exited ${r.exitCode} (a run longer than 10 minutes is stopped). Nothing was pushed. Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
   }
   const after = (await porcelain($, root)).join('\n')
-  if (after !== before) throw new Refuse(`${path} passed but changed the working tree. Name the changed files in the tool call and call it again:\n${after}`)
+  if (after !== before) throw new CheckFailed(`${path} passed but changed the working tree. Name the changed files in the tool call and call it again:\n${after}`, { path, exitCode: 0, log, output: after })
   return note
 }
 

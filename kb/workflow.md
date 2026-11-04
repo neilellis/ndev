@@ -23,6 +23,7 @@ stateDiagram-v2
     setup --> developing: started again, light mode
     planning --> developing: finishedPlan
     planning --> blocked: finishedPlan, waits for sign-off
+    developing --> developing: finishedInterview, runs the base check
     developing --> reviewing: finishedDevelopment, all issues of the PR are complete
     developing --> developed: finishedDevelopment, another issue of the PR is not complete
     developed --> reviewing: finishedDevelopment of the last issue
@@ -90,7 +91,7 @@ flowchart TD
     planning -->|"finishedPlan(file)<br/>auto, or straw_man or poc"| developing[developing<br/>test first]
     planning -->|"finishedPlan(file)<br/>interactive: wait for sign-off"| blocked
 
-    developing -->|"finishedDevelopment(issues, prs, message, files)<br/>fast, pre-commit, commit. No push."| reviewing[reviewing<br/>the plugin starts the review,<br/>REMEMBER HOOK fires]
+    developing -->|"finishedDevelopment(issues, prs, message, files, body_file)<br/>fast, pre-commit, commit. No push."| reviewing[reviewing<br/>the plugin starts the review, runs the dead-code sweep,<br/>REMEMBER HOOK fires]
     reviewing -->|"finishedReview(review, deadcode, remembered)<br/>pre-ready, pre-push, push, mark PR ready"| ci[ci<br/>the plugin watches the checks]
     ci -->|"finishedChecks()<br/>green, web change, docs change, or preview in heavy mode"| smoke[smoke<br/>browser smoke test]
     ci -->|"finishedChecks()<br/>green, nothing to smoke"| finishing
@@ -140,8 +141,10 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `create(shortName, description, mode)` | Files a new issue and calls `started` for it. The answer gives the issue number. It adds no board card. |
 | `comment(issue or pr, message)` | Adds a comment to the issue or the PR. It works with or without a workflow. |
 | `finishedPlan(issue, markdown_file)`                                 | Moves the plan into the PR body, with `Closes #n`.                                                                                                                            | The plan has no `Test entry point:` line.                                                                                                        |
+| `hotfix(shortName, description, issue)` | Files an issue for an urgent fix, and gives it its own worktree and draft PR, with the workflow off there. The answer gives the hotfix instructions. See [hotfix](#hotfix). |
+| `finishedInterview(issue)` | The interview has ended. Runs the base check and records the result. Valid only in `developing`. It can run again. `checkpoint` and `finishedDevelopment` refuse until it has run. See [Checks](#checks). |
 | `checkpoint(issue or pr, message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit. `changeTypes` is optional. See [Change types](#change-types). | A check script fails.                                                                                                                            |
-| `finishedDevelopment(issues, prs, message, files)`                    | Commits the named files for the listed issues. It does not push. When each issue of the PR is complete, it starts the code review and lists the changed UI files. Until then, the listed issues wait in `developed`.                                                             | Changed files are not named.                                                                                                                     |
+| `finishedDevelopment(issues, prs, message, files, body_file)`                    | Commits the named files for the listed issues. An optional `body_file` goes in its own section of the PR body, so the plan and its sign-off stay. A missing file refuses before the commit. It does not push. When each issue of the PR is complete, it starts the code review and lists the changed UI files. Until then, the listed issues wait in `developed`.                                                             | Changed files are not named.                                                                                                                     |
 | `finishedReview(issue or pr, review, deadcode, remembered)`                | Takes the results of the review and remember hooks. Runs `pre-ready-check.sh`, pushes, marks the PR ready.                                                                    | A field is empty. A `formal_project` sends `skipped:`. A check fails, and then nothing is pushed.                                                |
 | `finishedChecks(issue or pr)`                                            | Reads the checks of HEAD.                                                                                                                                                     | Checks are pending or red. HEAD is not pushed.                                                                                                   |
 | `finishedSmoke(issue or pr, report)`                                       | Records the smoke test on HEAD.                                                                                                                                               | HEAD is not in the report. A `formal_project` sends `skipped:`.                                                                                  |
@@ -155,7 +158,7 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `waitFor(issue or pr, shell_command, period, attempts, timeout)`           | Runs the command every `period` seconds (30 by default), in the worktree, until it exits 0. Each run may last 60 s.                                                           | See [Wait tools](#wait-tools).                                                                                                                   |
 | `waitForPR(issue, pr, state, period, attempts, timeout)`             | Holds the agent until the PR is `open`, `closed`, `merged`, `draft`, `ready` or `mergeable`. It does not wait for checks, because the workflow watches those.                 | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
 | `waitForIssue(issue or pr, waitOn, state, period, attempts, timeout)`       | Holds the agent until each issue in the list `waitOn` is `open` or `closed`.                                                                                                                        | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
-| `done(issue or pr, message, remembered)`                                   | Runs the done checks. It needs `remembered` only when a human skipped the review stage. Merges if the project level allows it.                                                | `remembered` is empty. A check fails, and then the message lists each problem.                                                                   |
+| `done(issue or pr, message, remembered)`                                   | Runs the done checks. It needs `remembered` only when a human skipped the review stage. Merges if the project level allows it. Stops the stacks and dev servers of the worktree, and leaves the worktree to Orca. If the settings file has an error, it stops nothing and names the repair.                                                | `remembered` is empty. A check fails, and then the message lists each problem.                                                                   |
 | `followUp(issue or pr, mode, message)`                                     | Creates an issue, then acts by mode.                                                                                                                                          | After `done`, only `issue_only` is allowed.                                                                                                      |
 | `addMigration(issue or pr, name)`                                          | Makes the empty migration file and lists it in the PR body, to run after the merge.                                                                                           | The name holds other than lower-case letters, digits and underscores. The workflow has no PR. The state is `setup`, `done`, `blocked` or `wait`. |
 | `requestSecret(name)`                                         | Says where a secret is: the file and the line. It never returns the value.                                                                                                    | Never. A secret that it cannot find is reported.                                                                                                 |
@@ -182,8 +185,9 @@ A stage hook is work that a change of state sets off. The hooks are in the tools
 
 | Hook       | Fires when the state enters | It tells the agent to                                                                                                                                                                                                                    | Result taken by                   |
 | ---------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `review` | `reviewing`                 | `finishedDevelopment` starts the `ndev:diff-reviewer` agent itself. Its answer comes back as a prompt and stays in the record. A resume starts it again if a restart lost it. The agent fixes the findings and runs the dead-code sweep. | `finishedReview`                  |
-| copy edit | `reviewing`                 | If the change holds prose for users (`.md`, `.mdx`, `.rst`, but not `CLAUDE.md`, `AGENTS.md`, `kb/`, `skills/`, `agents/`, `wiki/`, hidden folders, tests or fixtures), `finishedDevelopment` also starts the `ndev:copy-editor` agent. It runs Vale, then reads for slogans, clichés and machine rhythm. It checks language only. Its answer comes back as a prompt and stays in the record. A resume restarts only a reviewer that is lost. An empty answer or an error is named as a failure, and is not an answer. | `finishedReview`                  |
+| `review` | `reviewing`                 | `finishedDevelopment` starts the `ndev:diff-reviewer` agent itself. Its answer comes back as a prompt and stays in the record. A resume starts it again if a restart lost it. The agent fixes the findings. |
+| dead-code sweep | `reviewing`                 | `finishedDevelopment` and `/flow goto reviewing` run the sweep of each language, before the reviewers start, that the change holds: `sweep.sh` for Python, over all tracked roots, and `sweep-ts.sh` for TypeScript. The result is in the answer. Findings do not stop the review. An exit code of 2 is reported as "did not measure", and it is not a pass. A resume runs a sweep that a restart lost. The sweep does not run again for later commits. The agent gives the triage to `finishedReview` as `deadcode`. | `finishedReview`                  | `finishedReview`                  |
+| copy edit | `reviewing`                 | If the change holds prose for users (`.md`, `.mdx`, `.rst`, but not `CLAUDE.md`, `AGENTS.md`, `kb/`, `skills/`, `agents/`, `wiki/`, hidden folders, tests or fixtures), `finishedDevelopment` also starts the `ndev:copy-editor` agent. It runs `scripts/docs/readability.sh` (Vale), then reads for slogans, clichés and machine rhythm. It checks language only. Its answer comes back as a prompt and stays in the record. A resume restarts only a reviewer that is lost. An empty answer or an error is named as a failure, and is not an answer. A `VALE: not run` line is not a pass. | `finishedReview`                  |
 | `remember` | `reviewing`                 | The main agent records what the work taught (`ndev:remember`), updates the documents it made wrong (`ndev:docs-sync`), and runs the dev-wiki ingest. A subagent cannot do this, because it does not know the session.                    | `finishedReview`, as `remembered` |
 
 
@@ -206,7 +210,9 @@ The engine runs git with the repository's hooks off, so the tools run the checks
 | `pre-ready-check.sh`     | Before the PR leaves draft              | The full suite and E2E                                                                                                   |
 
 
-A failed script stops the tool. The message gives the script, the exit code and the last lines of output. When the base branch has the script, the tool runs the base version, so a branch cannot weaken its own check.
+**The base check.** After the interview and before any code, one check runs on the base, so that a base that is already broken shows while nothing depends on it. Light mode runs `pre-commit-check.sh`, in `finishedInterview`. Heavy mode runs `pre-push-check.sh`, in `finishedPlan`, before the sign-off, and the sign-off message names a failure. A failure of the base check does not stop the tool. The answer gives the script, the exit code, the output and the log. The agent then fixes it if the fix is small, files it with `followUp`, or calls `blocked`. The later commits run the same checks, so the failure also stops them until it is fixed. An agent that `followUp` started has no interview, and an issue that `followUp` adds to this PR has none, so this does not apply to them.
+
+Each other failed script stops the tool. The message gives the script, the exit code and the last lines of output. When the base branch has the script, the tool runs the base version, so a branch cannot weaken its own check.
 
 ## What the workflow took over from the hooks
 
@@ -425,6 +431,33 @@ In an Orca workspace, each save of the state updates the workspace. Tools, the h
 - The sync goes one way. If a human moves a workspace on the board, the plugin does not read that. The next change of status sets the column again.
 - The status ids are the default board columns of Orca. A board with other ids shows the failure in the toast.
 - A merge by a human reaches `completed` at the next 20-minute heartbeat, while the session is open.
+
+## The project board
+
+Each change of state moves the card, through `saveWorkflow`, so the tools, the watchdog and `/flow` all do it. A project with no board has no moves.
+
+| State | Column |
+| ----- | ------ |
+| `setup`, `planning`, `developing`, `reviewing`, `ci`, `smoke`, `finishing`, `revising` | In progress |
+| `blocked` | Awaiting feedback |
+| `done`, not merged | In review: no more automated development is due |
+| `done`, merged | Done |
+| `wait`, `developed` | No change |
+
+A `straw_man` issue goes to Done at `done`, because its commit is on the base branch. The settings come from the worktree. If that file has no board, they come from the main checkout. A file with an error shows a toast and moves no card.
+
+The record keeps the column in `board`, so a change inside a column makes no GitHub call. A failed move shows a toast and does not stop the tool, and the next change of column tries again. An issue with no card shows a toast, and the column is recorded.
+
+## hotfix
+
+`hotfix(shortName, description, issue)` is for a fix that must not wait for the workflow. It files the issue, claims a worktree, opens a draft PR and records the workflow as `off` there. The title comes from the first line of `description`, or else from `shortName`.
+
+- The session stays on its own issue, and that issue's record does not change.
+- The hotfix never joins the PR of the session's issue.
+- The agent commits with plain git, and names the worktree with the full path: `git -C <worktree> commit`. The git guard lets only that form through, and a push from there goes only to the branch of the hotfix. The hooks run, and `--no-verify` is never used.
+- The agent waits for the checks of the hotfix PR with `wait-for-pr-change.sh`, because the watchdog does not watch them. A human merges.
+- A `straw_man` project has no worktree and no PR: the fix goes on the base branch in the main checkout. The git guard stays on there. A session on an issue commits the fix with `checkpoint`, and a session with no workflow uses plain git.
+- If the set-up fails after the issue exists, the message names the issue. Repair: call `hotfix` again with `issue`, which files nothing new. A call without `issue` files a second one.
 
 ## followUp
 
