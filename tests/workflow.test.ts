@@ -71,7 +71,7 @@ const engine = (on: On, opts: Opts = {}) => {
     ...opts.files,
   }))
   const s = {
-    spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
+    spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], untracked: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
     otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined,
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
@@ -189,7 +189,8 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'rev-parse' && a[2]?.startsWith('origin/')) return ok(`${s.upstream}\n`)
       if (a[1] === 'rev-list' && s.ahead !== undefined) return ok(`${s.ahead}\n`)
       if (a[1] === 'rev-parse') return ok(`${ROOT}\n`)
-      if (a[1] === 'status') return ok(s.dirty.join('\n'))
+      // As real git does: a folder of untracked files is one line, unless the call asks for all of them.
+      if (a[1] === 'status') return ok([...s.dirty, ...(s.untracked.length ? (a.includes('--untracked-files=all') ? s.untracked.map(f => `?? ${f}`) : [`?? ${s.untracked[0]!.replace(/[^/]+$/, '')}`]) : [])].join('\n'))
       if (a[1] === 'remote') return ok(`git@github.com:${REPO}.git\n`)
       if (a[1] === 'symbolic-ref') return ok(`${s.originHead}\n`)
       if (a[1] === 'log' && line.includes('--grep=')) return ok([...s.ops].some(op => line.includes(`Ndev-Op: ${op}$`)) ? `${s.sha}\n` : '')
@@ -533,6 +534,34 @@ test('finishedDevelopment commits the named files and moves on', async ($, on) =
   expect(w.commits.length).toBe(1)
   expect(w.pushes.length).toBe(0)
   expect(w.state()?.state).toBe('reviewing')
+})
+
+test('finishedDevelopment takes a new file in an untracked folder when the file is named', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.untracked = ['apps/new/page.tsx']
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'Add the page', files: ['apps/new/page.tsx'] })
+  expect(r.isError).toBe(false)
+  expect(w.commits.length).toBe(1)
+})
+
+test('finishedDevelopment refuses the one unnamed file of an untracked folder, and names that file', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.untracked = ['apps/new/page.tsx', 'apps/new/secret.txt']
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'Add the page', files: ['apps/new/page.tsx'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('these changed files are not named: apps/new/secret.txt.')
+  expect(w.commits.length).toBe(0)
+})
+
+test('finishedDevelopment still takes an untracked folder when the folder is named', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.untracked = ['apps/new/page.tsx', 'apps/new/layout.tsx']
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'Add the page', files: ['apps/new/'] })
+  expect(r.isError).toBe(false)
+  expect(w.commits.length).toBe(1)
 })
 
 test('a failed check script stops the commit and names script, exit code and output', async ($, on) => {

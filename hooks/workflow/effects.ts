@@ -73,7 +73,8 @@ export async function paths($: EngineInterface, root: string): Promise<Paths> {
 // The path of each changed file: "XY path", or "XY old -> new" for a rename.
 export async function porcelain($: EngineInterface, root: string) {
   // Not through must, which trims: the first line's leading space is part of its status column.
-  const r = await run($, ['git', 'status', '--porcelain=v1', '--untracked-files=normal'], { cwd: root })
+  // All untracked files, one line each: the default shows one line for a folder, and a caller compares file names.
+  const r = await run($, ['git', 'status', '--porcelain=v1', '--untracked-files=all'], { cwd: root })
   if (r.exitCode !== 0) throw new Refuse(`git status exited ${r.exitCode} in ${root}: ${said(r)}`)
   return r.stdout.split('\n').filter(Boolean)
 }
