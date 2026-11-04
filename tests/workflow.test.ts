@@ -2090,6 +2090,17 @@ test('a raw git commit or push is refused while a workflow runs, and names the t
 })
 
 for (const command of [
+test('a generated report that opens with a machine marker is not feedback at done', async ($, on) => {
+  const w = engine(on, { wf: finishing() })
+  await start($, w)
+  w.s.comments = [{ id: 6633384837, body: '<!-- visual-diff -->\n## Visual diff', user: { login: 'human', type: 'User' }, created_at: '2026-11-02T00:00:00Z' }]
+  w.s.commitIso = '2026-11-01T00:00:00Z'
+  w.s.now = Date.parse('2026-11-03T00:00:00Z')
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(r.text).not.toContain('has no answer')
+  expect(w.state()?.state).not.toBe('revising')
+})
+
   'git -C ~/dev-wiki add -A && git -C ~/dev-wiki commit -qm "learn: x"',
   'git -C ~/dev-wiki commit -m "learn: never git push by hand"',
   'git -C "$HOME/dev-wiki" commit -m x',

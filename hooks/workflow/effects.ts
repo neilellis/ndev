@@ -191,7 +191,9 @@ type Comment = { id: number; body: string | null; user: { login: string; type?: 
 // it, which is what finishedRevision needs to know.
 export async function newFeedback($: EngineInterface, root: string, repo: string, issue: number, pr: Pr, after?: number): Promise<string[]> {
   const all = await ghLines<Comment>($, root, repo, ['feedback', String(issue), String(pr.number)])
-  const isPipeline = (c: Comment) => /<!-- work-heavy-auto|^\*\*work-heavy-auto|^\*\*Smoke tested/.test(c.body ?? '')
+  // A comment that opens with an HTML comment marker, such as <!-- visual-diff -->, is a report a script
+  // posted (under the user's own login), not a request.
+  const isPipeline = (c: Comment) => /<!-- work-heavy-auto|^\*\*work-heavy-auto|^\*\*Smoke tested|^\s*<!--\s*[a-z][\w:-]*/i.test(c.body ?? '')
   const acked = new Set(all.filter(isPipeline).flatMap(c => [...(c.body ?? '').matchAll(/ack:([\d,]+)/g)].flatMap(m => m[1]!.split(','))))
   let since = Math.max(Date.parse(pr.created_at), after ?? 0)
   if (after === undefined) {
