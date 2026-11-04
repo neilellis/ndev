@@ -172,10 +172,10 @@ export async function readChecks($: EngineInterface, root: string, repo: string,
 // What the idle heartbeat wants to know, for as few GitHub calls as it can: one read of the PR. Only
 // a state other than "clean" costs the extra read of the checks. `checks` lets a caller that needs
 // them too spend no second read.
-export type PrHealth = { number: number; merged: boolean; closed: boolean; problems: string[]; sha: string; checks?: Checks; seen: Record<string, string> }
+export type PrHealth = { number: number; merged: boolean; closed: boolean; problems: string[]; sha: string; checks?: Checks; seen: Record<string, string>; computing: boolean }
 export async function readPrHealth($: EngineInterface, root: string, repo: string, n: number): Promise<PrHealth> {
   const pr = await readPr($, root, repo, n)
-  const health: PrHealth = { number: n, merged: !!pr.merged, closed: pr.state !== 'open', problems: [], sha: pr.head.sha, seen: { state: pr.merged ? 'merged' : pr.state, draft: pr.draft ? 'yes' : 'no', mergeable: `${pr.mergeable === true ? 'yes' : pr.mergeable === false ? 'no' : 'unknown'}${pr.mergeable_state ? ` (${pr.mergeable_state})` : ''}` } }
+  const health: PrHealth = { number: n, merged: !!pr.merged, closed: pr.state !== 'open', problems: [], sha: pr.head.sha, seen: { state: pr.merged ? 'merged' : pr.state, draft: pr.draft ? 'yes' : 'no', mergeable: `${pr.mergeable === true ? 'yes' : pr.mergeable === false ? 'no' : 'unknown'}${pr.mergeable_state ? ` (${pr.mergeable_state})` : ''}` }, computing: pr.mergeable === null || pr.mergeable_state === 'unknown' }
   if (health.closed) return health
   if (pr.mergeable === false || pr.mergeable_state === 'dirty') health.problems.push(`PR #${n} has merge conflicts with its base. Merge the base into the branch, resolve them (the ndev:resolving-merge-conflicts skill), and call checkpoint.`)
   if (pr.mergeable_state !== 'clean') {

@@ -12,8 +12,8 @@ import type { WorkflowLive } from '../../types'
 import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
-import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, run, runCheck, said, withdrawAlert } from './effects'
-import type { Check, Ran } from './effects'
+import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
+import type { Check, PrHealth, Ran } from './effects'
 import { withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
@@ -2029,7 +2029,26 @@ async function status($: EngineInterface, c: Ctx): Promise<string> {
   const facts = await factsFor($, root, project, wf)
   const holder = wf.state === 'wait' ? await waitHolder($, wf) : undefined
   const extra = [wf.off ? `Off: ${wf.off.reason}. /flow on turns it back on.` : '', project?.config.workflow === false ? `Off for this project: ${project.path}.` : '', wf.blocked ? `Blocked: ${wf.blocked.message}` : '', holder?.detail ?? '', wf.changeTypes?.length ? `Change types: ${wf.changeTypes.join(', ')}.` : '', wf.migrations.length ? `Migrations after merge: ${wf.migrations.map(m => m.path).join(', ')}` : '']
-  return answer($, wf, facts, extra, holder?.next)
+  const merge = await finishedPrNow($, wf, facts)
+  return answer($, wf, facts, [...extra, merge?.detail ?? ''], holder?.next ?? merge?.next)
+}
+
+// The base can move after done, so only a read of the PR can say that a finished PR is still ready to merge.
+async function finishedPrNow($: EngineInterface, wf: Workflow, facts: Facts): Promise<{ detail?: string; next?: string } | undefined> {
+  const n = wf.prs[0]
+  if (wf.state !== 'done' || wf.merged || wf.direct || !n) return undefined
+  let health: PrHealth
+  try {
+    health = await readPrHealth($, wf.root, wf.repo, n)
+  } catch (error) {
+    return { detail: `PR #${n} was not read: ${String(error instanceof Error ? error.message : error).slice(0, 200)}`, next: `Whether PR #${n} can merge is not known, so do not report it as ready. Call status again.` }
+  }
+  if (health.merged) return { next: `PR #${n} is merged. Nothing is left to do.` }
+  if (health.closed) return { next: `PR #${n} was closed with no merge, so no merge is waiting. Repair: gh pr reopen ${n} --repo ${wf.repo}.` }
+  const seen = `GitHub says of PR #${n} at ${health.sha.slice(0, 8)}: mergeable ${health.seen.mergeable}.`
+  if (health.problems.length) return { detail: `${seen}\n${health.problems.join('\n')}`, next: `PR #${n} is not ready to merge, so do not report it as ready. Fix each problem above and commit with checkpoint, which takes the PR back to the checks.` }
+  if (health.computing) return { detail: seen, next: `GitHub has not finished computing whether PR #${n} can merge, so do not report it as ready. Call status again in a minute.` }
+  return mayMerge(facts.level) ? { detail: seen } : { detail: seen, next: 'The work is finished and ready for a human to merge. Nothing is left to do.' }
 }
 
 // Says what holds a record in "wait". Only a wait tool in this process, or another session that is still live, can.

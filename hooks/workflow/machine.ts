@@ -249,7 +249,7 @@ function stepText(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level'
       return 'A wait tool holds this agent. When it answers, go on from the state it names.'
     case 'done':
       if (facts.merged) return 'The work is finished and merged. Nothing is left to do.'
-      return mayMerge(facts.level) ? 'The work is finished and not merged. This project level lets you merge: load the ndev:merge skill and follow it.' : 'The work is finished and ready for a human to merge. Nothing is left to do.'
+      return mayMerge(facts.level) ? 'The work is finished and not merged. This project level lets you merge: load the ndev:merge skill and follow it.' : 'The work is finished and waits for a human to merge. The base can move after done, so call status to read whether the PR can still merge. Nothing else is left to do.'
   }
 }
 

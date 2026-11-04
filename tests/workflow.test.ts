@@ -790,6 +790,54 @@ test('a conflict under a finished PR reopens the work', async ($, on) => {
   expect(w.prompts[0]).toContain('merge conflicts')
 })
 
+test('status in done reads the PR: a conflict is named with its repair, and the PR is not called ready', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done' }, pr: { mergeable: false, mergeable_state: 'dirty' } })
+  await start($, w)
+  const r = await tool($, 'status', { pr: 12 })
+  expect(r.text).toContain('PR #12 has merge conflicts')
+  expect(r.text).toContain('ndev:resolving-merge-conflicts')
+  expect(r.text).toContain('(dirty)')
+  expect(r.text).toContain('checkpoint')
+  expect(r.text).not.toContain('ready for a human')
+  expect(w.state()?.state).toBe('done')
+})
+
+test('status in done says that GitHub is still computing, and does not call the PR ready', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done' }, pr: { mergeable: null, mergeable_state: 'unknown' } })
+  await start($, w)
+  const r = await tool($, 'status')
+  expect(r.text).toContain('GitHub has not finished computing whether PR #12 can merge')
+  expect(r.text).not.toContain('ready for a human')
+})
+
+test('status in done that cannot read the PR says so, and does not call the PR ready', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done' } })
+  await start($, w)
+  w.s.prReadsFor = { 12: ['HTTP 502 from GitHub'] }
+  const r = await tool($, 'status')
+  expect(r.text).toContain('PR #12 was not read')
+  expect(r.text).toContain('HTTP 502')
+  expect(r.text).not.toContain('ready for a human')
+})
+
+test('status in done calls a clean PR ready only after it reads it', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done' } })
+  await start($, w)
+  expect((await tool($, 'status')).text).toContain('ready for a human to merge')
+  w.s.pr = pull({ state: 'closed', merged: true, mergeable: null, mergeable_state: 'unknown' })
+  const merged = await tool($, 'status')
+  expect(merged.text).toContain('PR #12 is merged')
+  expect(merged.text).not.toContain('ready for a human')
+})
+
+test('/flow status in done reads no PR, so it does not call the PR ready, and names the tool that reads it', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done' } })
+  await start($, w)
+  const out = await command($, 'status')
+  expect(out).not.toContain('ready for a human')
+  expect(out).toContain('call status')
+})
+
 test('a conflict fix on a finished PR that is still open commits through checkpoint and goes back to the checks', async ($, on) => {
   const w = engine(on, { wf: { state: 'done' }, pr: { mergeable: false, mergeable_state: 'dirty' } })
   await start($, w)
