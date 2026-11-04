@@ -1103,6 +1103,64 @@ test('with old keys and a bad issue file, a resource still changes, and the old 
   assert.equal(held.workflows[7].rev, 3)
 })
 
+const issueOn = (wt, n) => JSON.parse(readFileSync(join(wt, `.neil-dev.issue-${n}.json`), 'utf8'))
+const setInterview = (wt, value) => spawnSync(SCRIPT, ['set-interview', '--worktree', wt], { input: JSON.stringify(value), encoding: 'utf8' })
+const ROUNDS = [{ title: 'R', questions: [], answers: [], at: 1 }]
+
+test('an issue file with interview answers still saves a workflow, and keeps the answers', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, '.neil-dev.issue-7.json'), JSON.stringify({ version: 1, issue: 7, rounds: ROUNDS, commentIds: { issue: 5 }, posted: true }))
+  const saved = setWorkflow(wt, 0, { issue: 7, state: 'developing' })
+  assert.equal(saved.status, 0, saved.stderr)
+  const held = issueOn(wt, 7)
+  assert.deepEqual(held.rounds, ROUNDS)
+  assert.deepEqual(held.commentIds, { issue: 5 })
+  assert.equal(held.posted, true)
+  assert.equal(held.workflow.state, 'developing')
+})
+
+test('set-interview changes only the answers: the workflow and the PR records stay', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'developing' }).status, 0)
+  assert.equal(setWorkflow(wt, 1, { issue: 7, state: 'reviewing' }).status, 0)
+  assert.equal(setWorkflow(wt, 0, { issue: 7, pr: 12, state: 'ci' }).status, 0)
+  const first = setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS, draft: { a: { selected: [] } } })
+  assert.equal(first.status, 0, first.stderr)
+  assert.equal(issueOn(wt, 7).workflow.rev, 2)
+  assert.equal(issueOn(wt, 7).prs[12].state, 'ci')
+  assert.deepEqual(issueOn(wt, 7).rounds, ROUNDS)
+  // What the writer leaves out goes: a finished round has no draft.
+  assert.equal(setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS }).status, 0)
+  assert.equal(issueOn(wt, 7).draft, undefined)
+  assert.equal(issueOn(wt, 7).workflow.rev, 2)
+})
+
+test('set-interview refuses a stale copy of the workflow, and names what it refused', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'developing' }).status, 0)
+  const refused = setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS, workflow: { issue: 7, state: 'setup', rev: 0 } })
+  assert.equal(refused.status, 2)
+  assert.match(refused.stderr, /workflow/)
+  assert.equal(issueOn(wt, 7).workflow.state, 'developing')
+})
+
+test('moving old state into an issue file keeps its answers', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, '.neil-dev.issue-7.json'), JSON.stringify({ version: 1, issue: 7, rounds: ROUNDS }))
+  writeFileSync(join(wt, FILE), JSON.stringify({ version: 2, resources: { docker: [], 'dev-servers': {} }, workflows: { 7: { issue: 7, state: 'ci', rev: 3 } } }))
+  sh(wt, SCRIPT, 'set-setting', '--key', 'mode', '--value', 'heavy')
+  assert.deepEqual(issueOn(wt, 7).rounds, ROUNDS)
+  assert.equal(issueOn(wt, 7).workflow.rev, 3)
+})
+
+test('an issue file with a key that neither the workflow nor the interview owns is still refused', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, '.neil-dev.issue-7.json'), JSON.stringify({ version: 1, issue: 7, rounds: [], mystery: 1 }))
+  const refused = setWorkflow(wt, 0, { issue: 7, state: 'ci' })
+  assert.equal(refused.status, 2)
+  assert.match(refused.stderr, /mystery/)
+})
+
 const OLD = {
   version: 2,
   resources: { docker: [], 'dev-servers': {} },

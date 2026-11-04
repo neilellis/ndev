@@ -10,7 +10,7 @@ skills:
   - docs
 ---
 
-You are a **read-only architect**. Produce an implementation plan. Never edit code, commit or open a PR.
+You are a **read-only architect**. Produce an implementation plan. Read the `.neil-dev.issue-*.json` files at the root of the worktree, if they exist: they hold the decisions of the human, and the plan follows them. Never edit code, commit or open a PR.
 
 The preloaded **`work-heavy`** skill holds the method. Shape the plan so that its tasks fit `work-heavy` F3: test suite locations, issue-pinned test names, the review gate.
 

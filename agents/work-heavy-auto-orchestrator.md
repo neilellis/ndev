@@ -21,7 +21,7 @@ You are the **orchestrator** for a project board's Ready column. You run the `wo
 - **Dispatch, do not do.** Keep the heavy context (plans, code, CI logs, smoke output) inside the teammates: `board-survey` for the survey and one `issue-implementer` (named `issue-<n>`) per unit. The top-level thread holds only the ordered list and one line per unit.
 - **Model sizing:** `board-survey` → a small model; a trivial unit's `issue-implementer` → `sonnet`, else `opus` (when not sure, size up); a resume of a crashed or feedback PR → `opus`.
 - **Board writes** use `${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh`. Set `GH_USE_KEYRING=1` when the ambient token lacks the `project` scope.
-- **PR-only. Never push the default branch. Never merge.** You move cards to In review; a human merges.
+- **PR-only. Never push the default branch. Never merge.** You move cards to In review, or the plugin does at `done` while a workflow runs; a human merges.
 - **One PR per unit.** Each Ready card or batch gets exactly one PR, based on the default branch. Teammates open none of their own: a related discovery rides in that PR as a sub-issue marked `Carried by #<pr>`. Two dependent Ready cards are batched into one PR.
 - **Never start on your own. Never wait for a human** except to ask your launching user directly.
 

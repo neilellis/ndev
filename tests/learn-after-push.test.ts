@@ -5,9 +5,18 @@ const ran = (stdout = '') => ({
   value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
 
+type Git = {
+  // What the Bash call does to the remote-tracking ref, as its reflog words it. Unset moves nothing.
+  moves?: string
+  // The Bash call itself reports a failure.
+  failed?: boolean
+}
+
 // A fake engine: a git repository at /proj with no .neil-dev.json, and ~/dev-wiki present.
-// Beneath the plugin, every Bash call succeeds, or fails when `failed`.
-const engine = async ($: Engine, on: On, failed = false) => {
+// Beneath the plugin, each Bash call can move the remote-tracking ref. The answer counts the git ref reads.
+const engine = async ($: Engine, on: On, { moves, failed = false }: Git = {}) => {
+  let sha = 'aaa'
+  const reads = { count: 0 }
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('tool.register', () => ({ value: { tool: 'mcp__ndev__report' } }))
   on('clock.now', () => ({ value: 0 }))
@@ -19,9 +28,20 @@ const engine = async ($: Engine, on: On, failed = false) => {
   on('fs.read', () => ({ value: '' }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
-  on('process.run', (_, e) => (e.argv[0] === 'git' ? ran('/proj\n') : ran()))
-  on('tool.call', () => (failed ? { isError: true as const, result: '' } : { result: '' }))
+  on('process.run', (_, e) => {
+    if (e.argv[1] === 'for-each-ref') {
+      reads.count += 1
+      return ran(`refs/remotes/origin/feature ${sha}\n`)
+    }
+    if (e.argv[1] === 'reflog') return ran(`${moves ?? ''}\n`)
+    return e.argv[0] === 'git' ? ran('/proj\n') : ran()
+  })
+  on('tool.call', () => {
+    if (moves) sha = 'bbb'
+    return failed ? { isError: true as const, result: '' } : { result: '' }
+  })
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  return reads
 }
 
 const context = async ($: Engine, command: string, extra: Record<string, unknown> = {}) =>
@@ -34,23 +54,59 @@ const asksForIngest = (text: string) => {
   expect(text).toContain('project or domain')
 }
 
+const PUSHED = 'update by push'
+
 test('a git push that lands asks for the dev-wiki ingest of development, design and copywriting lessons', async ($, on) => {
-  await engine($, on)
+  await engine($, on, { moves: PUSHED })
   asksForIngest(await context($, 'git push origin feature'))
+})
+
+test('a push with options before the verb asks for the ingest', async ($, on) => {
+  await engine($, on, { moves: PUSHED })
   asksForIngest(await context($, 'git -C /proj push -u origin feature'))
 })
 
-test('a push through a wrapper script or after cd asks for the ingest too', async ($, on) => {
-  await engine($, on)
+test('a push through a wrapper script asks for the ingest', async ($, on) => {
+  await engine($, on, { moves: PUSHED })
   asksForIngest(await context($, 'bash scripts/push-checked.sh origin feature > push.log 2>&1'))
-  asksForIngest(await context($, 'cd /proj && git push'))
 })
 
-test('commands that push nothing ask for no ingest', async ($, on) => {
+test('a push through a script whose name only ends in push asks for the ingest', async ($, on) => {
+  await engine($, on, { moves: PUSHED })
+  asksForIngest(await context($, 'bash scripts/merge_finish_and_push.sh'))
+})
+
+test('a push that lands before a later command fails asks for the ingest', async ($, on) => {
+  await engine($, on, { moves: PUSHED, failed: true })
+  asksForIngest(await context($, 'git push origin feature && false'))
+})
+
+test('a command that only names a push asks for no ingest', async ($, on) => {
   await engine($, on)
-  for (const command of ['ls -la', 'git stash push -m wip', 'echo push']) {
+  for (const command of [
+    'grep -rn "git push" hooks',
+    'sed -n 1,40p scripts/push-checked.sh',
+    'git stash push -m wip',
+    'echo push',
+  ]) {
     expect(await context($, command)).not.toContain('ndev:dev-wiki')
   }
+})
+
+test('a refused push whose call still exits 0 asks for no ingest', async ($, on) => {
+  await engine($, on)
+  const command = 'scripts/push-checked.sh -u origin feature > push.log 2>&1; rc=$?; echo "push exit $rc"; tail -30 push.log'
+  expect(await context($, command)).not.toContain('ndev:dev-wiki')
+})
+
+test('a push with nothing to send asks for no ingest', async ($, on) => {
+  await engine($, on)
+  expect(await context($, 'git push origin feature')).not.toContain('ndev:dev-wiki')
+})
+
+test('a fetch that moves a remote-tracking ref asks for no ingest', async ($, on) => {
+  await engine($, on, { moves: 'fetch origin: fast-forward' })
+  expect(await context($, 'git fetch origin; echo push')).not.toContain('ndev:dev-wiki')
 })
 
 test('a dry-run push asks for no ingest', async ($, on) => {
@@ -58,9 +114,10 @@ test('a dry-run push asks for no ingest', async ($, on) => {
   expect(await context($, 'git push --dry-run origin feature')).not.toContain('ndev:dev-wiki')
 })
 
-test('a push that failed asks for no ingest', async ($, on) => {
-  await engine($, on, true)
-  expect(await context($, 'git push origin feature')).not.toContain('ndev:dev-wiki')
+test('a command that does not name a push reads no git refs', async ($, on) => {
+  const reads = await engine($, on)
+  expect(await context($, 'ls -la')).not.toContain('ndev:dev-wiki')
+  expect(reads.count).toBe(0)
 })
 
 test('a push in the background asks for the ingest once it finishes with exit 0', async ($, on) => {

@@ -4,6 +4,7 @@
 import type { ViewServer, ViewStack, ViewTree, WorkflowView } from '../types'
 import { checksUrl, commitUrl, fileUrl, issueUrl, pullUrl, repoUrl, treeUrl } from './links'
 import { shownFull, span } from './workflow/live'
+import type { InterviewFile, InterviewQuestion, RecordedRound } from './workflow/interview-model'
 import type { FlowMark } from './workflow/machine'
 import type { Workflow } from './workflow/tools'
 
@@ -155,6 +156,56 @@ export function undrawnRows(name: string, wf: unknown, error: unknown): Row[] {
   return [
     [{ text: `${name} could not be drawn: ${String(error).slice(0, 200)}. Repair: fix that field in the file. The record as the file holds it:`, color: 'error' }],
     [dim(`  ${shownFull('record', JSON.stringify(wf))}`)],
+  ]
+}
+
+// The interview in an issue file: every round, question and answer. A file with no workflow has one too.
+export function interviewRows(file: InterviewFile, place: { root: string; now?: number; repo?: string; pr?: number }): Row[] {
+  const { root, now, repo, pr } = place
+  const text = (key: string, value: unknown) => linked(shownFull(key, value), { repo, root })
+  const when = (at: number) => (now ? ago(now, at) : '')
+  const name = `.neil-dev.issue-${file.issue}.json`
+  const comment = (label: string, href: string | undefined, id: number): Seg => (href ? link(label, `${href}#issuecomment-${id}`) : { text: `${label} (id ${id})` })
+  const { issue: onIssue, pr: onPr } = file.commentIds ?? {}
+  const comments = [
+    ...(onIssue ? [comment(`comment on #${file.issue}`, repo && issueUrl(repo, file.issue), onIssue)] : []),
+    ...(onPr ? [comment(pr ? `comment on PR #${pr}` : 'comment on the PR', repo && pr ? pullUrl(repo, pr) : undefined, onPr)] : []),
+  ]
+  const follows = file.startedByFollowUp
+  const drafts = Object.entries(file.draft ?? {})
+  const question = (q: InterviewQuestion, round: RecordedRound): Row[] => {
+    const answer = round.answers.find(a => a.id === q.id)
+    const said = answer && [...answer.selected, ...(answer.other ? [answer.other] : [])].join(', ')
+    return [
+      [dim(`    ${q.id}  `), ...text('header', q.header).map(seg => ({ ...seg, bold: true })), dim(q.multiSelect ? '  multi-select  ' : '  '), ...text('question', q.question)],
+      ...(q.followUpTo ? [[dim(`      follows ${q.followUpTo}`)]] : []),
+      ...(q.context ? [[dim('      '), ...text('context', q.context)]] : []),
+      ...(q.options ?? []).flatMap((o): Row[] => [
+        [dim(`      ${o.recommended ? '★' : '·'} `), ...text('option', o.label), ...(o.description ? [dim('  '), ...text('description', o.description)] : [])],
+        ...(o.preview ? [[dim('        '), ...text('preview', o.preview)]] : []),
+      ]),
+      ...(q.suggested ? [[dim('      suggested  '), ...text('suggested', q.suggested)]] : []),
+      ...(answer
+        ? [[dim('      answer  '), ...text('answer', said || '(none)'), dim(`  ${answer.source}`)], ...(answer.notes ? [[dim('      notes  '), ...text('notes', answer.notes)]] : [])]
+        : [[dim('      no answer')]]),
+    ]
+  }
+  return [
+    [{ text: `interview of #${file.issue}`, bold: true }, dim('  '), fileSeg(root, name, name)],
+    ...(follows ? [line('started by', issueSeg(repo, follows.of), dim(`  followUp ${when(follows.at)}`))] : []),
+    ...(file.posted !== undefined ? [line('posted', { text: file.posted ? 'yes' : 'not yet' })] : []),
+    ...(comments.length ? [line('comments', ...comments.flatMap((seg, i) => (i ? [dim('  '), seg] : [seg])))] : []),
+    ...(file.closed ? [line('closed', { text: `${when(file.closed.at)}${file.closed.asked ? '' : ', with no questions'}` })] : []),
+    ...(drafts.length ? [line('draft', { text: `${drafts.length} draft answer${drafts.length === 1 ? '' : 's'}` })] : []),
+    ...drafts.map(([id, d]): Row => [dim(`    ${id}  `), ...text('draft', [...d.selected, d.other, d.notes].filter(Boolean).join(', ') || '(empty)'), dim(d.touched ? '' : '  not touched')]),
+    ...file.rounds.flatMap((round): Row[] => [
+      line('round', ...text('title', round.title).map(seg => ({ ...seg, bold: true })), dim(`  ${when(round.at)}${round.dismissed ? '  closed by the human' : ''}${round.trustMeBro ? '  Trust Me Bro' : ''}`)),
+      ...(round.intro ? [[dim('    '), ...text('intro', round.intro)]] : []),
+      ...round.questions.flatMap(q => question(q, round)),
+      // An answer whose question is not in its round is still what the human said.
+      ...round.answers.filter(a => !round.questions.some(q => q.id === a.id)).map((a): Row => [dim(`    ${a.id}  no such question  `), ...text('answer', [...a.selected, a.other, a.notes].filter(Boolean).join(', ') || '(none)'), dim(`  ${a.source}`)]),
+    ]),
+    ...(file.rounds.length ? [] : [line('rounds', dim('none yet'))]),
   ]
 }
 

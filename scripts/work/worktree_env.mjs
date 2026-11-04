@@ -27,6 +27,7 @@
 //   worktree-env.sh migrate [--worktree <dir>]
 //   worktree-env.sh init [--worktree <dir>]
 //   worktree-env.sh set-setting --key mode|steering --value <value> [--worktree <dir>]
+//   worktree-env.sh set-interview [--worktree <dir>]   (the interview answers of one issue as JSON on stdin; the workflow and the PR records in that file stay)
 //   worktree-env.sh set-workflow --expect-rev <n> [--worktree <dir>]   (the state of one issue as JSON on stdin)
 //
 // add-dev-server names a running server by what it shows ("docs", "ui"); the same name again
@@ -363,12 +364,17 @@ function withLockFile(root, name, fn) {
   }
 }
 
-// One issue file as { workflow, prs }. A missing file holds neither. A shape this script does not know
+// The interview tool owns these keys of an issue file, and set-interview writes them. See InterviewFile
+// in hooks/workflow/interview-model.ts, and issueFileProblem in hooks/workflow/tools.ts, which keeps the same list.
+const INTERVIEW_KEYS = ['rounds', 'draft', 'commentIds', 'posted', 'closed', 'startedByFollowUp']
+const interviewOf = value => Object.fromEntries(Object.entries(value).filter(([key]) => INTERVIEW_KEYS.includes(key)))
+
+// One issue file as { workflow, prs, interview }. A missing file holds none. A shape this script does not know
 // is refused, and the file stays as it is.
 function readIssue(root, n) {
   const file = join(root, issueName(n))
   if (!existsSync(file)) return { prs: {} }
-  const refuse = problem => new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed. Repair: fix the file, or delete it if the workflow of #${n} can start again; it holds the workflow state of that issue.`)
+  const refuse = problem => new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed. Repair: fix the file. Delete it only if the workflow of #${n} can start again and its interview can be asked again: it holds both, and a draft answer is nowhere else.`)
   let raw
   try {
     raw = JSON.parse(readFileSync(file, 'utf8'))
@@ -376,8 +382,8 @@ function readIssue(root, n) {
     throw refuse(`is not valid JSON (${error.message})`)
   }
   if (!isObject(raw)) throw refuse('must hold a JSON object')
-  const extra = keysOutside(raw, ['version', 'issue', 'workflow', 'prs'])
-  if (extra.length > 0) throw refuse(`has the unknown top-level key ${quoted(extra)}; the keys are version, issue, workflow, prs`)
+  const extra = keysOutside(raw, ['version', 'issue', 'workflow', 'prs', ...INTERVIEW_KEYS])
+  if (extra.length > 0) throw refuse(`has the unknown top-level key ${quoted(extra)}; the keys are version, issue, workflow, prs, ${INTERVIEW_KEYS.join(', ')}`)
   if (raw.version !== ISSUE_VERSION) throw refuse(`has "version" ${JSON.stringify(raw.version)}; this script reads version ${ISSUE_VERSION}`)
   if (raw.issue !== n) throw refuse(`must hold "issue" ${n}, and holds ${JSON.stringify(raw.issue)}`)
   if (raw.workflow !== undefined && !(isObject(raw.workflow) && raw.workflow.issue === n)) throw refuse(`must hold under workflow an object whose issue is ${n}`)
@@ -385,14 +391,15 @@ function readIssue(root, n) {
   for (const [key, value] of Object.entries(raw.prs ?? {})) {
     if (!isObject(value) || String(value.pr) !== key || !isIssue(value.pr)) throw refuse(`must hold under prs.${key} an object whose pr is ${key}`)
   }
-  return { workflow: raw.workflow, prs: raw.prs ?? {} }
+  return { workflow: raw.workflow, prs: raw.prs ?? {}, interview: interviewOf(raw) }
 }
 
-const writeIssue = (root, n, { workflow, prs }) => writeRecord(join(root, issueName(n)), {
+const writeIssue = (root, n, { workflow, prs, interview }) => writeRecord(join(root, issueName(n)), {
   version: ISSUE_VERSION,
   issue: n,
   ...(workflow ? { workflow } : {}),
   ...(Object.keys(prs).length > 0 ? { prs } : {}),
+  ...interview,
 })
 
 // The numbers of the issue files of this worktree.
@@ -440,7 +447,7 @@ function moveOldState(root, record) {
   for (const [n, move] of moves) {
     withIssueLock(root, n, () => {
       const held = readIssue(root, n)
-      writeIssue(root, n, { workflow: held.workflow ?? move.workflow, prs: { ...move.prs, ...held.prs } })
+      writeIssue(root, n, { workflow: held.workflow ?? move.workflow, prs: { ...move.prs, ...held.prs }, interview: held.interview })
     })
   }
   return leads
@@ -556,6 +563,24 @@ function setWorkflow(values) {
     writeIssue(root, lead, pr ? { ...held, prs: { ...held.prs, [pr]: saved } } : { ...held, workflow: saved })
   })
   console.log(String(expected + 1))
+}
+
+// Replaces the interview keys of one issue file, under its lock. A copy of the workflow is refused, so
+// that an old read of the file cannot put a record back at an earlier revision.
+function setInterview(values) {
+  let file
+  try {
+    file = JSON.parse(readFileSync(0, 'utf8'))
+  } catch (error) {
+    throw new Fail(2, `worktree-env: set-interview reads a JSON object from stdin, and the text is not valid JSON (${error.message}). Nothing was changed.`)
+  }
+  if (!isObject(file)) throw new Fail(2, 'worktree-env: set-interview reads a JSON object from stdin, and the text is another JSON value. Nothing was changed.')
+  if (!isIssue(file.issue)) throw new Fail(2, `worktree-env: set-interview needs answers with an issue number, and their issue is ${JSON.stringify(file.issue)}. Nothing was changed.`)
+  const extra = keysOutside(file, ['version', 'issue', ...INTERVIEW_KEYS])
+  if (extra.length > 0) throw new Fail(2, `worktree-env: set-interview for #${file.issue} takes only ${INTERVIEW_KEYS.join(', ')}, and got ${quoted(extra)}. Nothing was changed. Repair: remove that key; set-workflow writes the workflow.`)
+  const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
+  ignoreLocally(root, gitDirs(root).common, file.issue)
+  withIssueLock(root, file.issue, () => writeIssue(root, file.issue, { ...readIssue(root, file.issue), interview: interviewOf(file) }))
 }
 
 // Rewrites a version 1 file ({ version: 1, stacks: [...] }) as version 2, with the stacks under
@@ -1118,6 +1143,9 @@ function main(argv) {
       return 0
     case 'migrate':
       migrate(values)
+      return 0
+    case 'set-interview':
+      setInterview(values)
       return 0
     case 'set-workflow':
       setWorkflow(values)

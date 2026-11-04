@@ -25,6 +25,8 @@ the next pass resumes from it. For a batched PR, write one section per member is
 - the tasks, and an **Assumptions** heading for each decision you made without the user;
 - one `Closes #<k>` line per issue the PR closes.
 
+While a workflow runs, call `mcp__ndev__finishedPlan` with the file instead: it writes the body, and `finishedDevelopment` runs `gates.sh`. With no workflow:
+
 ```bash
 gh pr edit <pr> --repo "$REPO" --body-file <file>   # write a file; do not paste inline
 ```
@@ -37,7 +39,7 @@ sub-issue that your teammates carry, and run the query after each.
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/work/gates.sh <issue> <ref> <pr>` fails a non-trivial issue whose PR body
 still holds the placeholder or names no test entry point. Copy the plan to the issue as a comment,
-read it once for clarity, then move the card to *In progress* (`board.sh move <itemId> progress`, the `work-heavy-auto` skill).
+read it once for clarity, then move the card to *In progress* (`board.sh move <itemId> progress`, the `work-heavy-auto` skill). While a workflow runs, the plugin moves it. `finishedPlan` also runs `pre-push-check.sh` on the base, before the sign-off.
 
 ### F2a — Agree the test entry point
 

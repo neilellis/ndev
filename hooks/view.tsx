@@ -1,4 +1,4 @@
-import { boundRoot, readHeld, effectiveRecords } from './workflow/tools'
+import { boundRoot, readHeldForPane, effectiveRecords } from './workflow/tools'
 import type { Workflow } from './workflow/tools'
 import { liveBox, liveGitDir, liveName, livePath, maskedText, readLive, shownFull } from './workflow/live'
 import { flowPicture } from './workflow/machine'
@@ -9,12 +9,12 @@ import type { EngineInterface, On } from 'claude-code'
 import type { ResourceView, ViewServer, ViewStack, ViewTree, WorkflowView } from '../types'
 import { loadConfigAt } from './config'
 import { fileUrl, issueUrl, pullUrl } from './links'
-import { attentionRows, byUrgency, detailsRows, headerRow, progressRow, recordRows, serverRows, stackRows, undrawnRows, worktreeRows, type Row } from './view-layout'
+import { attentionRows, byUrgency, detailsRows, headerRow, interviewRows, progressRow, recordRows, serverRows, stackRows, undrawnRows, worktreeRows, type Row } from './view-layout'
 
 // The /view pane: the ndev files, the workflow records and the running resources of the current git
 // worktree of the project, with the controls to create or copy a file and to stop, open or copy a resource.
 // The lists come from two scripts: ndev-files.sh (files) and worktree-env.sh (resources). The workflow
-// records come from readHeld. hooks/view-layout.ts lays out the rows; this file draws them.
+// records come from readHeldForPane. hooks/view-layout.ts lays out the rows; this file draws them.
 
 const PANE = 'view'
 const TITLE = 'ndev view'
@@ -81,11 +81,12 @@ const MARK: Record<FlowMark, { sign: string; color: 'success' | 'claude' | 'warn
 // does not hide the resources, and a bad live file does not hide the record.
 async function workflowsOf($: EngineInterface, path: string): Promise<Pick<ViewTree, 'workflows' | 'workflowError' | 'held'>> {
   try {
-    const held = await readHeld($, path)
+    const { held, problems } = await readHeldForPane($, path)
+    const failed = problems.length ? { workflowError: `Part of the workflows of ${path} could not be read: ${problems.join(' ')}` } : {}
     const records = effectiveRecords(held)
-    if (!records.length) return { workflows: [], held }
+    if (!records.length) return { workflows: [], held, ...failed }
     const gitDir = await liveGitDir($, path)
-    return { held, workflows: (await Promise.all(records.map(wf => workflowView($, wf, gitDir)))).sort(byUrgency) }
+    return { held, ...failed, workflows: (await Promise.all(records.map(wf => workflowView($, wf, gitDir)))).sort(byUrgency) }
   } catch (error) {
     return { workflowError: `The workflows of ${path} could not be read: ${(error as Error).message}` }
   }
@@ -240,7 +241,15 @@ function recordsOf(t: ViewTree, now: number): Row[] {
     } catch (error) {
       return undrawnRows(`.neil-dev.issue-${lead ?? wf.issue}.json`, wf, error)
     }
-  })
+  }).concat((t.held?.interviews ?? []).flatMap(file => {
+    const own = t.held?.issues.find(wf => wf.issue === file.issue)
+    const repo = own?.repo ?? t.held?.issues[0]?.repo ?? t.held?.prs[0]?.repo
+    try {
+      return interviewRows(file, { root: t.path, now, repo, pr: file.commentIds?.prNumber ?? own?.prs[0] })
+    } catch (error) {
+      return undrawnRows(`.neil-dev.issue-${file.issue}.json`, file, error)
+    }
+  }))
 }
 
 export const resourceView = (on: On) => {

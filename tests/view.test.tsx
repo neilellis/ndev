@@ -578,7 +578,7 @@ test('the history shows newest first, and a bar shows how far the flow has come'
   const ui = await start($)
   const rows = (await ui.findAll({ type: 'Text', text: /ago +(started|finishedPlan) / })).map(t => t.text)
   expect(rows.findIndex(t => t.includes('finishedPlan'))).toBeLessThan(rows.findIndex(t => t.includes('started')))
-  expect(await ui.find({ type: 'Text', text: /^█+░+ 2\/8 .*developing for 1m 0s/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^█+░+ 2\/9 .*developing for 1m 0s/ })).toBeTruthy()
   await ui.unmount()
 })
 
@@ -634,6 +634,99 @@ test('with no live file, the pane draws what the last save kept on the record', 
   world(on, {}, WT, issueFiles({ ...fullIssue, live: { at: 1000, calls: [{ tool: 'checkpoint', args: { message: 'saved' }, at: 999_000, outcome: 'running' }] } }))
   const ui = await start($)
   expect(await ui.find({ type: 'Text', text: /message +saved/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+// ---- the interview, in the same file ----
+const ANSWERED = {
+  rounds: [{
+    title: 'The login page', at: 900_000,
+    questions: [
+      { id: 'store', header: 'Session store', question: 'Where do sessions live?', options: [{ label: 'Redis' }] },
+      { id: 'name', header: 'Cookie name', question: 'What name?', suggested: 'sid' },
+    ],
+    answers: [
+      { id: 'store', selected: ['Redis'], notes: 'see https://example.com/redis', source: 'human' },
+      { id: 'name', selected: [], other: 'API_TOKEN=zzz', source: 'recommended' },
+    ],
+  }],
+  commentIds: { issue: 555, pr: 666 }, posted: true, closed: { at: 950_000, asked: true }, startedByFollowUp: { of: 3, at: 800_000 },
+  draft: { later: { selected: ['Yes'], other: '', notes: '', touched: true } },
+}
+test('the interview in an issue file shows each question and answer, with links, and no secret', async ($, on) => {
+  const file = JSON.parse(issueFiles(fullIssue)[ISSUE_AT(7)]!)
+  world(on, {}, WT, { [ISSUE_AT(7)]: JSON.stringify({ ...file, ...ANSWERED }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /interview of #7/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /The login page/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Where do sessions live\?/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Redis/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /recommended/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /1 draft answer/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /zzz/ })).toBeUndefined()
+  expect(await hrefOf(ui, 'https://example.com/redis')).toBe('https://example.com/redis')
+  expect(await hrefOf(ui, 'comment on #7')).toBe(`https://github.com/${REPO}/issues/7#issuecomment-555`)
+  expect(await hrefOf(ui, 'comment on PR #12')).toBe(`https://github.com/${REPO}/pull/12#issuecomment-666`)
+  await ui.unmount()
+})
+
+test('an issue file with only answers shows them, with no workflow', async ($, on) => {
+  world(on, {}, WT, { [ISSUE_AT(3)]: JSON.stringify({ version: 1, issue: 3, ...ANSWERED }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /interview of #3/ })).toBeTruthy()
+  expect(await hrefOf(ui, '.neil-dev.issue-3.json')).toBe(`file://${ISSUE_AT(3)}`)
+  await ui.unmount()
+})
+
+test('answers that the pane cannot draw cost their own rows, and the record still shows', async ($, on) => {
+  const file = JSON.parse(issueFiles(fullIssue)[ISSUE_AT(7)]!)
+  world(on, {}, WT, { [ISSUE_AT(7)]: JSON.stringify({ ...file, rounds: 'nonsense' }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /\.neil-dev\.issue-7\.json could not be drawn/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /fix-the-thing/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('an issue file with a key that nothing owns is refused as the script refuses it', async ($, on) => {
+  world(on, {}, WT, { [ISSUE_AT(7)]: JSON.stringify({ version: 1, issue: 7, mystery: 1 }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /\.neil-dev\.issue-7\.json.*mystery.*Repair/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('an answers row with a text that is not a text costs only its own rows', async ($, on) => {
+  const file = JSON.parse(issueFiles(fullIssue)[ISSUE_AT(7)]!)
+  const rounds = [{ questions: [{ id: 'q', header: 5, question: 'Why?' }], answers: [], at: 1 }]
+  world(on, {}, WT, { [ISSUE_AT(7)]: JSON.stringify({ ...file, rounds }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /interview of #7/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /fix-the-thing/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a bad issue file costs only its own rows: it says why, and the other issues still show', async ($, on) => {
+  world(on, {}, WT, { ...issueFiles(fullIssue), [ISSUE_AT(9)]: JSON.stringify({ version: 1, issue: 9, mystery: 1 }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /\.neil-dev\.issue-9\.json.*mystery.*Repair/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /fix-the-thing/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('the pane shows a multi-select, an untouched draft, and an answer whose question has gone', async ($, on) => {
+  const round = { title: 'R', at: 1, questions: [{ id: 'many', header: 'Pick', question: 'Which?', multiSelect: true, options: [{ label: 'A' }] }], answers: [{ id: 'gone', selected: ['Orphan answer'], source: 'human' }] }
+  world(on, {}, WT, { [ISSUE_AT(3)]: JSON.stringify({ version: 1, issue: 3, rounds: [round], draft: { later: { selected: ['Yes'], other: '', notes: '', touched: false } } }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /multi-select/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /not touched/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /gone/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /Orphan answer/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a handed-over file links its PR comment from the number it holds', async ($, on) => {
+  world(on, {}, WT, { ...issueFiles(fullIssue), [ISSUE_AT(3)]: JSON.stringify({ version: 1, issue: 3, rounds: [], commentIds: { pr: 666, prNumber: 40 } }) })
+  const ui = await start($)
+  expect(await hrefOf(ui, 'comment on PR #40')).toBe(`https://github.com/${REPO}/pull/40#issuecomment-666`)
   await ui.unmount()
 })
 

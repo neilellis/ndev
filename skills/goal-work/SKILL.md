@@ -39,7 +39,7 @@ Show the selected issues, the evidence for solved ones, the grouping, the blocke
 
 ## Deliver
 
-For each accepted group, call `mcp__ndev__started(<lead>, shortName)` and follow each answer. With no workflow, follow `work-heavy` F0 → F6 and claim the worktree with `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh <repoDir> <lead> origin/$BASE`. A non-zero exit means the worktree is not yours: stop and report it. Either way:
+For the first accepted group, call `mcp__ndev__started(<lead>, shortName)` and follow each answer. For each other group, call `mcp__ndev__followUp` with the mode `worktree` and `issues`, because a second `started` in this session joins the first group's PR. With no workflow, follow `work-heavy` F0 → F6 and claim the worktree with `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh <repoDir> <lead> origin/$BASE`. A non-zero exit means the worktree is not yours: stop and report it. Either way:
 
 - One PR for the group. The PR body has one section and one `Closes #<n>` per member.
 - Run cheap tests per member. Run expensive deployment, E2E or smoke work once per group.

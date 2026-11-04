@@ -9,9 +9,9 @@ Do one bounded pass: read the board, sort the startable issues, work each unit i
 
 ## The workflow
 
-A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)`, then `mcp__ndev__setSteering` with `auto` and the reason, as no human answers an unattended run, and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
-Ask the user for authorisation immediately before each GitHub write and each preview deployment. Read-only discovery can run without a prompt.
+With a subagent worker or no workflow, ask the user for authorisation immediately before each GitHub write and each preview deployment. Read-only discovery can run without a prompt.
 
 ## Settings
 
@@ -60,7 +60,7 @@ For each startable unit, a worker in its own session follows the answers of the 
 
 A related discovery becomes a sub-issue carried in the same PR (`Carried by #<pr>`, `Closes #<child>`). An unrelated discovery becomes a separate issue with no PR.
 
-Agents never wait for a human. When only a human can move work forward, post the `<!-- work-heavy-auto:state -->` comment (or the question, plan-confirm, feedback or smoke marker; `work-heavy` skill, `references/state.md`) and exit. The next pass resumes from it. Every pipeline comment starts with `<!-- work-heavy-auto` or `**work-heavy-auto`.
+Agents never wait for a human. A worker in a workflow calls `mcp__ndev__blocked`. For any other agent, when only a human can move work forward, post the `<!-- work-heavy-auto:state -->` comment (or the question, plan-confirm, feedback or smoke marker; `work-heavy` skill, `references/state.md`) and exit. The next pass resumes from it. Every pipeline comment starts with `<!-- work-heavy-auto` or `**work-heavy-auto`.
 
 ## Runner
 

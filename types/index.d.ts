@@ -186,9 +186,15 @@ declare module 'claude-code' {
       // The worktree of this session's workflow, and when the session was last active (hooks/workflow/).
       workflowRoot: Shaped<string | null>
       workflowIssue: Shaped<number | null>
+      workflowSessionHasHuman: Shaped<boolean>
+      // PaneCall in hooks/workflow/interview.tsx. This file must stay self-contained.
+      interviewView: Shaped<{ call?: { id: string; issue: number; [field: string]: unknown } }>
       workflowDoneWaitsFor: Shaped<string | null>
       workflowFollowUpWorktrees: Shaped<string[]>
+      workflowHotfixWorktrees: Shaped<string[]>
+      workflowHotfixPrs: Shaped<number[]>
       workflowDeclined: Shaped<boolean>
+      workflowSkillsLoaded: Shaped<string[]>
       workflowIssueAsked: Shaped<boolean>
       workflowCheckRead: Shaped<{ at: number }>
       workflowWatchNote: Shaped<{ at: number; why: string }>
@@ -327,7 +333,7 @@ export type ViewTree = {
   // The workflow of each issue in this worktree.
   workflows?: WorkflowView[]
   // Every record in full, as the issue files and the old keys of the worktree file hold them.
-  held?: { issues: import('../hooks/workflow/tools').Workflow[]; prs: import('../hooks/workflow/tools').Workflow[] }
+  held?: { issues: import('../hooks/workflow/tools').Workflow[]; prs: import('../hooks/workflow/tools').Workflow[]; interviews?: import('../hooks/workflow/interview-model').InterviewFile[] }
   // What the worktree file holds beside the resources.
   worktreeFile?: { version?: number; settings?: Record<string, unknown>; leads?: Record<string, number> }
   // Why the workflows could not be read, with the repair. The resources still draw.

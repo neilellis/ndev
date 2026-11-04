@@ -7,6 +7,8 @@ After any watch, read the explicit status and conclusion of each run or check.
 
 ## Wait for PR checks
 
+While a workflow runs, do not wait for the checks of its PR: the plugin watches them and refuses the wait helper. With no workflow:
+
 ```bash
 wait-for-pr-change.sh <pr> --skip-success [--json] [--interval 120] [--timeout <s>]
 ```
