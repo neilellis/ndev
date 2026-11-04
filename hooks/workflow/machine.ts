@@ -7,7 +7,8 @@ import type { ChangeType } from './change-types'
 
 export const ATTEMPT_LIMIT = 3
 
-export type State = 'setup' | 'interviewing' | 'planning' | 'developing' | 'developed' | 'reviewing' | 'ci' | 'smoke' | 'finishing' | 'done' | 'revising' | 'blocked' | 'wait'
+export const STATES = ['setup', 'interviewing', 'planning', 'developing', 'developed', 'reviewing', 'ci', 'smoke', 'finishing', 'done', 'revising', 'blocked', 'wait'] as const
+export type State = (typeof STATES)[number]
 
 // The phase tools, plus the three kinds of follow-up, which differ in what they do to the state.
 export type Tool =

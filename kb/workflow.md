@@ -115,7 +115,7 @@ flowchart TD
 
     active["any active state"] -->|"blocked(message)<br/>or 3 failed attempts<br/>or stalled with no progress"| blocked[[blocked<br/>keeps the previous state]]
     blocked -->|"unblocked(message) or /unblock message<br/>goes back to the previous state"| active
-    active -->|"waitFor, waitForURL, waitForProcessEnd,<br/>waitForSubAgent, waitForSeconds,<br/>waitForPR, waitForIssue"| wait[[wait<br/>the tool call holds the agent,<br/>keeps the previous state]]
+    active -->|"waitFor, waitForURL, waitForProcessEnd,<br/>waitForSubAgent, waitForSeconds,<br/>waitForPR, waitForIssue,<br/>waitForState"| wait[[wait<br/>the tool call holds the agent,<br/>keeps the previous state]]
     wait -->|"the condition is true, attempts or timeout run out,<br/>/unblock message, an interrupt, or the end of the turn<br/>or session goes back to the previous state"| active
 
     classDef start fill:#475569,stroke:#94a3b8,color:#ffffff
@@ -168,6 +168,7 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `waitFor(issue or pr, shell_command, period, attempts, timeout)`           | Runs the command every `period` seconds (30 by default), in the worktree, until it exits 0. Each run may last 60 s.                                                           | See [Wait tools](#wait-tools).                                                                                                                   |
 | `waitForPR(issue, pr, state, period, attempts, timeout)`             | Holds the agent until the PR is `open`, `closed`, `merged`, `draft`, `ready` or `mergeable`. It does not wait for checks, because the workflow watches those.                 | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
 | `waitForIssue(issue or pr, waitOn, state, period, attempts, timeout)`       | Holds the agent until each issue in the list `waitOn` is `open` or `closed`.                                                                                                                        | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
+| `waitForState(issue or pr, issue_id, state, period, attempts, timeout)` | Holds the agent until the workflow of the issue `issue_id` reaches `state` (any workflow state), or is past it on the main line. It reads the records in the worktrees of this repository, every 30 s by default, and makes no GitHub call. | See [Wait tools](#wait-tools). The state is not a workflow state. `issue_id` is an issue that this agent is on. |
 | `done(issue or pr, message, remembered)`                                   | Runs the done checks. It needs `remembered` only when a human skipped the review stage. Merges if the project level allows it. Stops the stacks and dev servers of the worktree, and leaves the worktree to Orca. If the settings file has an error, it stops nothing and names the repair.                                                | `remembered` is empty. A check fails, and then the message lists each problem.                                                                   |
 | `followUp(issue or pr, mode, message)`                                     | Creates an issue, then acts by mode.                                                                                                                                          | After `done`, only `issue_only` is allowed.                                                                                                      |
 | `addMigration(issue or pr, name)`                                          | Makes the empty migration file and lists it in the PR body, to run after the merge.                                                                                           | The name holds other than lower-case letters, digits and underscores. The workflow has no PR. The state is `setup`, `done`, `blocked` or `wait`. |
@@ -422,6 +423,10 @@ To see where a session is in the flow, type `/view`. It draws the flow as a chai
 
 To end a block with your answer, type `/unblock <message>`. The message is compulsory. The agent gets it in a prompt, with the next step. With no message, the command changes nothing and shows the block message. The notification and the flag are withdrawn.
 
+## Progress during a long tool call
+
+A tool call can run for many minutes: a check script runs for up to 10, and `finishedReview` runs `pre-ready-check.sh`, `pre-push-check.sh` and a push. After 15 seconds, and every 15 seconds from then on, the status line under the prompt names the tool, its time, its step and the limit of that step, such as `dev: light · interactive · ndev finishedReview 4m 10s · pre-ready-check.sh 2m 5s of at most 10m`. The line goes back when the call ends. A wait tool and the interview have their own display and add nothing here. The line says what runs. It does not show the output of the script, which `$.process.run` gives only at the end: a hung script and a working one look the same until the limit.
+
 ## Wait tools
 
 A wait tool holds the agent inside one tool call, so the agent cannot go on and spends no tokens. The state is `wait`, and the record keeps the previous state and what the wait is for. When the wait ends, the state goes back, and the answer gives the next step.
@@ -429,7 +434,7 @@ A wait tool holds the agent inside one tool call, so the agent cannot go on and 
 
 | Input      | Meaning                   | Default                                                                                                    |
 | ---------- | ------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `period`   | Seconds between checks.   | 30 for `waitFor`, 300 for `waitForPR` and `waitForIssue` (each check is one GitHub read), 5 for the others |
+| `period`   | Seconds between checks.   | 30 for `waitFor` and `waitForState`, 300 for `waitForPR` and `waitForIssue` (each check is one GitHub read), 5 for the others |
 | `attempts` | The most checks.          | As many as the timeout allows                                                                              |
 | `timeout`  | The most seconds to wait. | 3600                                                                                                       |
 
@@ -454,6 +459,7 @@ A wait ends in one of these ways:
 - A process that dies cannot change the record, so the state stays `wait`, and no reminder comes. `status` then says that no wait tool runs, and it names the repair. The next `started` goes back to the previous state, and it withdraws the notice of the wait. `/unblock <message>` also does this, and it prompts the agent. While another live session holds the wait, `status` names that session, and a dead one is taken with `started` and `takeOver` true.
 - A wait reads its own record, so a change of issue during the wait does not lose it. If the record is missing, the wait reads it 3 times, 1 second apart, and then fails with the files it read and the repair.
 - `waitFor` runs the command that the agent gives, with the same rights as the Bash tool.
+- `waitForState` ends at once when the issue is done or has its workflow off and did not reach the state, and the answer says so. An issue with no record does not end the wait, because it may not have started. Its limit: it reads only the worktrees of this repository on this machine, so a removed worktree looks like an issue that has not started. Use `waitForIssue` for that case.
 - A wait that passes half of its retries tells the human as `blocked` does: a persistent notification and the Orca flag. The retries are `attempts`, or as many as `timeout` allows at this `period`. Half of `timeout` counts too. The wait goes on, and it withdraws the notice when it ends. `waitForSeconds` has no retries, so it never does this.
 - In `ci`, the plugin still watches the checks. Use a wait tool for something else, not for the checks.
 

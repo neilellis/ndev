@@ -72,6 +72,7 @@ const engine = (on: On, opts: Opts = {}) => {
   }))
   const s = {
     spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
+    otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined,
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
@@ -96,6 +97,7 @@ const engine = (on: On, opts: Opts = {}) => {
   const steps: string[] = []
   const submodules: { command: string; paths?: string }[] = []
   const timers: (() => void)[] = []
+  const statuses: (string | undefined)[] = []
   const copies: string[] = []
 
   const commandNames: string[] = []
@@ -152,7 +154,7 @@ const engine = (on: On, opts: Opts = {}) => {
   on('ui.notify', () => ({ value: undefined }) as never)
   on('ui.open', () => ({ value: { isPlaced: true } }) as never)
   on('ui.close', () => ({ value: undefined }) as never)
-  on('ui.status', () => ({ value: undefined }))
+  on('ui.status', (_, e) => { statuses.push(e.text); return { value: undefined } })
   on('ui.log', () => ({ value: undefined }) as never)
   on('session.cwd', () => ({ value: ROOT }) as never)
   let refReads = 0
@@ -199,7 +201,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'stash') return ok('')
       if (a[1] === 'check-ignore') return ok('x\n')
       if (a[1] === 'cat-file') return s.blobSize ? ok(`${s.blobSize}\n`) : ok('', 1)
-      if (a[1] === 'worktree') return ok(`worktree ${ROOT}\n`)
+      if (a[1] === 'worktree') return s.worktreeListFails ? ok('', 128, s.worktreeListFails) : ok([ROOT, ...s.otherWorktrees].map(path => `worktree ${path}\n`).join(''))
       if (a[1] === 'add') { s.staged = true; return ok() }
       if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
       if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
@@ -316,6 +318,7 @@ const engine = (on: On, opts: Opts = {}) => {
     if (a[0] === 'bash' && a[1]?.includes('.sh')) {
       steps.push(`${a[1].split('/').pop()}${a.length > 2 ? ` ${a.slice(2).join(' ')}` : ''}`)
       if (s.hugeCheck && a[1].includes(s.hugeCheck)) return { value: { exitCode: s.hugeExit, stdout: `${'x'.repeat(STREAM_CAP - 5)}\nlast`, stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
+      if (s.checkHold) return (async () => { await s.checkHold; return s.failCheck && a[1]!.includes(s.failCheck) ? ok('lint: broken line', 3) : ok('passed') })() as never
       if (s.failCheck && a[1].includes(s.failCheck)) return ok('lint: broken line', 3)
       return ok('passed')
     }
@@ -382,7 +385,7 @@ const engine = (on: On, opts: Opts = {}) => {
     return carrier && carrier.state !== 'developing' ? carrier : own
   }
   liveFiles = files
-  return { commandNames, s, spawns, modelCalls, issueAsks, fills, orcaCalls, copies, gh, ready, prompts, toasts, compacts, pushes, commits, alerts, merges, steps, submodules, files, state, prRecord, issueRecord, timers }
+  return { commandNames, s, spawns, modelCalls, issueAsks, fills, orcaCalls, copies, gh, ready, prompts, toasts, compacts, pushes, commits, alerts, merges, steps, submodules, files, state, prRecord, issueRecord, timers, statuses }
 }
 type W = ReturnType<typeof engine>
 
@@ -396,7 +399,7 @@ const start = async ($: Dollar, w?: W) => {
   if (w) w.gh.length = 0 // fix-all-prs reads the repository at the start of a session; that is not the workflow.
 }
 // Each state tool names its issue. A test names it only when the issue is the point of the test.
-const STATE_TOOLS = ['interview', 'setSteering', 'finishedPlan', 'finishedInterview', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', 'waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue']
+const STATE_TOOLS = ['interview', 'setSteering', 'finishedPlan', 'finishedInterview', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', 'waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue', 'waitForState']
 let liveFiles: Map<string, string> | undefined
 // A test names its target only when the target is the point of the test: the issue, or its PR once it has moved on.
 function callFor(name: string): Record<string, unknown> {
@@ -2090,6 +2093,17 @@ test('a comment before the last commit is still feedback at done, until finished
   expect(w.state()?.feedbackAt).toBe(w.s.now)
 })
 
+test('a generated report that opens with a machine marker is not feedback at done', async ($, on) => {
+  const w = engine(on, { wf: finishing() })
+  await start($, w)
+  w.s.comments = [{ id: 6633384837, body: '<!-- visual-diff -->\n## Visual diff', user: { login: 'human', type: 'User' }, created_at: '2026-11-02T00:00:00Z' }]
+  w.s.commitIso = '2026-11-01T00:00:00Z'
+  w.s.now = Date.parse('2026-11-03T00:00:00Z')
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(r.text).not.toContain('has no answer')
+  expect(w.state()?.state).not.toBe('revising')
+})
+
 test('a PR head that this worktree lacks: finishedRevision names git pull', async ($, on) => {
   const w = engine(on, { wf: { state: 'revising' } })
   await start($, w)
@@ -2108,17 +2122,6 @@ test('a raw git commit or push is refused while a workflow runs, and names the t
   }
   const fine = await $.tool.call({ tool: 'Bash', command: 'git log --grep commit' } as never) as { deny?: string }
   expect(fine.deny).toBeUndefined()
-})
-
-test('a generated report that opens with a machine marker is not feedback at done', async ($, on) => {
-  const w = engine(on, { wf: finishing() })
-  await start($, w)
-  w.s.comments = [{ id: 6633384837, body: '<!-- visual-diff -->\n## Visual diff', user: { login: 'human', type: 'User' }, created_at: '2026-11-02T00:00:00Z' }]
-  w.s.commitIso = '2026-11-01T00:00:00Z'
-  w.s.now = Date.parse('2026-11-03T00:00:00Z')
-  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
-  expect(r.text).not.toContain('has no answer')
-  expect(w.state()?.state).not.toBe('revising')
 })
 
 for (const command of [
@@ -3766,6 +3769,146 @@ test('waitForIssue holds until the issue is closed', async ($, on) => {
   expect(r.isError).toBe(false)
   expect(r.text).toContain('issue #9')
   expect((await tool($, 'waitForIssue', { waitOn: [9], state: 'merged' })).isError).toBe(true)
+})
+
+// ---- the line under the prompt during a long tool call ----
+test('a long tool call shows its name, its step and the time under the prompt, and the line goes back when it ends', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  const shownBefore = w.statuses.at(-1)
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const held = tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  await settle()
+  expect(w.statuses.filter(x => x?.includes('checkpoint'))).toEqual([])
+  w.s.now += 125_000
+  w.timers.splice(0).forEach(fire => fire())
+  await settle()
+  const line = w.statuses.at(-1)!
+  expect(line).toContain(String(shownBefore))
+  expect(line).toContain('checkpoint 2m 5s')
+  expect(line).toMatch(/fast-checks\.sh 2m 5s of at most 10m/)
+  release()
+  expect((await held).isError).toBe(false)
+  expect(w.statuses.at(-1)).toBe(shownBefore)
+})
+
+test('a tool call that fails puts the line back too, and a wait tool has its own display and adds no line', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  const shownBefore = w.statuses.at(-1)
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  w.s.failCheck = 'fast-checks'
+  const held = tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  await settle()
+  w.timers.splice(0).forEach(fire => fire())
+  await settle()
+  expect(w.statuses.at(-1)).toContain('checkpoint')
+  release()
+  expect((await held).isError).toBe(true)
+  expect(w.statuses.at(-1)).toBe(shownBefore)
+  w.s.sleepAdvances = true
+  const before = w.statuses.length
+  await tool($, 'waitForSeconds', { secs: 1 })
+  expect(w.statuses.length).toBe(before)
+})
+
+// ---- waitForState ----
+const OTHER = '/other'
+const RECORD_BASE = { root: OTHER, repo: 'o/r', base: 'main', branch: 'b', evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], history: [] }
+const putIssue = (w: W, issue: number, record: Record<string, unknown>) => w.files.set(`${OTHER}/.neil-dev.issue-${issue}.json`, JSON.stringify({ version: 1, issue, workflow: { ...RECORD_BASE, issue, prs: [], state: 'developing', ...record } }))
+const startForState = async ($: Dollar, on: On) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.otherWorktrees = [OTHER]
+  return w
+}
+
+test('waitForState holds until an issue in another worktree reaches the state, with no GitHub call, and the state goes back', async ($, on) => {
+  const w = await startForState($, on)
+  putIssue(w, 9, { state: 'developing' })
+  const before = w.gh.length
+  let release = () => {}
+  w.s.sleepHold = new Promise<void>(resolve => { release = resolve })
+  const held = tool($, 'waitForState', { issue_id: 9, state: 'ci', period: 60 })
+  await settle()
+  expect(w.state()?.state).toBe('wait')
+  putIssue(w, 9, { state: 'ci' })
+  release()
+  const r = await held
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('Issue #9')
+  expect(r.text).toContain('state "ci"')
+  expect(w.gh.length).toBe(before)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('waitForState does not hold for a state that the issue is already past or passed through during the wait', async ($, on) => {
+  const w = await startForState($, on)
+  putIssue(w, 9, { state: 'smoke' })
+  const past = await tool($, 'waitForState', { issue_id: 9, state: 'reviewing', period: 60 })
+  expect(past.isError).toBe(false)
+  expect(past.text).toContain('past "reviewing"')
+  putIssue(w, 9, { state: 'developing', history: [{ at: w.s.now, tool: 'blocked', from: 'developing', to: 'blocked' }, { at: w.s.now, tool: 'unblocked', from: 'blocked', to: 'developing' }] })
+  const through = await tool($, 'waitForState', { issue_id: 9, state: 'blocked', period: 60 })
+  expect(through.isError).toBe(false)
+  expect(through.text).toContain('during this wait')
+})
+
+test('waitForState follows an issue into its PR record, and reads a blocked issue as still at its stage', async ($, on) => {
+  const w = await startForState($, on)
+  w.files.set(`${OTHER}/.neil-dev.issue-9.json`, JSON.stringify({ version: 1, issue: 9, workflow: { ...RECORD_BASE, issue: 9, prs: [44], state: 'developed' }, prs: { 44: { ...RECORD_BASE, issue: 9, issues: [9], pr: 44, prs: [44], state: 'ci' } } }))
+  const r = await tool($, 'waitForState', { issue_id: 9, state: 'ci', period: 60 })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('PR #44')
+  putIssue(w, 10, { state: 'blocked', previous: 'developing' })
+  const held = await tool($, 'waitForState', { issue_id: 10, state: 'reviewing', period: 60, attempts: 2 })
+  expect(held.isError).toBe(true)
+  expect(held.text).toContain('gave up')
+})
+
+test('waitForState ends at once when the issue is done or off and did not reach the state, and says so', async ($, on) => {
+  const w = await startForState($, on)
+  putIssue(w, 9, { state: 'done' })
+  const done = await tool($, 'waitForState', { issue_id: 9, state: 'revising', period: 60 })
+  expect(done.text).toContain('did not reach the state "revising"')
+  putIssue(w, 10, { state: 'developing', off: true })
+  const off = await tool($, 'waitForState', { issue_id: 10, state: 'ci', period: 60 })
+  expect(off.text).toContain('workflow off')
+})
+
+test('waitForState goes on for an issue with no record, names a file it cannot read, and names the exit code of a failed worktree list', async ($, on) => {
+  const w = await startForState($, on)
+  const none = await tool($, 'waitForState', { issue_id: 9, state: 'ci', period: 60, attempts: 2 })
+  expect(none.isError).toBe(true)
+  expect(none.text).toContain('has no workflow record')
+  expect(none.text).toContain(OTHER)
+  w.files.set(`${OTHER}/.neil-dev.worktree.json`, 'not json')
+  const unread = await tool($, 'waitForState', { issue_id: 9, state: 'ci', period: 60, attempts: 1 })
+  expect(unread.isError).toBe(true)
+  expect(unread.text).toContain('Not read')
+  w.s.worktreeListFails = 'not a git repository'
+  const failed = await tool($, 'waitForState', { issue_id: 9, state: 'ci', period: 60, attempts: 1 })
+  expect(failed.isError).toBe(true)
+  expect(failed.text).toContain('exit code 128: not a git repository')
+})
+
+test('waitForState refuses a state that is not a workflow state, a missing issue, and the issue that this agent is on', async ($, on) => {
+  const w = await startForState($, on)
+  const bad = await tool($, 'waitForState', { issue_id: 9, state: 'green' })
+  expect(bad.isError).toBe(true)
+  expect(bad.text).toContain('finishing')
+  expect((await tool($, 'waitForState', { state: 'ci' })).text).toContain('issue_id')
+  const own = await tool($, 'waitForState', { issue_id: 7, state: 'ci' })
+  expect(own.isError).toBe(true)
+  expect(own.text).toContain('this agent is on it')
+  expect(w.state()?.state).toBe('developing')
+  const specs = registeredTools as { name: string; inputSchema: { required: string[]; properties: Record<string, { enum?: string[] }> } }[]
+  const schema = specs.find(x => x.name === 'waitForState')!.inputSchema
+  expect(schema.required).toEqual(expect.arrayContaining(['issue_id', 'state']))
+  expect(schema.properties.state!.enum).toContain('wait')
 })
 
 test('a wait past half its attempts tells the human once, and withdraws the notice when it ends', async ($, on) => {

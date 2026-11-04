@@ -21,6 +21,7 @@ import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { interviewPane } from './workflow/interview'
 import { startTriage, triage, triageCommand } from './triage'
+import { showIdleStatus } from './workflow/progress'
 import { resourceView, startView } from './view'
 import { ensureRecord, readSettings, saveWorktreeSetting } from './worktree-settings'
 import type { WorktreeSettings } from './worktree-settings'
@@ -72,7 +73,7 @@ const STEERING_TEXT: Record<Steering, string> = {
 const label = (m: Mode, s: Steering) => `dev: ${m} · ${s}`
 
 const showStatus = async ($: EngineInterface) => {
-  $.ui.status(label(await read($, mode), await read($, steering)))
+  showIdleStatus($, label(await read($, mode), await read($, steering)))
 }
 
 // '' toggles; a known value sets it; anything else is refused with the choices.

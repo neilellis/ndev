@@ -1,6 +1,7 @@
 // The outside world of the workflow tools: git, GitHub, Orca, the check scripts and the notification.
 import type { EngineInterface } from 'claude-code'
 import { checkLog, outputCut } from './check-log'
+import { withStep } from './progress'
 
 export const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh'] as const
 export type Check = (typeof CHECKS)[number]
@@ -104,7 +105,7 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
     note = changed ? `This branch changes ${path}. The tool ran the version on ${base}, and a human must read the change in this PR.` : undefined
   }
   const before = (await porcelain($, root)).join('\n')
-  const r = await run($, ['bash', script, ...args], { cwd: root, timeoutMs: 600_000 })
+  const r = await withStep($, check, 600_000, () => run($, ['bash', script, ...args], { cwd: root, timeoutMs: 600_000 }))
   const log = `${gitDir}/ndev-${check}.log`
   await $.fs.write(log, checkLog(r, path))
   if (r.exitCode !== 0) {

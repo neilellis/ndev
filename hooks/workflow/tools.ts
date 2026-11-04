@@ -14,11 +14,12 @@ import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
 import { CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check } from './effects'
+import { withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
 import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
-import { ATTEMPT_LIMIT, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook } from './machine'
+import { ATTEMPT_LIMIT, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
 import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseRound, resultOf, startingAnswers } from './interview-model'
 import type { InterviewFile, InterviewRound } from './interview-model'
@@ -465,7 +466,7 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
     if (note) notes.push(note)
     const mapNote = await writeChangeMap($, wf, declared)
     if (mapNote) notes.push(mapNote)
-    const pushed = await run($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 })
+    const pushed = await withStep($, 'git push', 300_000, () => run($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 }))
     if (pushed.exitCode !== 0) throw new Refuse(`git push of ${branch} exited ${pushed.exitCode}: ${said(pushed)}\nThe commit is local. Fix the cause (git pull --rebase for a rejected push) and call the tool again.`)
   }
   wf.op = undefined
@@ -2078,6 +2079,7 @@ const SPEC_LIST: Spec[] = [
   { name: 'waitFor', description: 'Hold this agent and run the shell command every period seconds, in the worktree, until it exits 0. Each run may last 60 s. It gives up after attempts or timeout. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { shell_command: STR, period: { type: 'number', description: 'Seconds between checks. The default is 30' }, ...WAIT_LIMITS }, required: ['shell_command'] },
   { name: 'waitForPR', description: `Hold this agent until the PR reaches the state: ${WAIT_PR_STATES.join(', ')}. Do not use it for the checks of this PR: the workflow watches those. Each check is one GitHub read, so period is at least ${WAIT_GITHUB_PERIOD_S.least} s. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.`, properties: { pr: { type: 'integer' }, state: { type: 'string', enum: [...WAIT_PR_STATES] }, period: { type: 'number', description: `Seconds between checks. The default is ${WAIT_GITHUB_PERIOD_S.fallback}` }, ...WAIT_LIMITS }, required: ['pr', 'state'] },
   { name: 'waitForIssue', description: `Hold this agent until each named issue reaches the state: ${WAIT_ISSUE_STATES.join(', ')}. Each check is one GitHub read, so period is at least ${WAIT_GITHUB_PERIOD_S.least} s. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.`, properties: { waitOn: { type: 'array', items: { type: 'integer' }, description: 'The issues to wait for. The wait ends when all of them reach the state' }, state: { type: 'string', enum: [...WAIT_ISSUE_STATES] }, period: { type: 'number', description: `Seconds between checks. The default is ${WAIT_GITHUB_PERIOD_S.fallback}` }, ...WAIT_LIMITS }, required: ['waitOn', 'state'] },
+  { name: 'waitForState', description: `Hold this agent until another issue's workflow reaches the state, or is past it on the main line. It reads the workflow records in the worktrees of this repository and makes no GitHub call. An issue with no record yet counts as not there, so the wait goes on. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.`, properties: { issue_id: { type: 'integer', description: 'The issue to watch. It is not the issue of this agent' }, state: { type: 'string', enum: [...STATES] }, period: { type: 'number', description: 'Seconds between checks. The default is 30' }, ...WAIT_LIMITS }, required: ['issue_id', 'state'] },
   { name: 'status', description: 'Read the workflow state and the next step. This changes nothing. With no issue, it reads the issue that this agent is on.', properties: { issue: { type: 'number' }, pr: { type: 'number' } }, required: [], forSubagents: true },
   { name: 'requestSecret', description: 'Find where a named secret is set: .neil-dev.env, then .env, then ~/.zshrc, then ~/.bashrc. The answer gives the file and the line number, never the value.', properties: { name: STR }, required: ['name'], forSubagents: true },
 ]
@@ -2304,7 +2306,7 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
 // $.clock.sleep and not through a $ call in flight, so the pause is a short process.
 const WAIT_SLICE_S = 2
 const WAIT_BUDGET_LOW_MS = 2_000
-const WAIT_TOOLS = ['waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue']
+const WAIT_TOOLS = ['waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue', 'waitForState']
 const activeWaits = new Set<string>()
 export const isWaitRunning = (id: string) => activeWaits.has(id)
 
@@ -2361,8 +2363,58 @@ function waitSpec(name: string, a: Args): WaitSpec {
       if (!Array.isArray(numbers) || !numbers.length || !numbers.every(n => Number.isInteger(n) && (n as number) > 0)) throw new Refuse(`Refused: waitForIssue needs waitOn to be a list of issue numbers, and it got ${JSON.stringify(numbers)}. Nothing changed.`)
       return { what: `${numbers.length > 1 ? 'issues' : 'issue'} ${numbers.map(n => `#${String(n)}`).join(', ')} to be ${state}`, period: waitGithubPeriod(a, name) }
     }
+    case 'waitForState': {
+      const state = text(a, 'state')
+      if (!isState(state)) throw new Refuse(`Refused: waitForState needs state to be one of ${STATES.join(', ')}, and it got "${state}". Nothing changed.`)
+      if (a.issue_id === undefined) throw new Refuse('Refused: waitForState needs issue_id. Nothing changed.')
+      return { what: `issue #${waitNumber(a, name, 'issue_id', 0, true)} to reach the state "${state}"`, period: waitNumber(a, name, 'period', 30) }
+    }
     default: throw new Refuse(`There is no wait tool named ${name}.`)
   }
+}
+
+const isState = (value: string): value is State => (STATES as readonly string[]).includes(value)
+
+// Where a state stands on the main line. developed comes between FLOW's developing and reviewing, and a side state has no place.
+const LINE: State[] = FLOW.flatMap(state => (state === 'developing' ? [state, 'developed' as const] : [state]))
+
+// A wait can sleep through a state, and an issue can be past it before the wait starts, so the current state alone would hold a wait that can never end.
+function reachedState(wf: Workflow, wanted: State, startedAt: number): string | undefined {
+  if (wf.state === wanted) return `It is in the state "${wanted}".`
+  if (wf.history.some(h => h.at >= startedAt && h.to === wanted)) return `It was in the state "${wanted}" during this wait, and it is now in the state "${wf.state}".`
+  const at = LINE.indexOf(wf.state === 'blocked' || wf.state === 'wait' ? (wf.previous ?? wf.state) : wf.state === 'revising' ? 'ci' : wf.state)
+  const place = LINE.indexOf(wanted)
+  return place >= 0 && at > place ? `It is in the state "${wf.state}", which is past "${wanted}".` : undefined
+}
+
+// The issue can be in any worktree of this repository. One unreadable file must not hide the record in another worktree, so a problem counts only if the record is not found.
+async function checkIssueState($: EngineInterface, root: string, issue: number, wanted: State, startedAt: number): Promise<{ isOver: boolean; detail: string; seen?: Record<string, string> }> {
+  const listed = await git(root, $, 'worktree', 'list', '--porcelain')
+  if (listed.exitCode !== 0) return { isOver: false, detail: `git worktree list in ${root}: exit code ${listed.exitCode}: ${listed.stderr.trim().slice(-300)}` }
+  const worktrees = listed.stdout.split('\n').filter(line => line.startsWith('worktree ')).map(line => line.slice(9))
+  const found: Workflow[] = []
+  const problems: string[] = []
+  for (const worktree of worktrees) {
+    try {
+      const { held, problems: bad } = await readHeldForPane($, worktree)
+      problems.push(...bad)
+      const own = held.issues.find(wf => wf.issue === issue)
+      const record = own ? effectiveRecord(own, held.prs) : held.prs.find(p => p.issues?.includes(issue))
+      if (record) found.push(record)
+    } catch (error) {
+      problems.push(`${worktree}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const lastMove = (wf: Workflow) => wf.history.at(-1)?.at ?? 0
+  const wf = found.sort((a, b) => lastMove(b) - lastMove(a))[0]
+  if (!wf) return { isOver: false, detail: `Issue #${issue} has no workflow record in ${worktrees.join(', ')}. It has not started, or its worktree is gone. If it is gone, waitForIssue can read it.${problems.length ? ` Not read: ${problems.join(' ').slice(0, 300)}` : ''}`, seen: { state: 'no record' } }
+  const seen = { state: wf.state }
+  const label = `Issue #${issue} (${labelOf(wf)}, in ${wf.root})`
+  const reached = reachedState(wf, wanted, startedAt)
+  if (reached) return { isOver: true, detail: `${label} has reached it. ${reached}`, seen }
+  if (wf.state === 'done') return { isOver: true, detail: `${label} is done and did not reach the state "${wanted}", so nothing can end this wait.`, seen }
+  if (wf.off) return { isOver: true, detail: `${label} has its workflow off, so it will not reach the state "${wanted}".`, seen }
+  return { isOver: false, detail: `${label} is in the state "${wf.state}".`, seen }
 }
 
 // One check. A check is short: a command that hangs is killed, and counts as a failed attempt.
@@ -2402,6 +2454,8 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
       }
       return { isOver: allThere, detail: lines.join(' '), seen: shown }
     }
+    case 'waitForState':
+      return checkIssueState($, root, Number(a.issue_id), text(a, 'state') as State, startedAt)
     case 'waitForSubAgent': {
       const id = text(a, 'claude_agent_id')
       const agent = (await $.agent.list()).find(x => x.id === id)
@@ -2546,6 +2600,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
   await whenTurnsFree($)
   const { root, live, who } = await inTurn(async () => {
     const wf = await current($, c)
+    if (name === 'waitForState' && issuesOf(wf).includes(Number(c.args.issue_id))) throw new Refuse(`Refused: waitForState cannot watch issue #${String(c.args.issue_id)}, because this agent is on it and its state stays "wait" while the wait holds it. Nothing changed. Repair: name another issue.`)
     legal(wf, 'wait', await factsFor($, wf.root, c.project, wf))
     wf.waiting = { id, tool: name, what: shownValue('what', spec.what), at: startedAt, period: spec.period, ...(Number.isFinite(most) ? { most } : {}), timeoutS, args: shownArgs(c.args) }
     wf.waitAnswer = undefined
@@ -2995,7 +3050,7 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
       const logged = await liveStart($, s.name, args, project())
       try {
         const name = s.name
-        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : name === 'interview' && args.interviewJson !== undefined ? await askInterview($, { args, project: project(), tool: name }, next) : await inTurn(() => dispatch($, name, { args, project: project(), tool: name }))
+        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : name === 'interview' && args.interviewJson !== undefined ? await askInterview($, { args, project: project(), tool: name }, next) : await withToolProgress($, name, () => inTurn(() => dispatch($, name, { args, project: project(), tool: name })))
         await liveEnd($, logged, s.name, 'ok', result)
         return { result }
       } catch (error) {
