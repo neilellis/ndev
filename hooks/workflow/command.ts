@@ -8,7 +8,7 @@ import type { LoadedConfig } from '../config'
 import { comment, git, head, markReady, readPr, withdrawAlert } from './effects'
 import { afterSkip } from './machine'
 import type { State } from './machine'
-import { boundRoot, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
+import { boundRoot, endAsking, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
 import type { Workflow } from './tools'
 import { watcherNote } from './watchdog'
 
@@ -213,6 +213,7 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
   if (from === 'smoke' && verb === 'skip') wf.evidence.smoke = { sha, text: `skipped by the human: ${reason}` }
   wf.attempts = 0
   wf.nudges = { count: 0 }
+  if (from === 'interviewing') notes.push(...(await endAsking($, wf)))
   moved(wf, `human:${verb}`, { state: to }, now)
   await saveWorkflow($, wf)
   if (to === 'reviewing') {

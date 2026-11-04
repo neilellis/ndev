@@ -10,7 +10,7 @@ Use `work-light` for development and `github` for PR operations. Keep diagnosis 
 
 ## The workflow
 
-While a workflow runs, it tells you about a failed check. Fix it, commit with `mcp__ndev__checkpoint`, and call `mcp__ndev__finishedChecks` when the checks end. After three failed attempts, or when you need a human, call `mcp__ndev__blocked(message)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+While a workflow runs, it tells you about a failed check. Fix it, commit with `mcp__ndev__checkpoint`, and call `mcp__ndev__finishedChecks` when the checks end. After three failed attempts, the workflow blocks itself. Call `mcp__ndev__blocked(message)` only when you need a human for another reason. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 ## Identify the PR once
 
@@ -46,7 +46,7 @@ For a local command, use `${CLAUDE_PLUGIN_ROOT}/scripts/work/wait_for_process_en
 
 ## Complete with current evidence
 
-Follow the `r` skill before the PR leaves draft. If a preview needs a ready PR, meet the gates, mark it ready, then verify the real deployment. An ignored deployment is not preview evidence.
+Follow the `r` skill before the PR leaves draft. If a preview needs a ready PR, meet the gates, mark it ready (`finishedReview` does this while a workflow runs), then verify the real deployment. An ignored deployment is not preview evidence.
 
 Completion needs all of these:
 

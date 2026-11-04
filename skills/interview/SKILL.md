@@ -74,13 +74,13 @@ A heavy issue with no answered round cannot leave by itself, unless `followUp` s
 
 ## Read the answer
 
-The first line of the answer is JSON with each answer: `selected`, `other`, `notes` and `source`. Read the notes, because they can change the decision.
+The first line of the answer is JSON. Each entry of `answers` has `id` and `selected`, and it can have `other`, `notes` and `source`. `source` is `recommended` when the human did not change your recommendation. Read the notes, because they can change the decision.
 
 | The result | What it means | What you do |
 |---|---|---|
-| `submitted` | The human answered the round. | Find the new frontier. Ask again, or call `interview()`. |
-| `trustMeBro` | The human accepts your recommendations and wants no more questions. | State each remaining decision as an assumption, then call `interview()`. |
-| `dismissed` | The human closed the round for now. The answers so far are saved. | Ask again later, or call `mcp__ndev__blocked` with what you need. |
+| No extra key | The human answered the round. | Find the new frontier. Ask again, or call `interview()`. |
+| `trustMeBro: true` | The human accepts your recommendations and wants no more questions. | State each remaining decision as an assumption, then call `interview()`. |
+| `dismissed: true` | The human closed the round for now. The answers so far are saved, and `notAnswered` lists the other questions. | Ask again later, or call `mcp__ndev__blocked` with what you need. |
 
 The answers go to the file, to one comment on the issue and to one comment on the PR. If GitHub fails, the tool gives you the failed command and its output. Repair the cause and call `interview()`. It refuses until both comments are posted.
 

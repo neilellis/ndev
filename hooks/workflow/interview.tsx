@@ -46,7 +46,7 @@ const setAnswer = ($: EngineInterface, id: string, change: (a: DraftAnswer) => D
 
 const pick = ($: EngineInterface, q: InterviewQuestion, value: string) =>
   setAnswer($, q.id, a => {
-    if (!q.multiSelect) return { ...a, selected: [value] }
+    if (!q.multiSelect) return { ...a, selected: [value], other: '' }
     return { ...a, selected: a.selected.includes(value) ? a.selected.filter(x => x !== value) : [...a.selected, value] }
   })
 
@@ -145,7 +145,7 @@ export function interviewPane(on: On) {
             label={q.options ? 'Other answer' : 'Your answer'}
             value={a.other}
             {...(q.options ? {} : { autoFocus: true as const })}
-            onInput={(value: string) => { void setAnswer($, q.id, x => ({ ...x, other: value })) }}
+            onInput={(value: string) => { void setAnswer($, q.id, x => ({ ...x, other: value, selected: q.multiSelect || !value.trim() ? x.selected : [] })) }}
             onSubmit={() => { void forward($) }}
           />
           <Input

@@ -27,7 +27,7 @@ If the preview build fails, read its build logs with the host's own tool (for ex
 
 ## Merge
 
-Merge with `gh pr merge <pr_number> --merge`. Record the merge commit from `gh pr view <pr_number> --json mergeCommit`.
+While a workflow runs, `done` merges where the project level allows it. A PR with migrations merges through `ndev:merge`. With no workflow, merge with `gh pr merge <pr_number> --merge`. Record the merge commit from `gh pr view <pr_number> --json mergeCommit`.
 
 ## Confirm production
 

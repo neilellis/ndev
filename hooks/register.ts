@@ -10,7 +10,7 @@ import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
 import { askCredentials, credentialsSection, startCredentials } from './credentials'
 import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index'
-import { noteSessionHuman, releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowTools } from './workflow/tools'
+import { noteSessionHuman, releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowSkillReset, workflowTools } from './workflow/tools'
 import { startWatchdog, workflowTurn, workflowWatchdog } from './workflow/watchdog'
 import { startWorkflowCommand, workflowCommand } from './workflow/command'
 import { askForIssue } from './workflow/ask-issue'
@@ -259,6 +259,7 @@ export const register: Register = (on, options) => {
   walkDoc(on, options)
   // Before quality: a commit that is refused gets no quality notes.
   workflowGitGuard(on, () => project)
+  workflowSkillReset(on)
   quality(on, () => project)
   learnAfterPush(on, () => project)
   componentCheck(on, () => project)

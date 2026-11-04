@@ -191,7 +191,10 @@ declare module 'claude-code' {
       interviewView: Shaped<{ call?: { id: string; issue: number; [field: string]: unknown } }>
       workflowDoneWaitsFor: Shaped<string | null>
       workflowFollowUpWorktrees: Shaped<string[]>
+      workflowHotfixWorktrees: Shaped<string[]>
+      workflowHotfixPrs: Shaped<number[]>
       workflowDeclined: Shaped<boolean>
+      workflowSkillsLoaded: Shaped<string[]>
       workflowIssueAsked: Shaped<boolean>
       workflowCheckRead: Shaped<{ at: number }>
       workflowWatchNote: Shaped<{ at: number; why: string }>

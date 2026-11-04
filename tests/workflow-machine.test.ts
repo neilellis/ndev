@@ -77,6 +77,9 @@ test('setAuto leaves the interview, and each other state stays', () => {
   expect(afterTool({ state: 'interviewing' }, 'setAuto', facts({ mode: 'light' }))).toEqual({ state: 'developing' })
   expect(afterTool({ state: 'ci' }, 'setAuto', facts())).toEqual({ state: 'ci' })
   expect(afterTool({ state: 'done' }, 'setAuto', facts())).toHaveProperty('refused')
+  // A record can be blocked at the first started, with the interview to come after it.
+  expect(afterTool({ state: 'blocked', previous: 'interviewing' }, 'setAuto', facts())).toEqual({ state: 'blocked', previous: 'planning' })
+  expect(afterTool({ state: 'blocked', previous: 'ci' }, 'setAuto', facts())).toEqual({ state: 'blocked', previous: 'ci' })
 })
 
 test('blocked keeps the previous state, and unblocked restores it', () => {
