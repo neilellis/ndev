@@ -1,4 +1,5 @@
 import { boundRoot, readHeldForPane, effectiveRecords } from './workflow/tools'
+import type { InterviewFile } from './workflow/interview-model'
 import type { Workflow } from './workflow/tools'
 import { liveBox, liveGitDir, liveName, livePath, maskedText, readLive, shownFull } from './workflow/live'
 import { flowPicture } from './workflow/machine'
@@ -237,7 +238,7 @@ function recordsOf(t: ViewTree, now: number): Row[] {
   return [...(t.held?.issues ?? []), ...(t.held?.prs ?? [])].flatMap(wf => {
     const lead = wf.pr ? (leads[wf.pr] ?? wf.issue) : undefined
     try {
-      return recordRows(wf, { root: t.path, now, lead, isPresent: present })
+      return recordRows(wf as Workflow, { root: t.path, now, lead, isPresent: present })
     } catch (error) {
       return undrawnRows(`.neil-dev.issue-${lead ?? wf.issue}.json`, wf, error)
     }
@@ -245,7 +246,7 @@ function recordsOf(t: ViewTree, now: number): Row[] {
     const own = t.held?.issues.find(wf => wf.issue === file.issue)
     const repo = own?.repo ?? t.held?.issues[0]?.repo ?? t.held?.prs[0]?.repo
     try {
-      return interviewRows(file, { root: t.path, now, repo, pr: file.commentIds?.prNumber ?? own?.prs[0] })
+      return interviewRows(file as InterviewFile, { root: t.path, now, repo, pr: file.commentIds?.prNumber ?? own?.prs[0] })
     } catch (error) {
       return undrawnRows(`.neil-dev.issue-${file.issue}.json`, file, error)
     }

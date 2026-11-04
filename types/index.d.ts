@@ -333,12 +333,16 @@ export type ViewTree = {
   // The workflow of each issue in this worktree.
   workflows?: WorkflowView[]
   // Every record in full, as the issue files and the old keys of the worktree file hold them.
-  held?: { issues: import('../hooks/workflow/tools').Workflow[]; prs: import('../hooks/workflow/tools').Workflow[]; interviews?: import('../hooks/workflow/interview-model').InterviewFile[] }
+  held?: { issues: HeldWorkflow[]; prs: HeldWorkflow[]; interviews?: HeldInterview[] }
   // What the worktree file holds beside the resources.
   worktreeFile?: { version?: number; settings?: Record<string, unknown>; leads?: Record<string, number> }
   // Why the workflows could not be read, with the repair. The resources still draw.
   workflowError?: string
 }
+// A record in full, kept as read. This contract must be self-contained, so it names only the fields that the
+// pane reads to place a record. The pane treats each one as a Workflow or an InterviewFile to draw it.
+export type HeldWorkflow = { issue: number; pr?: number; repo: string; prs: number[]; [key: string]: unknown }
+export type HeldInterview = { issue: number; commentIds?: { prNumber?: number }; [key: string]: unknown }
 // One workflow as the pane draws it: an issue record, or the record of a PR with its issues.
 export type WorkflowView = {
   kind: 'issue' | 'pr'
