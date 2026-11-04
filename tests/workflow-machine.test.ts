@@ -113,6 +113,11 @@ test("followUp('this_agent') sends a state past development back to developing",
   expect('refused' in afterTool({ state: 'setup' }, 'followUpThisAgent', facts())).toBe(true)
 })
 
+test('done: a commit goes back to the checks only while the PR is open', () => {
+  expect(afterTool({ state: 'done' }, 'checkpoint', facts({ prOpen: true }))).toEqual({ state: 'ci' })
+  expect(afterTool({ state: 'done' }, 'checkpoint', facts())).toHaveProperty('refused')
+})
+
 test('other follow-ups keep the state; only an issue is allowed once done', () => {
   expect(afterTool({ state: 'ci' }, 'followUpOther', facts())).toEqual({ state: 'ci' })
   expect('refused' in afterTool({ state: 'done' }, 'followUpOther', facts())).toBe(true)

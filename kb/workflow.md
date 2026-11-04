@@ -39,6 +39,7 @@ stateDiagram-v2
     finishing --> done: done
     finishing --> revising: unanswered feedback
     done --> revising: a conflict, red checks or new feedback
+    done --> ci: checkpoint, while the PR is open
     revising --> ci: finishedRevision
     smoke --> ci: checkpoint, a new commit
     finishing --> ci: checkpoint, a new commit
@@ -108,6 +109,7 @@ flowchart TD
     finishing -->|"done(message)<br/>all done checks pass"| done([done<br/>merged, or ready for a human])
     finishing -->|"unanswered feedback found"| revising
     done -->|"heartbeat finds a conflict or red checks,<br/>or started(issue) with new feedback"| revising[revising<br/>answer the feedback]
+    done -->|"checkpoint, while the PR is open"| ci
     revising -->|"checkpoint, then<br/>finishedRevision()"| ci
 
     smoke & finishing -->|"checkpoint: a new commit<br/>makes the evidence stale.<br/>Documents only: stays in finishing,<br/>or goes to smoke when a docs smoke test is due"| ci
@@ -153,7 +155,7 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `finishedPlan(issue, markdown_file)`                                 | Moves the plan into the PR body, with `Closes #n`.                                                                                                                            | The plan has no `Test entry point:` line.                                                                                                        |
 | `hotfix(shortName, description, issue)` | Files an issue for an urgent fix, and gives it its own worktree and draft PR, with the workflow off there. The answer gives the hotfix instructions. See [hotfix](#hotfix). |
 | `finishedInterview(issue)` | For an issue that did not leave an interview, such as under auto steering. Runs the base check and records the result. Valid only in `developing`. It can run again. `checkpoint` and `finishedDevelopment` refuse until it has run. See [Checks](#checks). |
-| `checkpoint(issue or pr, message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit. `changeTypes` is optional. See [Change types](#change-types). | A check script fails.                                                                                                                            |
+| `checkpoint(issue or pr, message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit. In `done` on an open PR, it commits and goes back to `ci`. `changeTypes` is optional. See [Change types](#change-types). | A check script fails. In `done`, the PR is merged or closed, or there is no PR.                                                                                                                            |
 | `finishedDevelopment(issues, prs, message, files, body_file)`                    | Commits the named files for the listed issues. An optional `body_file` goes in its own section of the PR body, so the plan and its sign-off stay. A missing file refuses before the commit. It does not push. When each issue of the PR is complete, it starts the code review and lists the changed UI files. Until then, the listed issues wait in `developed`.                                                             | Changed files are not named.                                                                                                                     |
 | `finishedReview(issue or pr, review, deadcode, remembered)`                | Takes the results of the review and remember hooks. Runs `pre-ready-check.sh`, pushes, marks the PR ready.                                                                    | A field is empty. A `formal_project` sends `skipped:`. A check fails, and then nothing is pushed.                                                |
 | `finishedChecks(issue or pr)`                                            | Reads the checks of HEAD.                                                                                                                                                     | Checks are pending or red. HEAD is not pushed.                                                                                                   |
@@ -383,7 +385,7 @@ If the state, HEAD, the tree and the PR problems stay the same over 3 reminders,
 
 After 20 minutes with no activity, the plugin compacts the session and prompts the agent again. Before it prompts, it reads the PR. It tells the agent about a merge conflict or red checks. An idle session that still makes no progress after one reminder goes to `blocked`.
 
-The heartbeat also watches a `done` PR until the PR merges. A clean PR makes no prompt and no compaction. A conflict or red checks moves the state to `revising`, and the agent is prompted. A PR that closes in an active state blocks the workflow.
+The heartbeat also watches a `done` PR until the PR merges. A clean PR makes no prompt and no compaction. A conflict or red checks moves the state to `revising`, and the agent is prompted. An agent that finds the conflict first calls `checkpoint`, which goes back to `ci`. A PR that closes in an active state blocks the workflow.
 
 A session that has died does not restart, because the heartbeat runs inside the session. A new session resumes with `started`.
 

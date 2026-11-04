@@ -17,6 +17,8 @@ export type Tool =
 
 export type Facts = {
   merged?: boolean
+  // Only for a commit in done: the tool read the PR, and it is open.
+  prOpen?: boolean
   remembered?: boolean
   mode: Mode
   steering: Steering
@@ -39,7 +41,7 @@ export const needsPlanSignOff = (steering: Steering, level?: ProjectLevel) => st
 
 const VALID_NOW: Record<State, string> = {
   setup: 'started', interviewing: 'interview', planning: 'finishedPlan', developing: 'finishedDevelopment, after finishedInterview', developed: 'started, with an issue on this PR that is still in development', reviewing: 'finishedReview', ci: 'finishedChecks',
-  smoke: 'finishedSmoke', finishing: 'done', revising: 'finishedRevision', blocked: 'unblocked', wait: 'none while a wait tool runs, and the human can end it with /unblock <message>. If no wait tool runs now, call started', done: 'followUp with issue_only',
+  smoke: 'finishedSmoke', finishing: 'done', revising: 'finishedRevision', blocked: 'unblocked', wait: 'none while a wait tool runs, and the human can end it with /unblock <message>. If no wait tool runs now, call started', done: 'checkpoint while the PR is open, or else followUp with issue_only',
 }
 
 const wrong = (position: Position, tool: string): Move => ({
@@ -111,6 +113,8 @@ export function afterTool(position: Position, tool: Tool, facts: Facts): Move {
     // Documents leave the tested code as it was, but a change that now holds them has a smoke test due.
     if (state === 'finishing' && facts.docsOnly && facts.smoke) return { state: 'smoke' }
     if (state === 'smoke' || state === 'finishing') return { state: facts.docsOnly ? state : 'ci' }
+    // The base can move under a PR that waits for a human. A new commit needs the checks again.
+    if (state === 'done' && facts.prOpen) return { state: 'ci' }
     return wrong(position, tool)
   }
   if (tool === 'interview' && state === 'interviewing') return { state: afterInterview(facts.mode) }

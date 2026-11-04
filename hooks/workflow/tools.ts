@@ -1051,6 +1051,15 @@ function havePr(wf: Workflow) {
   if (!wf.direct && !wf.prs.length) throw new Refuse(`Refused: the workflow of #${wf.issue} has no PR. Nothing changed. Call started with issue ${wf.issue}: it opens the draft PR.`)
 }
 
+// A finished PR can still take a commit, such as a conflict fix, until it merges or closes.
+async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolean> {
+  const n = wf.prs[0]
+  if (wf.state !== 'done' || wf.direct || !n) return false
+  const pr = wf.merged ? undefined : await readPr($, wf.root, wf.repo, n)
+  if (pr?.state === 'open') return true
+  throw new Refuse(`Refused: PR #${n} is ${wf.merged || pr?.merged ? 'merged' : 'closed with no merge'}, so it cannot carry a new commit. Nothing changed. Repair: file the work with followUp and the mode issue_only.`)
+}
+
 async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const wf = await current($, c)
@@ -1059,7 +1068,8 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   if (!message) throw new Refuse('Refused: checkpoint needs a commit message.')
   const declared = declaredTypes(args)
   const facts = await factsFor($, wf.root, project, wf)
-  legal(wf, 'checkpoint', facts)
+  const prOpen = await isOpenAfterDone($, wf)
+  legal(wf, 'checkpoint', { ...facts, prOpen })
   refuseBeforeBaseCheck(wf, 'checkpoint')
   havePr(wf)
   const before = await head(wf.root, $)
@@ -1080,7 +1090,7 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   for (const e of [wf.evidence.review, wf.evidence.checks, wf.evidence.smoke]) if (e && e.sha !== sha && (await onlyDocsBetween($, wf, e.sha, sha))) e.sha = sha
   // A human who skipped the checks or the smoke test has decided: a commit of documents does not undo that.
   const smokeDue = requiredSmokeTypes(wf.changeTypes ?? []).length > 0 && !wf.evidence.smoke && !wf.evidence.checks?.byHuman
-  await move($, c, wf, 'checkpoint', { ...facts, docsOnly: wf.evidence.checks?.sha === sha, smoke: smokeDue })
+  await move($, c, wf, 'checkpoint', { ...facts, prOpen, docsOnly: wf.evidence.checks?.sha === sha, smoke: smokeDue })
   await flagForHuman($, wf, notes)
   await saveWorkflow($, wf)
   return answer($, wf, facts, notes)

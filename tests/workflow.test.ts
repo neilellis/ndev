@@ -790,6 +790,41 @@ test('a conflict under a finished PR reopens the work', async ($, on) => {
   expect(w.prompts[0]).toContain('merge conflicts')
 })
 
+test('a conflict fix on a finished PR that is still open commits through checkpoint and goes back to the checks', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done' }, pr: { mergeable: false, mergeable_state: 'dirty' } })
+  await start($, w)
+  w.s.dirty = ['M  CLAUDE.md']
+  const r = await tool($, 'checkpoint', { message: 'Merge main', files: ['CLAUDE.md'] })
+  expect(r.isError).toBe(false)
+  expect(w.commits.length).toBe(1)
+  expect(w.pushes.length).toBe(1)
+  expect(w.state()?.state).toBe('ci')
+})
+
+for (const [name, pr, said] of [['merged', { state: 'closed', merged: true }, 'merged'], ['closed', { state: 'closed', merged: false }, 'closed with no merge']] as const) {
+  test(`checkpoint on a finished PR that is ${name} commits nothing and says why`, async ($, on) => {
+    const w = engine(on, { wf: { state: 'done' }, pr })
+    await start($, w)
+    w.s.dirty = [' M a.ts']
+    const r = await tool($, 'checkpoint', { message: 'late', files: ['a.ts'] })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain(`PR #12 is ${said}`)
+    expect(r.text).toContain('issue_only')
+    expect(w.commits.length).toBe(0)
+    expect(w.state()?.state).toBe('done')
+  })
+}
+
+test('checkpoint on finished work with no PR is still refused', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done', direct: true, prs: [] } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { message: 'late', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(w.commits.length).toBe(0)
+  expect(w.state()?.state).toBe('done')
+})
+
 test('a merged PR ends the watch: no more GitHub calls', async ($, on) => {
   const w = engine(on, { wf: { state: 'done' }, pr: { state: 'closed', merged: true } })
   await start($, w)
