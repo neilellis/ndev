@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, TurnCompleteInput } from 'claude-code'
 
 import { checksUrl, pullUrl } from './links'
+import { showIdleStatus } from './workflow/progress'
 import type { Comm, Loop, Outcome, PrRow, Quota, Snapshot } from '../types'
 
 const PANE = 'fix-all-prs'
@@ -518,7 +519,7 @@ async function refresh($: EngineInterface, isQuiet = false, only?: number): Prom
       if (f.owner) await noteOnce($, `#${n}: owner ${f.owner}, ${f.via}`)
     }
     const { phase } = await read($, loop)
-    $.ui.status(rows.length ? `PRs ${rows.filter(r => r.state !== 'OPEN').length}/${rows.length} done · ${phase}` : undefined)
+    showIdleStatus($, rows.length ? `PRs ${rows.filter(r => r.state !== 'OPEN').length}/${rows.length} done · ${phase}` : undefined)
     if (!isQuiet) $.ui.toast(`fix-all-prs: refreshed: ${rows.length} pull request${rows.length === 1 ? '' : 's'}`)
     return fresh
   } catch (err) {

@@ -3822,6 +3822,35 @@ test('a long tool call shows its name, its step and the time under the prompt, a
   expect(w.statuses.at(-1)).toBe(shownBefore)
 })
 
+test('a short tool call does not write the status line', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  const before = w.statuses.length
+  await tool($, 'status')
+  expect(w.statuses.length).toBe(before)
+})
+
+test('a call that waits behind a long call does not take its line', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const held = tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  await settle()
+  const queued = tool($, 'status')
+  await settle()
+  w.s.now += 125_000
+  w.timers.splice(0).forEach(fire => fire())
+  await settle()
+  const line = w.statuses.at(-1)!
+  expect(line).toContain('checkpoint 2m 5s')
+  expect(line).toContain('fast-checks.sh')
+  expect(w.statuses.filter(x => x?.includes('ndev status'))).toEqual([])
+  release()
+  await held
+  await queued
+})
+
 test('a tool call that fails puts the line back too, and a wait tool has its own display and adds no line', async ($, on) => {
   const w = engine(on)
   await start($, w)
@@ -3896,6 +3925,24 @@ test('waitForState follows an issue into its PR record, and reads a blocked issu
   const held = await tool($, 'waitForState', { issue_id: 10, state: 'reviewing', period: 60, attempts: 2 })
   expect(held.isError).toBe(true)
   expect(held.text).toContain('gave up')
+})
+
+test('waitForState ends for an issue held at the state or past it, and holds for a sign-off that has not yet reached it', async ($, on) => {
+  const w = await startForState($, on)
+  const reached = [{ at: 1, tool: 'finishedReview', from: 'reviewing', to: 'ci' }]
+  w.s.now += 10_000
+  putIssue(w, 9, { state: 'blocked', previous: 'ci', history: reached })
+  const atState = await tool($, 'waitForState', { issue_id: 9, state: 'ci', period: 60, attempts: 2 })
+  expect(atState.isError).toBe(false)
+  expect(atState.text).toContain('held in "blocked"')
+  putIssue(w, 10, { state: 'wait', previous: 'revising', history: reached })
+  const past = await tool($, 'waitForState', { issue_id: 10, state: 'reviewing', period: 60, attempts: 2 })
+  expect(past.isError).toBe(false)
+  expect(past.text).toContain('past "reviewing"')
+  putIssue(w, 11, { state: 'blocked', previous: 'developing', history: [{ at: 1, tool: 'finishedPlan', from: 'planning', to: 'blocked' }] })
+  const signOff = await tool($, 'waitForState', { issue_id: 11, state: 'developing', period: 60, attempts: 2 })
+  expect(signOff.isError).toBe(true)
+  expect(signOff.text).toContain('gave up')
 })
 
 test('waitForState ends at once when the issue is done or off and did not reach the state, and says so', async ($, on) => {

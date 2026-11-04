@@ -14,6 +14,7 @@ import {
   walkStopped, workspaceOf,
 } from './walk'
 import type { Config, Run } from './walk'
+import { showIdleStatus } from '../workflow/progress'
 
 const PANE = 'walk-doc'
 // The first page compile takes minutes on a loaded machine; each probe is bounded so the loop keeps its own deadline, inside the host's 600 s limit on one process.run.
@@ -201,7 +202,7 @@ async function writeRun($: EngineInterface, run: Run) {
   } catch (error) {
     log($, `WARNING: cannot write ${runDirOf(run)}/run.json: ${String(error)}`)
   }
-  $.ui.status(statusLine(run))
+  showIdleStatus($, statusLine(run))
 }
 
 // Runs the project's machines.cleanup for the machines a Walk run named, and reports what it could not remove.
@@ -465,7 +466,7 @@ async function finish($: EngineInterface, run: Run, summary: string): Promise<st
   await $.fs.write(reportPath, reportMarkdown(done))
   const notes = (await stopServer($, run)) + (await cleanMachines($, run))
   await save($, done)
-  $.ui.status(undefined)
+  showIdleStatus($, undefined)
   const open = done.findings.filter(f => f.resolution === null || f.resolution.action === 'ESCALATED').length
   const texted = await sendText($, `walk-doc finished ${run.target}: ${done.findings.length} findings, ${open} open, ${done.attempt - 1} restarts. Report: ${reportPath}`)
   return `Walk finished. Report: ${reportPath}.${notes} ${texted}`
@@ -523,7 +524,7 @@ export async function startWalkDoc($: EngineInterface, cwd: string) {
   })
   for (const tool of WALK_TOOLS) await $.tool.register({ ...tool, inputSchema: tool.inputSchema as unknown as Record<string, unknown>, isDeferred: false })
   const run = await read($, runAtom)
-  if (isActive(run)) $.ui.status(statusLine(run))
+  if (isActive(run)) showIdleStatus($, statusLine(run))
 }
 
 // Called from register.ts's session.end (the engine takes one unmatched hook per event).

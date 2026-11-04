@@ -2382,7 +2382,11 @@ const LINE: State[] = FLOW.flatMap(state => (state === 'developing' ? [state, 'd
 function reachedState(wf: Workflow, wanted: State, startedAt: number): string | undefined {
   if (wf.state === wanted) return `It is in the state "${wanted}".`
   if (wf.history.some(h => h.at >= startedAt && h.to === wanted)) return `It was in the state "${wanted}" during this wait, and it is now in the state "${wf.state}".`
-  const at = LINE.indexOf(wf.state === 'blocked' || wf.state === 'wait' ? (wf.previous ?? wf.state) : wf.state === 'revising' ? 'ci' : wf.state)
+  // A held issue is at the stage it will go back to. A plan sign-off holds before that stage ever began, so the history must show it.
+  const held = wf.state === 'blocked' || wf.state === 'wait'
+  const stage = held ? (wf.previous ?? wf.state) : wf.state
+  if (held && stage === wanted && wf.history.some(h => h.to === wanted)) return `It is at "${wanted}", held in "${wf.state}".`
+  const at = LINE.indexOf(stage === 'revising' ? 'ci' : stage)
   const place = LINE.indexOf(wanted)
   return place >= 0 && at > place ? `It is in the state "${wf.state}", which is past "${wanted}".` : undefined
 }
@@ -3063,7 +3067,7 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
       const logged = await liveStart($, s.name, args, project())
       try {
         const name = s.name
-        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : name === 'interview' && args.interviewJson !== undefined ? await askInterview($, { args, project: project(), tool: name }, next) : await withToolProgress($, name, () => inTurn(() => dispatch($, name, { args, project: project(), tool: name })))
+        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : name === 'interview' && args.interviewJson !== undefined ? await askInterview($, { args, project: project(), tool: name }, next) : await inTurn(() => withToolProgress($, name, () => dispatch($, name, { args, project: project(), tool: name })))
         await liveEnd($, logged, s.name, 'ok', result)
         return { result }
       } catch (error) {
