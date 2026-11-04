@@ -7,10 +7,6 @@ description: "Record durable, non-obvious lessons from the session in the correc
 
 Harvest only facts that change future behaviour. A cosmetic change or an unproven hypothesis is not a lesson.
 
-## The workflow
-
-`mcp__ndev__finishedDevelopment` fires the remember hook, because the record must be right before the push. Give what you recorded to `mcp__ndev__finishedReview` as `remembered`, or `nothing: <reason>`. Commit with `mcp__ndev__checkpoint`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 For each fact, ask what it replaced. If a documented claim became false, run `forget` for it.
 
 ## Route each fact to exactly one home
@@ -40,3 +36,7 @@ The routing test for the wiki: **would this fact still be true if the system wer
 - If both harness trees exist, run `harness-sync` after a skill edit.
 
 Make repository edits in a worktree and pull request, unless you are already on the branch that owns them. Report each destination separately.
+
+## The workflow
+
+`mcp__ndev__finishedDevelopment` fires the remember hook, because the record must be right before the push. Give what you recorded to `mcp__ndev__finishedReview` as `remembered`, or `nothing: <reason>`. Commit with `mcp__ndev__checkpoint`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

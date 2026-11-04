@@ -8,10 +8,6 @@ disable-model-invocation: true
 
 This skill changes the repository. Use it only when the user invokes it. The commands are in this skill's `scripts/reset.sh`; call it with an absolute path.
 
-## The workflow
-
-A workflow's state stays in `.neil-dev.worktree.json`. Call `mcp__ndev__started(issue)` to resume it, or use `/flow off` to stop it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 Settings: `RESET_BASE` (base branch; default origin/HEAD, else `main`), `COMMIT_TRAILERS` (trailer lines that the session requires), `PR_FOOTER` (appended to a new PR body), `GH_USE_KEYRING=1` (use the gh keyring login).
 
 1. Run `reset.sh state`. If you are already in the base checkout, run `reset.sh freshen <main_root>` and stop.
@@ -21,3 +17,7 @@ Settings: `RESET_BASE` (base branch; default origin/HEAD, else `main`), `COMMIT_
 5. Report in one line: branch, PR, worktree removal, base SHA, clean or not.
 
 `--discard` is the authorisation to skip `save` and force-remove the current worktree. It never touches the base branch. Never remove another session's worktree. Never use a broad deletion target.
+
+## The workflow
+
+A workflow's state stays in `.neil-dev.worktree.json`. Call `mcp__ndev__started(issue)` to resume it, or use `/flow off` to stop it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

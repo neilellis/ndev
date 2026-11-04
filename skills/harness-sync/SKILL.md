@@ -8,10 +8,6 @@ disable-model-invocation: true
 
 In a repository that serves both harnesses, Claude reads `.claude/`, and Codex reads `.agents/` and `.codex/`. Some facts live in a different file in each tree, and **neither harness reads the other notation**.
 
-## The workflow
-
-While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 | Fact | Claude reads | Codex reads |
 |---|---|---|
 | skill body | `.claude/skills/<skill>/SKILL.md` | `.agents/skills/<skill>/SKILL.md` |
@@ -61,3 +57,7 @@ Keep a skill's scripts in one place that both harnesses call, for example a top-
 ## The report alone does not protect the trees
 
 A difference shows up as a test failure only when a test compares the two notations. When you add a fact that each harness stores differently, add its comparison to the project's checks and pin it with a guard. A fact that only this script checks is a fact that a push can carry away.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

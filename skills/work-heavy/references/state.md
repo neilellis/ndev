@@ -39,7 +39,7 @@ three decisions:
 
 | Your situation | What you must do |
 |---|---|
-| The work is done and green | `gh pr ready <n>`, **then** report. A finished PR left in draft gets no preview, no review and no attention. This is the usual failure, and it is silent. |
+| The work is done and green | `gh pr ready <n>` (while a workflow runs, `mcp__ndev__finishedReview` has done it), **then** report. A finished PR left in draft gets no preview, no review and no attention. This is the usual failure, and it is silent. |
 | The work is not finished (crash, no time, blocked) | Stay draft, and **rewrite the PR body** so that its first line is `**Draft because:** <what is left>`. Post the state comment with `- next: resume: …`. |
 | You decided not to ship it | Stay draft, and **rewrite the PR body** so that its first line is `**Draft because:** <the decision, and what you measured>`. Put it in the body, not only in your report: the dispatcher's context is lost; the PR survives. |
 
@@ -50,7 +50,7 @@ has looked at this yet", which is false on a PR that is green or parked on purpo
 [F1](setup.md#f1--worktree-branch-and-draft-pr). Each body rewrite above replaces the `Closes #<n>` line.
 
 State the draft flag in your one-line report (`draft: yes — <reason>` / `draft: no`). For board
-work, move the card to *In review* only when green and smoked. The one-line report is:
+work, move the card to *In review* only when green and smoked. While a workflow runs, the plugin moves the card at `done`, when no more automated development is due. The one-line report is:
 `#<n> <title> → <PR url> | tests: pass | e2e: <pass|skip> | preview: <url|n/a> | smoke: ok | wiki: <page|n/a> | docs: <page|n/a> | mergeable: yes | draft: no`.
 
 ## F6b — Act on PR review feedback (revise)
@@ -64,6 +64,7 @@ patch. A resume with feedback is never trivial.
 
 ## F7 — Questions
 
+- **Under a workflow with interactive steering**, the state `interviewing` asks the questions that come before the plan. The `interview` skill has the method, and the answers are in the `.neil-dev.issue-*.json` files. Use the points below for a question that comes later.
 - **Write the question clearly:** the decision, the options and the issue numbers. Keep it short so
   the reader can answer quickly.
 - **Attended** (a user or dispatcher can answer): on a real blocking ambiguity (scope, a product
@@ -74,7 +75,7 @@ patch. A resume with feedback is never trivial.
   ambiguity, make the most reasonable assumption, record it under **Assumptions** in the plan, and
   continue. Only when the task is impossible without an answer: post the questions as an issue
   comment under the questions marker, move the card to *Awaiting Feedback*
-  (`board.sh move <itemId> awaiting`, the `work-heavy-auto` skill), and report `PARKED`. A non-trivial plan that needs sign-off
+  (`board.sh move <itemId> awaiting`, the `work-heavy-auto` skill; while a workflow runs, `blocked` moves it), and report `PARKED`. A non-trivial plan that needs sign-off
   parks the same way under `<!-- work-heavy-auto:plan-confirm -->`, unless sign-off was waived.
 - Answers already in the thread are authoritative, also short ones. Do not ask again.
 - **A card moved back to *Ready* is the answer. Silence means nothing.** The human approves by moving

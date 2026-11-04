@@ -9,13 +9,13 @@ This is the attended, native-dispatch form of `work-heavy-auto`. Survey and orde
 
 ## The workflow
 
-A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)`, then `mcp__ndev__setSteering` with `auto` and the reason, as no human answers an unattended run, and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 ## Settings
 
 Use the settings section of `work-heavy-auto`: `REPO` and `BASE` from `gh repo view`, and `GH_PROJECT_OWNER`, `GH_PROJECT_NUMBER` and any non-default column names from the arguments or the project's `CLAUDE.md`. If the board is not set, stop and say: "Set GH_PROJECT_OWNER and GH_PROJECT_NUMBER (and any non-default column names) in CLAUDE.md or pass them as arguments."
 
-Board reads and moves use `${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh ready|awaiting|items|move <itemId> <status>`. Issue and PR queries use `${CLAUDE_PLUGIN_ROOT}/scripts/github/gh.sh`. Before each dispatch, run `${CLAUDE_PLUGIN_ROOT}/scripts/work/peer_activity.sh` and `scripts/worktree_claim.sh`. Exit 2, 3, 4 or 5 means: do not dispatch, report the issue as owned or unmeasured.
+Board reads and moves use `${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh ready|awaiting|items|move <itemId> <status>`. Issue and PR queries use `${CLAUDE_PLUGIN_ROOT}/scripts/github/gh.sh`. Before each dispatch, run `${CLAUDE_PLUGIN_ROOT}/scripts/work/peer_activity.sh` and `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh`. Exit 2, 3, 4 or 5 means: do not dispatch, report the issue as owned or unmeasured.
 
 ## Survey
 
@@ -28,7 +28,7 @@ Under `--dry-run`, report the ordered units and stop. Under `--issue <n>`, do th
 
 ## Each unit
 
-Dispatch one `issue-implementer` agent per unit (named `issue-<lead>`). Size the model: a trivial unit can use a smaller model; when you are not sure, size up. The worker loads `work-heavy` and `testing` and runs F0 → F6:
+Dispatch one `issue-implementer` agent per unit (named `issue-<lead>`). Size the model: a trivial unit can use a smaller model; when you are not sure, size up. A worker in its own session follows the answers of the workflow, which does these stages. A subagent worker cannot move a workflow, so this list is its brief. It loads `work-heavy` and `testing` and runs F0 → F6:
 
 - Worktree `.claude/worktrees/issue-<lead>`, branch `claude/issue-<lead>`, one draft PR based on the base branch.
 - One body section and one `Closes #<n>` per member, each with a `Test entry point:`.

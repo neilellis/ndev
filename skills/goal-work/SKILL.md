@@ -39,13 +39,12 @@ Show the selected issues, the evidence for solved ones, the grouping, the blocke
 
 ## Deliver
 
-For each accepted group, follow `work-heavy` F0 → F6:
+For the first accepted group, call `mcp__ndev__started(<lead>, shortName)` and follow each answer. For each other group, call `mcp__ndev__followUp` with the mode `worktree` and `issues`, because a second `started` in this session joins the first group's PR. With no workflow, follow `work-heavy` F0 → F6 and claim the worktree with `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh <repoDir> <lead> origin/$BASE`. A non-zero exit means the worktree is not yours: stop and report it. Either way:
 
-- Claim the worktree with `${CLAUDE_PLUGIN_ROOT}/scripts/work/worktree_claim.sh <repoDir> <lead> origin/$BASE` (`.claude/worktrees/issue-<lead>`). A non-zero exit means the worktree is not yours: stop and report it.
-- One branch and one PR. The PR body has one section and one `Closes #<n>` per member.
+- One PR for the group. The PR body has one section and one `Closes #<n>` per member.
 - Run cheap tests per member. Run expensive deployment, E2E or smoke work once per group.
 - Move cards only after the matching gates pass.
-- A related discovery becomes a linked sub-issue carried in the same PR. Unrelated work becomes a separate issue with no second PR.
+- A related discovery becomes a linked sub-issue carried in the same PR (`mcp__ndev__followUp` with `this_agent`). Unrelated work becomes a separate issue with no second PR (`issue_only`).
 
 ## Report
 

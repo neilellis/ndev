@@ -10,7 +10,7 @@ Use `work-light` for development and `github` for PR operations. Keep diagnosis 
 
 ## The workflow
 
-While a workflow runs, it tells you about a failed check. Fix it, commit with `mcp__ndev__checkpoint`, and call `mcp__ndev__finishedChecks` when the checks end. After three failed attempts, or when you need a human, call `mcp__ndev__blocked(message)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+While a workflow runs, it tells you about a failed check. Fix it, commit with `mcp__ndev__checkpoint`, and call `mcp__ndev__finishedChecks` when the checks end. After three failed attempts, the workflow blocks itself. Call `mcp__ndev__blocked(message)` only when you need a human for another reason. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 ## Identify the PR once
 
@@ -22,7 +22,7 @@ While a workflow runs, it tells you about a failed check. Fix it, commit with `m
 
 ## Diagnose, fix and verify
 
-Wait for checks with the `github` skill's helper, once, in the foreground:
+While a workflow runs, it watches the checks and refuses a wait helper. With no workflow, wait for checks with the `github` skill's helper, once, in the foreground:
 
 ```bash
 wait-for-pr-change.sh <pr> --skip-success --json
@@ -41,12 +41,12 @@ For each failure:
 - Rerun the checks that the code, dependency or base change can affect.
 - Get the independent review that `work-light` requires for behaviour changes.
 
-Commit coherent fixes. Push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Never use `--no-verify`. Then wait for checks on the new head SHA.
+Commit coherent fixes. While a workflow runs, `mcp__ndev__checkpoint` commits and pushes them. With no workflow, push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Never use `--no-verify`. Then wait for checks on the new head SHA.
 For a local command, use `${CLAUDE_PLUGIN_ROOT}/scripts/work/wait_for_process_end.sh <pid>`, then read the final log and exit status.
 
 ## Complete with current evidence
 
-Follow the `r` skill before the PR leaves draft. If a preview needs a ready PR, meet the gates, mark it ready, then verify the real deployment. An ignored deployment is not preview evidence.
+Follow the `r` skill before the PR leaves draft. If a preview needs a ready PR, meet the gates, mark it ready (`finishedReview` does this while a workflow runs), then verify the real deployment. An ignored deployment is not preview evidence.
 
 Completion needs all of these:
 

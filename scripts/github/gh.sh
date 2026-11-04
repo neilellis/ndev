@@ -415,6 +415,14 @@ case "$cmd" in
     GH_FIRST_POST=1 gh_first "comment on #$n" "" rest_comment issue comment "$n" --repo "$REPO" --body "$body"
     ;;
 
+  comment-edit)
+    need_repo
+    id="${1:?comment id required}"; shift
+    [ "${1:-}" = "--body" ] || die "usage: gh.sh comment-edit <id> --body <t>"
+    body="${2:-}"; [ -n "$body" ] || die "comment-edit: the body is empty"
+    GH api -X PATCH "repos/$REPO/issues/comments/$id" -f "body=$body" --jq .html_url
+    ;;
+
   pr-review)
     need_repo
     n="${1:?PR number required}"; shift

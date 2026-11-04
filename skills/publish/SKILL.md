@@ -7,10 +7,6 @@ description: "Merge the current change's pull request in a website or app projec
 
 When the user types `/publish`, that is their approval to merge the pull request for the current change. Use `finish` to get it ready and `github` for pull request operations. Never push to the base branch directly. Report only results that tools confirm.
 
-## The workflow
-
-If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, and end with `mcp__ndev__done`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 If `<project root>/.neil-dev.json` has a `branding` key, follow the project's brand copy rules for the publication report. Use the `copy` skill for those rules. Find the root with `git rev-parse --show-toplevel`.
 
 ## What you need from the project
@@ -31,7 +27,7 @@ If the preview build fails, read its build logs with the host's own tool (for ex
 
 ## Merge
 
-Merge with `gh pr merge <pr_number> --merge`. Record the merge commit from `gh pr view <pr_number> --json mergeCommit`.
+While a workflow runs, `done` merges where the project level allows it. A PR with migrations merges through `ndev:merge`. With no workflow, merge with `gh pr merge <pr_number> --merge`. Record the merge commit from `gh pr view <pr_number> --json mergeCommit`.
 
 ## Confirm production
 
@@ -56,5 +52,9 @@ Tell the user in plain English:
 - that production is ready on the merge commit and passed a browser check.
 
 If a build fix was needed, say what failed and link its pull request. If access, an external service or a user decision blocks progress, stop at the last confirmed state and name the blocker.
+
+## The workflow
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, and end with `mcp__ndev__done`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 `${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.

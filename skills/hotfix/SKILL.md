@@ -4,11 +4,6 @@ description: "Do the requested work directly on the main branch in the main chec
 disable-model-invocation: true
 ---
 
-## The workflow
-
-If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint` and end with `mcp__ndev__done`. A project level that may merge lets `done` merge. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
-
 Use this skill only when the user invokes it by name for the current task. Never load it on your own judgement. Never carry it into a later task.
 
 ## The exception
@@ -35,3 +30,9 @@ All other rules stay in force: test first, pass the guards, record every failure
 9. Push from the main checkout with the repo's checked-push command named in its CLAUDE.md, else `git push origin <base>`.
 10. If the push fails, read the error and fix the cause. Never force-push.
 11. Report the commit SHA and the push result.
+
+## The workflow
+
+The `mcp__ndev__hotfix` tool is another route: it gives an urgent fix its own issue, worktree and PR, and its answer gives the steps. This skill commits directly and has no PR. Use it only when the user names it.
+
+If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `mcp__ndev__checkpoint`, follow each answer and end with `mcp__ndev__done`. Only a `straw_man` project commits to the base branch. At another level, the hotfix goes through the PR. A project level that may merge lets `done` merge. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

@@ -5,6 +5,8 @@ Part of the `work-heavy` skill. This file covers the steps before any code. `$RE
 
 ## F0 — Resume check (do this first)
 
+While a workflow runs, `mcp__ndev__started` does this check. Go on to F0b. With no workflow:
+
 Before work on an issue or an existing branch, look for work in flight: an open PR on the
 conventional branch, or a PR whose body says `Closes #<n>`.
 
@@ -92,6 +94,8 @@ post it with `gh.sh issue-edit` or `gh.sh pr-edit`, read the result once, then r
 The orchestrators (`work-heavy-auto`, `work-light-auto`) clear these before they survey the board.
 
 ## F1 — Worktree, branch and draft PR
+
+While a workflow runs, `mcp__ndev__started` has done all of F1, so go on to F2. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. With no workflow, follow this fragment.
 
 Claim the worktree with the guard. It is the only approved way to get one:
 

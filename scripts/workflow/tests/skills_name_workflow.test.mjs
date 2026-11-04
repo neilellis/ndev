@@ -40,6 +40,23 @@ test('each agent names a workflow tool', () => {
   assert.deepEqual(missing, [], `these agents do not name a workflow tool: ${missing.join(', ')}`)
 })
 
+test('each skill and agent points to the workflow guide', () => {
+  const missing = [...skills, ...agents].filter(i => !read(i).includes('kb/workflow.md')).map(i => i.name)
+  assert.deepEqual(missing, [], `these do not name kb/workflow.md: ${missing.join(', ')}`)
+})
+
+test('each skill that an agent preloads exists', () => {
+  const names = new Set(skills.map(s => s.name))
+  const wrong = []
+  for (const agent of agents) {
+    const block = read(agent).match(/^skills:\n((?:  - .+\n)+)/m)?.[1] ?? ''
+    for (const m of block.matchAll(/^  - (\S+)$/gm)) {
+      if (!m[1].includes(':') && !names.has(m[1])) wrong.push(`${agent.name}: ${m[1]}`)
+    }
+  }
+  assert.deepEqual(wrong, [], `no such skill: ${wrong.join(', ')}`)
+})
+
 for (const name of FULL_METHOD) {
   test(`${name} names the tool of each stage`, () => {
     const text = read({ path: join(ROOT, 'skills', name, 'SKILL.md') })

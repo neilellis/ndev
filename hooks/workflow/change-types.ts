@@ -13,6 +13,10 @@ const DATABASE_FILE = /(^|\/)migrations?\/|\.sql$|\.prisma$/
 const CONFIG_FILE = /(^|\/)\.[^/]+(\/|$)|\.(json|ya?ml|toml|ini|lock)$|(^|\/)(Dockerfile[^/]*|Makefile|[^/]*\.config\.[^/]+)$/
 
 export const isDocsPath = (path: string) => DOCS_FILE.test(path)
+// Prose that a user of the project reads, which goes to the copy editor. Instructions for agents, the wiki and hidden folders do not.
+const USER_PROSE_FILE = /\.(md|mdx|rst)$/
+const NOT_USER_PROSE = /(^|\/)(CLAUDE|AGENTS)\.md$|(^|\/)\.[^/]+\/|(^|\/)(kb|skills|agents|wiki|fixtures|testdata)\//
+export const isUserProsePath = (path: string) => USER_PROSE_FILE.test(path) && !NOT_USER_PROSE.test(path) && !TEST_FILE.test(path)
 // A test or a story does not change what a person sees, so it is not a web change.
 export const isWebPath = (path: string) => WEB_FILE.test(path) && !TEST_FILE.test(path)
 

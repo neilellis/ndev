@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { boardColumn } from '../hooks/workflow/machine'
 import { strictest } from '../hooks/workflow/tools'
 import type { Workflow } from '../hooks/workflow/tools'
 import type { WorkflowLive } from '../types'
@@ -20,7 +21,7 @@ const ok = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, std
 
 const flow = (over: Record<string, unknown> = {}) => ({
   rev: 1, issue: 7, root: ROOT, repo: REPO, base: 'main', branch: 'issue-7', prs: [12], state: 'developing',
-  evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], owner: { session: 's1', at: 0 }, ...over,
+  evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], owner: { session: 's1', at: 0 }, baseCheck: { sha: SHA, script: 'pre-commit-check.sh', exitCode: 0, at: 0 }, ...over,
 })
 // A record past development sits under prs, as the merge point leaves it, and its issue waits as developed.
 const PR_STAGES = ['reviewing', 'ci', 'smoke', 'finishing', 'revising', 'done']
@@ -45,7 +46,7 @@ const pull = (over: Record<string, unknown> = {}) => ({
 const CHECKS = (...runs: { name: string; status?: string; conclusion: string | null }[]) => ({ check_runs: runs.map(r => ({ status: 'completed', ...r })) })
 
 type Opts = {
-  refuseCommand?: RegExp; wf?: Record<string, unknown> | null; config?: Record<string, unknown>; pr?: Record<string, unknown>; checks?: unknown; scripts?: boolean; files?: Record<string, string>; guide?: boolean; main?: boolean; names?: string[] }
+  refuseCommand?: RegExp; wf?: Record<string, unknown> | null; config?: Record<string, unknown>; pr?: Record<string, unknown>; checks?: unknown; scripts?: boolean; skillFiles?: boolean; files?: Record<string, string>; guide?: boolean; main?: boolean; names?: string[] }
 
 // A fake engine: a linked worktree at /proj, a simulated git and a simulated GitHub. Only the
 // process and file boundaries are fake: the plugin's tools, machine and watchdog all really run.
@@ -59,10 +60,10 @@ const engine = (on: On, opts: Opts = {}) => {
     ...opts.files,
   }))
   const s = {
-    agentCwd: undefined as string | undefined, now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
+    agentCwd: undefined as string | undefined, spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
-    main: opts.main ?? false, names: opts.names ?? ['a.ts'], draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
-    clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
+    main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
+    editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -116,11 +117,16 @@ const engine = (on: On, opts: Opts = {}) => {
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/neil' : e.name === 'ORCA_WORKSPACE_ID' && s.orcaOn ? 'workspace-1' : undefined }) as never)
   const guide = (path: string) => {
     if (path.endsWith('/kb/workflow.md')) return opts.guide !== false ? '# The guide' : undefined
+    const skill = /\/skills\/(work-light|work-heavy)\/SKILL\.md$/.exec(path)
+    if (skill && opts.skillFiles !== false) return `---\nname: ${skill[1]}\ndescription: "the listing"\n---\n\n# The ${skill[1]} method\n\nRun \`\${CLAUDE_PLUGIN_ROOT}/scripts/x.sh\`.\n`
     for (const name of ['kb/ui-components.md', 'kb/libraries.md', 'skills/motion/SKILL.md', 'skills/motion/references/delight.md']) if (path.endsWith(`/${name}`)) return `SOURCE ${name}`
     return undefined
   }
   on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) || guide(e.path) !== undefined }))
-  on('fs.read', (_, e) => ({ value: guide(e.path) ?? files.get(e.path) ?? '' }))
+  on('fs.read', (_, e) => {
+    if (s.failRead?.(e.path)) throw new Error(`no permission: ${e.path}`)
+    return { value: guide(e.path) ?? files.get(e.path) ?? '' }
+  })
   on('fs.write', (_, e) => {
     if (s.failWrite?.(e.path)) throw new Error(`disk full: ${e.path}`)
     const size = new TextEncoder().encode(e.text).length
@@ -130,16 +136,21 @@ const engine = (on: On, opts: Opts = {}) => {
   })
   on('ui.toast', (_, e) => { toasts.push(e.text); return { value: undefined } })
   on('ui.notify', () => ({ value: undefined }) as never)
+  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('ui.close', () => ({ value: undefined }) as never)
   on('ui.status', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }) as never)
   on('session.cwd', () => ({ value: s.agentCwd ?? ROOT }) as never)
+  let refReads = 0
   on('process.run', (_, e) => {
     const a = e.argv.map(String)
     const line = a.join(' ')
     // The host refuses a timeout that is not a whole number of ms, as $.process.run does in a session.
     const limit = e.init?.timeoutMs
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 600_000)) throw new Error('ndev: process.run: init.timeoutMs is a whole number of ms, 1 to 600000 (host check)')
-    if (a[0] === 'sleep') return (async () => { await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
+    if (a[0] === 'rm' && s.rmFails) return ok('', 1, s.rmFails)
+    if (a[0] === 'rm') { files.delete(a.at(-1)!); return ok() }
+    if (a[0] === 'sleep') return (async () => { if (s.sleepYields) await new Promise(r => setTimeout(r, 1)); await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
       return (async () => {
@@ -156,10 +167,14 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === '-C' && a[2] === '/main') return ok('/main/.git\n/main/.git\n')
       if (a[1] === '-C' && a[2] === CLAIMED) return ok('/main/.git/worktrees/claimed\n/main/.git\n')
       if (line.includes('--path-format=absolute')) return ok(s.main ? '/main/.git\n/main/.git\n' : `${ROOT}/.git/worktrees/x\n/main/.git\n`)
+      // Each read of the remote refs differs, so a Bash call that names a push lands.
+      if (a[1] === 'for-each-ref') return ok(`refs/remotes/origin/issue-7 ${++refReads}\n`)
+      if (a[1] === 'reflog') return ok('update by push\n')
       if (a[1] === 'fetch') return ok()
       if (line.includes('--abbrev-ref')) return ok(`${s.branch ?? 'issue-7'}\n`)
       if (a[1] === 'rev-parse' && a[2] === 'HEAD') return ok(`${s.sha}\n`)
       if (a[1] === 'rev-parse' && a[2]?.startsWith('origin/')) return ok(`${s.upstream}\n`)
+      if (a[1] === 'rev-list' && s.ahead !== undefined) return ok(`${s.ahead}\n`)
       if (a[1] === 'rev-parse') return ok(`${ROOT}\n`)
       if (a[1] === 'status') return ok(s.dirty.join('\n'))
       if (a[1] === 'remote') return ok(`git@github.com:${REPO}.git\n`)
@@ -169,13 +184,14 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'log' && line.includes('%cI')) return s.commitUnknown ? ok('', 128, `fatal: bad object ${a.at(-1)}`) : ok(`${s.commitIso}\n`)
       if (a[1] === 'log') return ok('')
       if (a[1] === 'ls-tree') return ok(s.workflowsDir ? 'tree .github/workflows\n' : '')
-      if (a[1] === 'ls-files') return ok('')
+      if (a[1] === 'ls-files') return ok(line.includes('*.py') ? s.names.filter(n => n.endsWith('.py')).join('\n') : '')
       if (a[1] === 'reset') { s.staged = false; steps.push('reset'); return ok() }
       if (a[1] === 'stash') return ok('')
       if (a[1] === 'check-ignore') return ok('x\n')
       if (a[1] === 'cat-file') return s.blobSize ? ok(`${s.blobSize}\n`) : ok('', 1)
       if (a[1] === 'worktree') return ok(`worktree ${ROOT}\n`)
       if (a[1] === 'add') { s.staged = true; return ok() }
+      if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
       if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
       if (a[1] === 'diff' && a[2] === 'HEAD') return ok(s.diffText)
       if (a[1] === 'diff') return ok('', s.staged ? 1 : 0)
@@ -211,6 +227,10 @@ const engine = (on: On, opts: Opts = {}) => {
         files.set(record, JSON.stringify({ version: 2, resources: {}, workflows: all, prs: prRecords }))
         return ok(`${rev}\n`)
       }
+      if (a[2] === 'stop-all') {
+        steps.push(`worktree-env.sh ${a.slice(2).join(' ')}`)
+        if (s.stopFails) return ok('', 1, s.stopFails)
+      }
       return ok()
     }
     if (a[0] === 'bash' && a[1]?.endsWith('notify.sh')) {
@@ -229,11 +249,14 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[2] === 'issue-new') return ok('{"number":31}\n')
       if (a[2] === 'pr-list') return ok(s.noOpenPr ? '' : '{"number":12}\n')
       if (a[2] === 'pr-edit') return ok('')
-      if (a[2] === 'subissues') return ok('')
+      if (a[2] === 'subissues') return s.linkFails ? ok('', 1, s.linkFails) : ok('')
       if (a[2] === 'commit-checks') return ok(JSON.stringify({ statuses: [], ...(s.checks as object) }))
       if (a[2] === 'feedback') return ok((s.comments as unknown[]).map(c => JSON.stringify(c)).join('\n'))
       if (a[2] === 'pr-ready') { ready.push(line); s.pr = { ...s.pr, draft: false }; return ok() }
-      if (a[2] === 'comment' || a[2] === 'pr-review' || a[2] === 'label') return ok()
+      if (a[2] === 'comment') return ok(`https://github.com/o/r/issues/${a[3]}#issuecomment-${1000 + Number(a[3])}\n`)
+      if (a[2] === 'comment-edit' && s.editFails) return ok('', 1, s.editFails)
+      if (a[2] === 'comment-edit') return ok('https://github.com/o/r/issues/7#issuecomment-1\n')
+      if (a[2] === 'pr-review' || a[2] === 'label') return ok()
       return ok('', 1, `gh.sh not faked: ${line}`)
     }
     if (a[0] === 'bash' && a[1]?.endsWith('merge.sh')) {
@@ -243,7 +266,18 @@ const engine = (on: On, opts: Opts = {}) => {
     if (a[0] === 'bash' && a[1]?.endsWith('init-worktree-submodules.sh')) {
       submodules.push({ command: JSON.parse(String(e.init?.stdin)).tool_input.command, paths: e.init?.env?.WORKTREE_SUBMODULES })
     }
-    if (a[0] === 'bash' && a[1]?.endsWith('worktree_claim.sh')) return ok('/claimed/issue-7\n')
+    if (a[0] === 'bash' && a[1]?.endsWith('worktree_claim.sh')) return s.claimFails ? ok('', 1, s.claimFails) : ok('/claimed/issue-7\n')
+    if (a[0] === 'bash' && a[1]?.endsWith('board.sh')) {
+      steps.push(`board.sh ${a.slice(2).join(' ')}`)
+      if (s.boardFails) return ok('', 1, s.boardFails)
+      if (a[2] === 'items') return ok(s.boardCards.map(c => JSON.stringify(c)).join('\n'))
+      return ok()
+    }
+    if (a[0] === 'bash' && (a[1]?.endsWith('/sweep.sh') || a[1]?.endsWith('/sweep-ts.sh'))) {
+      steps.push(`${a[1].split('/').pop()} ${a.slice(2).join(' ')}`)
+      s.spawnedAtSweep = spawns.length
+      return ok(s.sweepOutput, s.sweepExit)
+    }
     if (a[0] === 'bash' && a[1]?.includes('.sh')) {
       steps.push(`${a[1].split('/').pop()}${a.length > 2 ? ` ${a.slice(2).join(' ')}` : ''}`)
       if (s.hugeCheck && a[1].includes(s.hugeCheck)) return { value: { exitCode: s.hugeExit, stdout: `${'x'.repeat(STREAM_CAP - 5)}\nlast`, stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
@@ -266,6 +300,7 @@ const engine = (on: On, opts: Opts = {}) => {
         return answer({ result: expression.includes('innerWidth') ? String(s.pageWidth ?? s.viewportWidth) : expression.includes('location') ? s.pageUrl : String(s.dark) })
       }
       if (a[1] === 'screenshot' || a[1] === 'full-screenshot') return answer({ format: 'png', path: `/tmp/orca-shots/${orcaCalls.length}.png` })
+      if (a[2] === 'worker-start') return s.workerReceipt ? ok(JSON.stringify(s.workerReceipt), 1) : answer({ state: 'ready', dispatchId: 'ctx_1', runId: 'run_1', taskId: 'task_1' })
       if (a[1] === 'wait' || (a[1] === 'tab' && a[2] === 'close')) return answer({})
       if (a[2] === 'launch' && s.orcaFails) return ok('', 1, s.orcaFails)
       if (a[2] === 'show' && !s.orcaFails) return ok(JSON.stringify({ ok: true, result: { worktree: { linkedIssue: s.orcaLinked } } }))
@@ -326,7 +361,7 @@ const start = async ($: Dollar, w?: W) => {
   if (w) w.gh.length = 0 // fix-all-prs reads the repository at the start of a session; that is not the workflow.
 }
 // Each state tool names its issue. A test names it only when the issue is the point of the test.
-const STATE_TOOLS = ['finishedPlan', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', 'waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue']
+const STATE_TOOLS = ['interview', 'setSteering', 'finishedPlan', 'finishedInterview', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', 'waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue']
 let liveFiles: Map<string, string> | undefined
 // A test names its target only when the target is the point of the test: the issue, or its PR once it has moved on.
 function callFor(name: string): Record<string, unknown> {
@@ -369,6 +404,50 @@ test('started opens the workflow and answers with the next step', async ($, on) 
   expect(w.state()?.state).toBe('developing')
   expect(w.state()?.prs).toEqual([12])
   expect(r.text).toContain('State: developing')
+})
+
+test('started loads the skill of the mode into its answer, with the plugin path filled in', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.text).toContain('# The work-light method')
+  expect(r.text).toMatch(/Run `\/\S*\/scripts\/x\.sh`\./)
+  expect(r.text).toMatch(/relative paths start at \/\S*\/skills\/work-light\./)
+  expect(r.text).not.toContain('the listing')
+  expect(r.text).not.toContain('CLAUDE_PLUGIN_ROOT')
+  expect(r.text).not.toContain('work-heavy method')
+})
+
+test('started loads the heavy skill for a heavy issue, and the board skills never', async ($, on) => {
+  const w = engine(on, { wf: null, config: { steering: 'auto' } })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub', mode: 'heavy' })
+  expect(r.text).toContain('# The work-heavy method')
+  expect(r.text).not.toContain('work-heavy-auto')
+  expect(r.text).not.toContain('work-light method')
+})
+
+test('started loads a skill once in a session, and again after a compaction', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  const again = await tool($, 'started', { issue: 7 })
+  expect(again.isError).toBe(false)
+  expect(again.text).not.toContain('# The work-light method')
+  await $.session.compact({ instructions: 'keep it', messages: [{ role: 'user', text: 'the talk', toolUses: [] }] } as never)
+  const after = await tool($, 'started', { issue: 7 })
+  expect(after.text).toContain('# The work-light method')
+})
+
+test('started names the repair when it cannot read the skill, and the workflow still starts', async ($, on) => {
+  const w = engine(on, { wf: null, skillFiles: false })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+  expect(r.text).toMatch(/\/skills\/work-light\/SKILL\.md has no text/)
+  expect(r.text).toContain('Skill tool')
+  expect(r.text).toContain('ndev:work-light')
 })
 
 test('started goes to setup when a check script is missing, and names them', async ($, on) => {
@@ -959,16 +1038,122 @@ test('a project that commits to its base branch keeps the name of its main check
   expect(w.orcaCalls.flat()).not.toContain('--display-name')
 })
 
-test('an Orca follow-up names its workspace <issue>-<short name>, and tells its agent that short name', async ($, on) => {
+// ---- followUp with the mode worktree ----
+const workerStarts = (w: W) => w.orcaCalls.filter(c => c[0] === 'orchestration' && c[1] === 'worker-start')
+const onDeveloping = async ($: Dollar, on: On) => {
   const w = engine(on, { wf: { state: 'developing', shortName: 'add-sub' } })
   inOrca(w)
   await start($, w)
-  await tool($, 'followUp', { mode: 'orca_workspace', message: 'Tidy: the old Config loader\nbody' })
-  const made = w.orcaCalls.find(c => c[0] === 'worktree' && c[1] === 'create')!
-  const name = arg(made, '--name')!
-  expect(name).toMatch(/^\d+-tidy-the-old-config-loader$/)
-  expect(arg(made, '--prompt')).toContain('shortName')
-  expect(arg(made, '--prompt')).toContain('tidy-the-old-config-loader')
+  return w
+}
+
+test('a worktree follow-up files one issue and starts one worker in a new workspace named <issue>-<short name>', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const r = await tool($, 'followUp', { mode: 'worktree', message: 'Tidy: the old Config loader\nbody' })
+  expect(w.gh.filter(c => c.includes('issue-new')).length).toBe(1)
+  const started = workerStarts(w)
+  expect(started.length).toBe(1)
+  expect(arg(started[0], '--worktree')).toBe('new-top-level')
+  expect(arg(started[0], '--name')).toBe('31-tidy-the-old-config-loader')
+  expect(started[0]).toContain('--keep-open')
+  expect(arg(started[0], '--spec')).toContain('shortName "tidy-the-old-config-loader"')
+  expect(arg(started[0], '--spec')).toContain('body')
+  expect(w.gh.some(c => c.includes('subissues link 7 31'))).toBe(true)
+  expect(r.text).toContain('run_1')
+})
+
+test('the old mode name orca_workspace is refused, and the refusal names worktree', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const r = await tool($, 'followUp', { mode: 'orca_workspace', message: 'Tidy\nbody' })
+  expect(r.text).toContain('worktree')
+  expect(r.text).toContain('Refused')
+  expect(w.gh.filter(c => c.includes('issue-new'))).toEqual([])
+  expect(workerStarts(w)).toEqual([])
+})
+
+test('a worktree follow-up with issues files nothing and starts one worker that carries them all on one PR', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [200, 166], message: 'Retire the runner\nThe brief' })
+  expect(r.text).not.toContain('Refused')
+  expect(w.gh.filter(c => c.includes('issue-new'))).toEqual([])
+  const started = workerStarts(w)
+  expect(started.length).toBe(1)
+  expect(arg(started[0], '--name')).toBe('166-retire-the-runner')
+  const spec = arg(started[0], '--spec')!
+  expect(spec).toContain('The brief')
+  expect(spec).toContain('issue 166')
+  expect(spec).toContain('#200')
+  expect(spec).toContain('same worktree and PR')
+  expect(w.gh.some(c => c.includes('subissues link 7 166'))).toBe(true)
+  expect(w.gh.some(c => c.includes('subissues link 7 200'))).toBe(true)
+  expect(r.text).toContain('/issues/166')
+  expect(r.text).toContain('/issues/200')
+})
+
+test('issues with a closed or unreadable issue are refused by number, and nothing starts', async ($, on) => {
+  const w = await onDeveloping($, on)
+  w.s.issueReadsFor = { 200: [{ state: 'closed', title: 'Old' }], 201: ['Could not resolve to an issue'] }
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [166, 200, 201], message: 'Stage\nbrief' })
+  expect(r.text).toContain('Refused')
+  expect(r.text).toContain('#200 is closed')
+  expect(r.text).toContain('#201')
+  expect(r.text).toContain('Could not resolve')
+  expect(workerStarts(w)).toEqual([])
+  expect(w.gh.some(c => c.includes('subissues link'))).toBe(false)
+})
+
+test('bad issues are refused before any read: another mode, an empty list, a non-number and the calling issue', async ($, on) => {
+  const w = await onDeveloping($, on)
+  const reads = () => w.gh.filter(c => c.includes('issue-read 166')).length
+  const before = reads()
+  const refused = async (args: Record<string, unknown>, says: string) => {
+    const r = await tool($, 'followUp', { message: 'Stage\nbrief', ...args })
+    expect(r.text).toContain('Refused')
+    expect(r.text).toContain(says)
+  }
+  await refused({ mode: 'issue_only', issues: [166] }, 'worktree')
+  await refused({ mode: 'worktree', issues: [] }, 'issues')
+  await refused({ mode: 'worktree', issues: ['abc'] }, 'abc')
+  await refused({ mode: 'worktree', issues: [166, 7] }, '#7')
+  expect(reads()).toBe(before)
+  expect(workerStarts(w)).toEqual([])
+})
+
+test('the same worktree call again starts no second worker, and an issue with a worker is not started by another call', async ($, on) => {
+  const w = await onDeveloping($, on)
+  await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  const again = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  expect(again.text).not.toContain('Refused')
+  expect(again.text).toContain('ctx_1')
+  expect(workerStarts(w).length).toBe(1)
+  const other = await tool($, 'followUp', { mode: 'worktree', issues: [166, 200], message: 'Another\nbrief' })
+  expect(other.text).toContain('Refused')
+  expect(other.text).toContain('#166')
+  expect(workerStarts(w).length).toBe(1)
+})
+
+test('a sub-issue link that fails is said with its repair, and the worker still counts as started', async ($, on) => {
+  const w = await onDeveloping($, on)
+  w.s.linkFails = 'Issue may not contain duplicate sub-issues'
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\\nbrief' })
+  expect(r.text).toContain('#166 is not a sub-issue of #7')
+  expect(r.text).toContain('duplicate sub-issues')
+  expect(r.text).toContain('subissues link 7 166')
+  expect(r.text).toContain('ctx_1')
+})
+
+test('a worker that does not start is refused with what Orca said, by its receipt and not its exit code, and a retry starts it', async ($, on) => {
+  const w = await onDeveloping($, on)
+  w.s.workerReceipt = { ok: true, result: { state: 'failed', lastError: 'agent_prompt_blocked', failedStage: 'launch', recovery: 'Answer the prompt' } }
+  const r = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  expect(r.text).toContain('agent_prompt_blocked')
+  expect(r.text).toContain('Answer the prompt')
+  expect(r.text).toContain('#166')
+  expect(w.gh.some(c => c.includes('subissues link'))).toBe(false)
+  w.s.workerReceipt = undefined
+  const retry = await tool($, 'followUp', { mode: 'worktree', issues: [166], message: 'Stage\nbrief' })
+  expect(retry.text).not.toContain('Refused')
+  expect(workerStarts(w).length).toBe(2)
 })
 
 // ---- a follow-up agent works in its own worktree ----
@@ -2436,6 +2621,7 @@ test('the whole flow reaches GitHub only through gh.sh', async ($, on) => {
   const w = engine(on, { wf: null, pr: { draft: true } })
   await start($, w)
   await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  await tool($, 'finishedInterview', { issue: 7 })
   await tool($, 'finishedDevelopment', { prs: [12], message: 'Add', files: ['a.ts'] })
   await tool($, 'finishedReview', { remembered: 'nothing: small', review: 'clean', deadcode: 'clean' })
   expect(w.gh.length).toBeGreaterThan(0)
@@ -4104,4 +4290,1211 @@ test('the map names each issue on the PR before the PR record exists, with the t
   const map = JSON.parse(/^<!-- ndev:change-map (.*) -->$/m.exec(w.files.get(`${ROOT}/.git/worktrees/x/ndev-pr-body.md`)!)![1]!)
   expect(Object.keys(map.issues)).toEqual(['7', '12'])
   expect(map.issues['12'].changeTypes).toContain('database')
+})
+
+// ---- the copy editor beside the code review ----
+
+const PROSE = ['apps/docs/content/using/overview.mdx', 'README.md']
+const NOT_PROSE = ['a.ts', 'CLAUDE.md', 'AGENTS.md', 'kb/writing.md', 'skills/x/SKILL.md', 'docs/wiki/wiki.md', 'tests/fixtures/a.md', '.github/a.md']
+
+test('a change with prose for users starts the copy editor beside the code review, on those files only', async ($, on) => {
+  const w = engine(on, { names: [...PROSE, ...NOT_PROSE] })
+  const r = await toReview($, w)
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer', 'ndev:copy-editor'])
+  const prompt = w.spawns[1]!.prompt
+  for (const p of PROSE) expect(prompt).toContain(p)
+  for (const p of NOT_PROSE) expect(prompt).not.toContain(p)
+  expect(w.spawns[1]!.cwd).toBe(ROOT)
+  expect(r.text).toContain('copy editor')
+  expect(w.state()?.reviewCopy).toBeDefined()
+})
+
+test('a change with no prose for users starts no copy editor', async ($, on) => {
+  const w = engine(on, { names: NOT_PROSE })
+  const r = await toReview($, w)
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer'])
+  expect(r.text).not.toContain('copy editor')
+})
+
+test('the answer of the copy editor reaches the main agent in its own words, and the record keeps it', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'reviewer-1' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+  await start($, w)
+  await $.turn.complete({ agentId: 'copy-1', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\n1. A slogan.' } as never)
+  await settle()
+  expect(w.state()?.reviewCopy?.answer).toContain('A slogan')
+  expect(w.prompts.join('\n')).toContain('The copy edit of')
+  expect(w.prompts.join('\n')).toContain('A slogan')
+})
+
+test('a copy editor that did not start is named, and the repair names the files', async ($, on) => {
+  const w = engine(on, { names: PROSE })
+  w.s.spawnDeny = 'no such agent'
+  const r = await toReview($, w)
+  expect(r.text).toContain('The copy editor did not start: no such agent')
+  expect(r.text).toContain('ndev:copy-editor')
+  expect(r.text).toContain(PROSE[0]!)
+})
+
+test('a list of changed files that fails tells the agent why the copy editor did not start', async ($, on) => {
+  const w = engine(on, { names: PROSE })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.copyDiffFails = 'bad revision'
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'] })
+  expect(r.text).toContain('The copy editor did not start')
+  expect(r.text).toContain('exited 128')
+  expect(r.text).toContain('bad revision')
+})
+
+// Each reviewer is restarted by itself, and its answer does not depend on one write.
+const EDITING = { state: 'reviewing', prs: [12] }
+const live = (id: string, status = 'running') => ({ id, type: 't', description: 'd', status })
+
+test('a resume starts only the copy editor when only its answer was lost', async ($, on) => {
+  const w = engine(on, { names: PROSE, wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1', answer: 'code is fine' } }, reviewCopy: { agentId: 'gone' } } as never })
+  await start($, w)
+  const said = (await tool($, 'started', { issue: 7 })).text
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:copy-editor'])
+  expect(said).toContain('code is fine')
+})
+
+test('a resume starts only the code review when the copy editor still runs', async ($, on) => {
+  const w = engine(on, { names: PROSE, wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'gone' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+  w.s.agents = [live('copy-1')] as never
+  await start($, w)
+  const said = (await tool($, 'started', { issue: 7 })).text
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer'])
+  expect(w.state()?.reviewCopy?.agentId).toBe('copy-1')
+  expect(said).toContain('copy-1')
+})
+
+test('a resume takes a reviewer that has ended, with no answer, as lost', async ($, on) => {
+  const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } } } as never })
+  w.s.agents = [live('r-1', 'completed')] as never
+  await start($, w)
+  await tool($, 'started', { issue: 7 })
+  expect(w.spawns.map(s => s.subagentType)).toEqual(['ndev:diff-reviewer'])
+})
+
+test('a copy editor that did not start stays on the record, and a resume tries it again', async ($, on) => {
+  const w = engine(on, { names: PROSE })
+  w.s.spawnDeny = 'no such agent'
+  await toReview($, w)
+  expect((w.state()?.reviewCopy as { failed?: string }).failed).toContain('no such agent')
+  const tries = w.spawns.filter(s => s.subagentType === 'ndev:copy-editor').length
+  w.s.spawnDeny = ''
+  await tool($, 'started', { issue: 7 })
+  expect(w.spawns.filter(s => s.subagentType === 'ndev:copy-editor').length).toBe(tries + 1)
+  expect((w.state()?.reviewCopy as { failed?: string }).failed).toBeUndefined()
+})
+
+test('an answer survives a stale write', async ($, on) => {
+  const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+  await start($, w)
+  w.s.staleSaves = 1
+  await $.turn.complete({ agentId: 'copy-1', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\nA slogan.' } as never)
+  await settle()
+  expect(w.state()?.reviewCopy?.answer).toContain('A slogan')
+  expect(w.prompts.join('\n')).toContain('A slogan')
+})
+
+test('an answer that cannot be saved still reaches the main agent, which is told', async ($, on) => {
+  const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } } } as never })
+  await start($, w)
+  w.s.staleSaves = 99
+  await $.turn.complete({ agentId: 'r-1', answer: 'A real fault.' } as never)
+  await settle()
+  w.s.staleSaves = 0
+  const told = w.prompts.join('\n')
+  expect(told).toContain('A real fault.')
+  expect(told).toContain('was not saved')
+  expect(told).toContain('exited 5')
+})
+
+for (const [name, ending] of [['an empty answer', { answer: '  ' }], ['an error', { reason: 'error', answer: 'part of a rep' }]] as const) {
+  test(`a reviewer that ends with ${name} is named as a failure, and does not count as an answer`, async ($, on) => {
+    const w = engine(on, { wf: { ...EDITING, hooks: { review: { firedAt: 1, agentId: 'r-1' } }, reviewCopy: { agentId: 'copy-1' } } as never })
+    await start($, w)
+    await $.turn.complete({ agentId: 'copy-1', ...ending } as never)
+    await settle()
+    expect(w.state()?.reviewCopy?.answer).toBeUndefined()
+    const told = w.prompts.join('\n')
+    expect(told).toContain('The copy editor')
+    expect(told).toContain('failed')
+    expect(told).toContain('ndev:copy-editor')
+  })
+}
+
+// ---- the interview ----
+const INTERVIEW_FILE = `${ROOT}/.neil-dev.issue-7.json`
+const INTERVIEW_PANE = { plugin: 'ndev', component: 'Pane', requestId: 'interview', props: { title: 'Interview', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } } as const
+const ROUND = {
+  title: 'The login page',
+  intro: 'First round.',
+  questions: [
+    { id: 'store', header: 'Session store', question: 'Where do **sessions** live?', context: 'They outlive a deploy.', options: [{ label: 'Redis', description: 'Fast and shared.', recommended: true }, { label: 'Cookie', preview: '`set-cookie: s=...`' }] },
+    { id: 'name', header: 'Cookie name', question: 'What name?', suggested: 'sid' },
+    { id: 'browsers', header: 'Browsers', question: 'Which browsers?', multiSelect: true, options: [{ label: 'Safari', recommended: true }, { label: 'Chrome', recommended: true }, { label: 'Edge' }] },
+  ],
+}
+const asking = (extra: Record<string, unknown> = {}) => ({ state: 'interviewing', steering: 'interactive', ...extra })
+const human = async ($: Dollar, w: W) => {
+  w.s.sleepYields = true // A round's loop must leave room for the test's own timers.
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await settle()
+  w.gh.length = 0
+}
+// The call holds until the pane ends it. The kit cannot mount while a loop spins, so the fake sleep stays
+// pending while the test works the pane: tick lets one more pass of the loop run, and done ends the hold.
+const round = async ($: Dollar, w: W, json: unknown = ROUND, surface: 'terminal' | 'mobile' = 'terminal') => {
+  let wake = () => {}
+  const hold = () => { w.s.sleepHold = new Promise<void>(resolve => { wake = resolve }) }
+  hold()
+  const answer = tool($, 'interview', { interviewJson: json })
+  await settle()
+  const tick = async () => { const go = wake; hold(); go(); await settle() }
+  const done = () => { const go = wake; w.s.sleepHold = Promise.resolve(); go(); return answer }
+  return { done, tick, ui: await $.ui.mount({ ...INTERVIEW_PANE, surface }) }
+}
+const answersIn = (r: { text: string }) => JSON.parse(r.text.split('\n')[0]!) as { answers: { id: string; selected: string[]; other?: string; notes?: string; source?: string }[]; trustMeBro?: boolean; dismissed?: boolean; notAnswered?: string[] }
+const interviewFile = (w: W) => JSON.parse(w.files.get(INTERVIEW_FILE)!) as { rounds: { answers: unknown[] }[]; draft?: Record<string, { selected: string[] }>; commentIds?: { issue?: number; pr?: number }; posted?: boolean; closed?: { asked: boolean }; startedByFollowUp?: { of: number } }
+
+test('started asks first under interactive steering, and goes past the interview under auto', async ($, on) => {
+  const w = engine(on, { wf: null, config: { mode: 'heavy', steering: 'interactive' } })
+  await human($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(w.state()?.state).toBe('interviewing')
+  expect(w.state()?.prs).toEqual([12])
+  expect(r.text).toContain('ndev:interview')
+  expect(w.files.get(`/main/.git/info/exclude`)).toContain('.neil-dev.issue-*.json')
+})
+
+test('a round shows rich text; Select and Input change the answers that the agent gets; the file and both comments hold them', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  expect((await ui.find({ key: 'question' }))?.text).toContain('Where do **sessions** live?')
+  expect((await ui.find({ key: 'context' }))?.text).toContain('They outlive a deploy.')
+  expect((await ui.find({ key: 'options' }))?.text).toContain('`set-cookie: s=...`')
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.input({ key: 'notes-store', text: 'Only for now.', kind: 'change' })
+  await ui.press({ key: 'next' })
+  await ui.input({ key: 'other-name', text: 'session', kind: 'change' })
+  await ui.press({ key: 'next' })
+  await ui.select({ key: 'pick-browsers', value: 'Edge' })
+  await ui.select({ key: 'pick-browsers', value: 'Safari' })
+  await ui.press({ key: 'next' })
+  expect((await ui.find({ type: 'Text', text: /Session store/ }))?.text).toBe('Q1 Session store: Cookie (notes: Only for now.)')
+  await ui.press({ key: 'edit-name' })
+  expect((await ui.find({ key: 'other-name' }))).toBeDefined()
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  const r = await done()
+  await ui.unmount()
+  expect(r.isError).toBe(false)
+  expect(answersIn(r).answers).toEqual([
+    { id: 'store', selected: ['Cookie'], notes: 'Only for now.' },
+    { id: 'name', selected: [], other: 'session' },
+    { id: 'browsers', selected: ['Chrome', 'Edge'] },
+  ])
+  expect(w.state()?.state).toBe('interviewing')
+  expect(w.state()?.asking).toBeUndefined()
+  const file = interviewFile(w)
+  expect(file.rounds[0]!.answers.length).toBe(3)
+  expect(file.commentIds).toEqual({ issue: 1007, pr: 1012 })
+  expect(file.posted).toBe(true)
+  const posts = w.gh.filter(l => l.includes(' comment '))
+  expect(posts.length).toBe(2)
+  expect(posts[0]).toContain('ndev:interview issue=7')
+})
+
+test('the next round edits the two comments in place, and interview() goes on: planning when heavy', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const one = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await one.ui.press({ key: 'next' })
+  await one.ui.press({ key: 'submit' })
+  await one.done()
+  await one.ui.unmount()
+  w.gh.length = 0
+  const two = await round($, w, { title: 'Two', questions: [{ id: 'ttl', header: 'Lifetime', question: 'How long?', followUpTo: 'name', suggested: '1 day' }] })
+  expect((await two.ui.find({ type: 'Text', text: /Follow-up/ }))?.text).toBe('Follow-up to Q1 · Q1 › Q2')
+  const recap = (await two.ui.find({ key: 'recap' }))?.text
+  expect(recap).toContain('What name?')
+  expect(recap).toContain('sid')
+  await two.ui.press({ key: 'next' })
+  await two.ui.press({ key: 'submit' })
+  await two.done()
+  await two.ui.unmount()
+  expect(w.gh.filter(l => l.includes(' comment ')).length).toBe(0)
+  const edits = w.gh.filter(l => l.includes(' comment-edit '))
+  expect(edits.map(l => l.split(' comment-edit ')[1]!.split(' ')[0])).toEqual(['1007', '1012'])
+  const out = await tool($, 'interview')
+  expect(out.isError).toBe(false)
+  expect(w.state()?.state).toBe('planning')
+  expect(interviewFile(w).closed?.asked).toBe(true)
+})
+
+test('a follow-up inside the round recaps the answer as it stands', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[0], { id: 'ttl', header: 'Lifetime', question: 'How long?', followUpTo: 'store', suggested: '1 day' }] })
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.press({ key: 'next' })
+  expect((await ui.find({ key: 'recap' }))?.text).toContain('Cookie')
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+})
+
+test('a question with no answer does not go on, and says why', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.input({ key: 'other-name', text: '', kind: 'change' })
+  await ui.press({ key: 'next' })
+  expect((await ui.find({ type: 'Text', text: /needs an answer/ }))?.text).toContain('Cookie name')
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+})
+
+test('Trust Me Bro keeps the answers given, fills in the recommendations, and stops the questions', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.press({ key: 'trust' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).trustMeBro).toBe(true)
+  expect(answersIn(r).answers.map(a => [a.id, a.selected[0] ?? a.other, a.source])).toEqual([['store', 'Cookie', undefined], ['name', 'sid', 'recommended'], ['browsers', 'Safari', 'recommended']])
+  expect(r.text).toContain('assumption')
+  const again = await tool($, 'interview', { interviewJson: { title: 'More', questions: [{ id: 'x', header: 'X', question: 'X?', suggested: 's' }] } })
+  expect(again.isError).toBe(true)
+  expect(again.text).toContain('Trust Me Bro')
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(w.state()?.state).toBe('planning')
+})
+
+test('Close for now returns what was answered as dismissed, and the state stays', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.press({ key: 'close' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).dismissed).toBe(true)
+  expect(answersIn(r).answers.map(a => a.id)).toEqual(['store'])
+  expect(answersIn(r).notAnswered).toEqual(['name', 'browsers'])
+  expect(w.state()?.state).toBe('interviewing')
+})
+
+test('the pane says when no round is open, and on a phone it sends the human to the terminal', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const empty = await $.ui.mount({ ...INTERVIEW_PANE, surface: 'terminal' })
+  expect(await empty.find({ type: 'Text', text: /No interview/ })).toBeDefined()
+  await empty.unmount()
+  const { done, ui } = await round($, w, ROUND, 'mobile')
+  expect(await ui.find({ type: 'Text', text: /Answer it in the terminal/ })).toBeDefined()
+  await ui.unmount()
+  const desk = await $.ui.mount({ ...INTERVIEW_PANE, surface: 'terminal' })
+  await desk.press({ key: 'close' })
+  await done()
+  await desk.unmount()
+})
+
+test('a draft saved by an earlier call comes back, and the draft is saved while the round is open', async ($, on) => {
+  const w = engine(on, { wf: asking(), files: { [INTERVIEW_FILE]: JSON.stringify({ version: 1, issue: 7, rounds: [], draft: { store: { selected: ['Cookie'], other: '', notes: 'kept', touched: true } } }) } })
+  await human($, w)
+  const { done, tick, ui } = await round($, w)
+  await ui.press({ key: 'next' })
+  await ui.input({ key: 'notes-name', text: 'typed', kind: 'change' })
+  await tick()
+  expect(JSON.parse(w.files.get(INTERVIEW_FILE)!).draft.name.notes).toBe('typed')
+  await ui.press({ key: 'trust' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).answers[0]).toEqual({ id: 'store', selected: ['Cookie'], notes: 'kept' })
+  expect(interviewFile(w).draft).toBeUndefined()
+})
+
+test('the watchdog stays quiet while a round is open, and Orca shows that the human is needed', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  expect(w.state()?.asking).toBeDefined()
+  expect(w.alerts.length).toBe(1)
+  const before = w.prompts.length
+  await idle(w)
+  await idle(w)
+  expect(w.prompts.length).toBe(before)
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+  expect(w.state()?.asking).toBeUndefined()
+})
+
+test('no question goes to a human who is not there: auto and a session with no human refuse, and name the way on', async ($, on) => {
+  const w = engine(on, { wf: asking({ steering: 'auto' }) })
+  await human($, w)
+  const auto = await tool($, 'interview', { interviewJson: ROUND })
+  expect(auto.isError).toBe(true)
+  expect(auto.text).toContain('auto steering')
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('in a session with no human the round refuses and names setSteering', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await start($, w)
+  const r = await tool($, 'interview', { interviewJson: ROUND })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('setSteering')
+  expect(w.state()?.state).toBe('interviewing')
+})
+
+test('a bad round refuses with each problem and opens no pane', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const r = await tool($, 'interview', { interviewJson: { title: 'T', questions: [{ id: 'a', header: 'A', question: 'A?' }] } })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('suggested')
+  expect(w.state()?.asking).toBeUndefined()
+})
+
+test('interview() with no questions goes on when light, and a heavy issue refuses it, naming /flow skip', async ($, on) => {
+  const light = engine(on, { wf: asking({ mode: 'light' }) })
+  await human($, light)
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('No questions asked')
+  expect(light.state()?.state).toBe('developing')
+})
+
+test('a heavy issue with no answers cannot leave by itself, and a human can skip it', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('/flow skip')
+  expect(w.state()?.state).toBe('interviewing')
+  await command($, 'skip no decisions are open')
+  expect(w.state()?.state).toBe('planning')
+})
+
+test('when GitHub fails the agent still gets the answers and the failure, and the exit waits for the comments', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  w.s.ghFails = ' comment 7'
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).answers[0]!.other).toBe('sid')
+  expect(r.text).toContain('gh.sh comment 7')
+  expect(interviewFile(w).posted).toBe(false)
+  const refused = await tool($, 'interview')
+  expect(refused.isError).toBe(true)
+  expect(refused.text).toContain('gh.sh comment 7')
+  expect(w.state()?.state).toBe('interviewing')
+  w.s.ghFails = ''
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+  expect(interviewFile(w).commentIds?.issue).toBe(1007)
+})
+
+test('setSteering sets auto with a reason on the issue and the PR, leaves the interview, and takes nothing else', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  expect((await tool($, 'setSteering', { steering: 'interactive', reason: 'x' })).text).toContain('/flow steering interactive')
+  expect((await tool($, 'setSteering', { steering: 'auto' })).text).toContain('needs a reason')
+  expect(w.state()?.steering).toBe('interactive')
+  const r = await tool($, 'setSteering', { steering: 'auto', reason: 'this run uses claude -p' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.steering).toBe('auto')
+  expect(w.state()?.state).toBe('planning')
+  const said = w.gh.filter(l => l.includes('this run uses claude -p'))
+  expect(said.map(l => l.split(' comment ')[1]!.split(' ')[0])).toEqual(['7', '12'])
+})
+
+test('a followUp worker gets the interview files: the parent leaves them, and the child takes them at started', async ($, on) => {
+  const parent = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }] }
+  const w = engine(on, { wf: { mode: 'heavy' }, config: { steering: 'interactive' }, files: { [INTERVIEW_FILE]: JSON.stringify(parent) } })
+  await human($, w)
+  w.s.orcaOn = true
+  const r = await tool($, 'followUp', { mode: 'worktree', message: 'Add the child\nThe body' })
+  expect(r.isError).toBe(false)
+  const left = [...w.files.keys()].find(k => k.startsWith('/main/.git/ndev-interview-handover-'))
+  expect(left).toBeDefined()
+  expect(JSON.parse(w.files.get(left!)!).files[0].name).toBe('.neil-dev.issue-7.json')
+  expect(w.orcaCalls.some(c => c.join(' ').includes('.neil-dev.issue-7.json'))).toBe(true)
+})
+
+test('the child of a followUp takes the answers at started, and a heavy child can leave with no questions', async ($, on) => {
+  const parentFile = JSON.stringify({ version: 1, issue: 3, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }] })
+  const handOver = '/main/.git/ndev-interview-handover-7.json'
+  const w = engine(on, { wf: null, config: { mode: 'heavy', steering: 'interactive' }, files: { [handOver]: JSON.stringify({ followUpOf: 3, at: 5, files: [{ name: '.neil-dev.issue-3.json', text: parentFile }] }) } })
+  await human($, w)
+  await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(w.state()?.state).toBe('interviewing')
+  expect(w.files.get(`${ROOT}/.neil-dev.issue-3.json`)).toBe(parentFile)
+  expect(JSON.parse(w.files.get(INTERVIEW_FILE)!).startedByFollowUp).toEqual({ of: 3, at: 5 })
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('planning')
+})
+
+// ---- the interview: what the review found ----
+test('an Other answer replaces the recommendation, and a picked option replaces the Other answer', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[0]] })
+  await ui.input({ key: 'other-store', text: 'Memcached', kind: 'change' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  const typed = answersIn(await done()).answers[0]!
+  expect(typed.selected).toEqual([])
+  expect(typed.other).toBe('Memcached')
+  await ui.unmount()
+
+  const again = await round($, w, { title: 'Two', questions: [{ ...ROUND.questions[0], id: 'store2' }] })
+  await again.ui.input({ key: 'other-store2', text: 'Memcached', kind: 'change' })
+  await again.ui.select({ key: 'pick-store2', value: 'Cookie' })
+  await again.ui.press({ key: 'next' })
+  await again.ui.press({ key: 'submit' })
+  const picked = answersIn(await again.done()).answers[0]!
+  expect(picked.selected).toEqual(['Cookie'])
+  expect(picked.other).toBeUndefined()
+  await again.ui.unmount()
+})
+
+test('leaving the interview runs the base check when light, so finishedInterview is not a second step', async ($, on) => {
+  const w = engine(on, { wf: asking({ baseCheck: undefined }) })
+  await human($, w)
+  w.steps.length = 0
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+  expect(w.steps).toContain('pre-commit-check.sh')
+  expect(w.state()?.baseCheck).toMatchObject({ script: 'pre-commit-check.sh', exitCode: 0 })
+  expect(r.text).not.toContain('call finishedInterview')
+})
+
+test('a base that fails names the failure when the interview ends, and the state still goes on', async ($, on) => {
+  const w = engine(on, { wf: asking({ baseCheck: undefined }) })
+  await human($, w)
+  w.s.failCheck = 'pre-commit-check.sh'
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+  expect(r.text).toContain('pre-commit-check.sh exited')
+})
+
+test('a heavy interview leaves the base check to finishedPlan', async ($, on) => {
+  const answered = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [{ id: 'a', selected: ['x'], other: '', notes: '' }], at: 1 }], posted: true }
+  const w = engine(on, { wf: asking({ mode: 'heavy', baseCheck: undefined }), files: { [INTERVIEW_FILE]: JSON.stringify(answered) } })
+  await human($, w)
+  w.steps.length = 0
+  await tool($, 'interview')
+  expect(w.state()?.state).toBe('planning')
+  expect(w.steps).not.toContain('pre-push-check.sh')
+})
+
+test('the pane shows one round: a second issue is refused and the first round goes on', async ($, on) => {
+  const seven = flow(asking())
+  const eight = flow(asking({ issue: 8, prs: [13] }))
+  const w = engine(on, { files: { [RECORD]: held(seven, eight) } })
+  await human($, w)
+  await tool($, 'started', { issue: 7 })
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await tool($, 'started', { issue: 8 })
+  const second = await tool($, 'interview', { interviewJson: { title: 'Two', questions: [ROUND.questions[1]] } })
+  expect(second.isError).toBe(true)
+  expect(second.text).toContain('for #7 is already open')
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  expect((await done()).isError).toBe(false)
+  await ui.unmount()
+})
+
+test('a stale write while a finished round lets go is a warning: the answers still reach the agent', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  w.s.staleSaves = 1
+  const r = await done()
+  expect(r.isError).toBe(false)
+  expect(answersIn(r).answers[0]!.id).toBe('name')
+  expect(interviewFile(w).rounds.length).toBe(1)
+  await ui.unmount()
+})
+
+test('a write that fails while the round ends keeps the answers in the draft', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.input({ key: 'other-name', text: 'mine', kind: 'change' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  let writes = 0
+  w.s.failWrite = (path: string) => path === INTERVIEW_FILE && ++writes > 1
+  const r = await done()
+  expect(r.isError).toBe(true)
+  expect(interviewFile(w).draft?.name).toMatchObject({ other: 'mine' })
+  await ui.unmount()
+})
+
+test('with no PR yet, the interview does not count as posted, and the exit names started', async ($, on) => {
+  const w = engine(on, { wf: asking({ prs: [] }) })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  await done()
+  await ui.unmount()
+  expect(interviewFile(w).posted).toBe(false)
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('call started')
+  expect(w.state()?.state).toBe('interviewing')
+})
+
+const POSTED_ONCE = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [{ id: 'a', selected: ['x'], other: '', notes: '' }], at: 1 }], commentIds: { issue: 55, pr: 66 } }
+
+test('a comment that was deleted is posted again', async ($, on) => {
+  const file = POSTED_ONCE
+  const w = engine(on, { wf: asking(), files: { [INTERVIEW_FILE]: JSON.stringify(file) } })
+  await human($, w)
+  w.s.editFails = 'gh: Not Found (HTTP 404)'
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(interviewFile(w).commentIds).toEqual({ issue: 1007, pr: 1012 })
+})
+
+test('another failure of a comment edit names the command, and the issue stays', async ($, on) => {
+  const down = engine(on, { wf: asking(), files: { [INTERVIEW_FILE]: JSON.stringify(POSTED_ONCE) } })
+  await human($, down)
+  down.s.editFails = 'gh: HTTP 502'
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('comment-edit 55')
+  expect(r.text).toContain('HTTP 502')
+  expect(down.state()?.state).toBe('interviewing')
+})
+
+test('setSteering out of the interview posts what is not posted, closes the file, and withdraws a left alert', async ($, on) => {
+  const file = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [{ id: 'a', selected: ['x'], other: '', notes: '' }], at: 1 }], posted: false }
+  const w = engine(on, { wf: asking({ asking: { at: 1, group: 'g' } }), files: { [INTERVIEW_FILE]: JSON.stringify(file) } })
+  await human($, w)
+  const r = await tool($, 'setSteering', { steering: 'auto', reason: 'no human' })
+  expect(r.isError).toBe(false)
+  expect(interviewFile(w).posted).toBe(true)
+  expect(interviewFile(w).closed).toBeDefined()
+  expect(w.alerts).toContain('withdraw')
+  expect(w.state()?.asking).toBeUndefined()
+})
+
+test('/flow skip out of the interview withdraws a left alert', async ($, on) => {
+  const w = engine(on, { wf: asking({ asking: { at: 1, group: 'g' } }) })
+  await human($, w)
+  await command($, 'skip the human decides')
+  expect(w.state()?.state).toBe('developing')
+  expect(w.alerts).toContain('withdraw')
+  expect(w.state()?.asking).toBeUndefined()
+})
+
+test('a new round withdraws the alert that a reload left', async ($, on) => {
+  const w = engine(on, { wf: asking({ asking: { at: 1, group: 'old' } }) })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  expect(w.alerts[0]).toBe('withdraw')
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+})
+
+test('a pane that cannot show lets go of the notification and of the round', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  w.s.staleSaves = 1
+  const r = await tool($, 'interview', { interviewJson: { title: 'One', questions: [ROUND.questions[1]] } })
+  expect(r.isError).toBe(true)
+  expect(w.alerts).toEqual(['raise', 'withdraw'])
+  expect(w.state()?.asking).toBeUndefined()
+  w.s.sleepYields = true
+  const again = await round($, w, { title: 'Two', questions: [ROUND.questions[1]] })
+  await again.ui.press({ key: 'close' })
+  expect((await again.done()).isError).toBe(false)
+  await again.ui.unmount()
+})
+
+test('a human who thinks for a long time keeps the workflow: the hold refreshes the owner', async ($, on) => {
+  const w = engine(on, { wf: asking({ owner: { session: 's1', at: 0 } }) })
+  await human($, w)
+  const { done, tick, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  w.s.now += 6 * 60_000
+  await tick()
+  await tick()
+  expect(w.state()?.owner?.at).toBeGreaterThan(5 * 60_000)
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+})
+
+test('a worker that does not start takes back its hand-over, so a later issue is not relaxed by it', async ($, on) => {
+  const parent = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }] }
+  const w = engine(on, { wf: { mode: 'heavy' }, config: { steering: 'interactive' }, files: { [INTERVIEW_FILE]: JSON.stringify(parent) } })
+  await human($, w)
+  w.s.orcaOn = true
+  w.s.workerReceipt = { state: 'failed', lastError: 'no room', failedStage: 'spawn' }
+  const r = await tool($, 'followUp', { mode: 'worktree', message: 'Add the child\nThe body' })
+  expect(r.isError).toBe(true)
+  expect([...w.files.keys()].some(k => k.startsWith('/main/.git/ndev-interview-handover-'))).toBe(false)
+  expect(r.text).toContain('no room')
+})
+
+test('a hand-over that cannot be taken back names its file and the repair', async ($, on) => {
+  const parent = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }] }
+  const w = engine(on, { wf: { mode: 'heavy' }, config: { steering: 'interactive' }, files: { [INTERVIEW_FILE]: JSON.stringify(parent) } })
+  await human($, w)
+  w.s.orcaOn = true
+  w.s.workerReceipt = { state: 'failed', lastError: 'no room', failedStage: 'spawn' }
+  w.s.rmFails = 'rm: read-only file system'
+  const r = await tool($, 'followUp', { mode: 'worktree', message: 'Add the child\nThe body' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('read-only file system')
+  expect(r.text).toContain('Repair: delete it')
+  expect(r.text).toContain('ndev-interview-handover-')
+})
+
+test('the record says a new round is not posted before the post starts, so a crash cannot lose the post', async ($, on) => {
+  const earlier = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [{ id: 'a', selected: ['x'], other: '', notes: '' }], at: 1 }], commentIds: { issue: 55, pr: 66 }, posted: true }
+  const w = engine(on, { wf: asking(), files: { [INTERVIEW_FILE]: JSON.stringify(earlier) } })
+  await human($, w)
+  const seen: unknown[] = []
+  w.s.failWrite = (path: string) => {
+    if (path === INTERVIEW_FILE) seen.push(JSON.parse(w.files.get(path)!).posted)
+    return false
+  }
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  expect((await done()).isError).toBe(false)
+  await ui.unmount()
+  expect(seen).toContain(false)
+  expect(interviewFile(w).posted).toBe(true)
+})
+
+test('a parent interview file that cannot be read names the file and the cause', async ($, on) => {
+  const w = engine(on, { wf: { mode: 'heavy' }, config: { steering: 'interactive' }, files: { [INTERVIEW_FILE]: '{}' } })
+  await human($, w)
+  w.s.orcaOn = true
+  w.s.failRead = (path: string) => path === INTERVIEW_FILE
+  const r = await tool($, 'followUp', { mode: 'worktree', message: 'Add the child\nThe body' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain(INTERVIEW_FILE)
+  expect(r.text).toContain('No worker started')
+  expect(r.text).toContain('Repair: fix the file')
+})
+
+// ---- the board follows the state ----
+const BOARD = { config: { github: { repo: REPO, board: { owner: 'o', number: 1 } } } }
+const moves = (w: W) => w.steps.filter(l => l.startsWith('board.sh move'))
+
+test('a change of column moves the card, and a change inside a column does not', async ($, on) => {
+  const w = engine(on, { ...BOARD, wf: { state: 'developing', board: 'progress' } })
+  await start($, w)
+  await tool($, 'blocked', { message: 'Which colour?' })
+  expect(moves(w)).toEqual(['board.sh move I7 awaiting'])
+  await tool($, 'unblocked', { message: 'Blue' })
+  expect(moves(w)).toEqual(['board.sh move I7 awaiting', 'board.sh move I7 progress'])
+  w.s.dirty = [' M a.ts']
+  await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'] })
+  expect(moves(w).length).toBe(2)
+})
+
+test('finishedReview leaves the card in progress: automated development goes on through the checks', async ($, on) => {
+  const w = engine(on, { ...BOARD, wf: { state: 'reviewing', board: 'progress' } })
+  await start($, w)
+  const r = await tool($, 'finishedReview', { review: 'clean', deadcode: 'clean', remembered: 'nothing: small' })
+  expect(r.isError).toBe(false)
+  expect(moves(w)).toEqual([])
+})
+
+test('done puts the card in In review, because no automated development is left', async ($, on) => {
+  const w = engine(on, { ...BOARD, wf: finishing({ board: 'progress' }), pr: pull(), checks: CHECKS({ name: 'ci', conclusion: 'success' }) })
+  await start($, w)
+  const r = await tool($, 'done', { message: 'finished', remembered: 'none: nothing durable' })
+  expect(r.isError).toBe(false)
+  expect(moves(w)).toEqual(['board.sh move I7 review'])
+})
+
+test('a done that merges puts the card in Done', async ($, on) => {
+  const w = engine(on, { config: { ...BOARD.config, projectLevel: 'poc' }, wf: finishing({ board: 'progress' }), pr: pull(), checks: CHECKS({ name: 'ci', conclusion: 'success' }) })
+  await start($, w)
+  const r = await tool($, 'done', { message: 'finished', remembered: 'none: nothing durable' })
+  expect(r.isError).toBe(false)
+  expect(moves(w)).toEqual(['board.sh move I7 done'])
+})
+
+test('a board that fails shows a toast, does not stop the tool, and the next change tries again', async ($, on) => {
+  const w = engine(on, { ...BOARD, wf: { state: 'developing', board: 'progress' } })
+  await start($, w)
+  w.s.boardFails = 'token expired'
+  const r = await tool($, 'blocked', { message: 'Which colour?' })
+  expect(r.isError).toBe(false)
+  expect(w.toasts.join('\n')).toContain('#7')
+  expect(w.toasts.join('\n')).toContain('token expired')
+  expect(w.state()?.board).toBe('progress')
+  w.s.boardFails = ''
+  await tool($, 'unblocked', { message: 'Blue' })
+  expect(w.state()?.board).toBe('progress')
+  expect(moves(w)).toEqual([])
+  await tool($, 'blocked', { message: 'Again' })
+  expect(moves(w)).toEqual(['board.sh move I7 awaiting'])
+})
+
+test('an issue with no card shows a toast once and does not read the board at each save', async ($, on) => {
+  const w = engine(on, { ...BOARD, wf: { state: 'developing', board: 'progress' } })
+  await start($, w)
+  w.s.boardCards = []
+  await tool($, 'blocked', { message: 'Which colour?' })
+  expect(w.toasts.join('\n')).toContain('Issue #7 has no card')
+  expect(w.state()?.board).toBe('awaiting')
+})
+
+test('with no board or with the workflow off, nothing reads the board', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' } })
+  await start($, w)
+  await tool($, 'blocked', { message: 'Which colour?' })
+  expect(w.steps.filter(l => l.startsWith('board.sh'))).toEqual([])
+})
+
+// ---- the base check, after the interview and before development ----
+test('a new light issue names finishedInterview, and no commit goes in before it', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'fix-thing', mode: 'light' })
+  expect(r.text).toContain('finishedInterview')
+  w.s.dirty = [' M a.ts']
+  const early = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(early.isError).toBe(true)
+  expect(early.text).toContain('finishedInterview')
+  const also = await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'] })
+  expect(also.isError).toBe(true)
+  expect(also.text).toContain('finishedInterview')
+  w.steps.length = 0
+  const checked = await tool($, 'finishedInterview', { issue: 7 })
+  expect(checked.isError).toBe(false)
+  expect(w.steps).toEqual(['pre-commit-check.sh'])
+  expect(w.state()?.baseCheck).toMatchObject({ script: 'pre-commit-check.sh', exitCode: 0 })
+  expect(checked.text).not.toContain('call finishedInterview')
+  w.s.staged = true
+  const late = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(late.isError).toBe(false)
+})
+
+test('a failed base check names the script, the exit code, the output and the log, and stops nothing', async ($, on) => {
+  const w = engine(on, { wf: { baseCheck: undefined } })
+  await start($, w)
+  w.s.failCheck = 'pre-commit-check.sh'
+  const r = await tool($, 'finishedInterview', { issue: 7 })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('pre-commit-check.sh')
+  expect(r.text).toContain('exited 3')
+  expect(r.text).toContain('lint: broken line')
+  expect(r.text).toContain('ndev-pre-commit-check.sh.log')
+  expect(r.text).toContain('followUp')
+  expect(r.text).toContain('blocked')
+  expect(r.text).not.toContain('Nothing was pushed')
+  expect(w.state()?.baseCheck).toMatchObject({ exitCode: 3 })
+  // After a repair the agent runs it again.
+  w.s.failCheck = ''
+  const again = await tool($, 'finishedInterview', { issue: 7 })
+  expect(again.isError).toBe(false)
+  expect(w.state()?.baseCheck).toMatchObject({ exitCode: 0 })
+})
+
+test('finishedInterview is valid only in development', async ($, on) => {
+  const w = engine(on, { wf: { state: 'planning', mode: 'heavy', baseCheck: undefined } })
+  await start($, w)
+  const r = await tool($, 'finishedInterview', { issue: 7 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('planning')
+  expect(w.steps).toEqual([])
+})
+
+test('heavy runs pre-push-check.sh in finishedPlan, before the sign-off reaches the human', async ($, on) => {
+  const plan = `${ROOT}/plan.md`
+  const w = engine(on, { wf: { state: 'planning', mode: 'heavy', steering: 'interactive', baseCheck: undefined }, files: { [plan]: 'Test entry point: the CLI\n' } })
+  await start($, w)
+  w.s.failCheck = 'pre-push-check.sh'
+  const r = await tool($, 'finishedPlan', { issue: 7, markdown_file: plan })
+  expect(r.isError).toBe(false)
+  expect(w.steps).toEqual(['pre-push-check.sh'])
+  expect(w.state()?.baseCheck).toMatchObject({ script: 'pre-push-check.sh', exitCode: 3 })
+  expect(w.state()?.state).toBe('blocked')
+  expect(w.state()?.blocked?.message).toContain('pre-push-check.sh')
+  expect(w.alerts.length).toBeGreaterThan(0)
+})
+
+test('heavy needs no finishedInterview after finishedPlan', async ($, on) => {
+  const plan = `${ROOT}/plan.md`
+  const w = engine(on, { wf: { state: 'planning', mode: 'heavy', baseCheck: undefined }, files: { [plan]: 'Test entry point: the CLI\n' } })
+  await start($, w)
+  const r = await tool($, 'finishedPlan', { issue: 7, markdown_file: plan })
+  expect(r.text).not.toContain('finishedInterview')
+  w.s.dirty = [' M a.ts']
+  expect((await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })).isError).toBe(false)
+})
+
+test('a record that is past development needs no base check for its commits', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing', baseCheck: undefined } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  expect((await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })).isError).toBe(false)
+})
+
+// ---- the dead-code sweep ----
+test('the review stage runs the Python sweep over every tracked root, and gives the result', async ($, on) => {
+  const w = engine(on, { names: ['src/a.py', 'scripts/b.py', 'c.md'] })
+  w.s.sweepExit = 1
+  w.s.sweepOutput = 'src/a.py:3: DC02 unused name'
+  const r = await toReview($, w)
+  expect(w.steps).toContain('sweep.sh --base origin/main scripts src')
+  expect(w.steps.some(l => l.startsWith('sweep-ts.sh'))).toBe(false)
+  expect(r.text).toContain('src/a.py:3: DC02 unused name')
+  expect(w.prRecord(12)?.deadcode).toMatchObject({ sha: expect.any(String), results: [{ language: 'Python', exitCode: 1 }] })
+})
+
+test('the review stage runs the TypeScript sweep for a TypeScript change', async ($, on) => {
+  const w = engine(on, { names: ['a.tsx'] })
+  const r = await toReview($, w)
+  expect(w.steps).toContain('sweep-ts.sh origin/main')
+  expect(r.text).toContain('base 2, head 2')
+})
+
+test('a sweep that could not measure is reported as that, never as a pass', async ($, on) => {
+  const w = engine(on, { names: ['a.ts'] })
+  w.s.sweepExit = 2
+  w.s.sweepOutput = 'no knip.json'
+  const r = await toReview($, w)
+  expect(r.text).toContain('did not measure')
+  expect(r.text).toContain('no knip.json')
+  expect(r.text).toContain('exited 2')
+  expect(r.text).not.toContain('found nothing new')
+})
+
+test('a change with no Python or TypeScript runs no sweep, and says so', async ($, on) => {
+  const w = engine(on, { names: ['README.md'] })
+  const r = await toReview($, w)
+  expect(w.steps.some(l => l.startsWith('sweep'))).toBe(false)
+  expect(r.text).toContain('no Python or TypeScript')
+})
+
+test('a resume in review runs a sweep that a crash lost, and not one that ran', async ($, on) => {
+  const w = engine(on, { names: ['a.ts'], wf: { state: 'reviewing', hooks: { review: { firedAt: 0, answer: 'clean' } } } })
+  await start($, w)
+  await tool($, 'started', { issue: 7 })
+  expect(w.steps.filter(l => l.startsWith('sweep-ts.sh')).length).toBe(1)
+  await tool($, 'started', { issue: 7 })
+  expect(w.steps.filter(l => l.startsWith('sweep-ts.sh')).length).toBe(1)
+})
+
+test('finishedReview keeps the result of the plugin sweep in the evidence', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing', deadcode: { sha: SHA, results: [{ language: 'TypeScript', exitCode: 1, output: 'a.ts: unused' }] } } })
+  await start($, w)
+  await tool($, 'finishedReview', { review: 'clean', deadcode: 'a.ts is live', remembered: 'nothing: small' })
+  const text = w.state()?.evidence.review?.text ?? ''
+  expect(text).toContain('a.ts is live')
+  expect(text).toContain('TypeScript')
+})
+
+// ---- the body of a light PR ----
+test('finishedDevelopment puts body_file in the PR body and keeps the Closes line', async ($, on) => {
+  const note = `${ROOT}/note.md`
+  const w = engine(on, { files: { [note]: 'Problem and evidence.\n' } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'], body_file: 'note.md' })
+  expect(r.isError).toBe(false)
+  expect(w.gh.some(l => l.includes('pr-edit 12'))).toBe(true)
+  const body = [...w.files.values()].find(v => v.includes('Problem and evidence.') && v.includes('Closes #7'))
+  expect(body).toBeDefined()
+})
+
+test('a body_file that is missing refuses before anything is committed', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'], body_file: 'gone.md' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain(`${ROOT}/gone.md`)
+  expect(w.commits.length).toBe(0)
+  expect(w.state()?.state).toBe('developing')
+})
+
+// ---- the copy editor ----
+test('the answer of a copy editor says that Vale not run is not a pass', async ($, on) => {
+  const w = engine(on, { names: ['README.md', 'a.ts'] })
+  const r = await toReview($, w)
+  const prompt = w.spawns.find(s => s.subagentType === 'ndev:copy-editor')!.prompt
+  expect(prompt).toContain('/scripts/docs/readability.sh')
+  expect(r.isError).toBe(false)
+})
+
+// ---- hotfix ----
+test('hotfix files the issue, gives it its own worktree and PR, and turns the workflow off there', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' } })
+  await start($, w)
+  const r = await tool($, 'hotfix', { shortName: 'fix-login-redirect' })
+  expect(r.isError).toBe(false)
+  expect(w.gh.find(l => l.includes('issue-new'))).toContain('Hotfix: fix login redirect')
+  expect(r.text).toContain('Issue #31')
+  expect(r.text).toContain(CLAIMED)
+  expect(r.text).toContain(`https://github.com/${REPO}/pull/`)
+  expect(r.text).toContain('--no-verify')
+  const record = JSON.parse(w.files.get(`${CLAIMED}/.neil-dev.worktree.json`)!).workflows['31']
+  expect(record.off.reason).toContain('hotfix')
+  expect(record.prs.length).toBe(1)
+  // The session's own issue goes on: it did not join, and its record did not move.
+  expect(w.state(7)?.state).toBe('developing')
+  expect(w.state(7)?.prs).toEqual([12])
+  expect((await tool($, 'status')).text).toContain('#7')
+})
+
+test('a commit that names the worktree of a hotfix passes the git guard, and the own issue keeps its guard', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' } })
+  await start($, w)
+  const commit = { tool: 'Bash', command: `git -C ${CLAIMED} commit -m fix` } as never
+  await tool($, 'hotfix', { shortName: 'fix-login' })
+  expect((await $.tool.call(commit) as { deny?: string }).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Bash', command: `git -C ${CLAIMED} push` } as never) as { deny?: string }).deny).toBeUndefined()
+  // The session's own issue keeps its guard.
+  expect((await $.tool.call({ tool: 'Bash', command: 'git commit -m x' } as never) as { deny?: string }).deny).toContain('checkpoint')
+  expect((await $.tool.call({ tool: 'Bash', command: `git -C ${CLAIMED} commit -m fix && git push` } as never) as { deny?: string }).deny).toContain('checkpoint')
+})
+
+test('a wait for the PR of a hotfix passes while the workflow watches the checks of its own PR', async ($, on) => {
+  const w = engine(on, { wf: { state: 'ci' }, checks: RUNNING })
+  await start($, w)
+  const wait = (n: string) => $.tool.call({ tool: 'Bash', command: `/x/scripts/github/wait-for-pr-change.sh ${n} --skip-success --json` } as never) as Promise<{ deny?: string }>
+  expect((await wait('12')).deny).toContain('The workflow watches the checks')
+  const r = await tool($, 'hotfix', { shortName: 'fix-login' })
+  const pr = /\/pull\/(\d+)/.exec(r.text)![1]!
+  expect((await wait(pr)).deny).toBeUndefined()
+  expect((await wait('99')).deny).toContain('The workflow watches the checks')
+})
+
+test('the sweep ends before a reviewer starts, so a reviewer that ends finds its record on disk', async ($, on) => {
+  const w = engine(on, { names: ['a.ts'] })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'] })
+  expect(w.s.spawnedAtSweep).toBe(0)
+  expect(w.state()?.deadcode).toBeDefined()
+})
+
+test('/flow goto reviewing runs the sweep, and replaces a result from an earlier commit', async ($, on) => {
+  const old = { sha: 'old', results: [{ language: 'TypeScript', exitCode: 0, output: 'stale result' }] }
+  const w = engine(on, { names: ['a.ts'], wf: { state: 'developing', deadcode: old } })
+  await start($, w)
+  await command($, 'goto reviewing because the review was lost')
+  expect(w.steps.filter(l => l.startsWith('sweep-ts.sh')).length).toBe(1)
+  expect(JSON.stringify(w.state()?.deadcode)).not.toContain('stale result')
+})
+
+test('body_file does not replace the plan in the PR body', async ($, on) => {
+  const note = `${ROOT}/note.md`
+  const w = engine(on, { files: { [note]: 'Problem and evidence.\n' } })
+  await start($, w)
+  w.s.pr = { ...w.s.pr, body: '<!-- ndev:plan:7 -->\nThe signed plan.\nTest entry point: x\nCloses #7\n<!-- /ndev:plan:7 -->\n' }
+  w.s.dirty = [' M a.ts']
+  expect((await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['a.ts'], body_file: 'note.md' })).isError).toBe(false)
+  const body = [...w.files.values()].find(v => v.includes('ndev:body'))!
+  expect(body).toContain('The signed plan.')
+  expect(body).toContain('Test entry point: x')
+  expect(body.match(/Closes #7/g)?.length).toBe(1)
+})
+
+test('an issue that followUp this_agent adds has no interview, so its commits are not refused', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' } })
+  await start($, w)
+  await tool($, 'finishedInterview')
+  const made = await tool($, 'followUp', { mode: 'this_agent', message: 'Sub work' })
+  const child = Number(/issues\/(\d+)/.exec(made.text)![1])
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'finishedDevelopment', { issues: [7, child], prs: w.state()!.prs, message: 'm', files: ['a.ts'] })
+  expect(r.isError, r.text).toBe(false)
+  expect(r.text).not.toContain('no base check')
+})
+
+test('a base check with no script does not say passed', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing', noChecks: true, baseCheck: undefined } })
+  await start($, w)
+  const r = await tool($, 'finishedInterview')
+  expect(r.text).toContain('did not run')
+  expect(r.text).not.toContain('passed on')
+})
+
+test('a base check on a branch that holds commits does not say that the work changed nothing', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' } })
+  await start($, w)
+  w.s.ahead = '3'
+  w.s.failCheck = 'pre-commit-check'
+  const r = await tool($, 'finishedInterview')
+  expect(r.text).toContain('exited 3')
+  expect(r.text).not.toContain('before this work changed anything')
+  w.s.ahead = '0'
+  expect((await tool($, 'finishedInterview')).text).toContain('before this work changed anything')
+})
+
+test('done with an error in the settings stops nothing, and names the repair', async ($, on) => {
+  const w = engine(on, finished({ files: { [CONFIG]: '{ not json' } }))
+  await start($, w)
+  const r = await tool($, 'done', DONE)
+  expect(w.steps.filter(l => l.includes('stop-all'))).toEqual([])
+  expect(r.text).toContain('did not stop')
+  expect(r.text).toContain(`stop-all --worktree ${ROOT}`)
+})
+
+test('a straw_man hotfix opens no pass on the checkout of the session', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' }, config: { projectLevel: 'straw_man' } })
+  await start($, w)
+  const r = await tool($, 'hotfix', { shortName: 'fix-login' })
+  expect(r.text).toContain('checkpoint')
+  const main = (await $.tool.call({ tool: 'Bash', command: `git -C ${ROOT} commit -m fix` } as never)) as { deny?: string }
+  expect(main.deny).toContain('checkpoint')
+})
+
+test('a push from a hotfix worktree goes only to its own branch', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' } })
+  await start($, w)
+  await tool($, 'hotfix', { shortName: 'fix-login' })
+  const branch = JSON.parse(w.files.get(`${CLAIMED}/.neil-dev.worktree.json`)!).workflows['31'].branch as string
+  const push = async (rest: string) => ((await $.tool.call({ tool: 'Bash', command: `git -C ${CLAIMED} push ${rest}` } as never)) as { deny?: string }).deny
+  expect(await push('')).toBeUndefined()
+  expect(await push(`-u origin ${branch}`)).toBeUndefined()
+  expect(await push('origin HEAD')).toBeUndefined()
+  expect(await push('origin claude/issue-7')).toContain('hotfix')
+  expect(await push('origin HEAD:main')).toContain('hotfix')
+  expect(await push('--all')).toContain('hotfix')
+  expect(await push(`--force origin ${branch}`)).toContain('hotfix')
+})
+
+test('a retry with the issue files nothing more, and its worktree and PR pass the guards', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing' } })
+  await start($, w)
+  w.s.claimFails = 'no free slot'
+  const failed = await tool($, 'hotfix', { shortName: 'fix-login' })
+  expect(failed.text).toContain('issue: 31')
+  const filed = w.gh.filter(l => l.includes('issue-new')).length
+  w.s.claimFails = ''
+  const r = await tool($, 'hotfix', { shortName: 'fix-login', issue: 31 })
+  expect(r.isError).toBe(false)
+  expect(w.gh.filter(l => l.includes('issue-new')).length).toBe(filed)
+  expect(((await $.tool.call({ tool: 'Bash', command: `git -C ${CLAIMED} commit -m fix` } as never)) as { deny?: string }).deny).toBeUndefined()
+  // A second retry after the PR opened uses the same record.
+  expect((await tool($, 'hotfix', { shortName: 'fix-login', issue: 31 })).isError).toBe(false)
+})
+
+test('the board comes from the main checkout when the worktree has no board setting', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing', board: 'progress' }, files: { '/main/.neil-dev.json': JSON.stringify(BOARD.config) } })
+  await start($, w)
+  await tool($, 'blocked', { message: 'Which colour?' })
+  expect(moves(w)).toEqual(['board.sh move I7 awaiting'])
+})
+
+test('a settings file with an error shows a toast and moves no card', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing', board: 'progress' }, files: { [CONFIG]: '{ not json' } })
+  await start($, w)
+  const r = await tool($, 'blocked', { message: 'Which colour?' })
+  expect(r.isError).toBe(false)
+  expect(moves(w)).toEqual([])
+  expect(w.toasts.join('\n')).toContain(`the board does not show awaiting for issue #7: ${CONFIG} has an error`)
+})
+
+test('a straw_man issue that is done goes to Done: the commit is on the base branch', () => {
+  expect(boardColumn({ state: 'done', direct: true })).toBe('done')
+  expect(boardColumn({ state: 'done' })).toBe('review')
+})
+
+test('hotfix takes the title from the description when there is one', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  await tool($, 'hotfix', { shortName: 'fix-login', description: 'Login loops\n\nThe body.' })
+  expect(w.gh.find(l => l.includes('issue-new'))).toContain('Login loops')
+})
+
+test('hotfix refuses a bad shortName, and a project with no workflow, before it files anything', async ($, on) => {
+  const w = engine(on, { wf: null, config: { workflow: false } })
+  await start($, w)
+  expect((await tool($, 'hotfix', { shortName: 'Fix Login' })).isError).toBe(true)
+  expect((await tool($, 'hotfix', { shortName: 'fix-login' })).isError).toBe(true)
+  expect(w.gh.filter(l => l.includes('issue-new'))).toEqual([])
+})
+
+test('a hotfix that fails after the issue names the issue, so that a retry does not file it twice', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.claimFails = 'no free slot'
+  const r = await tool($, 'hotfix', { shortName: 'fix-login' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('#31')
+  expect(r.text).toContain('no free slot')
+  expect(r.text).toContain('worktree_claim.sh')
+})
+
+// ---- done stops the resources ----
+const finished = (over: Record<string, unknown> = {}) => ({ wf: finishing(), pr: pull(), checks: CHECKS({ name: 'ci', conclusion: 'success' }), ...over })
+const DONE = { message: 'finished', remembered: 'none: nothing durable' }
+
+test('done stops the stacks and the dev servers of the worktree, and leaves the worktree to Orca', async ($, on) => {
+  const w = engine(on, finished())
+  await start($, w)
+  const r = await tool($, 'done', DONE)
+  expect(r.isError).toBe(false)
+  expect(w.steps).toContain(`worktree-env.sh stop-all --background --on-end stop-and-delete --worktree ${ROOT}`)
+})
+
+test('done keeps to the policy of the project for stacks', async ($, on) => {
+  const w = engine(on, finished({ config: { worktreeStacks: { onSessionEnd: 'keep-running' } } }))
+  await start($, w)
+  await tool($, 'done', DONE)
+  expect(w.steps).toContain(`worktree-env.sh stop-all --background --on-end keep-running --worktree ${ROOT}`)
+})
+
+test('done stops nothing while another issue in the worktree is unfinished', async ($, on) => {
+  const w = engine(on, finished({ files: { [RECORD]: held(flow(finishing()), flow({ issue: 8, prs: [13], state: 'developing' })) } }))
+  await start($, w)
+  const r = await tool($, 'done', { ...DONE, pr: 12 })
+  expect(r.isError).toBe(false)
+  expect(w.steps.some(l => l.includes('stop-all'))).toBe(false)
+})
+
+test('a stop that fails does not undo done, and names the repair', async ($, on) => {
+  const w = engine(on, finished())
+  await start($, w)
+  w.s.stopFails = 'record is version 1'
+  const r = await tool($, 'done', DONE)
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('record is version 1')
+  expect(r.text).toContain(`stop-all --worktree ${ROOT}`)
+  expect(w.state()?.state).toBe('done')
+})
+
+// ---- the incomprehensible label ----
+test('started names the incomprehensible label', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'fix-thing' })
+  expect(r.text).toContain('incomprehensible')
 })

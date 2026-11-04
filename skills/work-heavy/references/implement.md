@@ -134,6 +134,8 @@ visibility).
 
 ### F3c — The two-axis review
 
+While a workflow runs, `finishedDevelopment` commits and starts both reviewers, and `finishedReview` pushes. Do not do these by hand. You still resolve the findings and do the sweep. With no workflow:
+
 Before the final push, review the diff on **two axes, with two independent reviewers, and keep the
 two reports apart.** A change can pass one axis and fail the other. One reviewer who holds both
 questions lets each hide the other. Use `mattpocock-skills:code-review` or two `diff-reviewer`
@@ -163,7 +165,7 @@ cannot see the defect and a documented command that reports a false zero.
 
 **Report under two headings and do not re-rank across them.** Resolve each Critical and Important
 finding on both. Then run all suites again (a fresh run, not a remembered one) with 0 failures. Then
-do the dead-code sweep ([F3d](#f3d--the-dead-code-sweep)). Commit (body `Closes #<n>` for issue work)
+do the dead-code sweep ([F3d](#f3d--the-dead-code-sweep)). With no workflow, commit (body `Closes #<n>` for issue work)
 and push.
 
 **An agent that reviews its own code argues for its own solution.** That is why both reviewers are

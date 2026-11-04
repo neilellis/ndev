@@ -37,6 +37,8 @@ was learned" is a correct answer for cosmetic work. Say it; do not pad the wiki.
 
 **2. Mark ready, then wait for checks.**
 
+While a workflow runs, `mcp__ndev__finishedReview` marks the PR ready and the workflow watches the checks, so do not run these commands. With no workflow:
+
 ```bash
 gh pr ready <n> --repo "$REPO"
 ${CLAUDE_PLUGIN_ROOT}/scripts/github/wait-for-pr-change.sh <n>      # one foreground wait, no polling
@@ -66,7 +68,7 @@ do an HTTP 200 check and record that interactive smoke is pending. The E2E suite
 this smoke, not a replacement.
 
 **5. Record the smoke ON the PR as a review**, not a plain comment, so that it is in the review
-timeline:
+timeline. While a workflow runs, give the report to `finishedSmoke`: it posts the review and the label. With no workflow:
 
 ```bash
 # <tmp> line 1 is the marker; line 2 onward is the report:

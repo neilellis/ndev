@@ -1,4 +1,4 @@
-// After each push that lands, asks for the dev-wiki ingest: the session's reusable development,
+// After each push that lands, as git records it, asks for the dev-wiki ingest: the session's reusable development,
 // design and copywriting lessons go to ~/dev-wiki, the way a project wiki ingests on completion.
 import type { Register } from 'claude-code'
 
@@ -25,14 +25,40 @@ export const isPush = (command: string) => {
   return [...code.matchAll(PUSH)].some(m => !DRY_RUN.test(code.slice(m.index).split(/[;&|\n]/)[0] ?? ''))
 }
 
+const SAYS_PUSH = /push/i
+
+// A ref name and its commit, for each remote-tracking ref. Outside a repository there are none to read.
+const remoteRefs = async ($: Parameters<Parameters<On>[2]>[0], cwd: string) => {
+  const ran = await $.process.run(['git', 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/remotes'], { cwd, timeoutMs: 10000 })
+  return ran.exitCode === 0 ? new Set(ran.stdout.split('\n').filter(line => line !== '')) : undefined
+}
+
+// Git records each push that lands in the reflog of the remote-tracking ref, and a fetch or a refused
+// push does not write that entry. The command text and its exit status cannot say this: a grep can name
+// a push, a script can hide one, and a later command in the call can set the exit status.
+const pushLanded = async ($: Parameters<Parameters<On>[2]>[0], cwd: string, before: Set<string>) => {
+  for (const line of (await remoteRefs($, cwd)) ?? []) {
+    if (before.has(line)) continue
+    const ref = line.split(' ')[0]
+    const reflog = await $.process.run(['git', 'reflog', 'show', '-n', '1', '--format=%gs', ref], { cwd, timeoutMs: 10000 })
+    if (reflog.stdout.startsWith('update by push')) return true
+  }
+  return false
+}
+
 // While a workflow runs, its finishing step asks for the ingest instead.
 export const learnAfterPush = (on: On, getProject: () => LoadedConfig | undefined = () => undefined) => {
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const ran = await next(e)
     const command = String((e as { command?: unknown }).command ?? '')
-    if (ran.deny !== undefined || ran.isError === true || !isPush(command)) return ran
-    if (await workflowOwnsChecks($, getProject())) return ran
+    if (!SAYS_PUSH.test(command)) return next(e)
     const background = (e as { run_in_background?: unknown }).run_in_background === true
+    const cwd = await $.session.cwd()
+    const before = background ? undefined : await remoteRefs($, cwd)
+    const ran = await next(e)
+    if (ran.deny !== undefined) return ran
+    const asks = background ? isPush(command) && ran.isError !== true : before !== undefined && (await pushLanded($, cwd, before))
+    if (!asks) return ran
+    if (await workflowOwnsChecks($, getProject())) return ran
     return { ...ran, context: [...(ran.context ?? []), ingestText(background)] }
   })
 }

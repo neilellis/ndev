@@ -26,7 +26,7 @@ These rules come from the plugin. Each line links to its full page. You must not
 
 | When | Skill |
 |---|---|
-| Any change from issue to PR | `work-light` |
+| Any change from issue to PR | `work-light`, which starts the workflow with `mcp__ndev__started` |
 | A pattern over the code (search, guard, refactor) | `ast-grep` |
 | Writing or updating the project wiki or docs | `docs` |
 | Writing or fixing tests | `testing` |

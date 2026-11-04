@@ -174,6 +174,18 @@ test('feedback answers through REST in the same shape when GraphQL fails', () =>
   assert.deepEqual(sorted(r), sorted(graph))
 })
 
+test('comment-edit changes the named comment in place, and refuses an empty body', () => {
+  const edited = ghsh(['comment-edit', '99', '--body', 'new'], [{ match: 'issues/comments/99', out: 'https://x/12#c\n' }])
+  assert.equal(edited.code, 0, edited.err)
+  assert.equal(edited.calls.length, 1)
+  assert.ok(edited.calls[0].includes('-X PATCH'), edited.calls[0])
+  assert.ok(edited.calls[0].includes('body=new'), edited.calls[0])
+  const empty = ghsh(['comment-edit', '99', '--body', ''], [])
+  assert.notEqual(empty.code, 0)
+  assert.equal(empty.calls.length, 0)
+  assert.match(empty.err, /body is empty/)
+})
+
 test('comment falls back to REST on a rate limit only: another failure may already have posted', () => {
   const works = ghsh(['comment', '12', '--body', 'hi'], [{ match: 'issue comment 12', out: 'https://x/12#c\n' }])
   assert.equal(works.code, 0, works.err)

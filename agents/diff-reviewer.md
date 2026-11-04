@@ -19,4 +19,4 @@ Read the diff and the code around it (`git diff`, Read, Grep, Glob). Run tests o
 
 ## The workflow
 
-`mcp__ndev__finishedDevelopment` starts you, and your answer goes to the main agent. You can call `mcp__ndev__status` and `mcp__ndev__iNeedA`, and `mcp__ndev__reportWorkflowBug` for a fault of the plugin.
+`mcp__ndev__finishedDevelopment` starts you, and your answer goes to the main agent. You can call `mcp__ndev__status` and `mcp__ndev__iNeedA`, and `mcp__ndev__reportWorkflowBug` for a fault of the plugin. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

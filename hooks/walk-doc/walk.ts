@@ -1,7 +1,7 @@
 // The walk's pure logic: arguments, config, page URLs, the report and reply protocol, the guard and the final report.
 // index.tsx wires it to the engine; nothing here reaches `$`.
 
-import type { WalkAsk as Ask, WalkFinding as Finding, WalkRun as Run } from '../../types'
+import type { WalkAsk as Ask, WalkCopyReview as CopyReview, WalkFinding as Finding, WalkRun as Run } from '../../types'
 
 export const PLUGIN = 'ndev'
 export const TOOL = <N extends string>(name: N) => `mcp__ndev__${name}` as const
@@ -11,7 +11,7 @@ export const MAX_RESTARTS = 20
 export const SAME_STEP_LIMIT = 10
 export const BLOCKING = ['OMISSION', 'BUG', 'INCORRECT', 'BLOCKED'] as const
 export type Code = (typeof BLOCKING)[number]
-export type { Ask, Finding, Run }
+export type { Ask, CopyReview, Finding, Run }
 export const DEFAULT_PERSONA = 'a competent developer who has never seen this project before'
 
 export type Config = {
@@ -387,7 +387,7 @@ export type ReplyEffect =
   | { effect: 'refuse'; reason: string }
 
 // ENHANCE notes and RECORD requests never stop the reader; the main agent answers them with NOTED.
-export const isNonBlocking = (f: Finding) => f.code === 'ENHANCE' || f.code === 'RECORD'
+export const isNonBlocking = (f: Finding) => f.code === 'ENHANCE' || f.code === 'RECORD' || f.code === 'COPY'
 // The blocking report the walk waits on.
 const lastBlocking = (run: Run) => [...run.findings].reverse().find(f => !isNonBlocking(f))
 
@@ -441,7 +441,7 @@ function noteAnswer(run: Run, input: ReplyInput, now: number): ReplyEffect {
   const f = run.findings.find(x => x.n === input.answers)
   if (f === undefined || !isNonBlocking(f) || f.resolution !== null) {
     const open = run.findings.filter(x => isNonBlocking(x) && x.resolution === null).map(x => `#${x.n} ${x.code}`)
-    return { effect: 'refuse', reason: `NOTED needs answers: the number of an unanswered ENHANCE or RECORD note; #${String(input.answers)} is not one. Open: ${open.join(', ') || 'none'}.` }
+    return { effect: 'refuse', reason: `NOTED needs answers: the number of an unanswered ENHANCE, RECORD or COPY note; #${String(input.answers)} is not one. Open: ${open.join(', ') || 'none'}.` }
   }
   const changed = Array.isArray(input.changed) ? input.changed.filter((c): c is string => typeof c === 'string') : []
   const findings = run.findings.map(x => (x.n === f.n ? { ...x, resolution: { action: 'NOTED' as const, note, changed, at: now } } : x))
@@ -708,6 +708,7 @@ export function reportMarkdown(run: Run): string {
   for (const f of run.findings) {
     lines.push(`### #${f.n} ${f.code} at ${f.step} (attempt ${f.attempt})`, '')
     if (f.code === 'RECORD') lines.push(`- Placing: ${f.expected}`, `- File: ${f.evidence}`, `- Caption: ${f.actual}`)
+    else if (f.code === 'COPY') lines.push(`- Text reviewed: ${f.evidence}`, `- Copy editor: ${f.actual}`)
     else lines.push(`- Expected: ${f.expected}`, `- Actual: ${f.actual}`, `- Evidence: ${f.evidence}`)
     lines.push(f.resolution === null ? '- Resolution: **open**' : `- Resolution: ${f.resolution.action}: ${f.resolution.note}${f.resolution.changed.length > 0 ? ` (changed: ${f.resolution.changed.join(', ')})` : ''}`, '')
   }
@@ -715,6 +716,12 @@ export function reportMarkdown(run: Run): string {
   if (asks.length > 0) {
     lines.push(`## Questions to the reader (${asks.length})`, '')
     for (const a of asks) lines.push(`- #${a.n} ${a.question}`, `  - Answer: ${a.answer === null ? '**none**' : a.answer.text}`)
+    lines.push('')
+  }
+  const copy = run.copyReviews ?? []
+  if (copy.length > 0) {
+    lines.push(`## Pages sent to the copy editor (${copy.length})`, '')
+    for (const c of copy) lines.push(`- ${c.url}: ${c.state}${c.detail === '' ? '' : ` (${c.detail})`}`)
     lines.push('')
   }
   lines.push(`## Guard denials (${run.denials.length})`, '', 'Check these for an over-tight rule.', '', ...run.denials.map(d => `- ${d.tool}: ${d.detail}`), '')
@@ -735,7 +742,7 @@ export interface ChatMessage { from: 'Walk' | 'Main'; kind: ChatKind; text: stri
 
 // Theme keys, so the colours follow the person's light or dark theme.
 export const CHAT_COLOR: Record<ChatKind, string> = {
-  BUG: 'error', INCORRECT: 'warning', OMISSION: 'suggestion', BLOCKED: 'permission', ENHANCE: 'subtle', RECORD: 'planMode',
+  BUG: 'error', INCORRECT: 'warning', OMISSION: 'suggestion', BLOCKED: 'permission', ENHANCE: 'subtle', RECORD: 'planMode', COPY: 'inactive',
   CONTINUE: 'success', RESTART: 'claude', ESCALATED: 'merged', NOTED: 'remember', ASK: 'autoAccept', ANSWER: 'ide',
 }
 
@@ -786,4 +793,111 @@ export function valuesNote(values: Record<string, string>, file: string): string
     `Values the person has given you for this walk (from ${file}). Use them where the docs say to ask someone for them:`,
     ...keys.map(k => `- ${k}=${values[k]}`),
   ].join('\n')
+}
+
+// The copy editor. The plugin sends each docs page that the reader opens, as text only, so the reader does not
+// have to ask and the editor does not see the source.
+const PAGE_ORIGINS = (run: Run) => new Set([`http://localhost:${run.port}`, `http://127.0.0.1:${run.port}`, ...run.startUrls.flatMap(u => { try { return [new URL(u).origin] } catch { return [] } })])
+
+// The docs pages that one tool call of the reader opens: a browser navigation, or a URL in a shell command.
+export function docsPagesOpened(run: Run, tool: string, input: Record<string, unknown>): string[] {
+  const raw = tool.endsWith('browser_navigate') && typeof input.url === 'string'
+    ? [input.url]
+    : tool === 'Bash' && typeof input.command === 'string'
+      ? input.command.match(/https?:\/\/[^\s'"<>)]+/g) ?? []
+      : []
+  return docsPages(run, raw)
+}
+
+// The docs pages that a browser tool shows after it ran, which also covers a page reached with a click.
+export function docsPagesShown(run: Run, value: unknown): string[] {
+  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? ''
+  return docsPages(run, [...text.matchAll(/Page URL: (https?:\/\/[^\s"\\]+)/g)].map(m => m[1]!))
+}
+
+function docsPages(run: Run, raw: string[]): string[] {
+  const origins = PAGE_ORIGINS(run)
+  const pages = raw.flatMap(u => {
+    let url: URL
+    try { url = new URL(u) } catch { return [] }
+    if (!origins.has(url.origin) || /\.[a-z0-9]+$/i.test(url.pathname) || url.pathname.startsWith('/api/') || url.pathname.startsWith('/_next/')) return []
+    return [`${url.origin}${url.pathname.replace(/\/*$/, '/')}`]
+  })
+  return [...new Set(pages)]
+}
+
+export const newCopyPages = (run: Run, pages: string[]) => pages.filter(p => !(run.copyReviews ?? []).some(c => c.url === p))
+
+// A caller can hold its copy of the run for minutes, as a restart does. What the copy editors wrote meanwhile stays.
+export function keepCopyWrites(next: Run, fresh: Run): Run {
+  if (fresh.runId !== next.runId) return next
+  const held = next.copyReviews ?? []
+  const rows = fresh.copyReviews ?? []
+  const copyReviews = [...rows.map(row => {
+    const own = held.find(c => c.url === row.url)
+    return own !== undefined && own.state !== 'running' ? own : row
+  }), ...held.filter(c => !rows.some(row => row.url === c.url))]
+  const findings = [...next.findings]
+  for (const f of fresh.findings) {
+    if (f.code !== 'COPY' || findings.some(k => k.code === 'COPY' && k.step === f.step && k.at === f.at)) continue
+    findings.push(findings.some(k => k.n === f.n) ? { ...f, n: Math.max(...findings.map(k => k.n)) + 1 } : f)
+  }
+  return { ...next, copyReviews, findings }
+}
+
+// The walk ends: a review that has no answer by now will not get one. The message names its pages and the repair.
+export function settleCopyReviews(run: Run): { run: Run; lostNote: string } {
+  const reviews = run.copyReviews ?? []
+  const lost = reviews.filter(c => c.state === 'running').map(c => c.url)
+  if (lost.length === 0) return { run, lostNote: '' }
+  return {
+    run: { ...run, copyReviews: reviews.map(c => (c.state === 'running' ? { ...c, state: 'lost' as const, detail: 'the agent ended with no answer' } : c)) },
+    lostNote: ` These pages had no copy review, because the editor gave no answer: ${lost.join(', ')}. Repair: start the ndev:copy-editor agent by hand on the text of each page.`,
+  }
+}
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', mdash: '\u2014', ndash: '\u2013', rsquo: '\u2019', lsquo: '\u2018', rdquo: '\u201d', ldquo: '\u201c', hellip: '\u2026', rarr: '\u2192', middot: '\u00b7' }
+const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, e: string) => {
+  if (e[0] !== '#') return ENTITIES[e.toLowerCase()] ?? whole
+  const code = e[1]?.toLowerCase() === 'x' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)
+  return Number.isNaN(code) ? whole : String.fromCodePoint(code)
+})
+
+// The words a reader of the page reads, as Markdown that Vale can lint. Code blocks and the site's own navigation are not copy.
+export function pageProse(html: string): string {
+  const withoutCode = html.replace(/<(script|style|svg|noscript|template|pre|iframe)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ')
+  const body = /<main\b[^>]*>([\s\S]*)<\/main\s*>/i.exec(withoutCode)?.[1] ?? /<body\b[^>]*>([\s\S]*)<\/body\s*>/i.exec(withoutCode)?.[1] ?? withoutCode
+  return decodeEntities(body
+    .replace(/<(nav|aside|footer|button)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<img\b[^>]*\balt="([^"]+)"[^>]*>/gi, '\n\nImage text: $1\n\n')
+    .replace(/<h([1-6])\b[^>]*>/gi, (_w, n: string) => `\n\n${'#'.repeat(Number(n))} `)
+    .replace(/<li\b[^>]*>/gi, '\n- ')
+    .replace(/<\/?(h[1-6]|p|div|section|article|ul|ol|table|tr|figure|figcaption|blockquote|br|hr)\b[^>]*>/gi, '\n\n')
+    .replace(/<\/t[dh]\s*>/gi, ' | ')
+    .replace(/<[^>]+>/g, ''))
+    .split('\n').map(line => line.replace(/[ \t]+/g, ' ').trim()).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// The answer form is in agents/copy-editor.md. An answer in another form goes to the main agent, so nothing passes by default.
+export const isCleanCopyAnswer = (answer: string) => /^VALE: ran\b.*\nFINDINGS: 0\s*$/.test(answer.trim())
+
+export function recordCopy(run: Run, agentId: string, answer: string, now: number, issues = ''): { run: Run; mainMessage: string | null } {
+  const review = (run.copyReviews ?? []).find(c => c.agentId === agentId)
+  if (review === undefined || review.state !== 'running') return { run, mainMessage: null }
+  const copyReviews = (run.copyReviews ?? []).map(c => (c === review ? { ...c, state: 'answered' as const, detail: answer.trim().split('\n')[0]?.slice(0, 200) ?? '' } : c))
+  if (isCleanCopyAnswer(answer)) return { run: { ...run, copyReviews }, mainMessage: null }
+  const text = answer.trim() === '' ? 'The copy editor ended with no answer, so this page has no copy review.' : answer.trim().slice(0, 8000)
+  const finding: Finding = { n: run.findings.length + 1, code: 'COPY', step: review.url, expected: '', actual: text, evidence: review.file ?? '', attempt: run.attempt, at: now, resolution: null }
+  return {
+    run: { ...run, copyReviews, findings: [...run.findings, finding] },
+    mainMessage: [
+      `Walk COPY #${finding.n} at ${review.url} (the reader carries on). The copy editor read the text of the page in ${review.file} and reports:`,
+      '',
+      text,
+      '',
+      faultRule(issues),
+      `Judge each finding, and keep the facts of the page. Fix the ones you accept on this branch in one commit that starts "walk-doc COPY:". Then call walk_reply with action NOTED, answers: ${finding.n}, a note (what you changed, or why not) and changed: the pages you changed. The answer shows in the walk pane; the reader is not stopped.`,
+    ].join('\n'),
+  }
 }

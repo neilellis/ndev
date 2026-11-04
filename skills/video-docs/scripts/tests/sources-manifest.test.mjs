@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { compare, dependencies } from "../sources-manifest.mjs";
@@ -55,5 +55,16 @@ describe("command line", () => {
     assert.equal(run("review", "video/content.json", "--page", "docs/b.md", "--integrity", "ok").status, 2);
     assert.equal(run("review", "video/content.json", "--page", "docs/b.md", "--integrity", "true to page", "--readability", "clear").status, 0);
     assert.equal(run("status", "video/content.json").status, 0);
+  });
+});
+
+describe("the command line", () => {
+  it("runs when its path goes through a symbolic link", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "manifest-link-"));
+    const link = path.join(dir, "link");
+    symlinkSync(path.dirname(SCRIPT), link);
+    const run = spawnSync("node", [path.join(link, "sources-manifest.mjs"), "--help"], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /Provenance for documentation videos/);
   });
 });

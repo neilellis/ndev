@@ -9,9 +9,9 @@ Do one bounded pass: read the board, sort the startable issues, work each unit i
 
 ## The workflow
 
-A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)`, then `mcp__ndev__setSteering` with `auto` and the reason, as no human answers an unattended run, and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
-Ask the user for authorisation immediately before each GitHub write and each preview deployment. Read-only discovery can run without a prompt.
+With a subagent worker or no workflow, ask the user for authorisation immediately before each GitHub write and each preview deployment. Read-only discovery can run without a prompt.
 
 ## Settings
 
@@ -56,11 +56,11 @@ Tests: `${CLAUDE_PLUGIN_ROOT}/scripts/work/tests/test_gates.sh`, `test_worktree_
 - Record an explicit blocker with `gh.sh blocked-by add`. A dependency on another Ready card in the same pass means "batch together", not "wait".
 - Batch only contiguous dependent or coupled issues. Keep unrelated work and risky schema, auth or migration work separate.
 
-For each startable unit, load `work-heavy` and `testing` and run F0 → F6. Use one worktree `.claude/worktrees/issue-<lead>`, one branch `claude/issue-<lead>` and one draft PR based on the base branch. The PR body has one section and one `Closes #<n>` per batched issue, each with a `Test entry point:`. Move the card to progress after the plan. Move it to review only after `gates.sh`, the checks and the smoke test pass. Run the `deadcode` skill's sweep for code changes.
+For each startable unit, a worker in its own session follows the answers of the workflow. A subagent worker cannot move a workflow, so it loads `work-heavy` and `testing` and runs F0 → F6. Use one worktree `.claude/worktrees/issue-<lead>`, one branch `claude/issue-<lead>` and one draft PR based on the base branch. The PR body has one section and one `Closes #<n>` per batched issue, each with a `Test entry point:`. Move the card to progress after the plan. Move it to review only after `gates.sh`, the checks and the smoke test pass. Run the `deadcode` skill's sweep for code changes.
 
 A related discovery becomes a sub-issue carried in the same PR (`Carried by #<pr>`, `Closes #<child>`). An unrelated discovery becomes a separate issue with no PR.
 
-Agents never wait for a human. When only a human can move work forward, post the `<!-- work-heavy-auto:state -->` comment (or the question, plan-confirm, feedback or smoke marker; `work-heavy` skill, `references/state.md`) and exit. The next pass resumes from it. Every pipeline comment starts with `<!-- work-heavy-auto` or `**work-heavy-auto`.
+Agents never wait for a human. A worker in a workflow calls `mcp__ndev__blocked`. For any other agent, when only a human can move work forward, post the `<!-- work-heavy-auto:state -->` comment (or the question, plan-confirm, feedback or smoke marker; `work-heavy` skill, `references/state.md`) and exit. The next pass resumes from it. Every pipeline comment starts with `<!-- work-heavy-auto` or `**work-heavy-auto`.
 
 ## Runner
 

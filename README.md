@@ -46,12 +46,12 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `forget` | Remove documentation and memory claims that code proves false after a feature, path, decision or command is removed, renamed or superseded. |
 | `github` | Operate GitHub issues, pull requests, checks, milestones, Actions runs and an optional project board through compact helper scripts. |
 | `goal-work` | Work every open GitHub issue that matches a condition the user gives, through grouped, mergeable pull requests, with the user reviewing the plan and the… |
-| `green-merge-open-prs` | Green and merge each eligible open pull request in number order, one at a time, into origin/main. |
 | `harness-sync` | Compare the Claude and Codex harness trees and reconcile a difference between them, before or after any change that copies one skill tree onto the other. |
 | `hotfix` | Do the requested work directly on the main branch in the main checkout, with no worktree and no pull request, then push to origin main. |
 | `hyperfine` | Benchmark and compare command durations when a speed claim or before/after measurement is needed. |
 | `i` | Alias of issue: create a GitHub issue from a description and put it in Backlog on the project board with its fields filled in. |
 | `i-have-adhd` | Load before writing any reply to the user. |
+| `interview` | Settle the decisions of an issue with the human, in the interview pane, before the plan or the code. |
 | `implement-spec` | Implement a provided specification and its linked tickets on one branch and in one pull request. |
 | `improve-agent` | Analyse an automated agent's run log and produce an evidence-based improvement plan for its prompt, skill, tools and guards. |
 | `infographic` | Create raster infographic images with bundled layout and visual-style references. |

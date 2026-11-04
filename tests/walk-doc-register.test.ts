@@ -9,7 +9,7 @@ const PAGE = 'Run `./acme doctor`, then edit `config/foo.json`.'
 type Ran = { argv: string[]; cwd?: string; timeoutMs?: number }
 
 function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
-  const flags = { readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: '' as string | null, toplevel: opts.root ?? '/repo', worktreeList: `worktree ${opts.root ?? '/repo'}\nHEAD 1\n`, gitFails: false, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolError: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', browser: { isConnected: true } as Record<string, unknown>, config: CONFIG as string | null }
+  const flags = { agentsEnded: [] as string[], pageHtml: '', pageExit: 0, readyAborts: false, asciinemaExit: 0, files: new Set<string>(), contents: new Map<string, string>(), configFails: false, cwdFails: false, agentRegisterFails: false, envText: '' as string | null, toplevel: opts.root ?? '/repo', worktreeList: `worktree ${opts.root ?? '/repo'}\nHEAD 1\n`, gitFails: false, spawnHeld: Promise.resolve() as Promise<void>, spawnFails: false, toolError: false, toolResult: 'ran' as unknown, overlay: 'overlay:function/true', browser: { isConnected: true } as Record<string, unknown>, config: CONFIG as string | null }
   const ran: Ran[] = []
   const written: Record<string, string> = {}
   const prompts: string[] = []
@@ -28,6 +28,7 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
     if (line === 'asciinema --version') return out('asciinema 3.2.1\n', flags.asciinemaExit)
     if (line.includes('socket.socket')) return out('4000\n')
     if (line.includes('nohup')) return out('4242\n')
+    if (e.argv[0] === 'curl' && e.argv.includes('--silent')) return { value: { exitCode: flags.pageExit, stdout: flags.pageHtml, stderr: flags.pageExit === 0 ? '' : 'connection refused', isStdoutTruncated: false, isStderrTruncated: false } }
     if (line.includes('curl -sf')) { if (flags.readyAborts) throw new Error('$.process.run(bash) aborted'); return out('', opts.readyExit ?? 0) }
     if (line.includes('tail -n 30')) return out('Error: port in use\n')
     if (line === 'bash -c uptime') return out('18:40  up 9 days, load averages: 196.39 195.25 196.50\n')
@@ -76,12 +77,12 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
   })
   on('agent.spawn', async (_$, e) => {
     if (flags.spawnFails) throw new Error('agent type ndev:walk is not available')
-    spawns.push({ prompt: e.prompt, cwd: e.cwd, subagentType: e.subagentType, description: e.description })
+    spawns.push({ prompt: e.prompt, cwd: e.cwd, subagentType: e.subagentType ?? (e as unknown as { subagent_type?: string }).subagent_type, description: e.description })
     await flags.spawnHeld
     return { model: 'm', agentId: `a${spawns.length}` }
   })
   // The test kit keeps a spawn's agentId to the core, so the agent list names the spawned agents.
-  on('agent.list', async () => ({ value: spawns.map((s, i) => ({ id: `a${i + 1}`, type: 'ndev:walk', description: s.description, status: 'running' })) }) as never)
+  on('agent.list', async () => ({ value: spawns.map((s, i) => ({ id: `a${i + 1}`, type: 'ndev:walk', description: s.description, status: flags.agentsEnded.includes(`a${i + 1}`) ? 'completed' : 'running' })) }) as never)
   on('session.send', async (_$, e) => {
     sent.push({ to: e.to, text: e.text })
     return { isDelivered: true }
@@ -91,6 +92,7 @@ function harness(on: On, opts: { readyExit?: number; root?: string } = {}) {
     return { text: e.text }
   })
   on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+  on('turn.complete', () => ({ text: 'text' }) as never)
   // ndev's quality hook reads the session folder on every Bash call.
   on('session.cwd', async () => {
     if (flags.cwdFails) throw new Error('session.cwd failed')
@@ -871,4 +873,269 @@ test('a walk-doc failure at session start is shown and named, and the rest of nd
   expect(h.agents).not.toContain('walk')
   // ndev's own start went on: the init-project hook ran after walk-doc.
   expect(h.ran.some(r => r.argv.join(' ').includes('rev-parse'))).toBe(true)
+})
+
+// The copy editor: each docs page that the reader opens goes to it once, and its findings reach the main agent.
+const PAGE_HTML = '<html><head><style>a{}</style><script>var x=1</script></head><body><nav>Sidebar</nav><main><h1>Every read, <em>with the account.</em></h1><p>Fish &amp; chips.</p></main></body></html>'
+const OPEN = { tool: 'mcp__plugin_ndev_playwright__browser_navigate', url: 'http://localhost:4000/installation/quick-start/', agentId: 'a1' }
+const editors = (h: { spawns: { subagentType?: string; prompt: string }[] }) => h.spawns.filter(s => s.subagentType === 'ndev:copy-editor')
+
+// The plugin fetches the page in the background, so the reader does not wait for it.
+const copySent = async (h: { clock: { advance(ms: number): Promise<unknown> } }) => {
+  for (let i = 0; i < 30; i++) {
+    await h.clock.advance(0)
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
+function pageServed(h: ReturnType<typeof harness>, _on: On, html = PAGE_HTML, exitCode = 0) {
+  h.flags.pageHtml = html
+  h.flags.pageExit = exitCode
+}
+
+test('a docs page the reader opens goes once to the copy editor, as its text only', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await call($, { ...OPEN, url: 'http://localhost:4000/installation/quick-start/#install' })
+  await copySent(h)
+  expect(editors(h)).toHaveLength(1)
+  const file = Object.keys(h.written).find(p => p.includes('/copy/'))!
+  expect(h.written[file]).toContain('# Every read, with the account.')
+  expect(h.written[file]).toContain('Fish & chips.')
+  expect(h.written[file]).not.toContain('var x=1')
+  expect(h.written[file]).not.toContain('Sidebar')
+  expect(editors(h)[0]!.prompt).toContain(file)
+  expect(editors(h)[0]!.prompt).toContain('http://localhost:4000/installation/quick-start/')
+})
+
+test('an image, the product and a page of another site do not go to the copy editor', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, { ...OPEN, url: 'http://localhost:4000/screenshots/a.png' })
+  await call($, { ...OPEN, url: 'http://localhost:8080/overview' })
+  await call($, { ...OPEN, url: 'https://example.com/' })
+  await copySent(h)
+  expect(editors(h)).toHaveLength(0)
+})
+
+test('the findings of the copy editor reach the main agent as a COPY note that NOTED answers, and the reader is not stopped', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\nHeading: "Every read" is a slogan.' } as never)
+  await copySent(h)
+  const told = h.prompts.find(p => p.includes('COPY'))!
+  expect(told).toContain('is a slogan')
+  expect(told).toContain('http://localhost:4000/installation/quick-start/')
+  expect(h.sent.filter(s => s.to === 'a1')).toHaveLength(0)
+  const status = JSON.parse(JSON.parse(await call($, { tool: 'mcp__ndev__walk_status' })).result)
+  expect(status.findings[0].code).toBe('COPY')
+  expect(status.phase).toBe('walking')
+  const replied = await call($, { tool: 'mcp__ndev__walk_reply', action: 'NOTED', answers: 1, note: 'Rewrote the heading' })
+  expect(replied).not.toContain('deny')
+})
+
+test('a page with nothing to change adds no finding, and the review stays on the record', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 0' } as never)
+  await copySent(h)
+  expect(h.prompts.filter(p => p.includes('COPY'))).toHaveLength(0)
+  const status = JSON.parse(JSON.parse(await call($, { tool: 'mcp__ndev__walk_status' })).result)
+  expect(status.findings).toHaveLength(0)
+  expect(status.copyReviews[0].state).toBe('answered')
+})
+
+test('a Vale that did not run is told to the main agent, even with no other finding', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: not run: E201 no styles\nFINDINGS: 0' } as never)
+  await copySent(h)
+  expect(h.prompts.find(p => p.includes('COPY'))).toContain('E201')
+})
+
+test('a page that cannot be fetched is told to the main agent with the URL, the exit code and the repair', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on, '', 7)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  expect(editors(h)).toHaveLength(0)
+  const told = h.prompts.find(p => p.includes('copy editor'))!
+  expect(told).toContain('http://localhost:4000/installation/quick-start/')
+  expect(told).toContain('exit 7')
+  expect(told).toContain('ndev:copy-editor')
+})
+
+test('walk_finish waits for a copy editor that still runs, and names the page', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  const refused = await call($, { tool: 'mcp__ndev__walk_finish', summary: 'done' })
+  expect(refused).toContain('copy editor')
+  expect(refused).toContain('http://localhost:4000/installation/quick-start/')
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 0' } as never)
+  expect(await call($, { tool: 'mcp__ndev__walk_finish', summary: 'done' })).toContain('Walk finished')
+})
+
+// The copy reviews end on their own time, so nothing here may stall the walk or lose an answer.
+const OPEN2 = { ...OPEN, url: 'http://localhost:4000/using/overview/' }
+const statusOf = async ($: Parameters<typeof call>[0]) => JSON.parse(JSON.parse(await call($, { tool: 'mcp__ndev__walk_status' })).result)
+
+test('after a refused walk_finish, a clean last answer wakes the main agent', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  await call($, { tool: 'mcp__ndev__walk_done', summary: 'All worked', agentId: 'a1' })
+  expect(await call($, { tool: 'mcp__ndev__walk_finish', summary: 'done' })).toContain('copy editor')
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 0' } as never)
+  await copySent(h)
+  expect(h.prompts.join('\n')).toContain('Every copy review has ended')
+})
+
+test('a clean answer before the reader has finished does not disturb the main agent', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 0' } as never)
+  await copySent(h)
+  expect(h.prompts.join('\n')).not.toContain('Every copy review has ended')
+})
+
+test('an editor that ended with no answer does not hold walk_finish, and the finish names the page', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  const refused = await call($, { tool: 'mcp__ndev__walk_finish', summary: 'done' })
+  expect(refused).toContain('call walk_finish again')
+  h.flags.agentsEnded.push('a2')
+  const finished = await call($, { tool: 'mcp__ndev__walk_finish', summary: 'done' })
+  expect(finished).toContain('Walk finished')
+  expect(finished).toContain('had no copy review')
+  expect(finished).toContain('http://localhost:4000/installation/quick-start/')
+  expect(finished).toContain('ndev:copy-editor')
+})
+
+test('a page still being sent holds walk_finish, and /walk-doc stop settles it as lost', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  let release = () => {}
+  h.flags.spawnHeld = new Promise<void>(r => { release = r })
+  await call($, OPEN)
+  await copySent(h)
+  expect(await call($, { tool: 'mcp__ndev__walk_finish', summary: 'done' })).toContain('still reviews')
+  const stopped = await walkDoc($, 'stop')
+  expect(stopped).toContain('had no copy review')
+  const report = Object.entries(h.written).find(([p]) => p.endsWith('/report.md'))![1]
+  expect(report).toContain('quick-start/: lost')
+  release()
+  await copySent(h)
+})
+
+test('an answer is kept when the project config cannot be read', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  h.flags.configFails = true
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\nA slogan.' } as never)
+  await copySent(h)
+  h.flags.configFails = false
+  expect(h.prompts.join('\n')).toContain('A slogan')
+  expect((await statusOf($)).findings[0].code).toBe('COPY')
+})
+
+test('two editors that end together keep both findings, with their own numbers', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await call($, OPEN2)
+  await copySent(h)
+  await Promise.all([
+    $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\nFirst.' } as never),
+    $.turn.complete({ reason: 'end', agentId: 'a3', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\nSecond.' } as never),
+  ])
+  await copySent(h)
+  const { findings } = await statusOf($)
+  expect(findings.map((f: { n: number }) => f.n)).toEqual([1, 2])
+  expect(findings.map((f: { actual: string }) => f.actual.split('\n').at(-1)).sort()).toEqual(['First.', 'Second.'])
+})
+
+test('an answer that arrives during a restart survives the restart', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await call($, OPEN)
+  await copySent(h)
+  let release = () => {}
+  h.flags.spawnHeld = new Promise<void>(r => { release = r })
+  const restarted = walkDoc($, 'restart')
+  await copySent(h)
+  await $.turn.complete({ reason: 'end', agentId: 'a2', answer: 'VALE: ran, 0 alerts\nFINDINGS: 1\nA slogan.' } as never)
+  await copySent(h)
+  release()
+  await restarted
+  const status = await statusOf($)
+  expect(status.findings.map((f: { code: string }) => f.code)).toEqual(['COPY'])
+  expect(status.copyReviews[0].state).toBe('answered')
+})
+
+test('a page that the reader reached with a click goes to the copy editor', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  h.flags.toolResult = '### Ran\n### Page\n- Page URL: http://localhost:4000/using/overview/\n- Page Title: The overview'
+  await call($, { tool: 'mcp__plugin_ndev_playwright__browser_evaluate', function: "() => walkArrow.point('text=Overview', { text: 'Click Overview', untilClick: true })", agentId: 'a1' })
+  await h.clock.advance(3000)
+  await call($, { tool: 'mcp__plugin_ndev_playwright__browser_click', element: 'Overview link', ref: 'e12', agentId: 'a1' })
+  await copySent(h)
+  expect(editors(h)).toHaveLength(1)
+  expect(editors(h)[0]!.prompt).toContain('http://localhost:4000/using/overview/')
+})
+
+test('two calls of the reader for one page start one editor', async ($, on) => {
+  const h = harness(on)
+  pageServed(h, on)
+  await start($)
+  await walkDoc($, 'apps/docs/content/installation/quick-start.mdx')
+  await Promise.all([call($, OPEN), call($, OPEN)])
+  await copySent(h)
+  expect(editors(h)).toHaveLength(1)
 })

@@ -7,10 +7,6 @@ description: "Choose the type of a narrated video (how-to, explainer or marketin
 
 Every video is one of three types. Each type has its own purpose, register, length, look and review. Choose the type before you write a word, and record it as `"type"` in `video.config.json`. Never mix two types in one video. If a request seems to need two, make two videos.
 
-## The workflow
-
-While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
-
 | | How-to | Explainer | Marketing |
 |---|---|---|---|
 | Skill | `video-how-to` | `video-explainer` | `video-marketing` |
@@ -46,3 +42,7 @@ If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `b
 - A how-to that says "powerful", "seamless" or "transform" has drifted into marketing. Remove the claim, or move it to an explainer.
 - An explainer that asks for a meeting before it has explained anything is a marketing film. Explain first, and keep one soft action for the end.
 - A marketing film that teaches a procedure is too long and loses its viewer. Link to the how-to instead.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

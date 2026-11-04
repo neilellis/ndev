@@ -186,9 +186,15 @@ declare module 'claude-code' {
       // The worktree of this session's workflow, and when the session was last active (hooks/workflow/).
       workflowRoot: Shaped<string | null>
       workflowIssue: Shaped<number | null>
+      workflowSessionHasHuman: Shaped<boolean>
+      // PaneCall in hooks/workflow/interview.tsx. This file must stay self-contained.
+      interviewView: Shaped<{ call?: { id: string; issue: number; [field: string]: unknown } }>
       workflowDoneWaitsFor: Shaped<string | null>
       workflowFollowUpWorktrees: Shaped<string[]>
+      workflowHotfixWorktrees: Shaped<string[]>
+      workflowHotfixPrs: Shaped<number[]>
       workflowDeclined: Shaped<boolean>
+      workflowSkillsLoaded: Shaped<string[]>
       workflowIssueAsked: Shaped<boolean>
       workflowCheckRead: Shaped<{ at: number }>
       workflowWatchNote: Shaped<{ at: number; why: string }>
@@ -204,7 +210,7 @@ declare module 'claude-code' {
 // The /walk-doc state (hooks/walk-doc/): one run, kept in $.state and mirrored to walk-run/<runId>/run.json.
 export type WalkFinding = {
   n: number
-  code: 'OMISSION' | 'BUG' | 'INCORRECT' | 'BLOCKED' | 'ENHANCE' | 'RECORD'
+  code: 'OMISSION' | 'BUG' | 'INCORRECT' | 'BLOCKED' | 'ENHANCE' | 'RECORD' | 'COPY'
   step: string
   expected: string
   actual: string
@@ -213,6 +219,9 @@ export type WalkFinding = {
   at: number
   resolution: { action: 'CONTINUE' | 'RESTART' | 'ESCALATED' | 'NOTED'; note: string; changed: string[]; at: number } | null
 }
+
+// One docs page that the plugin sent to the copy editor. A page goes once in a run.
+export type WalkCopyReview = { url: string; file: string | null; agentId: string | null; state: 'running' | 'answered' | 'failed' | 'lost'; detail: string; at: number }
 
 // A question the main agent sent the Walk agent with walk_ask, and the reader's walk_answer.
 export type WalkAsk = { n: number; question: string; at: number; answer: { text: string; at: number } | null }
@@ -233,7 +242,7 @@ export type WalkRun = {
   // Every Walk agent of this run, so the guard covers a resumed or replaced one.
   agentIds: string[]
   stepBlocks: Record<string, number>
-  // Blocking reports, ENHANCE notes and RECORD requests, numbered in the order they came.
+  // Blocking reports, ENHANCE notes, RECORD requests and COPY notes, numbered in the order they came.
   findings: WalkFinding[]
   denials: { tool: string; detail: string; at: number }[]
   // Repo-relative or ~ paths the docs tell the reader to open or edit.
@@ -244,6 +253,8 @@ export type WalkRun = {
   nudges: number
   // /walk-doc --re-record: every reader records each recording on the page again. Absent in runs from before the flag.
   reRecord?: boolean
+  // The docs pages sent to the copy editor. Absent in runs from before it.
+  copyReviews?: WalkCopyReview[]
   // Walk Bash commands recorded so far; each one's cast is numbered from this. Absent in runs from before recording.
   recorded?: number
   // Files Claude Code saved a Walk agent's own oversized tool output to; the guard opens exactly these under ~/.claude.
