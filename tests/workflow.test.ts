@@ -3264,6 +3264,55 @@ test('the second reviewer has its own answer, and it reaches the agent too', asy
   expect(w.prompts.join('\n')).toContain('b.ts:9')
 })
 
+const TWO_AXES = { config: { mode: 'heavy' }, wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'r-1' } }, reviewSpec: { agentId: 'r-2' } } as never } as never
+
+test('the report of each axis names that axis and what it is for', async ($, on) => {
+  const w = engine(on, TWO_AXES)
+  await start($, w)
+  await $.turn.complete({ agentId: 'r-2', answer: 'Critical: the issue asks for b.ts:9' } as never)
+  await settle()
+  await $.turn.complete({ agentId: 'r-1', answer: 'Important: a.ts:3 breaks a written rule' } as never)
+  await settle()
+  const [spec, standards] = w.prompts.filter(p => p.includes('b.ts:9') || p.includes('a.ts:3'))
+  expect(spec).toContain('The specification review of')
+  expect(spec).toContain('whether the diff does all that the issue, the plan and the interview answers ask')
+  expect(spec).toContain('The standards review gives its own report')
+  expect(spec).toContain('when both reports have come')
+  expect(standards).toContain('The standards review of')
+  expect(standards).toContain('the rules that the repository wrote down')
+  expect(standards).toContain('The specification review gives its own report')
+})
+
+test('the one reviewer of a light change says that it covers both questions', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'r-1' } } } })
+  await start($, w)
+  await $.turn.complete({ agentId: 'r-1', answer: 'Critical: a.ts:3 loses the error' } as never)
+  await settle()
+  const said = w.prompts.join('\n')
+  expect(said).toContain('The code review of')
+  expect(said).toContain('the written rules of the repository and the issue')
+  expect(said).not.toContain('gives its own report')
+})
+
+test('a failed axis is named, and its repair carries the question of that axis', async ($, on) => {
+  const w = engine(on, TWO_AXES)
+  await start($, w)
+  await $.turn.complete({ agentId: 'r-2', answer: '', reason: 'error' } as never)
+  await settle()
+  const said = w.prompts.join('\n')
+  expect(said).toContain('The specification review of')
+  expect(said).toContain('failed')
+  expect(said).toContain('Review axis: specification.')
+})
+
+test('a resume names the axis of each answer', async ($, on) => {
+  const w = engine(on, { config: { mode: 'heavy' }, wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'r-1', answer: 'standards are fine' } }, reviewSpec: { agentId: 'r-2', answer: 'the spec is met' } } as never })
+  await start($, w)
+  const said = (await tool($, 'started', { issue: 7 })).text
+  expect(said).toContain('The standards review answered:\nstandards are fine')
+  expect(said).toContain('The specification review answered:\nthe spec is met')
+})
+
 test('a resume in heavy mode gives both answers, and does not start the reviewers again', async ($, on) => {
   const w = engine(on, { config: { mode: 'heavy' }, wf: { state: 'reviewing', prs: [12], hooks: { review: { firedAt: 1, agentId: 'r-1', answer: 'standards are fine' } }, reviewSpec: { agentId: 'r-2', answer: 'the spec is met' } } as never })
   await start($, w)

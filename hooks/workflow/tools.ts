@@ -1392,11 +1392,18 @@ async function keepAnswer($: EngineInterface, root: string, agentId: string, rep
   }
 }
 
+// What each code reviewer is called, and what its report is for. Two reviewers on one PR must not read as one report sent twice.
+const STANDARDS_REPORT = { name: 'standards review', purpose: 'It checks the diff against the rules that the repository wrote down, and not whether the change meets the issue.', question: AXIS_STANDARDS, other: 'specification review' }
+const SPECIFICATION_REPORT = { name: 'specification review', purpose: 'It checks whether the diff does all that the issue, the plan and the interview answers ask, and nothing more. It does not judge the code style.', question: AXIS_SPECIFICATION, other: 'standards review' }
+const ONE_REPORT = { name: 'code review', purpose: 'It checks the diff for correctness and security, against the written rules of the repository and the issue.', question: '', other: '' }
+const reportOf = (wf: Workflow, agentId: string) => (!wf.reviewSpec ? ONE_REPORT : wf.reviewSpec.agentId === agentId ? SPECIFICATION_REPORT : STANDARDS_REPORT)
+
 // The reviewer has ended: keep its answer in the record, and give it to the main agent.
 // The main agent gets the answer even when the record does not. An empty ending or an error is not an answer.
 export async function reviewerAnswered($: EngineInterface, wf: Workflow, agentId: string, reply: string, reason?: string): Promise<void> {
   const isCopy = wf.reviewCopy?.agentId === agentId
-  const who = isCopy ? 'copy editor' : 'code review'
+  const report = reportOf(wf, agentId)
+  const who = isCopy ? 'copy editor' : report.name
   const send = (text: string) => {
     void $.prompt.submit({ text }).catch((error: unknown) => {
       $.ui.toast(`workflow: the answer of the ${who} for ${labelOf(wf)} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
@@ -1405,14 +1412,14 @@ export async function reviewerAnswered($: EngineInterface, wf: Workflow, agentId
   const isError = reason === 'error' || reason === 'aborted'
   if (isError || reply.trim() === '') {
     const ending = isError ? `its turn ended with the reason "${reason}"` : 'it gave no answer'
-    send(`The ${who} of ${labelOf(wf)} failed: ${ending}.${reply.trim() === '' ? '' : ` Its last text:\n\n${reply}\n\n`} Repair: start the ${isCopy ? 'ndev:copy-editor' : 'ndev:diff-reviewer'} agent yourself in ${wf.root}, or call started to restart it.`)
+    send(`The ${who} of ${labelOf(wf)} failed: ${ending}.${reply.trim() === '' ? '' : ` Its last text:\n\n${reply}\n\n`} Repair: start the ${isCopy ? 'ndev:copy-editor' : 'ndev:diff-reviewer'} agent yourself in ${wf.root}${!isCopy && report.question ? `, with this question: ${report.question}` : ''}, or call started to restart it.`)
     return
   }
   const kept = await keepAnswer($, wf.root, agentId, reply)
   if (kept === 'already') return
   const lost = kept === 'kept' ? '' : `\n\nThis answer was not saved, so a resume does not know it: ${kept}.`
-  if (isCopy) send(`The copy edit of ${labelOf(wf)} has ended:\n\n${reply}${lost}\n\n${COPY_ANSWER_STEP}`)
-  else send(`The code review of ${labelOf(wf)} has ended:\n\n${reply}${lost}\n\nFix what it found with checkpoint, which holds those commits. Then call finishedReview with the result.`)
+  if (isCopy) send(`The copy edit of ${labelOf(wf)} has ended. It checks only the language of the prose that readers see.\n\n${reply}${lost}\n\n${COPY_ANSWER_STEP}`)
+  else send(`The ${report.name} of ${labelOf(wf)} has ended. ${report.purpose}${report.other ? ` The ${report.other} gives its own report.` : ''}\n\n${reply}${lost}\n\nFix what it found with checkpoint, which holds those commits. Then call finishedReview with the result${report.other ? ', when both reports have come' : ''}.`)
 }
 
 // A resume in the review stage. Each reviewer is known, still runs, or a restart lost it, and only a lost one starts again.
@@ -1422,7 +1429,7 @@ async function resumeReview($: EngineInterface, wf: Workflow, facts: Facts): Pro
   const code = [wf.hooks?.review, ...(wf.reviewSpec ? [wf.reviewSpec] : [])]
   const codeLost = code.some(isLost)
   const copyLost = wf.reviewCopy !== undefined && isLost(wf.reviewCopy)
-  const kept = [...(codeLost ? [] : code.map(p => ['code review', p] as const)), ...(wf.reviewCopy && !copyLost ? [['copy edit', wf.reviewCopy] as const] : [])]
+  const kept = [...(codeLost ? [] : code.map(p => [reportOf(wf, p?.agentId ?? '').name, p] as const)), ...(wf.reviewCopy && !copyLost ? [['copy edit', wf.reviewCopy] as const] : [])]
   const lines = kept.map(([name, p]) => (p?.answer !== undefined ? `The ${name} answered:\n${p.answer}` : `The ${name} still runs: agent ${p?.agentId}.`))
   // The answers come first, so the note of a start is the last thing the agent reads.
   lines.sort((a, b) => Number(a.includes('still runs')) - Number(b.includes('still runs')))
