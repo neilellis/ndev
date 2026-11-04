@@ -98,6 +98,14 @@ const githubText = (g: GitHub | undefined) =>
     ? `GitHub (from ${CONFIG_FILE}; do not look these up again): repository ${g.repo}; ${g.board ? `project board ${g.board.owner} #${g.board.number}` : g.board === null ? 'no project board' : 'project board not set yet'}. The github and board scripts read these values from the file.`
     : undefined
 
+const REPORT_TEXT = [
+  'Final report of development work. Give the human only these sections, in this order, and leave out a section with no items:',
+  '1. **Decide**: each decision the human must make, as a question, labelled Q1, Q2.',
+  '2. **PRs**: each PR number with its link and its status in a short phrase, such as "checks passed, ready for you to merge" or "draft, 2 checks failing". For work with no PR, give the commit and whether it is pushed.',
+  '3. **Follow-up issues I can create**: one line each, labelled I1, I2. Do not create them until the human picks.',
+  'Before the report, put everything else in a comment on the PR with `mcp__ndev__comment`: what changed, the checks (passed, failed, skipped and not run), the files and the limits. With no PR, put it in the commit message. Do not tell the human anything that the PR shows, except its status.',
+].join('\n')
+
 const WIKI_TEXT =
   'Living development wiki: ~/dev-wiki (index `wiki.md`, rules `AGENTS.md`). At the start of development work, read the index once and open only the pages that fit. When you learn a reusable development, design or copywriting lesson that holds outside this project and its domain (a user correction, a non-obvious cause, a guard that lied or did not run, a procedure written a second time), record it with the `ndev:dev-wiki` skill before you finish the task; after each push the plugin also asks for the ingest. A project or domain fact goes to the project wiki (the `remember` skill) instead.'
 
@@ -429,6 +437,7 @@ export const register: Register = (on, options) => {
       brandingText(project?.config.branding),
       githubText(project?.config.github),
       WIKI_TEXT,
+      REPORT_TEXT,
       'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /orca-triage start.',
     ]
       .filter(Boolean)

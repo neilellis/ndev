@@ -17,7 +17,7 @@ These rules come from the plugin. Each line links to its full page. You must not
 5. **Never silence a rule.** Fix it, or add a narrow inline ignore with the reason on the same line. → `kb/type-safety.md`
 6. **Make a repeated script permanent.** The second copy goes in `scripts/`, with a test. Skills hold instructions only.
 7. **Never spend the subscription.** No `claude -p` without the user's explicit permission for that run.
-8. **Never overclaim.** Give numbers with their scope. Report passed, failed, skipped and not run separately.
+8. **Never overclaim.** Give numbers with their scope. Report passed, failed, skipped and not run separately, in a comment on the PR.
 9. **Worktree and PR only.** Never commit to `<main branch>`. One PR per unit of work. A human merges. Use Orca for worktrees and handoffs. → `kb/git-and-worktrees.md`
 10. **Simple English.** ASD-STE100, British spelling, the answer first. → `kb/writing.md`, skill `simple-english`
 11. **Forget history.** Documents and code describe the present. Use the `forget` skill when a fact stops being true.

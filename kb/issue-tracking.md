@@ -36,7 +36,7 @@
 - One PR per unit of work ([core belief 9](core-beliefs.md#9-work-only-in-a-worktree-with-a-pr-one-pr-per-unit-of-work)).
 - Open as a draft while work remains. Mark it ready only when every required check ran.
 - The body leads with what changed and why, then the evidence: the tests that you ran and their result, and what you did not run.
-- Report passed, failed, skipped (with the reason) and not run as separate states.
+- Report passed, failed, skipped (with the reason) and not run as separate states, in a comment on the PR. With no PR, put them in the commit message.
 - Link the issue with a closing keyword (`Closes #123`).
 - A human merges.
 

@@ -113,7 +113,7 @@ Choose the checks from the affected behaviour. Use the commands named in the pro
 | Schema, auth, concurrency, external interfaces | Failure cases through the affected integration tests. |
 | Documentation or skills only | `git diff --check`; `${CLAUDE_PLUGIN_ROOT}/scripts/docs/readability.sh`; `test -f` for each changed reference; a skill validator if one is installed. A missing validator is an unrun check. |
 
-Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states.
+Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states, in a comment on the PR. With no PR, put them in the commit message.
 
 One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `r` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
 

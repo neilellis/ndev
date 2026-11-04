@@ -104,7 +104,7 @@ Detail: [precheck-and-push.md](precheck-and-push.md).
 **Apply it.**
 
 - A number carries its scope: "62 of 391 files", not "most files".
-- Report passed, failed, skipped (with the reason) and not run as separate states.
+- Report passed, failed, skipped (with the reason) and not run as separate states, in a comment on the PR. With no PR, put them in the commit message.
 - A speed number needs the run count and the noise floor.
 - A rate claim needs a rate: "19 of 20 runs", not "it works now".
 - When you find that an earlier claim was wrong, correct it where you made it.
