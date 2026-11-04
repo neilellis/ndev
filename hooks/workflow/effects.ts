@@ -124,16 +124,15 @@ export function readPr($: EngineInterface, root: string, repo: string, n: number
   return ghOne<Pr>($, root, repo, ['pr-read', String(n)])
 }
 
-// GitHub calls are limited. Local git answers these two questions with no call at all.
+// GitHub calls are limited. Local git answers this question with no call at all.
 export async function repoFromOrigin($: EngineInterface, root: string): Promise<string> {
   const url = await gitOut(root, $, 'remote', 'get-url', 'origin')
   const match = url.match(/github\.com[:/]([^/]+\/[^/]+?)(\.git)?\/?$/)
   if (!match) throw new Refuse(`Refused: the origin of ${root} is not a GitHub repository (${url}). Repair: set github.repo in .neil-dev.json with /dev setup.`)
   return match[1] as string
 }
+// From GitHub and not from refs/remotes/origin/HEAD: clone sets that ref once, and a fetch does not move it.
 export async function defaultBranch($: EngineInterface, root: string, repo: string): Promise<string> {
-  const local = await git(root, $, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD')
-  if (local.exitCode === 0 && local.stdout.trim().startsWith('origin/')) return local.stdout.trim().slice('origin/'.length)
   return (await ghOne<{ default_branch: string }>($, root, repo, ['default-branch'])).default_branch
 }
 

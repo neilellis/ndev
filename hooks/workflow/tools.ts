@@ -719,6 +719,15 @@ async function workSkill($: EngineInterface, mode: Facts['mode']): Promise<strin
   return `The ${name} skill follows. Develop by it. Its relative paths start at ${folder}.\n\n${body.replaceAll('${CLAUDE_PLUGIN_ROOT}', $.plugin.root)}`
 }
 
+// A new issue in a worktree takes the branch that is checked out. The work of a merged PR is finished,
+// so a new issue on that branch would carry old commits. A PR closed without a merge can go on.
+async function refuseMergedBranch($: EngineInterface, root: string, repo: string, branch: string, base: string, issue: number): Promise<void> {
+  const prs = await ghLines<{ number: number; state: string; merged: boolean }>($, root, repo, ['pr-list', '--head', branch, '--state', 'all'])
+  const merged = prs.find(p => p.merged)
+  if (!merged || prs.some(p => p.state === 'open')) return
+  throw new Refuse(`Refused: the branch ${branch} of ${root} has merged in PR #${merged.number} and has no open PR, so issue #${issue} cannot start on it. Nothing changed. Repair: git -C ${root} fetch origin ${base} && git -C ${root} switch -c issue-${issue} origin/${base}, then call started again. Or start #${issue} from the main checkout, which claims a new worktree.`)
+}
+
 async function started($: EngineInterface, c: Ctx): Promise<string> {
   if (await read($, workflowDeclined)) throw new Refuse('Refused: the human chose to work without the workflow in this session. Do the work without these tools, or ask the human to type /flow on.')
   const { args, project } = c
@@ -801,6 +810,8 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
       claimNote = await initSubmodules($, project, home, root)
     } else if (branchHere === base) {
       throw new Refuse(`Refused: ${home} is on the base branch ${base}. Create a branch first, or set "projectLevel": "straw_man" to commit to it from the main checkout.`)
+    } else {
+      await refuseMergedBranch($, home, repo, branchHere, base, issue)
     }
   }
   if (wf?.owner && wf.owner.session !== session && now - wf.owner.at < OWNER_LIVE_MS && args.takeOver !== true) {

@@ -76,6 +76,7 @@ const engine = (on: On, opts: Opts = {}) => {
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
+    originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
   const gh: string[] = []
@@ -187,7 +188,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'rev-parse') return ok(`${ROOT}\n`)
       if (a[1] === 'status') return ok(s.dirty.join('\n'))
       if (a[1] === 'remote') return ok(`git@github.com:${REPO}.git\n`)
-      if (a[1] === 'symbolic-ref') return ok('origin/main\n')
+      if (a[1] === 'symbolic-ref') return ok(`${s.originHead}\n`)
       if (a[1] === 'log' && line.includes('--grep=')) return ok([...s.ops].some(op => line.includes(`Ndev-Op: ${op}$`)) ? `${s.sha}\n` : '')
       if (a[1] === 'log' && line.includes('%ct')) return ok(`${s.commitAt / 1000}\n`)
       if (a[1] === 'log' && line.includes('%cI')) return s.commitUnknown ? ok('', 128, `fatal: bad object ${a.at(-1)}`) : ok(`${s.commitIso}\n`)
@@ -279,6 +280,8 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[2] === 'pr-read') return ok(JSON.stringify(s.pr))
       if (a[2] === 'issue-read') return ok(JSON.stringify({ state: 'open', title: 'T' }))
       if (a[2] === 'issue-new') return ok('{"number":31}\n')
+      if (a[2] === 'default-branch') return s.defaultBranchFails ? ok('', 1, s.defaultBranchFails) : ok(JSON.stringify({ default_branch: s.githubBase }))
+      if (a[2] === 'pr-list' && line.includes('--state all')) return ok(s.branchPrs.map(p => JSON.stringify(p)).join('\n'))
       if (a[2] === 'pr-list') return ok(s.noOpenPr ? '' : '{"number":12}\n')
       if (a[2] === 'pr-edit') return ok('')
       if (a[2] === 'subissues') return s.linkFails ? ok('', 1, s.linkFails) : ok('')
@@ -1848,6 +1851,72 @@ test('a record that holds a workflow is a good record for the stacks and the ses
   const w = engine(on)
   await start($, w)
   expect(w.toasts.join(' ')).not.toContain('unknown top-level key')
+})
+
+test('started takes the base from GitHub when the local origin/HEAD is stale', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.originHead = 'origin/initial-site'
+  w.s.branch = 'fix/new-work'
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.base).toBe('main')
+})
+
+test('started refuses and records nothing when GitHub does not say the default branch, and says why', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.defaultBranchFails = 'HTTP 502 from api.github.com'
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('HTTP 502 from api.github.com')
+  expect(w.state()).toBeUndefined()
+})
+
+test('started does not claim a branch whose PR has merged, and names the repair', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.branch = 'fix/lens-hybrid-copy'
+  w.s.branchPrs = [{ number: 58, state: 'closed', merged: true }]
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('fix/lens-hybrid-copy')
+  expect(r.text).toContain('#58')
+  expect(r.text).toContain('git -C /')
+  expect(r.text).toContain('origin/main')
+  expect(w.state()).toBeUndefined()
+  expect(w.pushes).toEqual([])
+})
+
+test('started keeps a branch that has an open PR beside a merged one', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.branch = 'fix/second-round'
+  w.s.branchPrs = [{ number: 58, state: 'closed', merged: true }, { number: 70, state: 'open', merged: false }]
+  expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
+  expect(w.state()?.branch).toBe('fix/second-round')
+})
+
+test('started keeps a branch whose only PR was closed without a merge', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.branch = 'fix/reopened'
+  w.s.branchPrs = [{ number: 59, state: 'closed', merged: false }]
+  expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
+  expect(w.state()?.branch).toBe('fix/reopened')
+})
+
+test('create names the filed issue when the branch of the worktree has merged', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.branch = 'fix/lens-hybrid-copy'
+  w.s.branchPrs = [{ number: 58, state: 'closed', merged: true }]
+  const r = await tool($, 'create', { shortName: 'deactivate-halloween', description: 'Deactivate halloween', mode: 'light' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('Issue #31')
+  expect(r.text).toContain('fix/lens-hybrid-copy')
+  expect(r.text).toContain('Do not call create again')
+  expect(w.pushes).toEqual([])
 })
 
 test('a failed PR step in started keeps the record, so a retry resumes and does not claim again', async ($, on) => {
