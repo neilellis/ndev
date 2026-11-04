@@ -2110,7 +2110,6 @@ test('a raw git commit or push is refused while a workflow runs, and names the t
   expect(fine.deny).toBeUndefined()
 })
 
-for (const command of [
 test('a generated report that opens with a machine marker is not feedback at done', async ($, on) => {
   const w = engine(on, { wf: finishing() })
   await start($, w)
@@ -2122,6 +2121,7 @@ test('a generated report that opens with a machine marker is not feedback at don
   expect(w.state()?.state).not.toBe('revising')
 })
 
+for (const command of [
   'git -C ~/dev-wiki add -A && git -C ~/dev-wiki commit -qm "learn: x"',
   'git -C ~/dev-wiki commit -m "learn: never git push by hand"',
   'git -C "$HOME/dev-wiki" commit -m x',
