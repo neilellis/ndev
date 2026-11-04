@@ -20,6 +20,7 @@ export const IDLE_MS = 20 * 60_000
 const CHECK_MS = 3 * 60_000 // A read of the checks costs two GitHub calls. NDEV_WORKFLOW_CHECK_MS overrides it.
 const STUCK_MS = 60 * 60_000 // Checks pending this long are stuck, not slow.
 const TICK_MS = 60_000
+const NO_SESSION = /is not available in this mode: no session is bound/
 const TURN_END_LIMIT = 3 // Turn ends with no progress before the block.
 const IDLE_LIMIT = 1 // Idle nudges with no progress before the block.
 
@@ -236,6 +237,8 @@ export async function startWatchdog($: EngineInterface, project: () => LoadedCon
     try {
       await tick($, project)
     } catch (error) {
+      // The timer can fire in a process with no session. The host says to carry on: the next tick tries again.
+      if (NO_SESSION.test(String(error))) return note($, 'quiet: no session is bound in this process yet')
       $.ui.toast(`workflow: the idle check failed: ${String(error).slice(0, 240)}.${await reportFault($, 'workflow idle check', String(error), `the project ${project()?.root ?? 'unknown'}`)}`)
     }
   })
