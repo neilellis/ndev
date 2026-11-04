@@ -8,7 +8,7 @@ Take a component only when it improves a real interaction. Compare each control 
 
 | Interaction | Good fit | Why |
 |---|---|---|
-| A destructive action (reset, delete all) | Hold button | Holding for 1 to 2 s is a clearer guard than a second click. |
+| Any delete or destructive action (delete, reset, delete all) | Hold button | Holding for 1 to 2 s is a clearer guard than a second click. |
 | Progress against targets | Apple activity card | Rings show several ratios at a glance, for example steps done and questions answered. |
 | A live count on a dashboard | Number ticker (`smooth-number` and similar) | A changing number reads as live. |
 | A command search over many actions | Action search bar | It suits a long list of actions, not three buttons. |
