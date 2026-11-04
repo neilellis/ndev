@@ -13,7 +13,7 @@ import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
 import { CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, run, runCheck, said, withdrawAlert } from './effects'
-import type { Check } from './effects'
+import type { Check, Ran } from './effects'
 import { withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
@@ -2041,12 +2041,16 @@ async function screenshot($: EngineInterface, { args, project }: Ctx): Promise<s
 
 const CHANGE_TYPES_ARG = { type: 'array', items: { type: 'string', enum: [...CHANGE_TYPES] }, description: 'Optional. What the change holds, when the changed paths do not show it, such as web for a .ts file that renders a page. The changed paths always add their types too.' }
 
-const WAIT_TIMEOUT_S = 3600
+// The most that one wait call can hold the agent, with all its checks and pauses.
+const WAIT_MAX_S = 1200
+const WAIT_CHECK_MAX_MS = 60_000
+// The last part of a timeout, or a tenth of it if that is less: one part for the last check, and one to end the wait.
+const WAIT_END_MS = 10_000
 // GitHub calls are limited, so a wait on GitHub reads seldom. Each check is one read.
 const WAIT_GITHUB_PERIOD_S = { fallback: 300, least: 60 }
 const WAIT_PR_STATES = ['open', 'closed', 'merged', 'draft', 'ready', 'mergeable']
 const WAIT_ISSUE_STATES = ['open', 'closed']
-const WAIT_LIMITS = { attempts: { type: 'integer', description: 'The most checks. The default is as many as the timeout allows' }, timeout: { type: 'number', description: `The most seconds to wait. The default is ${WAIT_TIMEOUT_S}` } }
+const WAIT_LIMITS = { attempts: { type: 'integer', description: 'The most checks. The default is as many as the timeout allows' }, timeout: { type: 'number', description: `In seconds: the most time this wait can hold the agent, with all its checks and pauses. The default and the highest value is ${WAIT_MAX_S} (20 minutes)` } }
 const ISSUE_ARG = { type: 'number', description: 'The issue this call is for: the one that this agent is on. A worktree can hold several issues.' }
 const PR_ARG = { type: 'number', description: 'The PR this call is for. From finishedDevelopment on, the PR goes through the review, the checks and done. Give issue or pr.' }
 const SPEC_LIST: Spec[] = [
@@ -2075,8 +2079,8 @@ const SPEC_LIST: Spec[] = [
   { name: 'waitForSubAgent', description: 'Hold this agent until the named subagent ends. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { claude_agent_id: { ...STR, description: 'The id of the agent' }, period: { type: 'number', description: 'Seconds between checks. The default is 5' }, ...WAIT_LIMITS }, required: ['claude_agent_id'] },
   { name: 'waitForURL', description: 'Hold this agent until the URL answers with a 2xx status. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { url: STR, period: { type: 'number', description: 'Seconds between checks. The default is 5' }, ...WAIT_LIMITS }, required: ['url'] },
   { name: 'waitForProcessEnd', description: 'Hold this agent until the process ends. It cannot read the exit code: read the log or the result file of the process. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { pid: { type: 'integer' }, period: { type: 'number', description: 'Seconds between checks. The default is 5' }, ...WAIT_LIMITS }, required: ['pid'] },
-  { name: 'waitForSeconds', description: 'Hold this agent for this many seconds. attempts has no effect here, because no check runs. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { secs: { type: 'number' }, ...WAIT_LIMITS }, required: ['secs'] },
-  { name: 'waitFor', description: 'Hold this agent and run the shell command every period seconds, in the worktree, until it exits 0. Each run may last 60 s. It gives up after attempts or timeout. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { shell_command: STR, period: { type: 'number', description: 'Seconds between checks. The default is 30' }, ...WAIT_LIMITS }, required: ['shell_command'] },
+  { name: 'waitForSeconds', description: 'Hold this agent for this many seconds. attempts has no effect here, because no check runs. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { secs: { type: 'number', description: `The seconds to hold, at most ${WAIT_MAX_S}` }, ...WAIT_LIMITS }, required: ['secs'] },
+  { name: 'waitFor', description: 'Hold this agent and run the shell command every period seconds, in the worktree, until it exits 0. Each run may last 60 s, or what is left of the timeout if that is less. It gives up after attempts or timeout. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.', properties: { shell_command: STR, period: { type: 'number', description: 'Seconds between checks. The default is 30' }, ...WAIT_LIMITS }, required: ['shell_command'] },
   { name: 'waitForPR', description: `Hold this agent until the PR reaches the state: ${WAIT_PR_STATES.join(', ')}. Do not use it for the checks of this PR: the workflow watches those. Each check is one GitHub read, so period is at least ${WAIT_GITHUB_PERIOD_S.least} s. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.`, properties: { pr: { type: 'integer' }, state: { type: 'string', enum: [...WAIT_PR_STATES] }, period: { type: 'number', description: `Seconds between checks. The default is ${WAIT_GITHUB_PERIOD_S.fallback}` }, ...WAIT_LIMITS }, required: ['pr', 'state'] },
   { name: 'waitForIssue', description: `Hold this agent until each named issue reaches the state: ${WAIT_ISSUE_STATES.join(', ')}. Each check is one GitHub read, so period is at least ${WAIT_GITHUB_PERIOD_S.least} s. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.`, properties: { waitOn: { type: 'array', items: { type: 'integer' }, description: 'The issues to wait for. The wait ends when all of them reach the state' }, state: { type: 'string', enum: [...WAIT_ISSUE_STATES] }, period: { type: 'number', description: `Seconds between checks. The default is ${WAIT_GITHUB_PERIOD_S.fallback}` }, ...WAIT_LIMITS }, required: ['waitOn', 'state'] },
   { name: 'waitForState', description: `Hold this agent until another issue's workflow reaches the state, or is past it on the main line. It reads the workflow records in the worktrees of this repository and makes no GitHub call. An issue with no record yet counts as not there, so the wait goes on. The workflow is in the state "wait" meanwhile. The human can end the wait with /unblock.`, properties: { issue_id: { type: 'integer', description: 'The issue to watch. It is not the issue of this agent' }, state: { type: 'string', enum: [...STATES] }, period: { type: 'number', description: 'Seconds between checks. The default is 30' }, ...WAIT_LIMITS }, required: ['issue_id', 'state'] },
@@ -2319,6 +2323,11 @@ function waitNumber(a: Args, tool: string, key: string, fallback: number, isWhol
   return value
 }
 
+function waitLimit(value: number, tool: string, key: string): number {
+  if (value > WAIT_MAX_S) throw new Refuse(`Refused: ${tool} can hold the agent for at most ${WAIT_MAX_S} s in all, and ${key} is ${value}. Nothing changed. Repair: give ${WAIT_MAX_S} or less. If the wait gives up, call it again, or call blocked if only the human can go on.`)
+  return value
+}
+
 function waitGithubPeriod(a: Args, tool: string): number {
   const period = waitNumber(a, tool, 'period', WAIT_GITHUB_PERIOD_S.fallback)
   if (period < WAIT_GITHUB_PERIOD_S.least) throw new Refuse(`Refused: ${tool} reads GitHub at each check and calls are limited, so period must be at least ${WAIT_GITHUB_PERIOD_S.least} s. It got ${period}. Nothing changed.`)
@@ -2343,7 +2352,7 @@ function waitSpec(name: string, a: Args): WaitSpec {
     }
     case 'waitForSeconds': {
       if (a.secs === undefined) throw new Refuse('Refused: waitForSeconds needs secs. Nothing changed.')
-      const secs = waitNumber(a, name, 'secs', 0)
+      const secs = waitLimit(waitNumber(a, name, 'secs', 0), name, 'secs')
       return { what: `${secs} s`, period: secs }
     }
     case 'waitFor': {
@@ -2392,8 +2401,8 @@ function reachedState(wf: Workflow, wanted: State, startedAt: number): string | 
 }
 
 // The issue can be in any worktree of this repository. One unreadable file must not hide the record in another worktree, so a problem counts only if the record is not found.
-async function checkIssueState($: EngineInterface, root: string, issue: number, wanted: State, startedAt: number): Promise<{ isOver: boolean; detail: string; seen?: Record<string, string> }> {
-  const listed = await git(root, $, 'worktree', 'list', '--porcelain')
+async function checkIssueState($: EngineInterface, root: string, issue: number, wanted: State, startedAt: number, untilMs: number): Promise<{ isOver: boolean; detail: string; seen?: Record<string, string> }> {
+  const listed = await waitRun($, ['git', 'worktree', 'list', '--porcelain'], root, untilMs)
   if (listed.exitCode !== 0) return { isOver: false, detail: `git worktree list in ${root}: exit code ${listed.exitCode}: ${listed.stderr.trim().slice(-300)}` }
   const worktrees = listed.stdout.split('\n').filter(line => line.startsWith('worktree ')).map(line => line.slice(9))
   const found: Workflow[] = []
@@ -2422,7 +2431,16 @@ async function checkIssueState($: EngineInterface, root: string, issue: number, 
 }
 
 // One check. A check is short: a command that hangs is killed, and counts as a failed attempt.
-async function waitCheck($: EngineInterface, name: string, a: Args, root: string, startedAt: number): Promise<{ isOver: boolean; detail: string; seen?: Record<string, string> }> {
+// One process of a check, limited to what is left of the wait's time. A process past that limit makes the host reject, which run reports as a process that did not start.
+async function waitRun($: EngineInterface, argv: string[], cwd: string, untilMs: number, env?: Record<string, string>): Promise<Ran> {
+  const at = await $.clock.now()
+  const timeoutMs = Math.min(WAIT_CHECK_MAX_MS, Math.ceil(untilMs - at))
+  if (timeoutMs < 1) return { exitCode: 124, stdout: '', stderr: `${argv[0]} did not start: the time of this wait is up.` }
+  const r = await run($, argv, { cwd, timeoutMs, ...(env ? { env } : {}) })
+  return r.exitCode === 127 && (await $.clock.now()) - at >= timeoutMs ? { ...r, exitCode: 124, stderr: `${argv[0]} was stopped after ${timeoutMs} ms, the most that this check could use.` } : r
+}
+
+async function waitCheck($: EngineInterface, name: string, a: Args, root: string, startedAt: number, untilMs: number): Promise<{ isOver: boolean; detail: string; seen?: Record<string, string> }> {
   switch (name) {
     case 'waitForPR':
     case 'waitForIssue': {
@@ -2435,7 +2453,7 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
       let allThere = true
       for (const number of numbers) {
         const label = isPr ? `PR #${String(number)}` : `issue #${String(number)}`
-        const r = await run($, ['bash', `${$.plugin.root}/scripts/github/gh.sh`, isPr ? 'pr-read' : 'issue-read', String(number)], { cwd: root, env: { GH_REPO: wf?.repo ?? '' } })
+        const r = await waitRun($, ['bash', `${$.plugin.root}/scripts/github/gh.sh`, isPr ? 'pr-read' : 'issue-read', String(number)], root, untilMs, { GH_REPO: wf?.repo ?? '' })
         // A failed read is one failed attempt: the network or the quota can recover. A wrong number cannot.
         if (r.exitCode !== 0) {
           const why = `${label}: gh.sh exit code ${r.exitCode}: ${r.stderr.trim().slice(-300)}`
@@ -2459,7 +2477,7 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
       return { isOver: allThere, detail: lines.join(' '), seen: shown }
     }
     case 'waitForState':
-      return checkIssueState($, root, Number(a.issue_id), text(a, 'state') as State, startedAt)
+      return checkIssueState($, root, Number(a.issue_id), text(a, 'state') as State, startedAt, untilMs)
     case 'waitForSubAgent': {
       const id = text(a, 'claude_agent_id')
       const agent = (await $.agent.list()).find(x => x.id === id)
@@ -2467,12 +2485,12 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
       return { isOver: !['pending', 'running', 'waiting'].includes(agent.status), detail: `Agent ${id} is ${agent.status}.`, seen: { status: agent.status } }
     }
     case 'waitForURL': {
-      const r = await run($, ['curl', '-sS', '-L', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '30', text(a, 'url')], { cwd: root })
+      const r = await waitRun($, ['curl', '-sS', '-L', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '30', text(a, 'url')], root, untilMs)
       const code = r.stdout.trim()
       return { isOver: r.exitCode === 0 && /^2\d\d$/.test(code), detail: `HTTP ${code || 'no answer'}, curl exit code ${r.exitCode}${r.stderr.trim() ? `: ${r.stderr.trim().slice(0, 300)}` : ''}`, seen: { status: code || 'no answer' } }
     }
     case 'waitForProcessEnd': {
-      const r = await run($, ['ps', '-o', 'stat=', '-p', String(a.pid)], { cwd: root })
+      const r = await waitRun($, ['ps', '-o', 'stat=', '-p', String(a.pid)], root, untilMs)
       const stat = r.stdout.trim()
       // ps exits 1 for no such process. A zombie has ended, and waits only for its parent to read it.
       if (r.exitCode === 1 || stat.startsWith('Z')) return { isOver: true, detail: `Process ${String(a.pid)} has ended. Read its log or result file for how it ended.` }
@@ -2481,7 +2499,7 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
     case 'waitForSeconds':
       return { isOver: (await $.clock.now()) - startedAt >= Number(a.secs) * 1000, detail: `${String(a.secs)} s have passed.` }
     default: {
-      const r = await run($, ['bash', '-c', text(a, 'shell_command')], { cwd: root })
+      const r = await waitRun($, ['bash', '-c', text(a, 'shell_command')], root, untilMs)
       return { isOver: r.exitCode === 0, detail: `exit code ${r.exitCode}${r.stdout.trim() || r.stderr.trim() ? `: ${(r.stderr.trim() || r.stdout.trim()).slice(-400)}` : ''}`, seen: { 'exit code': String(r.exitCode), said: shownValue('said', r.stderr.trim() || r.stdout.trim()) } }
     }
   }
@@ -2584,11 +2602,12 @@ async function waitGoesOn($: EngineInterface, root: string, who: WaitWho, id: st
 }
 
 // Ends the wait in one step: the state goes back, or the human's answer is taken if a human came first.
-async function waitEnds($: EngineInterface, c: Ctx, root: string, who: WaitWho, id: string, label: string): Promise<string> {
+// The wait's time includes this. Past untilMs it does not wait for the queue: the save refuses a record that another writer changed.
+async function waitEnds($: EngineInterface, c: Ctx, root: string, who: WaitWho, id: string, label: string, untilMs: number): Promise<string> {
   for (let tries = 1; ; tries += 1) {
-    await whenTurnsFree($)
+    const isFree = await whenTurnsFree($, untilMs)
     try {
-      return await inTurn(async () => {
+      const end = async () => {
         const wf = await waitRecord($, root, who)
         const isHeld = wf.state === 'wait' && wf.waiting?.id === id
         const given = wf.waitAnswer?.id === id ? wf.waitAnswer.message : undefined
@@ -2597,7 +2616,8 @@ async function waitEnds($: EngineInterface, c: Ctx, root: string, who: WaitWho, 
         if (isHeld || given !== undefined) await saveWorkflow($, wf)
         const said = given ? `The human ended the wait and says: ${given}\n` : isHeld ? '' : `A human moved the workflow to the state "${wf.state}", so the wait ended.\n`
         return said + (await answer($, wf, await factsFor($, wf.root, c.project, wf)))
-      })
+      }
+      return await (isFree ? inTurn(end) : end())
     } catch (error) {
       if (tries >= 3 || !isStaleWrite(error)) throw error
     }
@@ -2609,12 +2629,18 @@ type WaitLimits = { signal: AbortSignal; budget: { remainingMs: number } }
 async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLimits): Promise<string> {
   const spec = waitSpec(name, c.args)
   const attempts = name === 'waitForSeconds' ? Infinity : waitNumber(c.args, name, 'attempts', Infinity, true)
-  const timeoutS = waitNumber(c.args, name, 'timeout', name === 'waitForSeconds' ? Math.max(WAIT_TIMEOUT_S, spec.period) : WAIT_TIMEOUT_S)
+  const timeoutS = waitLimit(waitNumber(c.args, name, 'timeout', WAIT_MAX_S), name, 'timeout')
+  if (name === 'waitForSeconds' && spec.period > timeoutS) throw new Refuse(`Refused: waitForSeconds cannot hold for ${spec.period} s with a timeout of ${timeoutS} s. Nothing changed. Repair: give secs of ${timeoutS} or less, or a longer timeout.`)
   const startedAt = await $.clock.now()
   const id = `${name}-${startedAt}`
+  const deadline = startedAt + timeoutS * 1000
+  // A set time runs no process and has its own end, so it keeps nothing back.
+  const endMs = name === 'waitForSeconds' ? 0 : Math.min(WAIT_END_MS, timeoutS * 100)
+  const checksEndAt = deadline - endMs
+  const lastCheckAt = checksEndAt - endMs
   // A set time is not a retry, so waitForSeconds never raises the notice.
-  const most = Math.min(attempts, Math.floor(timeoutS / spec.period))
-  await whenTurnsFree($)
+  const most = name === 'waitForSeconds' ? Infinity : Math.min(attempts, Math.ceil((lastCheckAt - startedAt) / (spec.period * 1000)) + 1)
+  if (!(await whenTurnsFree($, checksEndAt))) throw new Refuse(`${name} did not start its wait for ${spec.what}, because other tool calls held the queue for its timeout of ${timeoutS} s. Nothing changed. Repair: call it again when they end.`)
   const { root, live, who } = await retryStale($, () => inTurn(async () => {
     const wf = await current($, c)
     if (name === 'waitForState' && issuesOf(wf).includes(Number(c.args.issue_id))) throw new Refuse(`Refused: waitForState cannot watch issue #${String(c.args.issue_id)}, because this agent is on it and its state stays "wait" while the wait holds it. Nothing changed. Repair: name another issue.`)
@@ -2630,28 +2656,32 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
   let problem: string | undefined
   const told = (result: string) => (problem ? `${result}\nNo persistent notification: ${problem}` : result)
   try {
-    const deadline = startedAt + timeoutS * 1000
     let tries = 0
+    let last = ''
+    const gaveUp = async () => new Refuse(`${name} gave up on ${spec.what} within its timeout of ${timeoutS} s, after ${tries} attempts. ${tries ? `The last check: ${last}` : 'No check ran, because starting the wait used up the time'}. Repair: call it again, for at most ${WAIT_MAX_S} s more, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
     const pastHalf = async () => name !== 'waitForSeconds' && (tries * 2 > most || ((await $.clock.now()) - startedAt) * 2 > timeoutS * 1000)
     for (;;) {
-      if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name))
-      if (limits.signal.aborted) throw new Refuse(`Refused: ${name} for ${spec.what} was interrupted.\n${await waitEnds($, c, root, who, id, 'waitInterrupted')}`)
-      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts, because the host's time budget for one hook is nearly spent. Repair: call it again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp')}`)
-      const check = await waitCheck($, name, c.args, root, startedAt)
+      if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name, deadline))
+      if (limits.signal.aborted) throw new Refuse(`Refused: ${name} for ${spec.what} was interrupted.\n${await waitEnds($, c, root, who, id, 'waitInterrupted', deadline)}`)
+      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts, because the host's time budget for one hook is nearly spent. Repair: call it again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
+      // The time includes the checks, so none starts or runs past checksEndAt. waitForSeconds runs no process: its last check reads the clock.
+      if (name !== 'waitForSeconds' && (await $.clock.now()) >= checksEndAt) throw await gaveUp()
+      const check = await waitCheck($, name, c.args, root, startedAt, checksEndAt)
       tries += 1
+      last = check.detail
       const checkedAt = await $.clock.now()
-      await writeLive($, root, live, l => ({ ...l, wait: { id, tries, checkedAt, nextAt: Math.min(deadline, checkedAt + spec.period * 1000), detail: shownValue('detail', check.detail), seen: check.seen } }))
+      await writeLive($, root, live, l => ({ ...l, wait: { id, tries, checkedAt, nextAt: Math.min(lastCheckAt, checkedAt + spec.period * 1000), detail: shownValue('detail', check.detail), seen: check.seen } }))
       // A human can come during a check, which can last a minute. The answer goes first.
-      if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name))
-      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}\n${await waitEnds($, c, root, who, id, 'waitEnded')}`)
+      if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name, deadline))
+      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}\n${await waitEnds($, c, root, who, id, 'waitEnded', deadline)}`)
+      if (tries < attempts && (await $.clock.now()) >= lastCheckAt) throw await gaveUp()
       if (tries < attempts && !alert && (await pastHalf())) {
-        const raised = await waitAlert($, root, who, id, name, spec.what, tries, most, check.detail)
+        const raised = await waitAlert($, root, who, id, name, spec.what, tries, most, check.detail, checksEndAt)
         alert = raised.alert
         problem = raised.problem
       }
-      if (tries >= attempts) throw new Refuse(`${name} gave up on ${spec.what} after ${tries} attempts. The last check: ${check.detail}. Repair: call it again with more attempts, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp')}`)
-      if ((await $.clock.now()) >= deadline) throw new Refuse(`${name} gave up on ${spec.what} after its timeout of ${timeoutS} s and ${tries} attempts. The last check: ${check.detail}. Repair: call it again with a longer timeout, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp')}`)
-      const nextAt = Math.min(deadline, (await $.clock.now()) + spec.period * 1000)
+      if (tries >= attempts) throw new Refuse(`${name} gave up on ${spec.what} after ${tries} attempts. The last check: ${check.detail}. Repair: call it again with more attempts, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
+      const nextAt = Math.min(lastCheckAt, (await $.clock.now()) + spec.period * 1000)
       for (let now = await $.clock.now(); now < nextAt; now = await $.clock.now()) {
         const secs = Math.min(WAIT_SLICE_S, (nextAt - now) / 1000)
         const pause = await run($, ['sleep', String(secs)], { cwd: root, timeoutMs: Math.ceil((secs + 10) * 1000) })
@@ -2664,7 +2694,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
     // An unexpected failure must not leave the record in "wait", and if it does, the agent is told.
     const message = error instanceof Error ? error.message : String(error)
     if (error instanceof WaitRecordLost) throw new Error(`${name} for ${spec.what}: ${message}`)
-    const stuck = await waitEnds($, c, root, who, id, 'waitFailed').then(() => '', (e: unknown) => ` The state stays "wait", because going back also failed: ${e instanceof Error ? e.message : String(e)}. Repair: the human types /unblock <message>, or call started.`)
+    const stuck = await waitEnds($, c, root, who, id, 'waitFailed', deadline).then(() => '', (e: unknown) => ` The state stays "wait", because going back also failed: ${e instanceof Error ? e.message : String(e)}. Repair: the human types /unblock <message>, or call started.`)
     throw new Error(`${name} for ${spec.what}: ${message}.${stuck}`)
   } finally {
     activeWaits.delete(id)
@@ -2677,10 +2707,12 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
 
 // Past half the retries the wait may never end, so the human hears of it the way a block does. The
 // wait goes on, and it withdraws the notice when it ends.
-async function waitAlert($: EngineInterface, root: string, who: WaitWho, id: string, name: string, what: string, tries: number, most: number, last: string): Promise<{ alert?: { group: string; pid?: number }; problem?: string }> {
+async function waitAlert($: EngineInterface, root: string, who: WaitWho, id: string, name: string, what: string, tries: number, most: number, last: string, untilMs: number): Promise<{ alert?: { group: string; pid?: number }; problem?: string }> {
   const { issue } = who
   const raised = await raiseAlert($, root, issue, `${name} for ${what} has run ${tries} of ${most} checks. Last: ${last} /unblock ends the wait.`, `ndev: #${issue}: a wait is past half its retries`)
   const alert = { group: raised.group, pid: raised.pid }
+  // The record lets a later session withdraw the notice if this process dies. It does not hold the wait past its time.
+  if (!(await whenTurnsFree($, untilMs))) return { alert, problem: raised.problem }
   await retryStale($, () => inTurn(async () => {
     const wf = await readWaitRecord($, root, who)
     if (wf?.waiting?.id === id) {
@@ -3031,8 +3063,13 @@ export const inTurn = <T>(fn: () => Promise<T>): Promise<T> => {
 
 // A hook's budget of ten seconds runs on while it awaits the queue, and not through a process.
 // So a hook that must not die behind a long tool waits here, and only then joins the queue.
-export async function whenTurnsFree($: EngineInterface): Promise<void> {
-  while (turnsQueued) await $.process.run(['sleep', '0.2'])
+// With untilMs it stops there and answers false, for a caller whose own time is limited.
+export async function whenTurnsFree($: EngineInterface, untilMs?: number): Promise<boolean> {
+  while (turnsQueued) {
+    if (untilMs !== undefined && (await $.clock.now()) >= untilMs) return false
+    await $.process.run(['sleep', '0.2'])
+  }
+  return true
 }
 
 // Each state tool call shows in the /view pane, with its arguments and how it ended.

@@ -75,7 +75,7 @@ const engine = (on: On, opts: Opts = {}) => {
     otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined,
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
-    editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
+    probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
@@ -169,6 +169,7 @@ const engine = (on: On, opts: Opts = {}) => {
     if (a[0] === 'sleep') return (async () => { if (s.sleepYields) await new Promise(r => setTimeout(r, 1)); await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
+      s.probeLimits.push(e.init?.timeoutMs)
       return (async () => {
         const r = await s.probe!(a)
         return ok(r.stdout ?? '', r.exitCode, r.stderr ?? '')
@@ -276,6 +277,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (!isFixAllPrsRead(line)) gh.push(line)
       if (s.ghFails) return ok('', 1, s.ghFails)
       if (a[2] === 'blocked-by') return ok('')
+      if (a[2] === 'issue-read') s.now += Math.min(s.issueReadMs, e.init?.timeoutMs ?? Infinity)
       const scripted = (a[2] === 'pr-read' ? s.prReadsFor : a[2] === 'issue-read' ? s.issueReadsFor : undefined)?.[Number(a[3])]?.shift()
       if (typeof scripted === 'string') return ok('', 1, scripted)
       if (scripted) return ok(JSON.stringify(scripted))
@@ -2330,6 +2332,154 @@ test('waitFor gives up after its attempts, names the last result and goes back',
   expect(r.text).toContain('exit code 7')
   expect(r.text).toContain('no such file')
   expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait can hold for 1200 s in all: a longer timeout or secs is refused, and nothing changes', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  for (const [name, args] of [
+    ['waitFor', { shell_command: 'true', timeout: 1201 }],
+    ['waitForSeconds', { secs: 1201 }],
+    ['waitForSeconds', { secs: 5, timeout: 3600 }],
+  ] as const) {
+    const r = await tool($, name, args)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('1200 s')
+    expect(w.state()?.state).toBe('developing')
+  }
+  expect((await tool($, 'waitForSeconds', { secs: 1200 })).isError).toBe(false)
+})
+
+test('with no timeout a wait gives up within 1200 s, and its last check runs just before the end', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.probe = () => ({ exitCode: 1 })
+  const startedAt = w.s.now
+  const r = await tool($, 'waitFor', { shell_command: 'false', period: 100 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('timeout of 1200 s')
+  expect(w.s.now - startedAt).toBeLessThanOrEqual(1_200_000)
+  expect(w.s.probes.length).toBe(13)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a check may run only for what is left of the timeout', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.probe = () => ({ exitCode: 1 })
+  await tool($, 'waitFor', { shell_command: 'false', period: 100, timeout: 130 })
+  expect(w.s.probeLimits).toEqual([60_000, 20_000, 10_000])
+})
+
+test('a wait sees a condition that comes true in its last period, and does not hold to the end with no check', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  const startedAt = w.s.now
+  w.s.probe = () => ({ exitCode: w.s.now - startedAt > 100_000 ? 0 : 1 })
+  const r = await tool($, 'waitFor', { shell_command: 'x', period: 100, timeout: 130 })
+  expect(r.isError).toBe(false)
+  expect(w.s.probes.length).toBe(3)
+})
+
+test('waitForSeconds with secs above its timeout is refused, because it could not end well', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  const r = await tool($, 'waitForSeconds', { secs: 600, timeout: 300 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('Nothing changed')
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait behind a long call starts nothing past its timeout, and says so', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.sleepYields = true
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const held = tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  await settle()
+  const startedAt = w.s.now
+  // The hold ends in time for a wait that ignores its timeout to fail here, and not to hang the file.
+  const watch = setInterval(() => { if (w.s.now - startedAt > 60_000) release() }, 1)
+  const r = await tool($, 'waitFor', { shell_command: 'true', timeout: 30 })
+  clearInterval(watch)
+  release()
+  await held
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('Nothing changed')
+  expect(w.s.now - startedAt).toBeLessThanOrEqual(30_000)
+  expect(w.s.probes.length).toBe(0)
+})
+
+test('a wait ends within its timeout while another call holds the queue', async ($, on) => {
+  const w = engine(on)
+  await startFollowUp($, w)
+  w.s.sleepAdvances = true
+  w.s.sleepYields = true
+  w.s.dirty = [' M a.ts']
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const startedAt = w.s.now
+  // A helper's checkpoint holds the queue through its checks, while the main agent waits.
+  let held: ReturnType<typeof tool> | undefined
+  w.s.probe = () => {
+    held ??= tool($, 'checkpoint', { issue: 31, message: 'm', files: ['a.ts'], ...AGENT })
+    return { exitCode: 1 }
+  }
+  const watch = setInterval(() => { if (w.s.now - startedAt > 60_000) release() }, 1)
+  const r = await tool($, 'waitFor', { shell_command: 'false', period: 10, timeout: 30 })
+  clearInterval(watch)
+  const endedAt = w.s.now
+  release()
+  await held
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('timeout of 30 s')
+  expect(endedAt - startedAt).toBeLessThanOrEqual(30_000)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('one check of many issues stops reading when its time is up', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.issueReadMs = 8_000
+  const startedAt = w.s.now
+  const r = await tool($, 'waitForIssue', { waitOn: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], state: 'closed', timeout: 30 })
+  expect(r.isError).toBe(true)
+  expect(w.s.now - startedAt).toBeLessThanOrEqual(30_000)
+})
+
+test('a check stopped by what is left of the timeout says so, and is not reported as a command that did not run', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.probe = () => {
+    w.s.now += 60_000
+    throw new Error('the command was still running')
+  }
+  const r = await tool($, 'waitFor', { shell_command: 'slow', timeout: 30 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('stopped after')
+  expect(r.text).not.toContain('did not run')
+})
+
+test('a long period does not raise the notice after the first check', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  const seen: number[] = []
+  w.s.probe = () => {
+    seen.push(w.alerts.length)
+    return { exitCode: 1 }
+  }
+  await tool($, 'waitFor', { shell_command: 'false', period: 900 })
+  expect(seen).toEqual([0, 0, 1])
 })
 
 test('a wait gives up at its timeout, with attempts left', async ($, on) => {
@@ -4515,7 +4665,7 @@ test('the wait in the record holds the period and the arguments, with no secret'
   }
   const r = await tool($, 'waitFor', { shell_command: 'API_TOKEN=hunter2 curl https://x.io/a?k=v', period: 30, timeout: 90 })
   expect(r.isError).toBe(false)
-  expect(seen).toMatchObject({ tool: 'waitFor', period: 30, most: 3, timeoutS: 90 })
+  expect(seen).toMatchObject({ tool: 'waitFor', period: 30, most: 4, timeoutS: 90 })
   expect(JSON.stringify(seen)).not.toContain('hunter2')
   expect(JSON.stringify(seen)).not.toContain('k=v')
 })
