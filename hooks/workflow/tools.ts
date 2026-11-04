@@ -1816,8 +1816,8 @@ async function mustBeOpen($: EngineInterface, wf: Workflow, issues: number[]): P
   if (problems.length) throw new Refuse(`Refused: ${problems.join('; ')}. Nothing started.`)
 }
 
-// One supervised worker, so Orca wakes this session when it asks or ends. worker-start prints its receipt with
-// ok: true even when the start failed and it exits 1, so the state in the receipt decides, not the exit code.
+// One supervised worker, so Orca wakes this session when it asks or ends. --full because the concise receipt has no
+// recovery. worker-start prints its receipt with ok: true even when the start failed and it exits 1, so the state in the receipt decides, not the exit code.
 async function startWorktreeWorker($: EngineInterface, wf: Workflow, entry: Workflow['followUps'][number], message: string): Promise<string[]> {
   const issues = entry.issues ?? [entry.issue]
   const who = issues.map(i => `#${i}`).join(', ')
@@ -1841,7 +1841,7 @@ async function startWorktreeWorker($: EngineInterface, wf: Workflow, entry: Work
   const join = others.length ? ` Then call started for ${others.map(i => `#${i}`).join(', ')}: each joins the same worktree and PR, with its own closing line.` : ''
   const spec = `Use the ndev plugin to work on ${who} of ${wf.repo}, in this new workspace with one PR. Call started with issue ${lead} and shortName "${slug}".${join} It came up during #${wf.issue}.${handed.length ? ` The answers of its interview are in ${handed.join(', ')} in your worktree. Read them first.` : ''}\n\n${message}`
   const { main } = await paths($, wf.root)
-  const out = await run($, ['orca', 'orchestration', 'worker-start', '--spec', spec, '--task-title', entry.title, '--worktree', 'new-top-level', '--repo', `path:${main}`, '--name', `${lead}-${slug}`, '--agent', 'claude', '--keep-open', '--timeout-ms', '120000', '--json'], { cwd: wf.root, timeoutMs: 180_000 })
+  const out = await run($, ['orca', 'orchestration', 'worker-start', '--spec', spec, '--task-title', entry.title, '--worktree', 'new-top-level', '--repo', `path:${main}`, '--name', `${lead}-${slug}`, '--agent', 'claude', '--keep-open', '--timeout-ms', '120000', '--full', '--json'], { cwd: wf.root, timeoutMs: 180_000 })
   const retry = `Call followUp again with the same text to retry: it reuses what exists.`
   let reply: { ok?: boolean; result?: { state?: string; dispatchId?: string; runId?: string; lastError?: string; failedStage?: string; recovery?: string }; error?: { code?: string; message?: string } } | undefined
   try {

@@ -55,9 +55,10 @@ const note = (text) => process.stderr.write(`${text}\n`);
 const firstLine = (text) => String(text).trim().split("\n")[0];
 
 // Runs one Orca CLI command with --json and answers its result. A failure names the command and Orca's own error.
+// An orchestration command needs --full too: without it Orca prints a concise view with other keys, such as runId for run.id.
 function orca(args, { timeoutMs = 120_000 } = {}) {
   const what = `orca ${args.slice(0, 2).join(" ")}`;
-  const r = spawnSync(ORCA, [...args, "--json"], { encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync(ORCA, [...args, ...(args[0] === "orchestration" ? ["--full"] : []), "--json"], { encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
   if (r.error) throw new Exit(1, `${what} could not run: ${r.error.message}${START_ORCA}`);
   let reply;
   try {

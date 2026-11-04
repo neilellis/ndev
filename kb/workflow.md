@@ -284,7 +284,16 @@ On the phone, the pane sends the human to the terminal. There is no change to th
 
 **A worker from `followUp`.** With the mode `worktree`, the tool writes the parent's files to `ndev-interview-handover-<child>.json` in the git common folder, and it names them in the brief. A failed write stops the `followUp` and names the file and the error. The child's `started` takes the files and removes the hand-over. The child can ask more, or call `interview()` to go on, also when it is heavy. A parent that wants no interview says so in the brief.
 
-**No human.** `interview` with questions refuses under `auto`, and in a session with no human, where the message names `setSteering`. `/flow steering auto` during `interviewing` has the same effect: `interview()` goes on, and questions refuse. `/orca-triage` and `/fix-all-prs` stay interactive. `work-heavy-auto` and `work-light-auto` set `auto` on each issue that they start.
+**No human.** `interview` with questions refuses under `auto`, and in a session with no human, where the message names `setSteering`. `/flow steering auto` during `interviewing` has the same effect: `interview()` goes on, and questions refuse. `/fix-all-prs` stays interactive. In `/dev triage`, the coordinator session stays interactive and starts no workflow; each worker sets `auto` on its issues and asks the coordinator with `orca orchestration ask`. `work-heavy-auto` and `work-light-auto` set `auto` on each issue that they start.
+
+## Triage: `/dev triage`
+
+`/dev triage start` (the same as `/orca-triage start`) makes the session a coordinator. The session's model groups the open issues, and the mod makes one Orca Run with one Task for each group. Orca makes a workspace and starts a worker for each Task that is ready.
+
+- **The worker** takes its group through this workflow on one PR. It calls `started` for each issue of the group and `setSteering` with `auto` after each one. It asks with `orca orchestration ask --wait`, so that its turn stays open and the workflow's reminders do not count the wait as no progress. It sends `worker_done` after `done` accepts the PR. A group that follows another starts from the branch of that group's open PR. The mod sends that branch in Orca mail, and the worker retargets its own PR to it.
+- **The coordinator** does not call `started`, edit or commit for these issues. The mod sends it each question from a worker, each escalation, each failure and a failed launch. A worker that ends its turn with its Dispatch open, as in the state `ci`, has not failed: only `worker_done` or the status of the Task ends a group. It answers the worker, or it asks the human when the decision is the human's. When all groups have ended, the mod asks it to report to the human.
+
+Limit: `started` always takes the default branch as the base, and the worker changes only the base of the PR on GitHub. The review, the sweep and the checks of a stacked group can still compare with the default branch. So `done` can refuse a migration that came from the earlier group. The worker leaves that file and asks the coordinator.
 
 ## Mode and steering
 

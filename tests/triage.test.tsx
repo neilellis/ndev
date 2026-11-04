@@ -45,7 +45,7 @@ const message = (id: string, type: string, from: string, body: string, payload?:
 // A fake GitHub and Orca. Orca keeps its Tasks and workspaces: a Task with deps is pending until every dep's worker
 // reported success, and a workspace keeps the links and board status set on it.
 type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[] }
-function world(on: On, opts: { repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; taskCreateFails?: boolean } = {}) {
+function world(on: On, opts: { repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean } = {}) {
   const ran: string[][] = []
   const prompts: string[] = []
   const toasts: string[] = []
@@ -61,7 +61,7 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
   on('env.get', () => ({ value: '/home/neil' }))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
-  on('fs.read', () => ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null } }) }))
+  on('fs.read', () => ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null }, ...(opts.workflowOff ? { workflow: false } : {}) }) }))
   on('clock.every', () => new Promise(() => {}))
   on('clock.now', () => ({ value: 1_800_000_000_000 }))
   on('ui.status', () => ({ value: undefined }))
@@ -82,7 +82,10 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     ran.push(a)
     if (args.includes('gh.sh issue-search')) return ok((opts.issues ?? []).map(i => `${JSON.stringify(i)}\n`).join(''))
     if (args.includes('gh.sh board items')) return ok((opts.cards ?? []).map(c => `${JSON.stringify(c)}\n`).join(''))
-    if (args.includes('gh.sh pr-read')) return ok(JSON.stringify({ head: { ref: `claude/issue-${prHeads.get(Number(a[a.length - 1]))}` } }))
+    if (args.includes('gh.sh pr-read')) {
+      const pr = Number(a[a.length - 1])
+      return ok(JSON.stringify({ state: opts.merged?.includes(pr) ? 'closed' : 'open', merged: !!opts.merged?.includes(pr), head: { ref: `claude/issue-${prHeads.get(pr)}` } }))
+    }
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
     if (args.startsWith('orca worktree list')) return reply({ worktrees, totalCount: worktrees.length, truncated: false })
     if (args.startsWith('orca worktree create')) {
@@ -93,16 +96,21 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
       worktrees.push(wt)
       return reply({ worktree: wt })
     }
-    if (args.startsWith('orca orchestration run-create')) return reply({ run: { id: 'run_1', objective: a[a.indexOf('--objective') + 1]! } })
+    // As Orca 1.4 does: with no --full, orchestration --json prints a concise view with other keys.
+    const isFull = a.includes('--full')
+    if (args.startsWith('orca orchestration run-create')) {
+      if (opts.runCreateAnswers) return reply(opts.runCreateAnswers)
+      return reply(isFull ? { run: { id: 'run_1', objective: a[a.indexOf('--objective') + 1]! } } : { runId: 'run_1', next: 'task-create' })
+    }
     if (args.startsWith('orca orchestration task-create')) {
       if (opts.taskCreateFails && tasks.length === 1) return ok(JSON.stringify({ id: 'x', ok: false, error: { code: 'runtime_unavailable', message: 'Orca is not running' } }))
       const deps = a.includes('--deps') ? (JSON.parse(a[a.indexOf('--deps') + 1]!) as string[]) : []
       const t = { id: `task_${tasks.length + 1}`, deps, status: deps.length ? 'pending' : 'ready', title: a[a.indexOf('--task-title') + 1]! }
       tasks.push(t)
-      return reply({ task: { id: t.id, run_id: 'run_1', status: t.status, deps: JSON.stringify(deps), task_title: t.title } })
+      return reply(isFull ? { task: { id: t.id, run_id: 'run_1', status: t.status, deps: JSON.stringify(deps), task_title: t.title } } : { taskId: t.id, status: t.status })
     }
     if (args.startsWith('orca orchestration task-list')) {
-      const ready = tasks.filter(t => t.status === 'ready')
+      const ready = args.includes('--ready') ? tasks.filter(t => t.status === 'ready') : tasks
       return reply({ runId: 'run_1', tasks: ready.map(t => ({ id: t.id, status: t.status, deps: JSON.stringify(t.deps) })), count: ready.length })
     }
     if (args.startsWith('orca orchestration worker-start')) {
@@ -119,8 +127,8 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
       }
       tasks.find(t => t.id === task)!.status = 'dispatched'
       return reply({
-        runId: 'run_1', taskId: task, dispatchId: `ctx_${n}`, state: 'ready', stage: 'ready', launch: { requested: launch, effective: launch },
-        effects: [{ kind: 'terminal', role: 'agent', action: 'created', id: `term_${n}` }],
+        runId: 'run_1', taskId: task, dispatchId: `ctx_${n}`, state: 'ready', stage: 'ready',
+        ...(isFull ? { launch: { requested: launch, effective: launch }, effects: [{ kind: 'terminal', role: 'agent', action: 'created', id: `term_${n}` }] } : { terminal: `term_${n}` }),
       })
     }
     if (args.startsWith('orca orchestration check') && a.includes('--ack')) return reply({ runId: 'run_1', acknowledged: a[a.indexOf('--ack') + 1]! })
@@ -233,15 +241,28 @@ test('accepted groups become one Orca Run with a Task each; Orca makes the works
   expect(created[0]).not.toContain('--deps')
   expect(created[0]).toEqual(expect.arrayContaining(['--run', 'run_1', '--display-name', 'issue-3']))
   expect(created[1]).toEqual(expect.arrayContaining(['--deps', '["task_1"]', '--run', 'run_1']))
-  // The spec names the branch, the draft PR and the worker contract.
-  const spec = created[0]![created[0]!.indexOf('--spec') + 1]
-  expect(spec).toMatch(/claude\/issue-3/)
-  expect(spec).toMatch(/Closes #3/)
-  expect(spec).toMatch(/Closes #4/)
-  expect(spec).toMatch(/draft/i)
+  // The worker goes through the ndev workflow, one PR for the group, and answers to the coordinator.
+  const spec = created[0]![created[0]!.indexOf('--spec') + 1]!
+  expect(spec).toMatch(/mcp__ndev__started with issue 3\b/)
+  expect(spec).toMatch(/call mcp__ndev__started for #4\b.*same worktree and PR/)
+  expect(spec).toMatch(/mcp__ndev__setSteering/)
   expect(spec).toMatch(/orca orchestration ask/)
-  expect(spec).toMatch(/worker_done/)
-  expect(spec).toMatch(/orca worktree set --worktree active --pr <number> --workspace-status in-review/)
+  // The last workflow step comes before worker_done, so a follower starts from a finished pull request.
+  expect(spec.indexOf('mcp__ndev__done')).toBeGreaterThan(-1)
+  expect(spec.indexOf('mcp__ndev__done')).toBeLessThan(spec.indexOf('worker_done'))
+  // The tools refuse or replace these by hand.
+  expect(spec).not.toMatch(/gh pr create|orca worktree set|claude\/issue-/)
+  // The turn stays open while a question waits, because the workflow counts an ended turn as no progress.
+  expect(spec).toMatch(/orca orchestration ask --question .* --wait/)
+  expect(spec).toMatch(/ask --resume <message_id> --wait/)
+  // A block has a way out, so a worker never stays silent in it.
+  expect(spec).toMatch(/mcp__ndev__unblocked/)
+  expect(spec).toMatch(/--outcome failed/)
+  expect(spec).toMatch(/PR #<number>/)
+  // Each orchestration call asks for the full record: the concise view has other keys.
+  for (const call of w.ran.filter(x => x[0] === 'orca' && x[1] === 'orchestration')) expect(call).toContain('--full')
+  // A command outside orchestration does not know the flag.
+  for (const call of w.ran.filter(x => x[0] === 'orca' && x[1] !== 'orchestration')) expect(call).not.toContain('--full')
 
   // Orca makes the workspace, linked to the group's issues, then starts the worker in it.
   const made = w.ran.filter(a => a.slice(0, 3).join(' ') === 'orca worktree create')
@@ -286,10 +307,9 @@ test('a group that follows another branches from that group\'s branch and target
   const specs = w.orcaRan('orchestration task-create').map(a => a[a.indexOf('--spec') + 1]!)
   const follower = specs.find(x => x.includes('#9 ('))!
   expect(follower).toMatch(/follows #3/)
-  expect(follower).toMatch(/--base <that branch>/)
+  expect(follower).toMatch(/gh api -X PATCH repos\/\{owner\}\/\{repo\}\/pulls\/<number> -f base=<that branch>/)
   const alone = specs.find(x => x.includes('#12 ('))!
-  expect(alone).toMatch(/from the default branch/)
-  expect(alone).not.toMatch(/--base/)
+  expect(alone).not.toMatch(/--base|follows/)
   // The first workspaces start from the default branch; the follower's waits for #3 and starts from its branch.
   const creates = () => w.orcaRan('worktree create')
   await until(() => creates().length === 2, () => w.ran)
@@ -433,6 +453,7 @@ test('a failed group blocks the groups after it; the triage then ends, and /orca
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await until(async () => (await ui.find({ type: 'Text', text: /^blocked/ })) !== undefined, () => w.ran)
   await until(async () => (await ui.find({ type: 'Text', text: /^done · Orca Run run_1/ })) !== undefined)
+  await until(() => w.prompts.some(p => /the worker for #3 .*did not start/.test(p)), () => w.prompts)
   await ui.unmount()
   await $.command.run(command('start'))
   await until(() => w.ran.filter(a => a.join(' ').includes('gh.sh issue-search')).length === 2, () => w.toasts)
@@ -470,3 +491,144 @@ test('a launch that fails part way names /orca-triage reset, which clears the tr
   expect((await $.command.run(command(''))).text).toMatch(/No triage yet/)
 })
 
+test('a follower of a merged pull request starts from the default branch: its branch may be gone', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)], merged: [41] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple', { after: [3] })] } as never)
+  await until(() => w.orcaRan('worktree create').length === 1, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'Merged #41.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.orcaRan('worktree create').length === 2, () => w.ran)
+  expect(w.orcaRan('worktree create')[1]).not.toContain('--base-branch')
+})
+
+test('an Orca reply with no Run id stops the launch with that reply and the repair, and the pane never says "Orca Run undefined"', async ($, on) => {
+  const w = world(on, { issues: [issue(3)], runCreateAnswers: { objective: 'a new shape' } })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'average')] } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await ui.find({ type: 'Text', text: /run-create answered no Run id.*a new shape/ })) !== undefined, () => w.ran)
+  expect((await ui.find({ type: 'Text', text: /\/orca-triage reset/ }))?.text).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /undefined/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/dev triage is the same command as /orca-triage', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  expect((await $.command.run({ ...command(''), command: 'dev', args: 'triage' })).text).toMatch(/No triage yet/)
+  expect((await $.command.run({ ...command(''), command: 'dev', args: 'help' })).text).toMatch(/\/dev triage start/)
+  await $.command.run({ ...command(''), command: 'dev', args: 'triage start' })
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.prompts[0]).toMatch(/#3\b/)
+})
+
+test('the session is the coordinator: it is told so, and it hears of an escalation, a failed worker and the end', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).toMatch(/You are the coordinator/)
+  expect(w.prompts[0]).toMatch(/never call mcp__ndev__started/i)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'escalation', 'term_1', 'The schema is locked.', { taskId: 'task_1', dispatchId: 'ctx_1' })] })
+  await until(() => w.prompts.some(p => /The schema is locked/.test(p)), () => w.prompts)
+  // Its Dispatch is still open: the escalation decides nothing, and the prompt says how to answer it or end it.
+  const escalated = w.prompts.find(p => /The schema is locked/.test(p))!
+  expect(escalated).toMatch(/orca orchestration send --to dispatch:ctx_1/)
+  expect(escalated).toMatch(/orca orchestration task-update --id task_1 --status failed/)
+  expect(w.prompts.some(p => /Report to the user/.test(p))).toBe(false)
+  w.deliver({ deliveryId: 'delivery_3', messages: [message('msg_3', 'worker_done', 'term_1', 'Gave up.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'failed' })] })
+  w.deliver({ deliveryId: 'delivery_2', messages: [message('msg_2', 'worker_done', 'term_2', 'CI never passed.', { taskId: 'task_2', dispatchId: 'ctx_2', outcome: 'failed' })] })
+  await until(() => w.prompts.some(p => /CI never passed/.test(p)), () => w.prompts)
+  // Both groups are over, so the coordinator reports to the human, once.
+  await until(() => w.prompts.some(p => /Report to the user/.test(p)), () => w.prompts)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(w.prompts.filter(p => /Report to the user/.test(p))).toHaveLength(1)
+})
+
+test('a worker that ends its turn is not a failure: it may wait for its checks, and its later worker_done still counts', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple', { after: [3] })] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 1, () => w.ran)
+  const prompts = w.prompts.length
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_stop', 'escalation', 'term_1', 'Worker stopped without reporting: the workflow is now watching the checks.', { taskId: 'task_1', dispatchId: 'ctx_1', stopReason: 'finished' })] })
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(w.prompts.length).toBe(prompts)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /escalated|blocked, as/ })).toBeUndefined()
+  w.linkPr('/w/issue-3', 41)
+  w.deliver({ deliveryId: 'delivery_2', messages: [message('msg_1', 'worker_done', 'term_1', 'PR #41 is done.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+  await ui.unmount()
+})
+
+test('a worker stopped at a prompt reaches the coordinator, and does not fail its group', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple', { after: [3] })] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 1, () => w.ran)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_stop', 'escalation', 'term_1', 'Worker is waiting on a prompt.', { taskId: 'task_1', dispatchId: 'ctx_1', stopReason: 'needs-input' })] })
+  await until(() => w.prompts.some(p => /waiting on a prompt/.test(p)), () => w.prompts)
+  w.deliver({ deliveryId: 'delivery_2', messages: [message('msg_1', 'worker_done', 'term_1', 'PR #41 is done.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+})
+
+test('the coordinator hears of a launch that fails, so it never waits for nothing', async ($, on) => {
+  const stopped = world(on, { issues: [issue(3)], runCreateAnswers: { objective: 'a new shape' } })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => stopped.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'average')] } as never)
+  await until(() => stopped.prompts.some(p => /the launch stopped part way/.test(p)), () => stopped.prompts)
+})
+
+test('a Task that Orca reports failed reaches the coordinator once', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+  w.tasks.find(t => t.id === 'task_1')!.status = 'failed'
+  await $.command.run(command('refresh'))
+  await until(() => w.prompts.some(p => /Task of #3 .*failed/.test(p)), () => w.prompts)
+  await $.command.run(command('refresh'))
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(w.prompts.filter(p => /Task of #3 .*failed/.test(p))).toHaveLength(1)
+})
+
+test('with the workflow off in the project, the triage stops at the start and names the setting', async ($, on) => {
+  const w = world(on, { issues: [issue(3)], workflowOff: true })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.toasts.some(t => /sets .*workflow.*false.*Repair: remove that setting/.test(t)), () => w.toasts)
+  expect(w.prompts).toHaveLength(0)
+})
+
+test('a follower is told its base branch in Orca mail, and the worker_done names the pull request when the workspace does not', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple', { after: [3] })] } as never)
+  await until(() => w.orcaRan('worktree create').length === 1, () => w.ran)
+  // The workspace never got its link, so only the worker's own report names the pull request.
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'PR #41 is done.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.orcaRan('orchestration send').length === 1, () => w.ran)
+  const sent = w.orcaRan('orchestration send')[0]!
+  expect(sent[sent.indexOf('--to') + 1]).toBe('dispatch:ctx_2')
+  expect(sent[sent.indexOf('--body') + 1]).toMatch(/claude\/issue-/)
+  expect(sent).toContain('--full')
+  expect(w.orcaRan('worktree create')[1]).toContain('--base-branch')
+})

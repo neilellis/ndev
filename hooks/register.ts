@@ -20,7 +20,7 @@ import { learnAfterPush } from './learn'
 import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { interviewPane } from './workflow/interview'
-import { startTriage, triage } from './triage'
+import { startTriage, triage, triageCommand } from './triage'
 import { resourceView, startView } from './view'
 import { ensureRecord, readSettings, saveWorktreeSetting } from './worktree-settings'
 import type { WorktreeSettings } from './worktree-settings'
@@ -235,8 +235,9 @@ async function helpText($: EngineInterface) {
     '  /dev mode [light|heavy]             switch development mode (no value toggles)',
     '  /dev steering [interactive|auto]    switch steering (no value toggles)',
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
-    '  /orca-triage start [--dry-run]      group the open issues and work each group in its own Orca workspace (Triage pane)',
-    '  /dev-mode, /dev-steering and /dev-setup still work as before.',
+    '  /dev triage start [--dry-run]       group the open issues and coordinate an Orca worker on each group (Triage pane)',
+    '  /dev triage [launch|refresh|reset]  launch a dry run, read the triage back from Orca, or clear it; with no word, show its state',
+    '  /dev-mode, /dev-steering, /dev-setup and /orca-triage still work as before.',
     '',
     `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
   ].join('\n')
@@ -316,8 +317,8 @@ export const register: Register = (on, options) => {
     startComponentCheck()
     await $.command.register({
       name: 'dev',
-      description: 'ndev: help, setup, mode and steering (runs the set-up first if this project is not set up)',
-      argumentHint: '[help|setup|mode [light|heavy]|steering [interactive|auto]]',
+      description: 'ndev: help, setup, mode, steering and triage (runs the set-up first if this project is not set up)',
+      argumentHint: '[help|setup|mode [light|heavy]|steering [interactive|auto]|triage [start [--dry-run]|launch|refresh|reset]]',
     })
     await $.command.register({
       name: 'dev-mode',
@@ -408,7 +409,8 @@ export const register: Register = (on, options) => {
     if (word === 'steering') return switchSteering($, args)
     if (word === 'setup') return { text: await setup($, true) }
     if (word === 'help') return { text: await helpText($) }
-    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode or /dev steering.` }
+    if (word === 'triage') return triageCommand($, args, () => project)
+    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering or /dev triage.` }
     if (project !== undefined && !project.error && missingGitHub(project.config).length > 0) return { text: await setup($, false) }
     return { text: await helpText($) }
   })
@@ -443,7 +445,7 @@ export const register: Register = (on, options) => {
       githubText(project?.config.github),
       WIKI_TEXT,
       REPORT_TEXT,
-      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /orca-triage start.',
+      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /dev triage start.',
     ]
       .filter(Boolean)
       .join('\n\n')

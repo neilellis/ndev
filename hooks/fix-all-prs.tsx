@@ -344,7 +344,7 @@ export const START_ORCA = '\nRepair: start the Orca app (`orca open`) and check 
 // gone ahead without answering.
 export async function orca(run: Run, args: string[], noAnswer = START_ORCA): Promise<unknown> {
   const what = `orca ${args.slice(0, 2).join(' ')}`
-  const out = await run(['orca', ...args, '--json']).catch((err: unknown) => {
+  const out = await run(['orca', ...args, ...(args[0] === 'orchestration' ? ['--full'] : []), '--json']).catch((err: unknown) => {
     throw new Error(`${what} gave no answer: ${firstLine(err instanceof Error ? err.message : String(err)).replace(/\.$/, '')}.${noAnswer}`)
   })
   let reply: OrcaReply | undefined

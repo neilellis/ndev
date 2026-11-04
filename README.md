@@ -119,6 +119,12 @@ has not answered the set-up questions yet, `/dev` runs the set-up dialog first. 
 always shows the help. `/dev setup` asks all the set-up questions again (the same as
 `/dev-setup`).
 
+`/dev triage start [--dry-run]` groups the open issues and makes this session the coordinator of
+one Orca worker for each group. Each worker takes its group through the workflow on one pull
+request, and asks the coordinator when it needs a decision. `/dev triage launch`, `refresh` and
+`reset` launch a dry run, read the triage back from Orca, and clear it. `/orca-triage` is the
+same command. The guide is [kb/workflow.md](kb/workflow.md).
+
 ## Per-project settings: `.neil-dev.json`
 
 All the plugin's settings for a project live in one file at the project root, checked in with

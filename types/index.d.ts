@@ -123,6 +123,8 @@ export type TriageComplexity = 'very-complex' | 'complex' | 'average' | 'simple'
 export type TriageIssue = { number: number; title: string; url: string }
 
 export type TriageGroup = {
+  /** The branch its workspace started from, when that is not the default branch. */
+  base?: string
   // The lowest issue number: it names the Task, the workspace and the branch.
   lead: number
   issues: number[]

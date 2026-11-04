@@ -13,6 +13,11 @@ const flag = (name) => args[args.indexOf(name) + 1];
 const reply = (result) => console.log(JSON.stringify({ id: "x", ok: true, result }));
 const save = () => writeFileSync(path.join(dir, "state.json"), JSON.stringify(state));
 const command = args.filter((a) => !a.startsWith("--")).slice(0, 2).join(" ");
+// As Orca 1.4 does: with no --full, an orchestration command prints a concise view with other keys.
+if (command.startsWith("orchestration ") && !args.includes("--full")) {
+  console.log(JSON.stringify({ id: "x", ok: true, result: { runId: null, concise: true } }));
+  process.exit(0);
+}
 
 switch (command) {
   case "status":

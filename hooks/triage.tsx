@@ -6,9 +6,10 @@ import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktre
 import { pullUrl } from './links'
 import type { TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
-// /orca-triage: this session's model groups the open issues, and Orca does the work. Each group becomes one Task of one
-// Orca Run; Orca makes the workspace, linked to the group's issues, and starts a supervised Claude worker in it that
-// opens one draft pull request. The mod keeps only the plan and reads the rest back from Orca.
+// /dev triage (also /orca-triage): this session's model groups the open issues and then coordinates, and Orca does the
+// work. Each group becomes one Task of one Orca Run; Orca makes the workspace, linked to the group's issues, and starts a
+// supervised Claude worker in it that takes the group through the ndev workflow on one pull request. The session answers
+// the workers and reports to the human. The mod keeps only the plan and reads the rest back from Orca.
 const PANE = 'triage'
 const TITLE = 'Triage'
 const TOOL = 'mcp__ndev__triage_groups'
@@ -60,6 +61,7 @@ const setGroup = ($: EngineInterface, lead: number, change: Partial<TriageGroup>
 async function collect($: EngineInterface, project: LoadedConfig | undefined, isDryRun: boolean): Promise<string> {
   const g = project?.config.github
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
+  if (project?.config.workflow === false) throw new Error(`each triage worker needs the ndev workflow, and ${project.path} sets "workflow": false.\nRepair: remove that setting, or work the issues without /dev triage.`)
   const repo = g.repo
   if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /orca-triage refresh reads it again.`
   await update($, view, () => ({ ...EMPTY, repo, isDryRun }))
@@ -113,7 +115,9 @@ function brief(repo: string, issues: TriageIssue[]): string {
     '- after: the leads of groups that must finish first: when this group needs their change, or when both change the same files, so the two never edit the same lines at once. Groups with no after run in parallel.',
     '',
     `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }] }.`,
-    'If it refuses, fix what it names and call it again. Start no work on the issues yourself.',
+    'If it refuses, fix what it names and call it again.',
+    '',
+    `You are the coordinator of this triage: one Orca worker takes each group through the ndev workflow (kb/workflow.md), and you do none of that work. Never call mcp__ndev__started for these issues, and never edit, commit or open a pull request for them. Answer the workers, decide what to do when one fails, and report to the user. The mod sends you each of these moments.`,
   ].join('\n')
 }
 
@@ -175,24 +179,29 @@ function toGroup(g: Proposed): TriageGroup {
 // The worker's Task: Target, Change, Constraints, Ownership and Observable acceptance, as Orca's worker contract asks.
 function spec(repo: string, g: TriageGroup, issues: TriageIssue[]): string {
   const url = (n: number) => issues.find(i => i.number === n)?.url ?? `https://github.com/${repo}/issues/${n}`
-  const branch = `claude/issue-${g.lead}`
+  const [lead, ...others] = g.issues
   return [
     `Target: ${repo} ${g.issues.map(n => `#${n} (${url(n)})`).join(', ')}. ${g.title}`,
     `Change: ${g.implemented ? `The code may already do this: ${g.evidence}. Confirm it with a test that proves the behaviour; change code only where it falls short. ` : ''}${g.hint}`,
     'Constraints:',
+    `- Use the ndev workflow, with one pull request for this group. Call mcp__ndev__started with issue ${lead}, a shortName that you choose and the mode: heavy for a multi-step, cross-cutting or high-risk change, and light for the others. Then follow the answer of each tool.`,
+    ...(others.length ? [`- Then call mcp__ndev__started for ${others.map(n => `#${n}`).join(', ')}, each with the same shortName: each joins the same worktree and PR, with its own closing line.`] : []),
+    '- No human is at this terminal, because the coordinator session answers you. After each started, call mcp__ndev__setSteering with steering auto and the reason "An Orca worker of /dev triage: no human is at this terminal, and the coordinator session answers its questions."',
     '- Read each issue with `gh issue view` first. Work test first: a failing regression test through a public interface, then the smallest fix.',
     ...(g.after.length
-      ? [`- This group follows ${g.after.map(a => `#${a}`).join(', ')}. Your workspace starts from the branch of the first of their pull requests, or from the default branch when none opened one. Work on branch ${branch} from there${g.after.length > 1 ? ', and merge the branches of the other pull requests into it first' : ''}. Never push to the default branch and never merge a pull request.`]
-      : [`- Work on branch ${branch} from the default branch. Never push to the default branch and never merge.`]),
-    `- At your first push, open a draft pull request with \`gh pr create --draft --title "${g.title.replace(/"/g, "'")}"${g.after.length ? ' --base <that branch>' : ''}\`${g.after.length ? ', where <that branch> is the branch your workspace started from (the default branch when it started there), so the pull request shows only this group\'s change' : ''}. Its body ends with:`,
-    ...g.issues.map(n => `  Closes #${n}`),
-    `  Model: ${g.model}`,
-    `  Effort: ${g.effort}`,
-    '- Then link it to this Orca workspace: `orca worktree set --worktree active --pr <number> --workspace-status in-review --json`.',
-    '- When you need a product or scope decision, ask with `orca orchestration ask`; never guess.',
-    `Ownership: this workspace and branch ${branch} only.`,
-    `Observable acceptance: a draft pull request from ${branch} that closes ${g.issues.map(n => `#${n}`).join(', ')}, with its tests passing.`,
-    'Then send worker_done once, with --outcome succeeded and the pull request number in the body, or --outcome failed and the reason.',
+      ? [
+          `- This group follows ${g.after.map(a => `#${a}`).join(', ')}. Your workspace starts from the branch of the first of their open pull requests, or from the default branch when none is open.${g.after.length > 1 ? ' Merge the branches of the other open pull requests into it first.' : ''} Orca mail with the subject "Base branch" names <that branch> when it is not the default branch. Then, when the workflow has opened your draft pull request, run \`gh api -X PATCH repos/{owner}/{repo}/pulls/<number> -f base=<that branch>\`, so the pull request shows only this group's change. With no such mail, change no base.`,
+          '- If a tool tells you to move or remove a file that came from a group this one follows, leave the file and ask the coordinator.',
+        ]
+      : []),
+    '- Save work with mcp__ndev__checkpoint and not with git commit or git push. The workflow opens the pull request and links it to this workspace. Merge only when mcp__ndev__done does it.',
+    `- The pull request body ends with these lines: Model: ${g.model} and Effort: ${g.effort}.`,
+    '- When you need a product or scope decision, ask the coordinator and never guess. Run `orca orchestration ask --question "<question>" --wait --timeout-ms 540000 --json` in the foreground, with a command timeout of 600000 ms. After a timeout, run `orca orchestration ask --resume <message_id> --wait --timeout-ms 540000 --json`. Do not end your turn while a question is open, because the workflow counts that as no progress.',
+    '- Call mcp__ndev__blocked only when a person must act on this machine, such as a sign-in.',
+    `- If the workflow blocks this issue, for example on an open blocked-by issue, read the message. ${g.after.length ? `When it names only issues of the groups that this group follows (${g.after.map(a => `#${a}`).join(', ')}), their change is in your branch, so call mcp__ndev__unblocked and go on. ` : ''}Ask the coordinator about any other block, and call mcp__ndev__unblocked when it is clear. If nobody can clear it, send worker_done with --outcome failed and the block message.`,
+    'Ownership: this workspace and its branch only.',
+    `Observable acceptance: mcp__ndev__done accepted a pull request that closes ${g.issues.map(n => `#${n}`).join(', ')}.`,
+    'Then send worker_done once, with --outcome succeeded and a body that starts with PR #<number>. If you cannot finish, send it with --outcome failed and the reason.',
   ].join('\n')
 }
 
@@ -210,6 +219,7 @@ async function launch($: EngineInterface): Promise<void> {
   } catch (err) {
     const runId = (await read($, view)).runId
     await update($, view, (x): TriageView => ({ ...x, phase: 'done' }))
+    ask($, 'the failed launch', `Triage: the launch stopped part way: ${message(err)}\nNo worker will write to you. Tell the user, with the repair: /orca-triage reset clears this triage, then /orca-triage start begins again.`)
     throw new Error(`the launch stopped part way: ${message(err)}\n${runId ? `Orca Run ${runId} keeps the Tasks it made. ` : ''}Repair: /orca-triage reset clears this triage, then /orca-triage start begins again.`)
   }
   await startReady($)
@@ -219,8 +229,9 @@ async function launch($: EngineInterface): Promise<void> {
 async function create($: EngineInterface, v: TriageView): Promise<void> {
   const repo = v.repo!
   const run = runner($, 120_000)
-  const created = (await orca(run, ['orchestration', 'run-create', '--objective', `Triage ${repo}: ${v.groups.length} groups`])) as { run: { id: string } }
-  const runId = created.run.id
+  const created = (await orca(run, ['orchestration', 'run-create', '--objective', `Triage ${repo}: ${v.groups.length} groups`])) as { run?: { id?: string } }
+  const runId = created.run?.id
+  if (!runId) throw new Error(`orca orchestration run-create answered no Run id: ${JSON.stringify(created).slice(0, 300)}`)
   handled.clear()
   await update($, view, (x): TriageView => ({ ...x, runId }))
   await note($, `Orca Run ${runId} created`)
@@ -237,7 +248,8 @@ async function create($: EngineInterface, v: TriageView): Promise<void> {
     const made = (await orca(run, [
       'orchestration', 'task-create', '--run', runId, '--task-title', g.title, '--display-name', `issue-${g.lead}`,
       '--spec', spec(repo, g, v.issues), ...(deps.length ? ['--deps', JSON.stringify(deps)] : []),
-    ])) as { task: { id: string; status: string } }
+    ])) as { task?: { id?: string; status: string } }
+    if (!made.task?.id) throw new Error(`orca orchestration task-create for #${g.lead} answered no Task id: ${JSON.stringify(made).slice(0, 300)}`)
     taskOf.set(g.lead, made.task.id)
     await setGroup($, g.lead, { taskId: made.task.id, task: made.task.status })
   }
@@ -260,9 +272,12 @@ async function startNow($: EngineInterface): Promise<void> {
     try {
       const worktree = g.worktree ?? await makeWorkspace($, v.repo, g, v.issues)
       await startWorker($, v.runId, g, worktree)
+      const now = (await read($, view)).groups.find(x => x.lead === g.lead)
+      if (now?.dispatchId && !now.error && now.base) await tellBase($, v.runId, now, now.base)
     } catch (err) {
       await setGroup($, g.lead, { error: message(err) })
       await note($, `#${g.lead}: ${firstLine(message(err))}`)
+      askToDecide($, `the failed start of #${g.lead}`, `Triage: the worker for #${g.lead} (${g.title}) did not start:`, message(err), g, v.runId)
     }
   }
   await settle($)
@@ -272,6 +287,7 @@ async function startNow($: EngineInterface): Promise<void> {
 // the triage is done.
 async function settle($: EngineInterface): Promise<void> {
   const before = await read($, view)
+  let hasEnded = false
   await update($, view, (x): TriageView => {
     const groups = x.groups.slice()
     const isStuck = (g: TriageGroup) => !!g.error || g.task === 'failed' || g.blockedBy !== undefined
@@ -284,13 +300,21 @@ async function settle($: EngineInterface): Promise<void> {
       })
     }
     const isOver = groups.every(g => g.task === 'completed' || isStuck(g))
+    hasEnded = x.phase === 'running' && isOver
     return { ...x, groups, phase: x.phase === 'running' && isOver ? 'done' : x.phase }
   })
   const after = await read($, view)
   for (const g of after.groups) {
     if (g.blockedBy !== undefined && before.groups.find(y => y.lead === g.lead)?.blockedBy === undefined) await note($, `#${g.lead}: blocked, as #${g.blockedBy} failed`)
   }
-  if (after.phase === 'done' && before.phase === 'running') await note($, 'every group is done, failed or blocked')
+  if (hasEnded) {
+    await note($, 'every group is done, failed or blocked')
+    ask($, 'the end of the triage', [
+      `Triage of ${after.repo}: every group has ended. Report to the user, with a link to each pull request and issue, what each group reached and what needs them. Read each pull request with gh first, because this list can be behind.`,
+      '',
+      ...after.groups.map(g => `#${g.lead} ${g.title}: ${g.error ?? (g.blockedBy !== undefined ? `blocked, as #${g.blockedBy} failed` : g.task ?? 'no state')}${g.pr && after.repo ? `, ${pullUrl(after.repo, g.pr)}` : ', no pull request recorded'}`),
+    ].join('\n'))
+  }
 }
 
 // Orca makes the workspace from the default branch and links the group's issues to it before setup runs.
@@ -303,13 +327,14 @@ async function makeWorkspace($: EngineInterface, repo: string, g: TriageGroup, i
   ])) as { worktree?: { id?: string } }
   const id = made.worktree?.id
   if (!id) throw new Error(`orca worktree create for #${g.lead} answered no worktree id: ${JSON.stringify(made).slice(0, 300)}${START_ORCA}`)
-  await setGroup($, g.lead, { worktree: id })
+  await setGroup($, g.lead, { worktree: id, base })
   await note($, `#${g.lead}: Orca made workspace issue-${g.lead}`)
   return id
 }
 
-// A group that follows others starts from the head branch of the first of their pull requests, so it carries the
-// change it waits for and its own pull request stacks on that one. Undefined when none opened a pull request.
+// A group that follows others starts from the head branch of the first of their open pull requests, so it carries the
+// change it waits for and its own pull request stacks on that one. Undefined when none is open: a merged pull request
+// has its change on the default branch, and its branch may be gone.
 async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise<string | undefined> {
   if (!g.after.length) return undefined
   const groups = (await read($, view)).groups
@@ -317,8 +342,10 @@ async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise
   for (const a of g.after) {
     const before = groups.find(x => x.lead === a)
     const pr = worktrees.find(w => w.id === before?.worktree)?.linkedPR ?? before?.pr
-    if (!pr) continue
-    const headRefName = (await gh(runner($, 60_000), ['pr-read', String(pr)]) as { head?: { ref?: string } }).head?.ref
+    if (!pr) { await note($, `#${g.lead}: #${a}, which it follows, has no known pull request`); continue }
+    const pr_ = await gh(runner($, 60_000), ['pr-read', String(pr)]) as { state?: string; head?: { ref?: string } }
+    if (pr_.state !== 'open') continue
+    const headRefName = pr_.head?.ref
     if (!headRefName) throw new Error(`gh.sh pr-read ${pr} of ${repo} answered no head branch, so the branch #${g.lead} follows is unknown`)
     return headRefName
   }
@@ -334,7 +361,7 @@ type StartReceipt = {
 // state decides, not the exit code.
 async function startWorker($: EngineInterface, runId: string, g: TriageGroup, worktree: string): Promise<void> {
   const args = ['orchestration', 'worker-start', '--task', g.taskId!, '--run', runId, '--worktree', `id:${worktree}`,
-    '--agent', 'claude', '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000', '--json']
+    '--agent', 'claude', '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000', '--full', '--json']
   const out = await $.process.run(['orca', ...args], { timeoutMs: 180_000 })
   let reply: { ok?: boolean; result?: StartReceipt; error?: { code?: string; message?: string } } | undefined
   try {
@@ -352,10 +379,21 @@ async function startWorker($: EngineInterface, runId: string, g: TriageGroup, wo
     const waits = r.lastError === 'agent_prompt_blocked' ? '\nA prompt waits in the worker\'s terminal: Jump to it and answer it.' : ''
     await setGroup($, g.lead, { dispatchId: r.dispatchId, terminal, error: `worker-start failed: ${r.lastError ?? r.state} at ${r.failedStage ?? 'an unknown stage'}${waits}\n${r.recovery ?? 'Orca gave no recovery.'}` })
     await note($, `#${g.lead}: the worker did not start: ${r.lastError ?? r.state}`)
+    askToDecide($, `the failed start of #${g.lead}`, `Triage: the worker for #${g.lead} (${g.title}) did not start: ${r.lastError ?? r.state} at ${r.failedStage ?? 'an unknown stage'}.`, r.recovery ?? 'Orca gave no recovery.', g, runId)
     return
   }
   await setGroup($, g.lead, { dispatchId: r.dispatchId, terminal, effective })
   await note($, `#${g.lead}: worker ${r.dispatchId} started (${effective ?? `${g.model} · ${g.effort}`})`)
+}
+
+// The spec is written before the first of the groups ends, so only now is the branch known.
+async function tellBase($: EngineInterface, runId: string, g: TriageGroup, base: string): Promise<void> {
+  try {
+    await orca(runner($, 60_000), ['orchestration', 'send', '--to', `dispatch:${g.dispatchId}`, '--run', runId, '--subject', 'Base branch',
+      '--body', `Your workspace started from branch ${base}. When the workflow has opened your draft pull request, set its base to ${base}, as your Task says.`])
+  } catch (err) {
+    askToDecide($, `the base branch of #${g.lead}`, `Triage: the worker for #${g.lead} was not told its base branch, ${base}:`, message(err), g, runId)
+  }
 }
 
 type Message = { id: string; from_handle: string; type: string; body: string; payload: string | null }
@@ -386,8 +424,18 @@ async function waitLoop($: EngineInterface): Promise<void> {
   }
 }
 
+// A worker that cannot go on needs a decision, and the coordinator makes it or takes it to the human.
+function askToDecide($: EngineInterface, what: string, head: string, body: string, g: TriageGroup | undefined, runId: string | undefined): void {
+  ask($, what, [
+    head, '', body, '',
+    'Find the cause from the pull request and the workspace of the worker, and tell the user what it needs. Ask the user with AskUserQuestion when the decision is theirs. Do not do the work of the worker yourself.',
+    ...(g?.dispatchId ? [`To answer a worker that is still open: \`orca orchestration send --to dispatch:${g.dispatchId} --run ${runId} --subject "<topic>" --body "<guidance>" --json\`.`] : []),
+    ...(g?.taskId ? [`To end its group when it cannot go on: \`orca orchestration task-update --id ${g.taskId} --status failed --run ${runId} --json\`.`] : []),
+  ].join('\n'))
+}
+
 async function handle($: EngineInterface, m: Message): Promise<void> {
-  const payload = m.payload ? (JSON.parse(m.payload) as { taskId?: string; dispatchId?: string; outcome?: string; _orcaLifecycleRejection?: { code?: string; reason?: string } }) : {}
+  const payload = m.payload ? (JSON.parse(m.payload) as { taskId?: string; dispatchId?: string; outcome?: string; stopReason?: string; _orcaLifecycleRejection?: { code?: string; reason?: string } }) : {}
   if (payload._orcaLifecycleRejection) {
     await note($, `Orca rejected a ${m.type} from ${m.from_handle}: ${payload._orcaLifecycleRejection.code ?? ''} ${payload._orcaLifecycleRejection.reason ?? ''}`)
     return
@@ -405,8 +453,10 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
       ].join('\n'))
   } else if (m.type === 'worker_done') {
     const isDone = payload.outcome === 'succeeded'
-    if (g) await setGroup($, g.lead, { summary: firstLine(m.body), question: undefined, ...(isDone ? {} : { error: `the worker reported ${payload.outcome ?? 'no outcome'}: ${m.body}` }) })
+    const reported = /\bPR #(\d+)/.exec(m.body)
+    if (g) await setGroup($, g.lead, { summary: firstLine(m.body), question: undefined, ...(reported ? { pr: Number(reported[1]) } : {}), ...(isDone ? {} : { error: `the worker reported ${payload.outcome ?? 'no outcome'}: ${m.body}` }) })
     await note($, `${who}: worker done, ${payload.outcome ?? 'no outcome'}`)
+    if (!isDone) askToDecide($, `the failure of ${who}`, `Triage: the Orca worker for ${who} ended with ${payload.outcome ?? 'no outcome'}:`, m.body, g, v.runId)
     // Keep the worker's terminal open for review.
     if (payload.dispatchId) {
       await orca(runner($, 60_000), ['orchestration', 'worker-retain', '--dispatch', payload.dispatchId])
@@ -414,9 +464,14 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
     }
     await startReady($)
   } else if (m.type === 'escalation') {
-    if (g) await setGroup($, g.lead, { error: `escalated: ${m.body}` })
+    // Orca writes this when a turn ends with no worker_done, and the workflow ends the turn of a worker that waits for
+    // its checks. The workflow wakes that worker, and its own reminders catch a worker that has stopped.
+    if (payload.stopReason === 'finished') { await note($, `${who} ended a turn and its Dispatch stays open`); return }
+    // Its Dispatch stays open, so this settles nothing: only worker_done or the Task's status ends a group.
+    if (g) await setGroup($, g.lead, { summary: `Needs a decision: ${firstLine(m.body)}` })
     await note($, `${who} escalated: ${firstLine(m.body)}`)
     $.ui.toast(`/orca-triage: ${who} escalated: ${firstLine(m.body)}`)
+    askToDecide($, `the escalation from ${who}`, `Triage: the Orca worker for ${who} escalated:`, m.body, g, v.runId)
   }
 }
 
@@ -431,6 +486,11 @@ async function refresh($: EngineInterface): Promise<void> {
     orcaWorktrees(run),
   ])
   const now = await $.clock.now()
+  for (const g of v.groups) {
+    if (g.task !== 'failed' && tasks.tasks.find(t => t.id === g.taskId)?.status === 'failed') {
+      askToDecide($, `the failed Task of #${g.lead}`, `Triage: the Task of #${g.lead} (${g.title}) is failed in Orca.`, g.error ?? g.summary ?? 'Orca gave no reason.', g, v.runId)
+    }
+  }
   await update($, view, x => {
     const groups = x.groups.map(g => {
       const wt = worktrees.find(w => w.id === g.worktree) as { workspaceStatus?: string; linkedPR?: number | null } | undefined
@@ -476,7 +536,7 @@ const fail = ($: EngineInterface, what: string) => (err: unknown) => {
 export async function startTriage($: EngineInterface) {
   await $.command.register({
     name: 'orca-triage',
-    description: 'Group the open issues with this session\'s model and work each group in its own Orca workspace, one draft pull request per group',
+    description: 'Group the open issues with this session\'s model, then coordinate an Orca worker on each group, one pull request per group. Same as /dev triage',
     argumentHint: '[start [--dry-run]|launch|refresh|reset]',
   })
   await $.tool.register({
@@ -511,30 +571,32 @@ export async function startTriage($: EngineInterface) {
   $.clock.every(TICK_MS, () => { void tick($) })
 }
 
-export const triage = (on: On, project: () => LoadedConfig | undefined) => {
-  // Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
-  on('command.run', { command: 'orca-triage' }, async ($, e) => {
-    const words = e.args.trim().split(/\s+/).filter(Boolean)
-    const [verb = 'status'] = words.filter(w => !w.startsWith('--'))
-    const unknown = words.find(w => w.startsWith('--') && (w !== '--dry-run' || verb !== 'start'))
-    if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The one option is /orca-triage start --dry-run.` }
-    void openPane($)
-    if (verb === 'start') {
-      void collect($, project(), words.includes('--dry-run'))
-        .then(text => $.ui.toast(text), fail($, 'start'))
-      return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
-    }
-    if (verb === 'launch') { void launch($).catch(fail($, 'launch')); return { text: 'Launching the planned groups in Orca.' } }
-    if (verb === 'refresh') { void tick($).catch(fail($, 'refresh')); return { text: 'Reading the triage back from Orca.' } }
-    if (verb === 'reset') {
-      const v = await read($, view)
-      await update($, view, () => EMPTY)
-      return { text: v.runId ? `Triage cleared. Orca Run ${v.runId} and its workspaces stay in Orca.` : 'Triage cleared.' }
-    }
-    if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run], launch, refresh or reset.` }
+// /orca-triage <args> and /dev triage <args>. Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
+export async function triageCommand($: EngineInterface, args: string, project: () => LoadedConfig | undefined): Promise<{ text: string }> {
+  const words = args.trim().split(/\s+/).filter(Boolean)
+  const [verb = 'status'] = words.filter(w => !w.startsWith('--'))
+  const unknown = words.find(w => w.startsWith('--') && (w !== '--dry-run' || verb !== 'start'))
+  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The one option is /orca-triage start --dry-run.` }
+  void openPane($)
+  if (verb === 'start') {
+    void collect($, project(), words.includes('--dry-run'))
+      .then(text => $.ui.toast(text), fail($, 'start'))
+    return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
+  }
+  if (verb === 'launch') { void launch($).catch(fail($, 'launch')); return { text: 'Launching the planned groups in Orca.' } }
+  if (verb === 'refresh') { void tick($).catch(fail($, 'refresh')); return { text: 'Reading the triage back from Orca.' } }
+  if (verb === 'reset') {
     const v = await read($, view)
-    return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups.` : 'No triage yet. /orca-triage start reads the issues.' }
-  }).catch(($, e, next) => ({
+    await update($, view, () => EMPTY)
+    return { text: v.runId ? `Triage cleared. Orca Run ${v.runId} and its workspaces stay in Orca.` : 'Triage cleared.' }
+  }
+  if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run], launch, refresh or reset.` }
+  const v = await read($, view)
+  return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups.` : 'No triage yet. /orca-triage start reads the issues.' }
+}
+
+export const triage = (on: On, project: () => LoadedConfig | undefined) => {
+  on('command.run', { command: 'orca-triage' }, ($, e) => triageCommand($, e.args, project)).catch(($, e, next) => ({
     text: `/orca-triage ${e.args} failed (${next.error.kind} after ${next.error.budget} ms): ${next.error.message ?? 'no message'}`,
   }))
 
@@ -551,7 +613,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     await note($, `the model made ${planned.length} groups`)
     if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /orca-triage launch starts them.` }
     void launch($).catch(fail($, 'launch'))
-    return { result: `Recorded ${planned.length} groups. The mod creates the Orca Run and starts the workers; the Triage pane shows them. Wait for worker questions, which the mod sends you.` }
+    return { result: `Recorded ${planned.length} groups. The mod creates the Orca Run and starts the workers; the Triage pane shows them. You are the coordinator now: start no work on these issues, and wait for what the mod sends you.` }
   })
 
   // The model's reply to a worker's question closes the question on the pane.
@@ -589,7 +651,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
                 : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
     const phase = v.phase === 'grouping' ? `the model is grouping ${v.issues.length} issues`
       : v.phase === 'planned' ? `${v.groups.length} groups planned, nothing started${v.isDryRun ? ' (dry run)' : ''}`
-        : v.phase === 'running' ? `Orca Run ${v.runId}` : v.phase === 'done' ? `done · Orca Run ${v.runId}` : 'not started'
+        : v.phase === 'running' ? `Orca Run ${v.runId ?? 'not made yet'}` : v.phase === 'done' ? (v.runId ? `done · Orca Run ${v.runId}` : 'stopped: no Orca Run was made') : 'not started'
     const url = (n: number) => v.issues.find(i => i.number === n)?.url ?? `https://github.com/${v.repo}/issues/${n}`
     const titled = (n: number) => v.issues.find(i => i.number === n)?.title ?? ''
 
