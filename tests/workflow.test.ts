@@ -36,6 +36,19 @@ const held = (...records: Record<string, unknown>[]) => {
   }
   return JSON.stringify({ version: 2, resources: {}, workflows: issues, prs })
 }
+// The state of a worktree as a reader sees it: the old keys of the worktree file, and over them the issue files.
+const heldOn = (files: Map<string, string> | undefined, root = ROOT) => {
+  const file = JSON.parse(files?.get(`${root}/.neil-dev.worktree.json`) ?? '{}') as { workflows?: Record<string, unknown>; prs?: Record<string, unknown> }
+  const workflows = { ...file.workflows }
+  const prs = { ...file.prs }
+  for (const [path, body] of files ?? []) {
+    if (!new RegExp(`^${root}/\\.neil-dev\\.issue-\\d+\\.json$`).test(path)) continue
+    const held = JSON.parse(body) as { issue: number; workflow?: unknown; prs?: Record<string, unknown> }
+    if (held.workflow) workflows[held.issue] = held.workflow
+    Object.assign(prs, held.prs)
+  }
+  return { workflows, prs }
+}
 const pull = (over: Record<string, unknown> = {}) => ({
   number: 12, state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean',
   body: 'Closes #7', created_at: '2026-11-01T00:00:00Z', head: { sha: SHA, ref: 'issue-7' }, ...over,
@@ -117,7 +130,9 @@ const engine = (on: On, opts: Opts = {}) => {
     for (const name of ['kb/ui-components.md', 'kb/libraries.md', 'skills/motion/SKILL.md', 'skills/motion/references/delight.md']) if (path.endsWith(`/${name}`)) return `SOURCE ${name}`
     return undefined
   }
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) || guide(e.path) !== undefined }))
+  const isFolder = (path: string) => [...files.keys()].some(k => k.startsWith(`${path}/`))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) || isFolder(e.path) || guide(e.path) !== undefined }))
+  on('fs.list', (_, e) => ({ value: [...files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => ({ value: guide(e.path) ?? files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => {
     if (s.failWrite?.(e.path)) throw new Error(`disk full: ${e.path}`)
@@ -193,17 +208,32 @@ const engine = (on: On, opts: Opts = {}) => {
           return ok('', 5, 'another writer got in first')
         }
         // As the real script: a writer that expected another revision changes nothing, and exits 5.
-        const record = `${a[a.indexOf('--worktree') + 1]}/.neil-dev.worktree.json`
-        const onFile = JSON.parse(files.get(record) ?? '{}') as { workflow?: { issue: number; rev?: number }; workflows?: Record<string, { rev?: number }>; prs?: Record<string, { rev?: number }> }
-        const all: Record<string, { rev?: number }> = { ...(onFile.workflow ? { [onFile.workflow.issue]: onFile.workflow } : {}), ...onFile.workflows }
-        const prRecords = { ...onFile.prs }
-        const written = JSON.parse(String(e.init?.stdin)) as { issue: number; pr?: number }
-        const was = (written.pr ? prRecords[written.pr]?.rev : all[written.issue]?.rev) ?? 0
+        const root = a[a.indexOf('--worktree') + 1]!
+        const record = `${root}/.neil-dev.worktree.json`
+        type Saved = { issue: number; pr?: number; rev?: number }
+        const onFile = JSON.parse(files.get(record) ?? '{}') as { workflow?: Saved; workflows?: Record<string, Saved>; prs?: Record<string, Saved>; leads?: Record<string, number>; settings?: unknown; resources?: unknown }
+        const issueAt = (n: number) => `${root}/.neil-dev.issue-${n}.json`
+        const inFile = (n: number) => JSON.parse(files.get(issueAt(n)) ?? `{"version":1,"issue":${n}}`) as { version: number; issue: number; workflow?: Saved; prs?: Record<string, Saved> }
+        const leads = { ...onFile.leads }
+        const written = JSON.parse(String(e.init?.stdin)) as Saved
+        // The old keys move at the first write, and what an issue file holds stays.
+        const oldIssues = { ...(onFile.workflow ? { [onFile.workflow.issue]: onFile.workflow } : {}), ...onFile.workflows }
+        const oldPrs = { ...onFile.prs }
+        for (const old of Object.values(oldIssues)) files.set(issueAt(old.issue), JSON.stringify({ ...inFile(old.issue), workflow: inFile(old.issue).workflow ?? old }))
+        for (const [n, old] of Object.entries(oldPrs)) {
+          leads[n] ??= old.issue
+          const at = inFile(leads[n]!)
+          files.set(issueAt(leads[n]!), JSON.stringify({ ...at, prs: { [n]: old, ...at.prs } }))
+        }
+        if (written.pr) leads[written.pr] ??= written.issue
+        const moved = Object.keys(oldIssues).length + Object.keys(oldPrs).length > 0
+        if (moved || JSON.stringify(leads) !== JSON.stringify(onFile.leads ?? {})) files.set(record, JSON.stringify({ version: 2, settings: onFile.settings, resources: onFile.resources ?? {}, leads }))
+        const lead = written.pr ? leads[written.pr]! : written.issue
+        const held = inFile(lead)
+        const was = (written.pr ? held.prs?.[written.pr]?.rev : held.workflow?.rev) ?? 0
         const rev = Number(a[a.indexOf('--expect-rev') + 1]) + 1
         if (was !== rev - 1) return ok('', 5, `the workflow of ${written.pr ? `PR #${written.pr}` : `#${written.issue}`} is at revision ${was}, and this writer expected ${rev - 1}`)
-        if (written.pr) prRecords[written.pr] = { ...written, rev }
-        else all[written.issue] = { ...written, rev }
-        files.set(record, JSON.stringify({ version: 2, resources: {}, workflows: all, prs: prRecords }))
+        files.set(issueAt(lead), JSON.stringify(written.pr ? { ...held, prs: { ...held.prs, [written.pr]: { ...written, rev } } } : { ...held, workflow: { ...written, rev } }))
         return ok(`${rev}\n`)
       }
       return ok()
@@ -298,7 +328,7 @@ const engine = (on: On, opts: Opts = {}) => {
   on('session.usage', () => ({ value: { startedAt: s.resumed ? s.now - 3_600_000 : s.now } }) as never)
 
   type Held = ReturnType<typeof flow> & { blocked?: { message: string; group?: string }; hooks?: Record<string, { firedAt: number; result?: string } | undefined> } & Record<string, unknown>
-  const onRecord = () => JSON.parse(files.get(RECORD) ?? '{}') as { workflows?: Record<string, Held>; prs?: Record<string, Held> }
+  const onRecord = () => heldOn(files) as { workflows?: Record<string, Held>; prs?: Record<string, Held> }
   const prRecord = (n: number) => onRecord().prs?.[n]
   const issueRecord = (n: number) => onRecord().workflows?.[n]
   // The record that acts for this issue now: its PR record, once the PR is past its developers.
@@ -328,7 +358,7 @@ let liveFiles: Map<string, string> | undefined
 function callFor(name: string): Record<string, unknown> {
   if (name === 'finishedDevelopment') return { issues: [onIssue] }
   if (name === 'waitForPR') return { issue: onIssue }
-  const onFile = JSON.parse(liveFiles?.get(RECORD) ?? '{}') as { workflows?: Record<string, { state: string; prs: number[] }>; prs?: Record<string, { state: string }> }
+  const onFile = heldOn(liveFiles) as { workflows?: Record<string, { state: string; prs: number[] }>; prs?: Record<string, { state: string }> }
   const own = onFile.workflows?.[onIssue]
   const n = own?.state === 'developed' ? own.prs[0] : undefined
   return n !== undefined && onFile.prs?.[n] && onFile.prs[n]!.state !== 'developing' ? { pr: n } : { issue: onIssue }
@@ -1112,7 +1142,7 @@ test('a followUp subagent adds its change types to its own record', async ($, on
   await startFollowUp($, w)
   w.s.dirty = [' M a.ts']
   expect((await tool($, 'checkpoint', { issue: 31, message: 'm', files: ['a.ts'], changeTypes: ['tests'], worktree: CLAIMED })).isError).toBe(false)
-  expect(JSON.parse(w.files.get(`${CLAIMED}/.neil-dev.worktree.json`)!).workflows[31].changeTypes).toEqual(['tests', 'backend'])
+  expect(JSON.parse(w.files.get(`${CLAIMED}/.neil-dev.issue-31.json`)!).workflow.changeTypes).toEqual(['tests', 'backend'])
   expect(w.state()?.changeTypes).toBeUndefined()
   expect((await tool($, 'checkpoint', { issue: 31, message: 'm', files: ['a.ts'], changeTypes: ['frontend'], worktree: CLAIMED })).text).toContain('web, backend')
 })
@@ -1138,7 +1168,7 @@ test('the record of the main workflow stays on its issue, and its Orca workspace
   await tool($, 'checkpoint', { message: 'm', files: ['a.ts'], ...AGENT })
   expect(w.state()!.issue).toBe(7)
   expect(w.state()!.state).toBe('developing')
-  expect(JSON.parse(w.files.get(`${CLAIMED}/.neil-dev.worktree.json`)!).workflows[31].issue).toBe(31)
+  expect(JSON.parse(w.files.get(`${CLAIMED}/.neil-dev.issue-31.json`)!).workflow.issue).toBe(31)
   expect(JSON.stringify(w.orcaCalls)).not.toContain('"31"')
 })
 
@@ -1164,6 +1194,19 @@ test('checkpoint refuses a worktree that followUp did not start, and names those
   expect(r.text).toContain('/elsewhere')
   expect(r.text).toContain(CLAIMED)
   expect(w.s.commitDirs).toEqual([])
+})
+
+test('the worktree of a followUp agent is on the record, so another session can read it after a restart', async ($, on) => {
+  const w = engine(on)
+  await startFollowUp($, w)
+  expect(w.state()?.followUps?.[0]?.worktree).toBe(CLAIMED)
+})
+
+test('checks pending at done: the commit that done waits for is on the record, so a new session watches it', async ($, on) => {
+  const w = engine(on, { wf: { state: 'finishing', evidence: { checks: { sha: SHA, text: 'green' } } }, checks: RUNNING })
+  await start($, w)
+  await tool($, 'done', { message: 'm', remembered: 'nothing: small' })
+  expect(w.state()?.doneWaitsFor).toBe(SHA)
 })
 
 test('a helper that followUp did not start still cannot call checkpoint', async ($, on) => {

@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { shownValue } from '../hooks/workflow/live'
+import { linked } from '../hooks/view-layout'
+import { shownFull, shownValue } from '../hooks/workflow/live'
 
 type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
 type On = Parameters<Body>[1]
@@ -44,7 +45,8 @@ function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, curr
   const copied: string[] = []
   const opened: string[] = []
   const table: Record<string, ReturnType<typeof ok>> = {
-    [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify(listing)),
+    // As ndev-files.sh does, the listing names each issue file that exists.
+    [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify({ worktrees: listing.worktrees.map(t => ({ ...t, files: [...t.files, ...Object.keys(files).filter(k => k.startsWith(`${t.path}/.neil-dev.issue-`)).map(k => ({ name: k.slice(t.path.length + 1), isKnown: false, present: true, isIgnored: true }))] })) })),
     [`${ENV} list --json --live --worktree ${WT}`]: ok(JSON.stringify(record)),
     ...answers,
   }
@@ -57,7 +59,8 @@ function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, curr
   on('prompt.compose', () => ({ sections: [] }))
   on('prompt.submit', (_, e) => e)
   on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || e.path === `${ROOT}/.ndev-inited` || e.path in files }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || e.path === `${ROOT}/.ndev-inited` || e.path in files || Object.keys(files).some(k => k.startsWith(`${e.path}/`)) }))
+  on('fs.list', (_, e) => ({ value: Object.keys(files).filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => ({ value: files[e.path] ?? '' }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
@@ -504,6 +507,222 @@ test('shownValue masks each form of a secret that a command can hold', () => {
   expect(shownValue('body', { password: 'hunter2', nested: { token: 'abc' }, list: [{ secret: 'x' }], fine: 1 })).not.toMatch(/hunter2|abc|"x"/)
   expect(shownValue('body', { fine: 1 })).toContain('"fine":1')
   expect(shownValue('list', [{ password: 'hunter2' }])).not.toContain('hunter2')
+})
+
+// ---- the issue files, and everything they hold ----
+const ISSUE_AT = (n: number) => `${WT}/.neil-dev.issue-${n}.json`
+const REPO = 'acme/widgets'
+const fullIssue = {
+  rev: 6, issue: 7, root: WT, repo: REPO, base: 'main', branch: 'issue-7', prs: [12], shortName: 'fix-the-thing', state: 'developing', mode: 'heavy', steering: 'auto',
+  owner: { session: 'sess-abc', at: 990_000 }, lastSession: 'sess-old', releasedAt: 980_000,
+  orca: { name: '7-fix-the-thing', status: 'in-progress', comment: 'Working on it', attention: false, issue: 7 },
+  evidence: { review: { sha: 'abcdef1234567', text: 'no findings' } },
+  attempts: 2, nudges: { count: 3, fingerprint: 'fp-1' },
+  followUps: [{ hash: 'h1', mode: 'subagent', issue: 31, title: 'Tidy the parser', worktree: '/proj/.claude/worktrees/w31' }],
+  migrations: [{ name: 'add_col', path: 'supabase/migrations/1_add_col.sql' }],
+  hooks: { review: { firedAt: 950_000, result: 'See https://example.com/report for #44', agentId: 'agent-9' } },
+  reviewCopy: { agentId: 'agent-c', answer: 'copy is fine' },
+  changeTypes: ['web', 'tests'], webFiles: ['app/page.tsx'],
+  history: [{ at: 900_000, tool: 'started', to: 'planning' }, { at: 940_000, tool: 'finishedPlan', from: 'planning', to: 'developing' }],
+  doneWaitsFor: 'feedface', futureThing: { color: 'teal', api_key: 'hunter2' },
+}
+const issueFiles = (issue: Record<string, unknown>, prs?: Record<string, unknown>) => ({ [ISSUE_AT(issue.issue as number)]: JSON.stringify({ version: 1, issue: issue.issue, workflow: issue, ...(prs ? { prs } : {}) }) })
+const hrefOf = async (ui: Awaited<ReturnType<typeof start>>, text: string | RegExp) => (await ui.find({ type: 'Link', text }))?.props.href
+
+test('a worktree with issue files and no worktree file still shows its workflows and its resources', async ($, on) => {
+  const onlyIssue = { worktrees: [listing.worktrees[0], { ...listing.worktrees[1], files: [file('.neil-dev.json', true), file('.neil-dev.worktree.json', false, true), { name: '.neil-dev.issue-7.json', isKnown: false, present: true, isIgnored: true }] }] }
+  world(on, { [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify(onlyIssue)) }, WT, issueFiles(fullIssue))
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^developing, issue #7/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /docs +:3000/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('every field of an issue record shows, and each resource in it is one click away', async ($, on) => {
+  world(on, {}, WT, issueFiles(fullIssue))
+  const ui = await start($)
+  expect(await hrefOf(ui, '.neil-dev.issue-7.json')).toBe(`file://${ISSUE_AT(7)}`)
+  expect(await hrefOf(ui, REPO)).toBe(`https://github.com/${REPO}`)
+  expect(await hrefOf(ui, /^issue-7$/)).toBe(`https://github.com/${REPO}/tree/issue-7`)
+  expect(await hrefOf(ui, /^main$/)).toBe(`https://github.com/${REPO}/tree/main`)
+  expect(await hrefOf(ui, 'checks #12')).toBe(`https://github.com/${REPO}/pull/12/checks`)
+  expect(await hrefOf(ui, 'abcdef12')).toBe(`https://github.com/${REPO}/commit/abcdef1234567`)
+  expect(await hrefOf(ui, 'feedface')).toBe(`https://github.com/${REPO}/commit/feedface`)
+  expect(await hrefOf(ui, '#31')).toBe(`https://github.com/${REPO}/issues/31`)
+  expect(await hrefOf(ui, '/proj/.claude/worktrees/w31')).toBe('file:///proj/.claude/worktrees/w31')
+  expect(await hrefOf(ui, 'supabase/migrations/1_add_col.sql')).toBe(`file://${WT}/supabase/migrations/1_add_col.sql`)
+  expect(await hrefOf(ui, 'app/page.tsx')).toBe(`file://${WT}/app/page.tsx`)
+  for (const shown of [/fix-the-thing/, /rev +6/, /sess-abc/, /sess-old/, /attempts +2/, /nudges +3.*fp-1/, /Working on it/, /no findings/, /agent-9/, /copy is fine/, /web, tests/, /Tidy the parser/, /add_col/, /finishedPlan +planning → developing/, /futureThing/, /teal/]) {
+    expect(await ui.find({ type: 'Text', text: shown })).toBeTruthy()
+  }
+  await ui.unmount()
+})
+
+test('a field that the pane does not know still shows, and a secret in a record does not', async ($, on) => {
+  world(on, {}, WT, issueFiles(fullIssue))
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /hunter2/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a URL and an issue number in the text of a record are links', async ($, on) => {
+  world(on, {}, WT, issueFiles(fullIssue))
+  const ui = await start($)
+  expect(await hrefOf(ui, 'https://example.com/report')).toBe('https://example.com/report')
+  expect(await hrefOf(ui, '#44')).toBe(`https://github.com/${REPO}/issues/44`)
+  await ui.unmount()
+})
+
+test('the history shows newest first, and a bar shows how far the flow has come', async ($, on) => {
+  world(on, {}, WT, issueFiles(fullIssue))
+  const ui = await start($)
+  const rows = (await ui.findAll({ type: 'Text', text: /ago +(started|finishedPlan) / })).map(t => t.text)
+  expect(rows.findIndex(t => t.includes('finishedPlan'))).toBeLessThan(rows.findIndex(t => t.includes('started')))
+  expect(await ui.find({ type: 'Text', text: /^█+░+ 2\/8 .*developing for 1m 0s/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('the worktree file shows its version, its settings, and the lead issue of each PR', async ($, on) => {
+  const withLeads = { ...record, settings: { mode: 'heavy', steering: 'auto' }, leads: { 12: 7 } }
+  world(on, { [`${ENV} list --json --live --worktree ${WT}`]: ok(JSON.stringify(withLeads)) }, WT, issueFiles({ ...fullIssue, state: 'developed' }, { 12: { rev: 2, issue: 7, pr: 12, issues: [7], root: WT, repo: REPO, prs: [12], state: 'reviewing', base: 'main', branch: 'issue-7', evidence: {}, followUps: [], migrations: [], history: [] } }))
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /version +2/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /mode +heavy/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /steering +auto/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /PR #12 +lead issue #7 +\.neil-dev\.issue-7\.json/ })).toBeTruthy()
+  // The issue that the PR took over keeps its own section, and the PR says which file holds it.
+  expect(await ui.find({ type: 'Text', text: /^── issue #7 .*\.neil-dev\.issue-7\.json/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^── PR #12 .*lead #7 .*\.neil-dev\.issue-7\.json/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('state still in the old keys of the worktree file names that file, and says a save moves it', async ($, on) => {
+  world(on, {}, WT, { [RECORD_AT]: JSON.stringify({ workflows: { 7: { state: 'developing', issue: 7, prs: [] } } }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^── issue #7 .*\.neil-dev\.worktree\.json.*the next save moves it/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a dev server links its port and its folder and shows its pid, and a stack links its folder', async ($, on) => {
+  world(on)
+  const ui = await start($)
+  expect(await hrefOf(ui, ':3000')).toBe('http://localhost:3000')
+  expect(await hrefOf(ui, `${WT}/apps/docs`)).toBe(`file://${WT}/apps/docs`)
+  expect(await ui.find({ type: 'Text', text: /pid 4821/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /cliVersion +2\.122\.0/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('a blocked workflow is the first thing the pane says', async ($, on) => {
+  world(on, {}, WT, issueFiles({ ...fullIssue, state: 'blocked', previous: 'ci', blocked: { message: 'Which API key?', at: 990_000, group: 'g' } }))
+  const ui = await start($)
+  const all = (await ui.findAll({ type: 'Text', text: /./ })).map(t => t.text)
+  expect(all.findIndex(t => /^▲ #7 needs you: Which API key\?/.test(t))).toBeLessThan(all.findIndex(t => t.startsWith('fix-1')))
+  await ui.unmount()
+})
+
+test('the header counts the workflows and the servers, active rows first', async ($, on) => {
+  world(on, {}, WT, { ...issueFiles({ ...fullIssue, state: 'done' }), ...issueFiles({ ...fullIssue, issue: 9, state: 'developing' }) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /^ndev view .*2 workflows .*1 server up, 1 down/ })).toBeTruthy()
+  const flows = (await ui.findAll({ type: 'Text', text: /^(done|developing), issue/ })).map(t => t.text)
+  expect(flows[0]).toMatch(/^developing, issue #9/)
+  await ui.unmount()
+})
+
+test('with no live file, the pane draws what the last save kept on the record', async ($, on) => {
+  world(on, {}, WT, issueFiles({ ...fullIssue, live: { at: 1000, calls: [{ tool: 'checkpoint', args: { message: 'saved' }, at: 999_000, outcome: 'running' }] } }))
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /message +saved/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+// ---- what the review found ----
+const SECRET_TEXT = 'curl -H "Authorization: Bearer abc" API_TOKEN=zzz ghp_x1'
+test('a secret in any field of a record stays off the screen', async ($, on) => {
+  world(on, {}, WT, issueFiles({
+    ...fullIssue, state: 'blocked', previous: 'ci',
+    blocked: { message: SECRET_TEXT, at: 990_000 }, typesUnread: SECRET_TEXT, liveUnread: SECRET_TEXT, doneMessage: SECRET_TEXT,
+    nudges: { count: 1, fingerprint: SECRET_TEXT }, orca: { name: SECRET_TEXT, status: SECRET_TEXT, comment: SECRET_TEXT, attention: false, issue: 7 },
+  }))
+  const ui = await start($)
+  for (const secret of [/Bearer abc/, /zzz/, /ghp_x1/]) expect(await ui.find({ type: 'Text', text: secret })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a failed stop shows all that it recorded, with no secret', async ($, on) => {
+  const failed = { at: '2026-01-01T00:00:00.000Z', command: `kill ${SECRET_TEXT}`, exitCode: 3, output: `boom ${SECRET_TEXT}`, repair: 'kill -9 4821' }
+  const withStop = { ...record, resources: { ...record.resources, 'dev-servers': { docs: { ...record.resources['dev-servers'].docs, lastStop: failed } } } }
+  world(on, { [`${ENV} list --json --live --worktree ${WT}`]: ok(JSON.stringify(withStop)) })
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /The last stop failed: boom/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /exit 3/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /repair +kill -9 4821/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /2026-01-01/ })).toBeTruthy()
+  for (const secret of [/Bearer abc/, /zzz/, /ghp_x1/]) expect(await ui.find({ type: 'Text', text: secret })).toBeUndefined()
+  await ui.unmount()
+})
+
+for (const [what, bad] of [
+  ['a history row with no tool', { history: [{ at: 1 }] }],
+  ['evidence with no sha', { evidence: { checks: { text: 'x' } } }],
+  ['a migration that is a string', { migrations: ['001.sql'] }],
+  ['a web file that is a number', { webFiles: [1] }],
+  ['issues that is a number', { issues: 5 }],
+  ['prs that is a string', { prs: 'abc' }],
+  ['a path that cannot be encoded', { webFiles: ['a\ud800b.ts'] }],
+] as [string, Record<string, unknown>][]) {
+  test(`${what}: the pane still draws, with its stop buttons, and names the file`, async ($, on) => {
+    world(on, {}, WT, { ...issueFiles({ ...fullIssue, ...bad }), ...issueFiles({ ...fullIssue, issue: 9 }) })
+    const ui = await start($)
+    expect(await ui.find({ type: 'Button', key: `stop:${WT}:docs` })).toBeTruthy()
+    expect(await ui.find({ type: 'Link', text: '.neil-dev.issue-9.json' })).toBeTruthy()
+    await ui.unmount()
+  })
+}
+
+test('a record the pane cannot draw says so in red, names the file, and shows the raw record', async ($, on) => {
+  world(on, {}, WT, issueFiles({ ...fullIssue, history: [{ at: 1 }] }))
+  const ui = await start($)
+  expect(await ui.find({ type: 'Text', text: /\.neil-dev\.issue-7\.json could not be drawn: .*Repair/ })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /"shortName":"fix-the-thing"/ })).toBeTruthy()
+  await ui.unmount()
+})
+
+for (const [what, content, said] of [
+  ['an unknown version', JSON.stringify({ version: 2, issue: 7, workflow: { issue: 7, state: 'ci', prs: [] } }), /version/],
+  ['the state of another issue', JSON.stringify({ version: 1, issue: 7, workflow: { issue: 9, state: 'ci', prs: [] } }), /workflow.*issue/],
+  ['the wrong issue number', JSON.stringify({ version: 1, issue: 9, workflow: { issue: 9, state: 'ci', prs: [] } }), /issue/],
+  ['a PR under the wrong key', JSON.stringify({ version: 1, issue: 7, prs: { 12: { pr: 13, issue: 7 } } }), /prs\.12/],
+] as [string, string, RegExp][]) {
+  test(`an issue file with ${what} is refused where the script would refuse it, and names the file`, async ($, on) => {
+    world(on, {}, WT, { [ISSUE_AT(7)]: content })
+    const ui = await start($)
+    expect(await ui.find({ type: 'Text', text: /\.neil-dev\.issue-7\.json.*Repair/ })).toBeTruthy()
+    expect(await ui.find({ type: 'Text', text: said })).toBeTruthy()
+    expect(await ui.find({ type: 'Button', key: `stop:${WT}:docs` })).toBeTruthy()
+    await ui.unmount()
+  })
+}
+
+test('a URL with a fragment keeps its link; one with a masked query links to its page, with no query in the address', async ($, on) => {
+  world(on, {}, WT, issueFiles({ ...fullIssue, doneMessage: 'See https://github.com/o/r/pull/12#issuecomment-99 and https://x.io/a?token=abc&k=v' }))
+  const ui = await start($)
+  expect(await hrefOf(ui, 'https://github.com/o/r/pull/12#issuecomment-99')).toBe('https://github.com/o/r/pull/12#issuecomment-99')
+  expect(await hrefOf(ui, /^https:\/\/x\.io\/a/)).toBe('https://x.io/a')
+  await ui.unmount()
+})
+
+test('a path in a sibling worktree does not link to this worktree', () => {
+  const links = (text: string) => linked(text, { root: '/tmp/wt' }).filter(seg => seg.href).map(seg => seg.href)
+  expect(links('see /tmp/wt-other/x and /tmp/wt.old/y')).toEqual([])
+  expect(links('see /tmp/wt/x, then /tmp/wt.')).toEqual(['file:///tmp/wt/x', 'file:///tmp/wt'])
+})
+
+test('shownFull masks a secret and keeps the whole text', () => {
+  expect(shownFull('note', `curl -u bob:hunter2 ${'x'.repeat(200)}`)).toBe(`curl -u ••• ${'x'.repeat(200)}`)
+  expect(shownFull('api_key', 'abc')).toBe('•••')
+  expect(shownFull('note', 'one\ntwo')).toBe('one two')
 })
 
 test('shownValue leaves plain commands alone', () => {

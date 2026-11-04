@@ -20,4 +20,4 @@ Settings: `RESET_BASE` (base branch; default origin/HEAD, else `main`), `COMMIT_
 
 ## The workflow
 
-A workflow's state stays in `.neil-dev.worktree.json`. Call `mcp__ndev__started(issue)` to resume it, or use `/flow off` to stop it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+A workflow's state stays in `.neil-dev.issue-<id>.json`. Call `mcp__ndev__started(issue)` to resume it, or use `/flow off` to stop it. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

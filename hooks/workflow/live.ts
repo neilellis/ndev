@@ -29,7 +29,8 @@ const SECRET_TEXT: [RegExp, string][] = [
   [/\bsk-[A-Za-z0-9_-]+/g, MASK],
   [/\bxox[a-z]-[A-Za-z0-9-]+/g, MASK],
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, `$1${MASK}@`],
-  [/\b([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)[?#]\S*/gi, `$1?${MASK}`],
+  // A plain fragment such as #issuecomment-99 stays: it holds no secret, and it says where the link goes.
+  [/\b([a-z][a-z0-9+.-]*:\/\/[^\s?#]+)(?!#[\w.-]+(?:[\s)\],;:!?"']|$))[?#]\S*/gi, `$1?${MASK}`],
 ]
 
 // A secret under a key inside an object, at any depth, as in a body that a tool was given.
@@ -47,6 +48,16 @@ export function shownValue(key: string, value: unknown): string {
   const raw = Array.isArray(value) ? value.map(textOf).join(', ') : textOf(value)
   const line = SECRET_TEXT.reduce((text, [find, put]) => text.replace(find, put), raw).trim().split('\n')[0] ?? ''
   return line.length > MAX_TEXT ? `${line.slice(0, MAX_TEXT)}…(${raw.length} chars)` : line
+}
+
+// The text with each secret masked, and nothing else changed. The pane passes each span it draws through this.
+export const maskedText = (text: string): string => SECRET_TEXT.reduce((masked, [find, put]) => masked.replace(find, put), text)
+
+// The same as shownValue with the whole text: for a pane that wraps it. Line ends become spaces.
+export function shownFull(key: string, value: unknown): string {
+  if (SECRET_KEY.test(key)) return MASK
+  const raw = Array.isArray(value) ? value.map(textOf).join(', ') : textOf(value)
+  return maskedText(raw).replace(/\s+/g, ' ').trim()
 }
 
 export function shownArgs(args: Record<string, unknown>): Record<string, string> {

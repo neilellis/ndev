@@ -572,7 +572,7 @@ Treat `backend`, `database` and `config` as "run everything" unless the project 
 
 ## The record
 
-The state is in `.neil-dev.worktree.json`, under `workflows`, with one entry for each issue number. Each issue has its own revision. A file with the old `workflow` key still reads, and the next write moves it. `scripts/work/worktree_env.mjs` is the only writer. It uses a lock and a revision number, so a stale writer fails and does not overwrite. An entry can also hold `mode` and `steering`. A PR has its own entry in `prs`, by PR number, with `issues` for what it carries. `/view` shows the state of the worktree.
+The state of each issue is in its own file, `.neil-dev.issue-<id>.json`, so that two issues in one worktree do not collide on one file. The file holds `workflow` and, on a lead issue, `prs`: the record of each PR that the issue leads. It has every field that a new session needs to go on. `.neil-dev.worktree.json` holds the settings, the resources and `leads`, which names the lead issue of each PR. The lead is fixed when the PR record is first written. Each issue has its own revision. A file with the old `workflow`, `workflows` or `prs` keys still reads, and the next write moves them. An issue file wins over an old key. The live display data stays in the git directory, and each save keeps its last snapshot on the record. `scripts/work/worktree_env.mjs` is the only writer. It uses a lock and a revision number, so a stale writer fails and does not overwrite. An entry can also hold `mode` and `steering`. A PR has its own entry in `prs`, by PR number, with `issues` for what it carries. `/view` shows the state of the worktree.
 
 The record must stay out of git. `set-workflow` adds the line to `info/exclude` of the repository by itself, so the workflow tools start in any project. It refuses a record that git tracks and names `git rm --cached` as the repair. It also refuses when a `.gitignore` un-ignores the record.
 
@@ -608,7 +608,7 @@ You can add an issue to a PR until the PR is merged. `started` with a new issue,
 
 ## The /view panel
 
-`/view` shows the record and what the tools are doing now. Each worktree with a workflow has a card. The title names the issue or the PR, such as `reviewing, PR #12 (issues #7, #9)`.
+`/view` shows every field of the worktree file and of each issue file, and what the tools are doing now. Each issue, PR, check, branch, commit, file, folder and URL in it is a link. A workflow that needs the human is at the top. Each worktree with a workflow has a card. The title names the issue or the PR, such as `reviewing, PR #12 (issues #7, #9)`.
 
 
 | Row | What it shows |

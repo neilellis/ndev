@@ -7,4 +7,7 @@ export const fileUrl = (path: string): string => {
 }
 export const pullUrl = (repo: string, number: number): string => `https://github.com/${repo}/pull/${number}`
 export const issueUrl = (repo: string, number: number): string => `https://github.com/${repo}/issues/${number}`
+export const repoUrl = (repo: string): string => `https://github.com/${repo}`
+export const treeUrl = (repo: string, ref: string): string => `https://github.com/${repo}/tree/${ref.split('/').map(encodeURIComponent).join('/')}`
+export const commitUrl = (repo: string, sha: string): string => `https://github.com/${repo}/commit/${sha}`
 export const checksUrl = (repo: string, number: number): string => `${pullUrl(repo, number)}/checks`

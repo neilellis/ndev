@@ -7,7 +7,8 @@
 //
 // list shows, for each worktree (the main checkout first), the three known files
 // (.neil-dev.json, .neil-dev.env, .neil-dev.worktree.json) as present or missing and every other
-// .neil-dev* file that exists, with whether git ignores the name. It never reads a file's content.
+// .neil-dev* file that exists, such as .neil-dev.issue-<id>.json, with whether git ignores the name.
+// It never reads a file's content.
 // create writes a minimal .neil-dev.json, or an empty .neil-dev.env (mode 600). copy takes the file
 // from the main checkout. Neither overwrites a file. .neil-dev.env is only written where git ignores
 // it, so it cannot be committed. .neil-dev.worktree.json belongs to worktree-env.sh.

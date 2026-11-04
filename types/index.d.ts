@@ -309,8 +309,10 @@ export type ResponsiveView = {
 
 // The /view pane: the ndev files and the running resources of every git worktree.
 export type ViewFile = { name: string; isKnown: boolean; present: boolean; isIgnored: boolean }
-export type ViewServer = { name: string; pid: number; port: number; command: string; cwd: string; live: boolean; lastStopOutput?: string }
-export type ViewStack = { kind: string; projectId: string; workdir: string; live: boolean | null; liveError?: string; lastStopOutput?: string }
+export type ViewLastStop = { at?: string; command?: string; exitCode?: number; repair?: string }
+// details holds each other field of the record, so a new field shows without a change here.
+export type ViewServer = { name: string; pid: number; port: number; command: string; cwd: string; live: boolean; lastStopOutput?: string; lastStop?: ViewLastStop; startedAt?: number; details?: Record<string, string> }
+export type ViewStack = { kind: string; projectId: string; workdir: string; live: boolean | null; liveError?: string; lastStopOutput?: string; lastStop?: ViewLastStop; details?: Record<string, string> }
 export type ViewTree = {
   path: string
   branch: string
@@ -324,6 +326,10 @@ export type ViewTree = {
   resourceError?: string
   // The workflow of each issue in this worktree.
   workflows?: WorkflowView[]
+  // Every record in full, as the issue files and the old keys of the worktree file hold them.
+  held?: { issues: import('../hooks/workflow/tools').Workflow[]; prs: import('../hooks/workflow/tools').Workflow[] }
+  // What the worktree file holds beside the resources.
+  worktreeFile?: { version?: number; settings?: Record<string, unknown>; leads?: Record<string, number> }
   // Why the workflows could not be read, with the repair. The resources still draw.
   workflowError?: string
 }
@@ -343,6 +349,8 @@ export type WorkflowView = {
   blocked?: string
   blockedAt?: number
   visited?: string[]
+  // When this record reached its state.
+  since?: number
   waiting?: { id: string; tool: string; what: string; at: number; period?: number; most?: number; timeoutS?: number; args?: Record<string, string> }
   review?: { name: string; firedAt?: number; answered: boolean }[]
   live?: WorkflowLive

@@ -968,47 +968,191 @@ const workflowRepo = () => {
 }
 const setWorkflow = (wt, rev, value) => spawnSync(SCRIPT, ['set-workflow', '--expect-rev', String(rev), '--worktree', wt], { input: JSON.stringify(value), encoding: 'utf8' })
 const onDisk = wt => JSON.parse(readFileSync(join(wt, FILE), 'utf8'))
+const ISSUE_PATTERN = '.neil-dev.issue-*.json'
+const issueFile = (wt, n) => JSON.parse(readFileSync(join(wt, `.neil-dev.issue-${n}.json`), 'utf8'))
+const onIssue = (wt, n) => issueFile(wt, n).workflow
 
 const SEVEN = { issue: 7, state: 'developing' }
 
-test('set-workflow writes the state under its issue and counts the revision', () => {
+test('set-workflow writes the state to the file of its issue and counts the revision', () => {
   const wt = workflowRepo()
   const first = setWorkflow(wt, 0, SEVEN)
   assert.equal(first.status, 0, first.stderr)
-  assert.deepEqual(onDisk(wt).workflows, { 7: { ...SEVEN, rev: 1 } })
+  assert.deepEqual(issueFile(wt, 7), { version: 1, issue: 7, workflow: { ...SEVEN, rev: 1 } })
+  assert.equal(existsSync(join(wt, FILE)), false, 'the worktree file holds no state of an issue')
   const second = setWorkflow(wt, 1, { issue: 7, state: 'reviewing' })
   assert.equal(second.status, 0, second.stderr)
-  assert.equal(onDisk(wt).workflows[7].rev, 2)
+  assert.equal(onIssue(wt, 7).rev, 2)
 })
 
-test('each issue has its own state and its own revision', () => {
+test('each issue has its own file and its own revision', () => {
   const wt = workflowRepo()
   assert.equal(setWorkflow(wt, 0, SEVEN).status, 0)
   const other = setWorkflow(wt, 0, { issue: 12, state: 'planning' })
   assert.equal(other.status, 0, other.stderr)
   assert.equal(setWorkflow(wt, 1, { issue: 7, state: 'ci' }).status, 0)
-  assert.deepEqual(onDisk(wt).workflows, { 7: { issue: 7, state: 'ci', rev: 2 }, 12: { issue: 12, state: 'planning', rev: 1 } })
+  assert.deepEqual(onIssue(wt, 7), { issue: 7, state: 'ci', rev: 2 })
+  assert.deepEqual(onIssue(wt, 12), { issue: 12, state: 'planning', rev: 1 })
 })
 
-test('set-workflow keeps the state of a PR under prs, with its own revision, beside the issues', () => {
+test('a lock held on the worktree file or on another issue does not stop a save', () => {
+  const wt = workflowRepo()
+  const gitDir = sh(wt, 'git', 'rev-parse', '--path-format=absolute', '--git-dir')
+  assert.equal(setWorkflow(wt, 0, SEVEN).status, 0)
+  writeFileSync(join(gitDir, 'ndev-worktree.lock'), String(process.pid))
+  writeFileSync(join(gitDir, 'ndev-issue-12.lock'), String(process.pid))
+  const free = setWorkflow(wt, 1, { issue: 7, state: 'ci' })
+  assert.equal(free.status, 0, free.stderr)
+  assert.equal(onIssue(wt, 7).state, 'ci')
+  const held = spawnSync(SCRIPT, ['set-workflow', '--expect-rev', '0', '--worktree', wt], { input: JSON.stringify({ issue: 12, state: 'planning' }), encoding: 'utf8', env: { ...process.env, NDEV_WORKTREE_LOCK_WAIT_MS: '100' } })
+  assert.equal(held.status, 2)
+  assert.match(held.stderr, /ndev-issue-12\.lock/)
+  assert.match(held.stderr, /rm /)
+})
+
+test('the state of a PR goes in the file of its lead issue, and the worktree file marks the lead', () => {
   const wt = workflowRepo()
   assert.equal(setWorkflow(wt, 0, SEVEN).status, 0)
   const pull = { pr: 12, issue: 7, issues: [7, 9], state: 'reviewing' }
   const first = setWorkflow(wt, 0, pull)
   assert.equal(first.status, 0, first.stderr)
   assert.equal(first.stdout.trim(), '1')
-  assert.deepEqual(onDisk(wt).prs, { 12: { ...pull, rev: 1 } })
-  assert.equal(onDisk(wt).workflows[7].state, 'developing')
-  assert.equal(onDisk(wt).workflows[7].rev, 1)
-  // A write of an issue, or of a resource, keeps the PR.
+  assert.deepEqual(onDisk(wt).leads, { 12: 7 })
+  assert.deepEqual(issueFile(wt, 7).prs, { 12: { ...pull, rev: 1 } })
+  assert.equal(onIssue(wt, 7).rev, 1)
+  // A write of the issue, or of a resource, keeps the PR.
   assert.equal(setWorkflow(wt, 1, { issue: 7, state: 'developed' }).status, 0)
-  assert.equal(onDisk(wt).prs[12].state, 'reviewing')
+  assert.equal(issueFile(wt, 7).prs[12].state, 'reviewing')
   const stale = setWorkflow(wt, 0, pull)
   assert.equal(stale.status, 5)
   assert.match(stale.stderr, /PR #12/)
   assert.match(stale.stderr, /revision 1/)
   const listed = run({ worktree: wt }, wt, 'list', '--json')
   assert.equal(listed.status, 0, listed.out)
+  const all = JSON.parse(listed.out)
+  assert.equal(all.workflows[7].state, 'developed')
+  assert.equal(all.prs[12].state, 'reviewing')
+  assert.deepEqual(all.leads, { 12: 7 })
+})
+
+test('a lower issue that joins a PR does not move the PR state: the lead stays as marked', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { pr: 12, issue: 7, issues: [7], state: 'reviewing' }).status, 0)
+  const joined = setWorkflow(wt, 1, { pr: 12, issue: 5, issues: [5, 7], state: 'developing' })
+  assert.equal(joined.status, 0, joined.stderr)
+  assert.deepEqual(onDisk(wt).leads, { 12: 7 })
+  assert.deepEqual(issueFile(wt, 7).prs[12].issues, [5, 7])
+  assert.equal(existsSync(join(wt, '.neil-dev.issue-5.json')), false)
+})
+
+for (const [what, body] of [
+  ['text that is not JSON', '{ not json'],
+  ['another issue', JSON.stringify({ version: 1, issue: 8 })],
+  ['a state of another issue', JSON.stringify({ version: 1, issue: 7, workflow: { issue: 8 } })],
+  ['a PR under the wrong key', JSON.stringify({ version: 1, issue: 7, prs: { 12: { pr: 13, issue: 7 } } })],
+]) {
+  test(`an issue file with ${what} is refused, names the file and stays as it is`, () => {
+    const wt = workflowRepo()
+    writeFileSync(join(wt, '.neil-dev.issue-7.json'), body)
+    const r = setWorkflow(wt, 0, SEVEN)
+    assert.equal(r.status, 2)
+    assert.match(r.stderr, /\.neil-dev\.issue-7\.json/)
+    assert.match(r.stderr, /Repair/)
+    assert.equal(readFileSync(join(wt, '.neil-dev.issue-7.json'), 'utf8'), body)
+  })
+}
+
+test('a bad issue file does not stop the write of a setting or a resource', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, '.neil-dev.issue-7.json'), '{ not json')
+  sh(wt, SCRIPT, 'set-setting', '--key', 'mode', '--value', 'heavy')
+  assert.equal(onDisk(wt).settings.mode, 'heavy')
+})
+
+test('a bad issue file does not stop list --json: it names the file, and the resources still read', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, '.neil-dev.issue-7.json'), '{ not json')
+  const listed = JSON.parse(sh(wt, SCRIPT, 'list', '--json'))
+  assert.deepEqual(listed.resources, { docker: [], 'dev-servers': {} })
+  assert.match(listed.unreadIssueFiles[0], /\.neil-dev\.issue-7\.json.*Repair/)
+})
+
+test('a lost lead is found again in the issue files, so a PR record stays saveable', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { issue: 9, pr: 12, state: 'reviewing' }).status, 0)
+  const held = onDisk(wt)
+  writeFileSync(join(wt, '.neil-dev.worktree.json'), JSON.stringify({ ...held, leads: undefined }))
+  const saved = setWorkflow(wt, 1, { issue: 3, pr: 12, state: 'ci' })
+  assert.equal(saved.status, 0, saved.stderr)
+  assert.equal(onDisk(wt).leads[12], 9)
+  assert.equal(JSON.parse(readFileSync(join(wt, '.neil-dev.issue-9.json'), 'utf8')).prs[12].rev, 2)
+  assert.equal(existsSync(join(wt, '.neil-dev.issue-3.json')), false)
+})
+
+test('with old keys and a bad issue file, a resource still changes, and the old state stays in the file', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, '.neil-dev.issue-7.json'), '{ not json')
+  const old = { version: 2, resources: { docker: [], 'dev-servers': {} }, workflows: { 7: { issue: 7, state: 'ci', rev: 3 } } }
+  writeFileSync(join(wt, '.neil-dev.worktree.json'), JSON.stringify(old))
+  sh(wt, SCRIPT, 'add-dev-server', '--name', 'docs', '--pid', String(process.pid), '--port', '3000', '--cwd', wt)
+  sh(wt, SCRIPT, 'remove-dev-server', '--name', 'docs')
+  sh(wt, SCRIPT, 'set-setting', '--key', 'mode', '--value', 'heavy')
+  const held = onDisk(wt)
+  assert.deepEqual(held.resources['dev-servers'], {})
+  assert.equal(held.settings.mode, 'heavy')
+  assert.equal(held.workflows[7].rev, 3)
+})
+
+const OLD = {
+  version: 2,
+  resources: { docker: [], 'dev-servers': {} },
+  workflows: { 7: { issue: 7, state: 'developed', rev: 3 }, 9: { issue: 9, state: 'ci', rev: 2 } },
+  prs: { 12: { pr: 12, issue: 7, issues: [7], state: 'reviewing', rev: 4 } },
+}
+const movedOut = wt => {
+  const held = onDisk(wt)
+  assert.equal(held.workflows, undefined)
+  assert.equal(held.prs, undefined)
+  assert.deepEqual(held.leads, { 12: 7 })
+  assert.deepEqual(issueFile(wt, 7), { version: 1, issue: 7, workflow: OLD.workflows[7], prs: OLD.prs })
+  assert.deepEqual(onIssue(wt, 9), OLD.workflows[9])
+}
+
+test('the migrate command moves the state in the worktree file to the issue files', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, FILE), JSON.stringify(OLD))
+  sh(wt, SCRIPT, 'migrate')
+  movedOut(wt)
+})
+
+test('a write of a setting moves the state in the worktree file to the issue files', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, FILE), JSON.stringify(OLD))
+  sh(wt, SCRIPT, 'set-setting', '--key', 'mode', '--value', 'heavy')
+  movedOut(wt)
+  assert.equal(onDisk(wt).settings.mode, 'heavy')
+})
+
+test('list shows the state of a worktree file that nothing has moved yet', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, FILE), JSON.stringify(OLD))
+  const all = JSON.parse(run({ worktree: wt }, wt, 'list', '--json').out)
+  assert.equal(all.workflows[9].state, 'ci')
+  assert.equal(all.prs[12].rev, 4)
+  assert.equal(onDisk(wt).workflows[9].state, 'ci', 'a read moves nothing')
+})
+
+test('a save moves the other issues too, and an old state never replaces a newer issue file', () => {
+  const wt = workflowRepo()
+  writeFileSync(join(wt, FILE), JSON.stringify(OLD))
+  // A move that a crash stopped: this file is written, and the worktree file still holds the old state.
+  writeFileSync(join(wt, '.neil-dev.issue-9.json'), JSON.stringify({ version: 1, issue: 9, workflow: { issue: 9, state: 'smoke', rev: 5 } }))
+  const r = setWorkflow(wt, 3, { issue: 7, state: 'done' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(onDisk(wt).workflows, undefined)
+  assert.equal(onIssue(wt, 7).rev, 4)
+  assert.equal(issueFile(wt, 7).prs[12].rev, 4)
+  assert.equal(onIssue(wt, 9).state, 'smoke')
 })
 
 test('a record with a PR under the wrong key is refused, and names the key', () => {
@@ -1035,7 +1179,7 @@ test('set-workflow refuses a stale writer (exit 5) and names the issue and both 
   assert.match(stale.stderr, /#7/)
   assert.match(stale.stderr, /revision 1/)
   assert.match(stale.stderr, /expected 0/)
-  assert.equal(onDisk(wt).workflows[7].state, 'developing')
+  assert.equal(onIssue(wt, 7).state, 'developing')
 })
 
 test('set-workflow refuses text that is not a JSON object', () => {
@@ -1058,12 +1202,12 @@ test('the other commands keep the state of each issue', () => {
   assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'ci' }).status, 0)
   assert.equal(setWorkflow(wt, 0, { issue: 12, state: 'planning' }).status, 0)
   sh(wt, SCRIPT, 'set-setting', '--key', 'mode', '--value', 'heavy')
-  assert.equal(onDisk(wt).workflows[7].state, 'ci')
+  assert.equal(onIssue(wt, 7).state, 'ci')
   const sleeper = spawn('sleep', ['30'], { stdio: 'ignore' })
   try {
     sh(wt, SCRIPT, 'add-dev-server', '--name', 'ui', '--pid', String(sleeper.pid), '--port', '3999')
-    assert.equal(onDisk(wt).workflows[7].state, 'ci')
-    assert.equal(onDisk(wt).workflows[12].state, 'planning')
+    assert.equal(onIssue(wt, 7).state, 'ci')
+    assert.equal(onIssue(wt, 12).state, 'planning')
     assert.equal(onDisk(wt).settings.mode, 'heavy')
   } finally {
     sleeper.kill()
@@ -1078,7 +1222,7 @@ test('a record with the old "workflow" key moves to its issue at the next write,
   assert.equal(r.status, 0, r.stderr)
   const held = onDisk(wt)
   assert.equal(held.workflow, undefined)
-  assert.deepEqual(held.workflows, { 7: { issue: 7, state: 'reviewing', rev: 5 } })
+  assert.deepEqual(onIssue(wt, 7), { issue: 7, state: 'reviewing', rev: 5 })
 })
 
 for (const [what, value] of [
@@ -1108,18 +1252,18 @@ test('set-workflow in a project that does not ignore the record ignores it local
   const { wt, common } = unpreparedWorkflowRepo()
   const r = setWorkflow(wt, 0, { issue: 260, state: 'planning' })
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(onDisk(wt).workflows[260].issue, 260)
+  assert.equal(onIssue(wt, 260).issue, 260)
   assert.equal(sh(wt, 'git', 'status', '--porcelain'), '', 'neither the record nor .gitignore shows as a change')
-  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `${FILE}\n`)
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `${FILE}\n${ISSUE_PATTERN}\n`)
   assert.equal(setWorkflow(wt, 1, { issue: 260, state: 'developing' }).status, 0)
-  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `${FILE}\n`, 'the line is added once')
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `${FILE}\n${ISSUE_PATTERN}\n`, 'each line is added once')
 })
 
 test('set-workflow keeps the text of an exclude file that has no last newline', () => {
   const { wt, common } = unpreparedWorkflowRepo()
   writeFileSync(join(common, '.git', 'info', 'exclude'), '*.log')
   assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'planning' }).status, 0)
-  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `*.log\n${FILE}\n`)
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), `*.log\n${FILE}\n${ISSUE_PATTERN}\n`)
 })
 
 test('set-workflow refuses a record that git tracks, names the repair and leaves the exclude file', () => {
@@ -1131,6 +1275,25 @@ test('set-workflow refuses a record that git tracks, names the repair and leaves
   assert.match(r.stderr, /git rm --cached/)
   assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), '')
   assert.equal(readFileSync(join(wt, FILE), 'utf8'), '{}\n')
+})
+
+test('set-workflow refuses an issue file that git tracks, and names it in the repair', () => {
+  const { wt, common } = unpreparedWorkflowRepo()
+  writeFileSync(join(wt, '.neil-dev.issue-7.json'), '{}\n')
+  sh(wt, 'git', 'add', '.neil-dev.issue-7.json')
+  const r = setWorkflow(wt, 0, { issue: 7, state: 'planning' })
+  assert.equal(r.status, 3, r.stderr)
+  assert.match(r.stderr, /git rm --cached \.neil-dev\.issue-7\.json/)
+  assert.equal(readFileSync(join(common, '.git', 'info', 'exclude'), 'utf8'), '')
+})
+
+test('set-workflow refuses when .gitignore un-ignores the issue files, and writes nothing', () => {
+  const { wt } = unpreparedWorkflowRepo()
+  writeFileSync(join(wt, '.gitignore'), `!${ISSUE_PATTERN}\n`)
+  const r = setWorkflow(wt, 0, { issue: 7, state: 'planning' })
+  assert.equal(r.status, 3, r.stderr)
+  assert.match(r.stderr, /not git-ignored/)
+  assert.equal(existsSync(join(wt, '.neil-dev.issue-7.json')), false)
 })
 
 test('set-workflow refuses when .gitignore un-ignores the record, and writes nothing', () => {
@@ -1146,6 +1309,6 @@ test('set-workflow writes in the main checkout, for a straw_man project on main'
   const main = dirname(workflowRepo())
   const r = setWorkflow(main, 0, { issue: 7, state: 'developing' })
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(onDisk(main).workflows[7].issue, 7)
-  assert.equal(onDisk(main).workflows[7].rev, 1)
+  assert.equal(onIssue(main, 7).issue, 7)
+  assert.equal(onIssue(main, 7).rev, 1)
 })

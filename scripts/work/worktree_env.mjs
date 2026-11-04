@@ -4,8 +4,13 @@
 // the plugin's session-end hook can stop them:
 //   { "version": 2, "settings": { "mode": ..., "steering": ... }, "resources": { "docker": [<stack>...], "dev-servers": { "<name>": <server> } } }
 // "settings" is optional: the development mode and steering this worktree chose (/dev mode, /dev steering).
-// "workflows" is optional: the state of the workflow tools for each issue, under the issue number
-// (hooks/workflow/machine.ts owns its meaning). The old "workflow" key is read and moves at the next write.
+// "leads" is optional: for each PR, the issue that leads it, whose issue file holds the state of the PR.
+//
+// The state of the workflow tools (hooks/workflow/machine.ts owns its meaning) is not in this file. Each
+// issue has its own file beside it, so that two agents in one worktree never contend for one file:
+//   .neil-dev.issue-<n>.json   { "version": 1, "issue": <n>, "workflow": <state>, "prs": { "<pr>": <state> } }
+// A lead stays the lead when a lower issue joins its PR, so the state of a PR never moves between files.
+// The old keys "workflow", "workflows" and "prs" of this file still read, and the next write moves them.
 //
 //   worktree-env.sh add-stack --kind supabase --project-id <id> --cli-version <x.y.z>
 //                             [--workdir <dir holding supabase/>] [--worktree <dir>]
@@ -35,7 +40,7 @@
 // another worktree lists); 4 remove-stack or remove-dev-server: not listed; 5 set-workflow: a stale
 // revision.
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,6 +61,7 @@ const STOP_TIMEOUT_S = Number(process.env.NDEV_STACK_STOP_TIMEOUT_S ?? 180)
 const SERVER_STOP_TIMEOUT_S = Number(process.env.NDEV_DEV_SERVER_STOP_TIMEOUT_S ?? 10)
 // ps gives the elapsed time to the second, so two readings of one start time differ by a second or so.
 const START_TOLERANCE_MS = 5000
+const ISSUE_VERSION = 1
 const LOCK_WAIT_MS = Number(process.env.NDEV_WORKTREE_LOCK_WAIT_MS ?? 10000)
 
 class Fail extends Error {
@@ -116,41 +122,65 @@ function refuseNotIgnored(root, common) {
   throw new Fail(2, `git check-ignore exited ${r.status} in ${root}: ${r.stderr.trim()}`)
 }
 
-// The workflow tools start in any project, and an issue branch should not carry a .gitignore change,
-// so set-workflow ignores its own record in the local info/exclude. .gitignore is not edited. A
-// tracked record, or a .gitignore that un-ignores it, is still refused.
-function ignoreLocally(root, common) {
-  const tracked = git(root, ['ls-files', '--', FILE])
-  if (tracked.status !== 0) throw new Fail(2, `git ls-files ${FILE} exited ${tracked.status} in ${root}: ${tracked.stderr.trim()}`)
-  if (tracked.stdout.trim() !== '') {
+function trackedRefusal(root, pathspec) {
+  const tracked = git(root, ['ls-files', '--', pathspec])
+  if (tracked.status !== 0) throw new Fail(2, `git ls-files ${pathspec} exited ${tracked.status} in ${root}: ${tracked.stderr.trim()}`)
+  const name = tracked.stdout.trim().split('\n')[0]
+  if (name) {
     throw new Fail(3, [
-      `worktree-env: git tracks ${FILE} in ${root}, so it could be committed. Nothing was recorded.`,
-      `Repair: run \`git rm --cached ${FILE}\` and commit, then run this command again.`,
+      `worktree-env: git tracks ${name} in ${root}, so it could be committed. Nothing was recorded.`,
+      `Repair: run \`git rm --cached ${name}\` and commit, then run this command again.`,
     ].join('\n'))
   }
-  const ignored = git(root, ['check-ignore', '-q', FILE])
-  if (ignored.status !== 1) return refuseNotIgnored(root, common)
-  const exclude = join(common, 'info', 'exclude')
-  try {
-    const text = existsSync(exclude) ? readFileSync(exclude, 'utf8') : ''
-    mkdirSync(dirname(exclude), { recursive: true })
-    appendFileSync(exclude, `${text === '' || text.endsWith('\n') ? '' : '\n'}${FILE}\n`)
-  } catch (error) {
-    throw new Fail(2, `worktree-env: could not add ${FILE} to ${exclude}: ${error.message}. Nothing was recorded. Repair: add the line to the project's .gitignore and commit it, then run this command again.`)
-  }
-  refuseNotIgnored(root, common)
 }
 
+function excludeLocally(root, common, line, probe) {
+  const ignored = git(root, ['check-ignore', '-q', probe])
+  if (ignored.status === 0) return
+  if (ignored.status === 1) {
+    const exclude = join(common, 'info', 'exclude')
+    try {
+      const text = existsSync(exclude) ? readFileSync(exclude, 'utf8') : ''
+      mkdirSync(dirname(exclude), { recursive: true })
+      appendFileSync(exclude, `${text === '' || text.endsWith('\n') ? '' : '\n'}${line}\n`)
+    } catch (error) {
+      throw new Fail(2, `worktree-env: could not add ${line} to ${exclude}: ${error.message}. Nothing was recorded. Repair: add the line to the project's .gitignore and commit it, then run this command again.`)
+    }
+    const again = git(root, ['check-ignore', '-q', probe])
+    if (again.status === 0) return
+    if (again.status === 1) {
+      throw new Fail(3, [
+        `worktree-env: ${probe} is not git-ignored in ${root}, so it could be committed. Nothing was recorded.`,
+        `Repair: add the line \`${line}\` to the project's .gitignore and commit it (or add it to ${common}/info/exclude), and remove any line that un-ignores it, then run this command again.`,
+      ].join('\n'))
+    }
+    throw new Fail(2, `git check-ignore ${probe} exited ${again.status} in ${root}: ${again.stderr.trim()}`)
+  }
+  throw new Fail(2, `git check-ignore ${probe} exited ${ignored.status} in ${root}: ${ignored.stderr.trim()}`)
+}
+
+// The workflow tools start in any project, and an issue branch should not carry a .gitignore change,
+// so set-workflow ignores the worktree file and the issue files in the local info/exclude. .gitignore
+// is not edited. A tracked file, or a .gitignore that un-ignores one, is still refused.
+function ignoreLocally(root, common, issue) {
+  trackedRefusal(root, FILE)
+  trackedRefusal(root, ISSUE_PATTERN)
+  excludeLocally(root, common, FILE, FILE)
+  excludeLocally(root, common, ISSUE_PATTERN, issueName(issue))
+}
+
+const ISSUE_PATTERN = '.neil-dev.issue-*.json'
+const issueName = n => `.neil-dev.issue-${n}.json`
 const isObject = v => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isText = v => typeof v === 'string' && v !== ''
 const keysOutside = (value, allowed) => Object.keys(value).filter(k => !allowed.includes(k))
 const quoted = keys => keys.map(k => `"${k}"`).join(', ')
 const STACK_KEYS = ['kind', 'projectId', 'workdir', 'cliVersion', 'addedAt', 'lastStop']
 const SERVER_KEYS = ['pid', 'port', 'command', 'cwd', 'started', 'lastStop']
-const empty = () => ({ version: VERSION_NOW, settings: {}, resources: { docker: [], 'dev-servers': {} }, workflows: {}, prs: {} })
+const empty = () => ({ version: VERSION_NOW, settings: {}, resources: { docker: [], 'dev-servers': {} }, leads: {}, workflows: {}, prs: {} })
 
 // The file's content: settings only when there are some, so an empty record stays as before.
-const content = (settings, resources, workflows, prs) => ({ version: VERSION_NOW, ...(Object.keys(settings).length > 0 ? { settings } : {}), resources, ...(Object.keys(workflows ?? {}).length > 0 ? { workflows } : {}), ...(Object.keys(prs ?? {}).length > 0 ? { prs } : {}) })
+const content = (settings, resources, leads) => ({ version: VERSION_NOW, ...(Object.keys(settings).length > 0 ? { settings } : {}), resources, ...(Object.keys(leads).length > 0 ? { leads } : {}) })
 
 function settingsProblem(settings) {
   if (!isObject(settings)) return 'must hold "settings" as an object'
@@ -206,8 +236,14 @@ function workflowsProblem(raw) {
 // The problem with a parsed record, or undefined.
 function shapeProblem(raw) {
   if (!isObject(raw)) return 'must hold a JSON object'
-  const extra = keysOutside(raw, ['version', 'settings', 'resources', 'workflow', 'workflows', 'prs'])
-  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, settings, resources, workflows, prs`
+  const extra = keysOutside(raw, ['version', 'settings', 'resources', 'leads', 'workflow', 'workflows', 'prs'])
+  if (extra.length > 0) return `has the unknown top-level key ${quoted(extra)}; the keys are version, settings, resources, leads`
+  if (raw.leads !== undefined) {
+    if (!isObject(raw.leads)) return 'must hold "leads" as an object'
+    for (const [pr, lead] of Object.entries(raw.leads)) {
+      if (!isIssue(Number(pr)) || !isIssue(lead)) return `must hold under leads.${pr} the number of an issue, for a PR number`
+    }
+  }
   if (raw.settings !== undefined) {
     const problem = settingsProblem(raw.settings)
     if (problem) return problem
@@ -256,7 +292,7 @@ function readRecord(root) {
   }
   const problem = shapeProblem(raw)
   if (problem) throw new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed or stopped. Repair: fix the file (see the plugin README, "Worktree resources"), or delete it if nothing it lists still runs.`)
-  return { version: VERSION_NOW, settings: raw.settings ?? {}, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} }, workflows: { ...(raw.workflow ? { [raw.workflow.issue]: raw.workflow } : {}), ...raw.workflows }, prs: raw.prs ?? {} }
+  return { version: VERSION_NOW, settings: raw.settings ?? {}, resources: { docker: raw.resources.docker ?? [], 'dev-servers': raw.resources['dev-servers'] ?? {} }, leads: raw.leads ?? {}, workflows: { ...(raw.workflow ? { [raw.workflow.issue]: raw.workflow } : {}), ...raw.workflows }, prs: raw.prs ?? {} }
 }
 
 // Write a temporary file, then rename it, so a reader never sees half a file.
@@ -289,8 +325,12 @@ const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0,
 
 // One writer at a time: an exclusive lock file in the worktree's git dir (not in the worktree, so
 // it needs no .gitignore line). A lock whose holder is gone is taken over.
-function withLock(root, fn) {
-  const lock = join(gitDirs(root).gitDir, 'ndev-worktree.lock')
+const withLock = (root, fn) => withLockFile(root, 'ndev-worktree.lock', fn)
+const withIssueLock = (root, n, fn) => withLockFile(root, `ndev-issue-${n}.lock`, fn)
+
+// The order is the worktree lock, then an issue lock, and never the other way: no two commands can wait for each other.
+function withLockFile(root, name, fn) {
+  const lock = join(gitDirs(root).gitDir, name)
   const deadline = Date.now() + LOCK_WAIT_MS
   for (;;) {
     try {
@@ -323,12 +363,111 @@ function withLock(root, fn) {
   }
 }
 
+// One issue file as { workflow, prs }. A missing file holds neither. A shape this script does not know
+// is refused, and the file stays as it is.
+function readIssue(root, n) {
+  const file = join(root, issueName(n))
+  if (!existsSync(file)) return { prs: {} }
+  const refuse = problem => new Fail(2, `worktree-env: ${file} ${problem}. Nothing was changed. Repair: fix the file, or delete it if the workflow of #${n} can start again; it holds the workflow state of that issue.`)
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw refuse(`is not valid JSON (${error.message})`)
+  }
+  if (!isObject(raw)) throw refuse('must hold a JSON object')
+  const extra = keysOutside(raw, ['version', 'issue', 'workflow', 'prs'])
+  if (extra.length > 0) throw refuse(`has the unknown top-level key ${quoted(extra)}; the keys are version, issue, workflow, prs`)
+  if (raw.version !== ISSUE_VERSION) throw refuse(`has "version" ${JSON.stringify(raw.version)}; this script reads version ${ISSUE_VERSION}`)
+  if (raw.issue !== n) throw refuse(`must hold "issue" ${n}, and holds ${JSON.stringify(raw.issue)}`)
+  if (raw.workflow !== undefined && !(isObject(raw.workflow) && raw.workflow.issue === n)) throw refuse(`must hold under workflow an object whose issue is ${n}`)
+  if (raw.prs !== undefined && !isObject(raw.prs)) throw refuse('must hold "prs" as an object')
+  for (const [key, value] of Object.entries(raw.prs ?? {})) {
+    if (!isObject(value) || String(value.pr) !== key || !isIssue(value.pr)) throw refuse(`must hold under prs.${key} an object whose pr is ${key}`)
+  }
+  return { workflow: raw.workflow, prs: raw.prs ?? {} }
+}
+
+const writeIssue = (root, n, { workflow, prs }) => writeRecord(join(root, issueName(n)), {
+  version: ISSUE_VERSION,
+  issue: n,
+  ...(workflow ? { workflow } : {}),
+  ...(Object.keys(prs).length > 0 ? { prs } : {}),
+})
+
+// The numbers of the issue files of this worktree.
+const issueFiles = root => readdirSync(root).flatMap(name => {
+  const found = /^\.neil-dev\.issue-([1-9]\d*)\.json$/.exec(name)
+  return found ? [Number(found[1])] : []
+})
+
+// The whole state of the worktree, for a reader. An issue file wins over an old key of the worktree file.
+// A bad issue file is named in unreadIssueFiles: it must not hide the resources, which a stop still needs.
+function readAll(root) {
+  const record = readRecord(root)
+  const workflows = { ...record.workflows }
+  const prs = { ...record.prs }
+  const unreadIssueFiles = []
+  for (const n of issueFiles(root)) {
+    try {
+      const held = readIssue(root, n)
+      if (held.workflow) workflows[n] = held.workflow
+      Object.assign(prs, held.prs)
+    } catch (error) {
+      if (!(error instanceof Fail)) throw error
+      unreadIssueFiles.push(error.message)
+    }
+  }
+  return { ...record, workflows, prs, ...(unreadIssueFiles.length > 0 ? { unreadIssueFiles } : {}) }
+}
+
+const holdsOldState = record => Object.keys(record.workflows).length > 0 || Object.keys(record.prs).length > 0
+
+// Moves the state in the old keys of the worktree file to the issue files, and answers the leads for the
+// worktree file. Call it under the worktree lock. The issue files are written first, so a crash loses
+// nothing: the next write moves the rest, and what an issue file already holds stays.
+function moveOldState(root, record) {
+  if (!holdsOldState(record)) return record.leads
+  const leads = { ...record.leads }
+  const moves = new Map()
+  const moveOf = n => moves.get(n) ?? moves.set(n, { prs: {} }).get(n)
+  for (const [n, workflow] of Object.entries(record.workflows)) moveOf(Number(n)).workflow = workflow
+  for (const [pr, state] of Object.entries(record.prs)) {
+    leads[pr] ??= state.issue
+    moveOf(leads[pr]).prs[pr] = state
+  }
+  ignoreLocally(root, gitDirs(root).common, [...moves.keys()][0])
+  for (const [n, move] of moves) {
+    withIssueLock(root, n, () => {
+      const held = readIssue(root, n)
+      writeIssue(root, n, { workflow: held.workflow ?? move.workflow, prs: { ...move.prs, ...held.prs } })
+    })
+  }
+  return leads
+}
+
+// Writes the settings and the resources under the worktree lock. A bad issue file stops the move of the old
+// state and not this write, because a stop must still clear a resource: the old state stays in the file, and
+// the next write moves it.
+function writeResources(root, record, settings, resources) {
+  let leads = record.leads
+  let old = {}
+  try {
+    leads = moveOldState(root, record)
+  } catch (error) {
+    if (!(error instanceof Fail)) throw error
+    old = { workflows: record.workflows, prs: record.prs }
+    console.error(`worktree-env: the old workflow state stays in ${join(root, FILE)}, and the resources were saved. ${error.message}`)
+  }
+  writeRecord(join(root, FILE), { ...content(settings, resources, leads), ...old })
+}
+
 // Reads the file again under the lock before each change, so an entry added meanwhile is kept.
 // `edit` gets the resources and returns them changed.
 function change(root, edit) {
   withLock(root, () => {
     const record = readRecord(root)
-    writeRecord(join(root, FILE), content(record.settings, edit(record.resources), record.workflows, record.prs))
+    writeResources(root, record, record.settings, edit(record.resources))
   })
 }
 
@@ -353,7 +492,7 @@ function init(values) {
       console.log(`worktree-env: ${file} already exists; nothing changed.`)
       return
     }
-    writeRecord(file, content({}, empty().resources))
+    writeRecord(file, content({}, empty().resources, {}))
     console.log(`worktree-env: created ${file} with no resources.`)
   })
 }
@@ -370,15 +509,16 @@ function setSetting(values) {
   refuseNotIgnored(root, common)
   withLock(root, () => {
     const record = readRecord(root)
-    writeRecord(join(root, FILE), content({ ...record.settings, [key]: value }, record.resources, record.workflows, record.prs))
+    writeResources(root, record, { ...record.settings, [key]: value }, record.resources)
   })
   console.log(`worktree-env: saved ${key} ${value} in ${join(root, FILE)}.`)
 }
 
 // Saves the workflow state of one issue or one PR (hooks/workflow), read from stdin as a JSON object: a state
-// with a "pr" goes under prs, and any other under workflows, by its issue. --expect-rev is the revision of
-// that state the caller read: a stale writer gets exit 5 and changes nothing. The record is allowed
-// in the main checkout here only, for a straw_man project that works directly on main.
+// with a "pr" goes in the file of the lead of that PR, and any other in the file of its issue. --expect-rev is
+// the revision of that state the caller read: a stale writer gets exit 5 and changes nothing. It takes the lock
+// of that one issue file. It takes the worktree lock only to mark a new lead or to move old state. The record
+// is allowed in the main checkout here only, for a straw_man project that works directly on main.
 function setWorkflow(values) {
   const expected = Number(need(values, 'expect-rev'))
   if (!Number.isInteger(expected) || expected < 0) throw new Fail(2, `worktree-env: --expect-rev "${values['expect-rev']}" is not a revision number.`)
@@ -393,14 +533,27 @@ function setWorkflow(values) {
   if (pr !== undefined && !isIssue(pr)) throw new Fail(2, `worktree-env: set-workflow needs a PR state with a PR number, and its pr is ${JSON.stringify(pr)}. Nothing was changed.`)
   if (!isIssue(issue)) throw new Fail(2, `worktree-env: set-workflow needs a state with an issue number, and its issue is ${JSON.stringify(issue)}. Nothing was changed.`)
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
-  ignoreLocally(root, gitDirs(root).common)
-  withLock(root, () => {
-    const record = readRecord(root)
-    const current = (pr ? record.prs[pr] : record.workflows[issue])?.rev ?? 0
+  ignoreLocally(root, gitDirs(root).common, issue)
+  // The rename in writeRecord makes this read safe with no lock.
+  const seen = readRecord(root)
+  let lead = pr ? seen.leads[pr] : issue
+  if (holdsOldState(seen) || lead === undefined) {
+    withLock(root, () => {
+      const record = readRecord(root)
+      const leads = { ...moveOldState(root, record) }
+      // A lead that the worktree file lost is in the issue file that holds the PR.
+      if (pr) leads[pr] ??= issueFiles(root).find(n => readIssue(root, n).prs[pr]) ?? issue
+      writeRecord(join(root, FILE), content(record.settings, record.resources, leads))
+      lead = pr ? leads[pr] : issue
+    })
+  }
+  withIssueLock(root, lead, () => {
+    const held = readIssue(root, lead)
+    const current = (pr ? held.prs[pr] : held.workflow)?.rev ?? 0
     const name = pr ? `PR #${pr}` : `#${issue}`
-    if (current !== expected) throw new Fail(5, `worktree-env: the workflow of ${name} in ${join(root, FILE)} is at revision ${current}, and this writer expected ${expected}. Nothing was changed. Repair: read the state again (the status tool) and retry.`)
+    if (current !== expected) throw new Fail(5, `worktree-env: the workflow of ${name} in ${join(root, issueName(lead))} is at revision ${current}, and this writer expected ${expected}. Nothing was changed. Repair: read the record again and redo the change.`)
     const saved = { ...workflow, rev: expected + 1 }
-    writeRecord(join(root, FILE), content(record.settings, record.resources, pr ? record.workflows : { ...record.workflows, [issue]: saved }, pr ? { ...record.prs, [pr]: saved } : record.prs))
+    writeIssue(root, lead, pr ? { ...held, prs: { ...held.prs, [pr]: saved } } : { ...held, workflow: saved })
   })
   console.log(String(expected + 1))
 }
@@ -417,7 +570,13 @@ function migrate(values) {
     }
     const raw = parseRecord(file)
     if (!isVersion1(raw)) {
-      readRecord(root)
+      const record = readRecord(root)
+      if (holdsOldState(record)) {
+        const leads = moveOldState(root, record)
+        writeRecord(file, content(record.settings, record.resources, leads))
+        console.log(`worktree-env: moved the workflow state in ${file} to the issue files in ${root}.`)
+        return
+      }
       console.log(`worktree-env: ${file} is already version ${VERSION_NOW}; nothing changed.`)
       return
     }
@@ -609,7 +768,7 @@ function withLive(record) {
 function list(values) {
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   const file = join(root, FILE)
-  const record = readRecord(root)
+  const record = values.json ? readAll(root) : readRecord(root)
   if (values.json) {
     console.log(JSON.stringify(values.live ? withLive(record) : record, null, 2))
     return

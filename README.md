@@ -413,6 +413,10 @@ only as the source for **Copy from main**):
   worktree, **Copy from main**. Neither overwrites a file. `.neil-dev.env` is written only where
   git ignores it. The work is done by `scripts/work/ndev-files.sh`
   (`list --json`, `create`, `copy`; test: `node --test scripts/work/tests/ndev_files.test.mjs`).
+- Every field of the worktree file and of each `.neil-dev.issue-<id>.json`, with the lead issue of
+  each PR. A field that the pane does not know still shows, and secrets are masked. Each issue, PR,
+  check, branch, commit, file, folder and URL is a link. A workflow that needs you is at the top.
+  `hooks/view-layout.ts` lays out the rows and `hooks/view.tsx` draws them.
 - The resources in `.neil-dev.worktree.json` (version 2), with live status from
   `worktree-env.sh list --json --live`: a dev server is running while its pid still runs the
   recorded command; a docker stack is running while `docker ps` shows its containers (`?` and
@@ -442,7 +446,7 @@ run that started before the Bash call.
 
 ## The workflow: /flow
 
-The `mcp__ndev__*` workflow tools keep an agent on one issue from `started` to `done`. Each tool records the state in `.neil-dev.worktree.json`, does the commit, push or mark-ready step, and returns the next step. The `review` and `remember` stage hooks fire when the state changes. When a turn ends and the work is not finished, the plugin prompts the agent again. After 20 minutes with no activity, it compacts the session, reads the PR status and prompts again. `blocked` sends a notification that stays until you dismiss it.
+The `mcp__ndev__*` workflow tools keep an agent on one issue from `started` to `done`. Each tool records the state in `.neil-dev.issue-<id>.json`, does the commit, push or mark-ready step, and returns the next step. The `review` and `remember` stage hooks fire when the state changes. When a turn ends and the work is not finished, the plugin prompts the agent again. After 20 minutes with no activity, it compacts the session, reads the PR status and prompts again. `blocked` sends a notification that stays until you dismiss it.
 
 The guide, with the flow chart, is [kb/workflow.md](kb/workflow.md). To show it in a session, type `/flow guide`. `/flow` also shows the status, skips a phase, goes to a state, ends a block and turns the workflow off. `/unblock <message>` gives the agent your answer and ends a block or a wait. It runs at once, also during a turn.
 

@@ -1,5 +1,5 @@
 // The workflow tools: each one does the work of a phase, records the state in the worktree's
-// .neil-dev.worktree.json, and answers with the next step. machine.ts decides the moves.
+// .neil-dev.issue-<id>.json, and answers with the next step. machine.ts decides the moves.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
@@ -7,6 +7,7 @@ import { reportBug, reportFault } from './bug-report'
 import { iNeedA, NEED_KINDS } from './i-need-a'
 
 import type { LoadedConfig, ProjectLevel } from '../config'
+import type { WorkflowLive } from '../../types'
 import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
@@ -15,7 +16,7 @@ import type { Check } from './effects'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
-import { liveCallEnd, liveCallStart, liveName, shownArgs, shownValue, writeLive } from './live'
+import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
 import { ATTEMPT_LIMIT, afterStarted, afterTool, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
 import { SECRET_NAME, findInText, secretFiles } from './secrets'
@@ -32,7 +33,7 @@ export type Workflow = {
   rev?: number
   // The issue, or on a PR record its lead: the lowest number of its issues.
   issue: number
-  // Only on a PR record, which the worktree file holds under prs from the merge point on.
+  // Only on a PR record, which the lead issue's file holds under prs from the merge point on.
   pr?: number
   issues?: number[]
   root: string
@@ -78,6 +79,12 @@ export type Workflow = {
   waitAnswer?: { id: string; message: string }
   op?: { id: string; tool: string }
   history: { at: number; tool: string; from?: State; to: State }[]
+  // The commit whose pending checks refused `done`. The session watches them as it does in `ci`.
+  doneWaitsFor?: string
+  // What the /view pane last showed live for this record, at the last save. The hot copy is in the git dir.
+  live?: WorkflowLive
+  // Why the last read of the live file failed.
+  liveUnread?: string
   // The stage hooks that a change of state fired, and the result that the tool leaving the stage took.
   hooks?: Partial<Record<StageHook, { firedAt: number; result?: string; agentId?: string; answer?: string }>>
   // Heavy mode only: the second reviewer. hooks.review holds the standards axis, this the specification axis.
@@ -93,18 +100,13 @@ export type Workflow = {
 }
 
 const OWNER_LIVE_MS = 10 * 60_000
-const HISTORY_LIMIT = 50
 const SECTION = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->\n?/
 
 const workflowRoot = atom({ plugin: 'ndev', key: 'workflowRoot' } as const, null as string | null, { shape: 'workflow-root-1' })
 // The issue that this agent works on now. A worktree can hold several; each agent has its own.
 const workflowIssue = atom({ plugin: 'ndev', key: 'workflowIssue' } as const, null as number | null, { shape: 'workflow-issue-1' })
-// The commit whose pending checks refused `done`. The session watches them as it does in `ci`.
 // The human chose to work without the workflow in this session.
 const workflowDeclined = atom({ plugin: 'ndev', key: 'workflowDeclined' } as const, false, { shape: 'workflow-declined-1' })
-// The worktrees of the agents that followUp started: each commits there through checkpoint.
-const followUpWorktrees = atom({ plugin: 'ndev', key: 'workflowFollowUpWorktrees' } as const, [] as string[], { shape: 'workflow-follow-up-worktrees-1' })
-const doneWaitsFor = atom({ plugin: 'ndev', key: 'workflowDoneWaitsFor' } as const, null as string | null, { shape: 'workflow-done-waits-1' })
 export async function boundRoot($: EngineInterface): Promise<string | null> {
   return read($, workflowRoot)
 }
@@ -117,19 +119,53 @@ async function bind($: EngineInterface, root: string, issue: number): Promise<vo
   await update($, workflowIssue, () => issue)
 }
 
-// Each issue in this worktree's record. The old "workflow" key still reads, until the next write moves it.
+// Each issue and PR in this worktree. Each issue has its own file, and the file of a PR's lead holds that PR.
+// The old keys of the worktree file still read until the next write moves them, and an issue file wins over them.
 export type HeldRecords = { issues: Workflow[]; prs: Workflow[] }
-export async function readHeld($: EngineInterface, root: string): Promise<HeldRecords> {
-  const path = `${root}/${RECORD}`
-  if (!(await $.fs.exists(path))) return { issues: [], prs: [] }
+type IssueFile = { workflow?: Workflow; prs?: Record<string, Workflow> }
+const ISSUE_FILE = /^\.neil-dev\.issue-[1-9]\d*\.json$/
+async function parsed<T>($: EngineInterface, path: string): Promise<T> {
   try {
-    const held = JSON.parse(await $.fs.read(path)) as { workflow?: Workflow; workflows?: Record<string, Workflow>; prs?: Record<string, Workflow> }
-    const all: Record<string, Workflow> = { ...(held.workflow ? { [held.workflow.issue]: held.workflow } : {}), ...held.workflows }
-    const filled = (wf: Workflow) => ({ ...wf, migrations: wf.migrations ?? [] })
-    return { issues: Object.values(all).map(filled), prs: Object.values(held.prs ?? {}).map(filled) }
+    return JSON.parse(await $.fs.read(path)) as T
   } catch (error) {
     throw new Error(`${path} is not valid JSON (${String(error).slice(0, 160)}). Repair: fix the file, then call the tool again.`)
   }
+}
+// The same rules as readIssue in scripts/work/worktree_env.mjs, which refuses to save over a file that breaks them.
+function issueFileProblem(n: number, raw: unknown): string | undefined {
+  if (typeof raw !== 'object' || raw === null) return 'must hold a JSON object'
+  const held = raw as { version?: unknown; issue?: unknown; workflow?: { issue?: unknown }; prs?: unknown }
+  if (held.version !== 1) return `has "version" ${JSON.stringify(held.version)}; this plugin reads version 1`
+  if (held.issue !== n) return `must hold "issue" ${n}, and holds ${JSON.stringify(held.issue)}`
+  if (held.workflow !== undefined && held.workflow?.issue !== n) return `must hold under workflow an object whose issue is ${n}, and that issue is ${JSON.stringify(held.workflow?.issue)}`
+  if (held.prs === undefined) return undefined
+  if (typeof held.prs !== 'object' || held.prs === null) return 'must hold "prs" as an object'
+  const wrong = Object.entries(held.prs).find(([key, value]) => String((value as { pr?: unknown } | null)?.pr) !== key)
+  return wrong ? `must hold under prs.${wrong[0]} an object whose pr is ${wrong[0]}` : undefined
+}
+
+export async function readHeld($: EngineInterface, root: string): Promise<HeldRecords> {
+  const issues: Record<string, Workflow> = {}
+  const prs: Record<string, Workflow> = {}
+  const path = `${root}/${RECORD}`
+  if (await $.fs.exists(path)) {
+    const held = await parsed<{ workflow?: Workflow; workflows?: Record<string, Workflow>; prs?: Record<string, Workflow> }>($, path)
+    Object.assign(issues, held.workflow ? { [held.workflow.issue]: held.workflow } : {}, held.workflows)
+    Object.assign(prs, held.prs)
+  }
+  if (await $.fs.exists(root)) {
+    for (const entry of await $.fs.list(root)) {
+      if (!ISSUE_FILE.test(entry.name)) continue
+      const file = `${root}/${entry.name}`
+      const held = await parsed<IssueFile>($, file)
+      const problem = issueFileProblem(Number(/\d+/.exec(entry.name)?.[0]), held)
+      if (problem) throw new Error(`${file} ${problem}. Repair: fix the file, then call the tool again.`)
+      if (held.workflow) issues[held.workflow.issue] = held.workflow
+      Object.assign(prs, held.prs)
+    }
+  }
+  const filled = (wf: Workflow) => ({ ...wf, migrations: wf.migrations ?? [] })
+  return { issues: Object.values(issues).map(filled), prs: Object.values(prs).map(filled) }
 }
 
 export async function readWorkflows($: EngineInterface, root: string): Promise<Workflow[]> {
@@ -140,9 +176,9 @@ export async function readWorkflows($: EngineInterface, root: string): Promise<W
 const effectiveRecord = (wf: Workflow, prs: Workflow[]) => (wf.state === 'developed' ? prs.find(p => p.pr === wf.prs[0] && p.state !== 'developing') : undefined) ?? wf
 
 // One entry for each thing a worktree is doing now: an issue, or a PR that took its issues over.
+export const effectiveRecords = ({ issues, prs }: HeldRecords): Workflow[] => [...new Set(issues.map(wf => effectiveRecord(wf, prs)))]
 export async function readEffective($: EngineInterface, root: string): Promise<Workflow[]> {
-  const { issues, prs } = await readHeld($, root)
-  return [...new Set(issues.map(wf => effectiveRecord(wf, prs)))]
+  return effectiveRecords(await readHeld($, root))
 }
 
 export const sameRecord = (a: Workflow, b: Workflow) => a.pr === b.pr && (a.pr !== undefined || a.issue === b.issue)
@@ -210,10 +246,19 @@ async function syncOrca($: EngineInterface, wf: Workflow): Promise<void> {
   else wf.orca = now
 }
 
+// The live file holds display data only, so a failed read costs the snapshot and never the save. The record says why.
+async function liveSnapshot($: EngineInterface, wf: Workflow): Promise<{ live?: WorkflowLive; error?: string }> {
+  try {
+    return await readLive($, livePath(await liveGitDir($, wf.root), liveName(wf)))
+  } catch (error) {
+    return { error: String(error instanceof Error ? error.message : error).slice(0, 200) }
+  }
+}
+
 export async function saveWorkflow($: EngineInterface, wf: Workflow): Promise<void> {
   await syncOrca($, wf)
-  const history = wf.history.slice(-HISTORY_LIMIT)
-  const r = await run($, ['bash', envScript($), 'set-workflow', '--expect-rev', String(wf.rev ?? 0), '--worktree', wf.root], { cwd: wf.root, stdin: JSON.stringify({ ...wf, history }), timeoutMs: 20_000 })
+  const shown = await liveSnapshot($, wf)
+  const r = await run($, ['bash', envScript($), 'set-workflow', '--expect-rev', String(wf.rev ?? 0), '--worktree', wf.root], { cwd: wf.root, stdin: JSON.stringify({ ...wf, live: shown.live, liveUnread: shown.error }), timeoutMs: 20_000 })
   if (r.exitCode !== 0) throw new Error(`worktree-env.sh set-workflow exited ${r.exitCode} for ${wf.root}: ${said(r)}`)
   wf.rev = (wf.rev ?? 0) + 1
 }
@@ -385,7 +430,7 @@ async function doneProblems($: EngineInterface, wf: Workflow, sha: string): Prom
     if (checks.red.length) problems.push(`Red checks on HEAD: ${checks.red.join(', ')}.`)
     if (checks.pending.length) {
       problems.push(`Pending checks on HEAD: ${checks.pending.join(', ')}. Do not run a wait helper: the workflow watches them and prompts you when they end.`)
-      await update($, doneWaitsFor, () => sha)
+      wf.doneWaitsFor = sha
     }
   }
   if (wf.evidence.checks?.sha !== sha) problems.push('finishedChecks has no record for HEAD.')
@@ -821,9 +866,17 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
 
 // An agent that followUp started has its own worktree and record, so the session's workflow does not
 // move. A worktree with no check scripts commits nothing, as in setup: only a human skips them.
+// The worktrees of the agents that followUp started from this session's workflow: each commits there through checkpoint.
+async function followUpAgentWorktrees($: EngineInterface): Promise<string[]> {
+  const root = await read($, workflowRoot)
+  if (!root) return []
+  const { issues, prs } = await readHeld($, root)
+  return [...issues, ...prs].flatMap(wf => (wf.followUps ?? []).flatMap(f => (f.mode === 'subagent' && f.worktree ? [f.worktree] : [])))
+}
+
 async function followUpCheckpoint($: EngineInterface, { args }: Ctx): Promise<string> {
   const root = text(args, 'worktree').replace(/\/$/, '')
-  const known = await read($, followUpWorktrees)
+  const known = await followUpAgentWorktrees($)
   if (!known.includes(root)) throw new Refuse(`Refused: followUp did not start an agent in ${root}. Its worktrees in this session: ${known.join(', ') || 'none'}. Nothing was committed.`)
   const wf = await loadWorkflow($, root, Number(args.issue))
   if (!wf) throw new Refuse(`Refused: ${root}/${RECORD} holds no workflow for issue #${String(args.issue)}. Nothing was committed. Repair: the main agent calls followUp again with the same text.`)
@@ -1308,6 +1361,7 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
     await saveWorkflow($, wf)
     return answer($, wf, facts, [`Not done: this feedback has no answer:\n${feedback.join('\n')}`, ...problems.map(p => `Also: ${p}`)])
   }
+  if (wf.doneWaitsFor === sha) await saveWorkflow($, wf)
   if (problems.length) throw new Refuse(`Not done. Fix each of these, then call done again:\n- ${problems.join('\n- ')}`)
 
   const notes: string[] = []
@@ -1534,7 +1588,6 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
     const worktree = entry.worktree
     const branch = await gitOut(worktree, $, 'rev-parse', '--abbrev-ref', 'HEAD')
     if (!(await loadWorkflow($, worktree, n))) await saveWorkflow($, { issue: n, root: worktree, repo: wf.repo, base: wf.base, branch, prs: [], state: 'developing', evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], followUpOf: wf.issue })
-    await update($, followUpWorktrees, known => (known.includes(worktree) ? known : [...known, worktree]))
     const spawned = await $.agent.spawn({ subagentType: 'ndev:issue-implementer', prompt: `Work on issue #${n} of ${wf.repo}, in its own worktree ${worktree} on the branch ${branch}, and open its own PR. The worktree is claimed for you: do not claim another, and do not call started. Commit and push only through mcp__ndev__checkpoint with issue ${n}, worktree "${worktree}", the message and each file: it runs the check scripts, and a raw git commit or push is refused. It came up during #${wf.issue}. ${message}`, description: `Follow-up issue #${n}`, cwd: worktree })
     if ('deny' in spawned && spawned.deny) throw new Refuse(`The issue #${n} and the worktree ${worktree} exist, and the agent did not start: ${String(spawned.deny)}\nCall followUp again with the same text to retry: it reuses both.`)
     notes.push(`An agent works on #${n} in its own worktree ${worktree} and PR, by this followUp call. It commits there through checkpoint with issue ${n}, which refuses until that worktree has the check scripts.`)
@@ -1788,7 +1841,7 @@ export async function watchesChecks($: EngineInterface, wf: Workflow): Promise<b
   if (wf.owner && wf.owner.session !== (await $.session.id())) return false
   if (wf.state === 'ci') return true
   if (wf.state !== 'finishing') return false
-  const sha = await read($, doneWaitsFor)
+  const sha = wf.doneWaitsFor
   return !!sha && sha === (await git(wf.root, $, 'rev-parse', 'HEAD')).stdout.trim()
 }
 

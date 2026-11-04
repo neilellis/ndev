@@ -1,6 +1,6 @@
-import { boundRoot, readEffective } from './workflow/tools'
+import { boundRoot, readHeld, effectiveRecords } from './workflow/tools'
 import type { Workflow } from './workflow/tools'
-import { liveBox, liveGitDir, liveName, livePath, readLive } from './workflow/live'
+import { liveBox, liveGitDir, liveName, livePath, maskedText, readLive, shownFull } from './workflow/live'
 import { flowPicture } from './workflow/machine'
 import type { FlowMark, State } from './workflow/machine'
 import { atom, read, update } from 'claude-code'
@@ -9,10 +9,12 @@ import type { EngineInterface, On } from 'claude-code'
 import type { ResourceView, ViewServer, ViewStack, ViewTree, WorkflowView } from '../types'
 import { loadConfigAt } from './config'
 import { fileUrl, issueUrl, pullUrl } from './links'
+import { attentionRows, byUrgency, detailsRows, headerRow, progressRow, recordRows, serverRows, stackRows, undrawnRows, worktreeRows, type Row } from './view-layout'
 
-// The /view pane: the ndev files and the running resources of the current git worktree of the
-// project, with the controls to create or copy a file and to stop, open or copy a resource.
-// The lists come from two scripts: ndev-files.sh (files) and worktree-env.sh (resources).
+// The /view pane: the ndev files, the workflow records and the running resources of the current git
+// worktree of the project, with the controls to create or copy a file and to stop, open or copy a resource.
+// The lists come from two scripts: ndev-files.sh (files) and worktree-env.sh (resources). The workflow
+// records come from readHeld. hooks/view-layout.ts lays out the rows; this file draws them.
 
 const PANE = 'view'
 const TITLE = 'ndev view'
@@ -22,7 +24,7 @@ const ARM_MS = 5000
 const RECORD = '.neil-dev.worktree.json'
 const WRITABLE = ['.neil-dev.json', '.neil-dev.env']
 
-const view = atom({ plugin: 'ndev', key: 'resourceView' } as const, { trees: [], busy: [] } as ResourceView, { shape: 'resource-view-1' })
+const view = atom({ plugin: 'ndev', key: 'resourceView' } as const, { trees: [], busy: [] } as ResourceView, { shape: 'resource-view-2' })
 
 // The module's own: the project folder from session.start, and the poll timer.
 let repo: string | undefined
@@ -44,12 +46,19 @@ async function run($: EngineInterface, script: string, args: string[]): Promise<
 
 type ListedFile = { name: string; isKnown: boolean; present: boolean; isIgnored: boolean }
 type Listed = { path: string; branch: string; isMain: boolean; files: ListedFile[]; problem?: string }
+type LastStop = NonNullable<ViewServer['lastStop']> & { output?: string }
+const stopOf = (stop: LastStop | undefined) => ({ lastStopOutput: stop?.output === undefined ? undefined : shownFull('output', stop.output), lastStop: stop })
 type Record2 = {
+  version?: number
+  settings?: Record<string, unknown>
+  leads?: Record<string, number>
   resources?: {
-    docker?: { kind: string; projectId: string; workdir: string; live: boolean | null; liveError?: string; lastStop?: { output?: string } }[]
-    'dev-servers'?: Record<string, { pid: number; port: number; command: string; cwd: string; live: boolean; lastStop?: { output?: string } }>
+    docker?: ({ kind: string; projectId: string; workdir: string; live: boolean | null; liveError?: string; lastStop?: LastStop } & Record<string, unknown>)[]
+    'dev-servers'?: Record<string, { pid: number; port: number; command: string; cwd: string; live: boolean; started?: string; lastStop?: LastStop } & Record<string, unknown>>
   }
 }
+const ISSUE_FILE = /^\.neil-dev\.issue-\d+\.json$/
+const others = (record: Record<string, unknown>, known: string[]) => Object.fromEntries(Object.entries(record).filter(([key, value]) => !known.includes(key) && value !== undefined && value !== null))
 
 // The flow line in parts, so the issue and the PR can be drawn as links: text, then a number, then text.
 function workflowParts(w: NonNullable<ViewTree['workflows']>[number]) {
@@ -70,12 +79,13 @@ const MARK: Record<FlowMark, { sign: string; color: 'success' | 'claude' | 'warn
 
 // The workflows of a worktree, each with what it does now. It has its own failure, so a bad record
 // does not hide the resources, and a bad live file does not hide the record.
-async function workflowsOf($: EngineInterface, path: string): Promise<Pick<ViewTree, 'workflows' | 'workflowError'>> {
+async function workflowsOf($: EngineInterface, path: string): Promise<Pick<ViewTree, 'workflows' | 'workflowError' | 'held'>> {
   try {
-    const records = await readEffective($, path)
-    if (!records.length) return { workflows: [] }
+    const held = await readHeld($, path)
+    const records = effectiveRecords(held)
+    if (!records.length) return { workflows: [], held }
     const gitDir = await liveGitDir($, path)
-    return { workflows: await Promise.all(records.map(wf => workflowView($, wf, gitDir))) }
+    return { held, workflows: (await Promise.all(records.map(wf => workflowView($, wf, gitDir)))).sort(byUrgency) }
   } catch (error) {
     return { workflowError: `The workflows of ${path} could not be read: ${(error as Error).message}` }
   }
@@ -84,8 +94,10 @@ async function workflowsOf($: EngineInterface, path: string): Promise<Pick<ViewT
 async function workflowView($: EngineInterface, wf: Workflow, gitDir: string): Promise<WorkflowView> {
   const own = await readLive($, livePath(gitDir, liveName(wf)))
   // A call can name an issue of the PR, so a PR record also draws the calls of its issues.
-  const others = wf.pr ? await Promise.all((wf.issues ?? []).map(n => readLive($, livePath(gitDir, `issue-${n}`)))) : []
-  const calls = [own, ...others].flatMap(l => l.live?.calls ?? []).sort((a, b) => a.at - b.at)
+  const sibling = wf.pr ? await Promise.all((wf.issues ?? []).map(n => readLive($, livePath(gitDir, `issue-${n}`)))) : []
+  // With no live file, what the last save kept on the record draws instead.
+  const ownLive = own.live ?? wf.live
+  const calls = [ownLive, ...sibling.map(l => l.live)].flatMap(l => l?.calls ?? []).sort((a, b) => a.at - b.at)
   const hook = wf.hooks?.review
   const review = [
     ...(hook ? [{ name: 'review', firedAt: hook.firedAt, answered: hook.answer !== undefined }] : []),
@@ -93,27 +105,33 @@ async function workflowView($: EngineInterface, wf: Workflow, gitDir: string): P
   ]
   return {
     kind: wf.pr ? 'pr' : 'issue', mode: wf.mode, steering: wf.steering, state: wf.state, previous: wf.previous, issue: wf.issue, pr: wf.pr, issues: wf.issues, repo: wf.repo, prs: wf.prs,
-    blocked: wf.blocked?.message, blockedAt: wf.blocked?.at, waiting: wf.waiting, review,
+    blocked: wf.blocked ? shownFull('message', wf.blocked.message) : undefined, blockedAt: wf.blocked?.at, waiting: wf.waiting, review,
     visited: (wf.history ?? []).flatMap(h => [h.from, h.to]).filter((x): x is State => !!x),
-    live: own.live || calls.length ? { at: own.live?.at ?? 0, ...own.live, calls } : undefined,
-    liveError: [own, ...others].map(l => l.error).find(Boolean),
+    since: wf.history?.at(-1)?.at,
+    live: ownLive || calls.length ? { at: ownLive?.at ?? 0, ...ownLive, calls } : undefined,
+    liveError: [own, ...sibling].map(l => l.error).find(Boolean),
   }
 }
 
 async function readTree($: EngineInterface, t: Listed): Promise<ViewTree> {
   const tree: ViewTree = { path: t.path, branch: t.branch, isMain: t.isMain, files: t.files, problem: t.problem, servers: [], stacks: [] }
-  if (!t.files.some(f => f.name === RECORD && f.present)) return tree
+  if (!t.files.some(f => (f.name === RECORD || ISSUE_FILE.test(f.name)) && f.present)) return tree
   const r = await run($, envScript($), ['list', '--json', '--live', '--worktree', t.path])
   if (r.exitCode !== 0) return { ...tree, ...(await workflowsOf($, t.path)), resourceError: failure(`The resources of ${t.path} could not be read`, r) }
   try {
-    const resources = (JSON.parse(r.stdout) as Record2).resources ?? {}
+    const listedRecord = JSON.parse(r.stdout) as Record2
+    const resources = listedRecord.resources ?? {}
     const servers: ViewServer[] = Object.entries(resources['dev-servers'] ?? {}).map(([name, s]) => ({
-      name, pid: s.pid, port: s.port, command: s.command, cwd: s.cwd, live: s.live, lastStopOutput: s.lastStop?.output,
+      name, pid: s.pid, port: s.port, command: s.command, cwd: s.cwd, live: s.live, ...stopOf(s.lastStop),
+      startedAt: s.started ? Date.parse(s.started) : undefined,
+      details: shownOthers(others(s, ['pid', 'port', 'command', 'cwd', 'live', 'started', 'lastStop'])),
     }))
     const stacks: ViewStack[] = (resources.docker ?? []).map(s => ({
-      kind: s.kind, projectId: s.projectId, workdir: s.workdir, live: s.live, liveError: s.liveError, lastStopOutput: s.lastStop?.output,
+      kind: s.kind, projectId: s.projectId, workdir: s.workdir, live: s.live, liveError: s.liveError, ...stopOf(s.lastStop),
+      details: shownOthers(others(s, ['kind', 'projectId', 'workdir', 'live', 'liveError', 'lastStop'])),
     }))
-    return { ...tree, servers, stacks, ...(await workflowsOf($, t.path)) }
+    const worktreeFile = { version: listedRecord.version, settings: listedRecord.settings, leads: listedRecord.leads }
+    return { ...tree, servers, stacks, worktreeFile, ...(await workflowsOf($, t.path)) }
   } catch (error) {
     return { ...tree, resourceError: `The resources of ${t.path} could not be read: worktree-env.sh list printed no JSON (${(error as Error).message}). Run: bash ${envScript($)} list --json --live --worktree ${t.path}` }
   }
@@ -209,6 +227,22 @@ async function openView($: EngineInterface) {
     return { text: error ? `ndev view opened, but the lists could not be read: ${error}` : `ndev view opened for ${current}.` }
 }
 
+const shownOthers = (fields: Record<string, unknown>) => (Object.keys(fields).length ? detailsRows(fields) : undefined)
+
+// Each record in full: the issues, then the PRs.
+function recordsOf(t: ViewTree, now: number): Row[] {
+  const present = (name: string) => t.files.some(f => f.name === name && f.present)
+  const leads = t.worktreeFile?.leads ?? {}
+  return [...(t.held?.issues ?? []), ...(t.held?.prs ?? [])].flatMap(wf => {
+    const lead = wf.pr ? (leads[wf.pr] ?? wf.issue) : undefined
+    try {
+      return recordRows(wf, { root: t.path, now, lead, isPresent: present })
+    } catch (error) {
+      return undrawnRows(`.neil-dev.issue-${lead ?? wf.issue}.json`, wf, error)
+    }
+  })
+}
+
 export const resourceView = (on: On) => {
   on('command.run', { command: 'view' }, $ => openView($))
 
@@ -235,6 +269,17 @@ export const resourceView = (on: On) => {
 
     const issueLink = (repoName: string | undefined, n: number) => (repoName ? <Link key={`issue:${n}`} href={issueUrl(repoName, n)} label={`#${n}`} /> : `#${n}`)
     const prLink = (repoName: string | undefined, n: number) => (repoName ? <Link key={`pr:${n}`} href={pullUrl(repoName, n)} label={`#${n}`} /> : `#${n}`)
+    // One row of the layout: plain text, a coloured span or a link.
+    const rowOf = (row: Row, key: string) => (
+      <Text key={key} wrap="wrap">
+        {row.map((seg, i) => (seg.href
+          ? <Link key={`seg:${i}`} href={seg.href} label={maskedText(seg.text)} />
+          : seg.color || seg.bold || seg.dim
+            ? <Text key={`seg:${i}`} color={seg.color} weight={seg.bold ? 'bold' : undefined} dimColor={seg.dim}>{maskedText(seg.text)}</Text>
+            : maskedText(seg.text)))}
+      </Text>
+    )
+    const rowsOf = (rows: Row[], key: string) => rows.map((row, i) => rowOf(row, `${key}:${i}`))
     const liveLine = (line: { text: string; color?: 'warning' | 'error' | 'subtle' | 'success' }, key: string) => <Text key={key} color={line.color} wrap="wrap">{line.text}</Text>
 
     // What the workflow does now, what it waits for and what came back last.
@@ -279,6 +324,7 @@ export const resourceView = (on: On) => {
               </Box>
             ))}
           </Box>
+          {rowOf(progressRow(picture, w, checkedAt ?? 0), 'progress')}
           {picture.revising && (
             <Box alignItems="center">
               <Text color="subtle">↺ feedback ──→</Text>
@@ -318,12 +364,13 @@ export const resourceView = (on: On) => {
       return (
         <Box key={id} flexDirection="column">
           <Box gap={2}>
-            <Text color={s.live ? 'success' : 'subtle'}>{`${word(s.live)} ${s.name}   :${s.port}   ${s.live ? 'running' : 'stopped'}`}</Text>
+            <Text color={s.live ? 'success' : 'subtle'}>{`${word(s.live)} ${s.name}   `}{s.live ? <Link key="port" href={`http://localhost:${s.port}`} label={`:${s.port}`} /> : `:${s.port}`}{`   ${s.live ? 'running' : 'stopped'}`}</Text>
             {s.live && <Button key={`open:${id}`} label="Open" plain onPress={() => { void $.process.run(['open', `http://localhost:${s.port}`]) }} />}
             <Button key={`copy-port:${id}`} label="Copy port" plain onPress={press => { void $.ui.copy({ text: String(s.port), surface: press.surface }) }} />
             <Button key={`copy-command:${id}`} label="Copy command" plain onPress={press => { void $.ui.copy({ text: s.command, surface: press.surface }) }} />
             {s.live && <Button key={stopKey} label={stopLabel(stopKey, 'Stop')} plain onPress={() => { void press2($, stopKey, () => act($, stopKey, `Stop dev server ${s.name}`, envScript($), ['stop', '--name', s.name, '--worktree', t.path])) }} />}
           </Box>
+          {rowsOf(serverRows(s, checkedAt ?? 0), `about:${id}`)}
           {s.lastStopOutput && <Text color="error">{`  The last stop failed: ${s.lastStopOutput}`}</Text>}
         </Box>
       )
@@ -343,6 +390,7 @@ export const resourceView = (on: On) => {
             {stop('keep', 'Stop, keep data', 'stop-keep-data')}
             {stop('delete', 'Stop and delete data', 'stop-and-delete')}
           </Box>
+          {rowsOf(stackRows(s), `about:${id}`)}
           {s.lastStopOutput && <Text color="error">{`  The last stop failed: ${s.lastStopOutput}`}</Text>}
         </Box>
       )
@@ -355,6 +403,8 @@ export const resourceView = (on: On) => {
 
     return (
       <Box flexDirection="column" gap={1}>
+        {rowOf(headerRow(trees[0], checkedAt ?? 0), 'header')}
+        {trees.flatMap(t => rowsOf(attentionRows(t), `attention:${t.path}`))}
         {error && <Text color="error">{error}</Text>}
         {notice && <Text color={notice.isError ? 'error' : 'success'}>{notice.text}</Text>}
         {servicesError && <Text color="error">{servicesError}</Text>}
@@ -387,6 +437,12 @@ export const resourceView = (on: On) => {
                   {stopAll(t, 'keep', 'Stop all, keep data', 'stop-keep-data')}
                   {stopAll(t, 'delete', 'Stop all and delete data', 'stop-and-delete')}
                 </Box>
+              </Box>
+            )}
+            {(t.held || t.worktreeFile) && (
+              <Box key="records" flexDirection="column">
+                {rowsOf(worktreeRows(t), 'worktree')}
+                {rowsOf(recordsOf(t, checkedAt ?? 0), 'record')}
               </Box>
             )}
           </Box>
