@@ -9,7 +9,7 @@ This is the attended, native-dispatch form of `work-heavy-auto`. Survey and orde
 
 ## The workflow
 
-A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)` and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+A worker in its own session or Orca workspace calls `mcp__ndev__started(issue, shortName)`, then `mcp__ndev__setSteering` with `auto` and the reason, as no human answers an unattended run, and follows each answer until `mcp__ndev__done`. A subagent cannot move a workflow, so an `issue-implementer` subagent follows the stages of its brief and files other work with `mcp__ndev__followUp` with `issue_only`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 ## Settings
 

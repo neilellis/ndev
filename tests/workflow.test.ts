@@ -60,7 +60,7 @@ const engine = (on: On, opts: Opts = {}) => {
     now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
-    clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
+    sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -128,6 +128,8 @@ const engine = (on: On, opts: Opts = {}) => {
   })
   on('ui.toast', (_, e) => { toasts.push(e.text); return { value: undefined } })
   on('ui.notify', () => ({ value: undefined }) as never)
+  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('ui.close', () => ({ value: undefined }) as never)
   on('ui.status', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }) as never)
   on('session.cwd', () => ({ value: ROOT }) as never)
@@ -137,7 +139,7 @@ const engine = (on: On, opts: Opts = {}) => {
     // The host refuses a timeout that is not a whole number of ms, as $.process.run does in a session.
     const limit = e.init?.timeoutMs
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 600_000)) throw new Error('ndev: process.run: init.timeoutMs is a whole number of ms, 1 to 600000 (host check)')
-    if (a[0] === 'sleep') return (async () => { await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
+    if (a[0] === 'sleep') return (async () => { if (s.sleepYields) await new Promise(r => setTimeout(r, 1)); await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
       return (async () => {
@@ -228,7 +230,9 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[2] === 'commit-checks') return ok(JSON.stringify({ statuses: [], ...(s.checks as object) }))
       if (a[2] === 'feedback') return ok((s.comments as unknown[]).map(c => JSON.stringify(c)).join('\n'))
       if (a[2] === 'pr-ready') { ready.push(line); s.pr = { ...s.pr, draft: false }; return ok() }
-      if (a[2] === 'comment' || a[2] === 'pr-review' || a[2] === 'label') return ok()
+      if (a[2] === 'comment') return ok(`https://github.com/o/r/issues/${a[3]}#issuecomment-${1000 + Number(a[3])}\n`)
+      if (a[2] === 'comment-edit') return ok('https://github.com/o/r/issues/7#issuecomment-1\n')
+      if (a[2] === 'pr-review' || a[2] === 'label') return ok()
       return ok('', 1, `gh.sh not faked: ${line}`)
     }
     if (a[0] === 'bash' && a[1]?.endsWith('merge.sh')) {
@@ -322,7 +326,7 @@ const start = async ($: Dollar, w?: W) => {
   if (w) w.gh.length = 0 // fix-all-prs reads the repository at the start of a session; that is not the workflow.
 }
 // Each state tool names its issue. A test names it only when the issue is the point of the test.
-const STATE_TOOLS = ['finishedPlan', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', 'waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue']
+const STATE_TOOLS = ['interview', 'setSteering', 'finishedPlan', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', 'waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue']
 let liveFiles: Map<string, string> | undefined
 // A test names its target only when the target is the point of the test: the issue, or its PR once it has moved on.
 function callFor(name: string): Record<string, unknown> {
@@ -4144,3 +4148,329 @@ for (const [name, ending] of [['an empty answer', { answer: '  ' }], ['an error'
     expect(told).toContain('ndev:copy-editor')
   })
 }
+
+// ---- the interview ----
+const INTERVIEW_FILE = `${ROOT}/.neil-dev.issue-7.json`
+const INTERVIEW_PANE = { plugin: 'ndev', component: 'Pane', requestId: 'interview', props: { title: 'Interview', isFocused: false, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } } as const
+const ROUND = {
+  title: 'The login page',
+  intro: 'First round.',
+  questions: [
+    { id: 'store', header: 'Session store', question: 'Where do **sessions** live?', context: 'They outlive a deploy.', options: [{ label: 'Redis', description: 'Fast and shared.', recommended: true }, { label: 'Cookie', preview: '`set-cookie: s=...`' }] },
+    { id: 'name', header: 'Cookie name', question: 'What name?', suggested: 'sid' },
+    { id: 'browsers', header: 'Browsers', question: 'Which browsers?', multiSelect: true, options: [{ label: 'Safari', recommended: true }, { label: 'Chrome', recommended: true }, { label: 'Edge' }] },
+  ],
+}
+const asking = (extra: Record<string, unknown> = {}) => ({ state: 'interviewing', steering: 'interactive', ...extra })
+const human = async ($: Dollar, w: W) => {
+  w.s.sleepYields = true // A round's loop must leave room for the test's own timers.
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await settle()
+  w.gh.length = 0
+}
+// The call holds until the pane ends it. The kit cannot mount while a loop spins, so the fake sleep stays
+// pending while the test works the pane: tick lets one more pass of the loop run, and done ends the hold.
+const round = async ($: Dollar, w: W, json: unknown = ROUND, surface: 'terminal' | 'mobile' = 'terminal') => {
+  let wake = () => {}
+  const hold = () => { w.s.sleepHold = new Promise<void>(resolve => { wake = resolve }) }
+  hold()
+  const answer = tool($, 'interview', { interviewJson: json })
+  await settle()
+  const tick = async () => { const go = wake; hold(); go(); await settle() }
+  const done = () => { const go = wake; w.s.sleepHold = Promise.resolve(); go(); return answer }
+  return { done, tick, ui: await $.ui.mount({ ...INTERVIEW_PANE, surface }) }
+}
+const answersIn = (r: { text: string }) => JSON.parse(r.text.split('\n')[0]!) as { answers: { id: string; selected: string[]; other?: string; notes?: string; source?: string }[]; trustMeBro?: boolean; dismissed?: boolean; notAnswered?: string[] }
+const interviewFile = (w: W) => JSON.parse(w.files.get(INTERVIEW_FILE)!) as { rounds: { answers: unknown[] }[]; draft?: Record<string, { selected: string[] }>; commentIds?: { issue?: number; pr?: number }; posted?: boolean; closed?: { asked: boolean }; startedByFollowUp?: { of: number } }
+
+test('started asks first under interactive steering, and goes past the interview under auto', async ($, on) => {
+  const w = engine(on, { wf: null, config: { mode: 'heavy', steering: 'interactive' } })
+  await human($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(w.state()?.state).toBe('interviewing')
+  expect(w.state()?.prs).toEqual([12])
+  expect(r.text).toContain('ndev:interview')
+  expect(w.files.get(`/main/.git/info/exclude`)).toContain('.neil-dev.issue-*.json')
+})
+
+test('a round shows rich text; Select and Input change the answers that the agent gets; the file and both comments hold them', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  expect((await ui.find({ key: 'question' }))?.text).toContain('Where do **sessions** live?')
+  expect((await ui.find({ key: 'context' }))?.text).toContain('They outlive a deploy.')
+  expect((await ui.find({ key: 'options' }))?.text).toContain('`set-cookie: s=...`')
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.input({ key: 'notes-store', text: 'Only for now.', kind: 'change' })
+  await ui.press({ key: 'next' })
+  await ui.input({ key: 'other-name', text: 'session', kind: 'change' })
+  await ui.press({ key: 'next' })
+  await ui.select({ key: 'pick-browsers', value: 'Edge' })
+  await ui.select({ key: 'pick-browsers', value: 'Safari' })
+  await ui.press({ key: 'next' })
+  expect((await ui.find({ type: 'Text', text: /Session store/ }))?.text).toBe('Q1 Session store: Cookie (notes: Only for now.)')
+  await ui.press({ key: 'edit-name' })
+  expect((await ui.find({ key: 'other-name' }))).toBeDefined()
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  const r = await done()
+  await ui.unmount()
+  expect(r.isError).toBe(false)
+  expect(answersIn(r).answers).toEqual([
+    { id: 'store', selected: ['Cookie'], notes: 'Only for now.' },
+    { id: 'name', selected: [], other: 'session' },
+    { id: 'browsers', selected: ['Chrome', 'Edge'] },
+  ])
+  expect(w.state()?.state).toBe('interviewing')
+  expect(w.state()?.asking).toBeUndefined()
+  const file = interviewFile(w)
+  expect(file.rounds[0]!.answers.length).toBe(3)
+  expect(file.commentIds).toEqual({ issue: 1007, pr: 1012 })
+  expect(file.posted).toBe(true)
+  const posts = w.gh.filter(l => l.includes(' comment '))
+  expect(posts.length).toBe(2)
+  expect(posts[0]).toContain('ndev:interview issue=7')
+})
+
+test('the next round edits the two comments in place, and interview() goes on: planning when heavy', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const one = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await one.ui.press({ key: 'next' })
+  await one.ui.press({ key: 'submit' })
+  await one.done()
+  await one.ui.unmount()
+  w.gh.length = 0
+  const two = await round($, w, { title: 'Two', questions: [{ id: 'ttl', header: 'Lifetime', question: 'How long?', followUpTo: 'name', suggested: '1 day' }] })
+  expect((await two.ui.find({ type: 'Text', text: /Follow-up/ }))?.text).toBe('Follow-up to Q1 · Q1 › Q2')
+  const recap = (await two.ui.find({ key: 'recap' }))?.text
+  expect(recap).toContain('What name?')
+  expect(recap).toContain('sid')
+  await two.ui.press({ key: 'next' })
+  await two.ui.press({ key: 'submit' })
+  await two.done()
+  await two.ui.unmount()
+  expect(w.gh.filter(l => l.includes(' comment ')).length).toBe(0)
+  const edits = w.gh.filter(l => l.includes(' comment-edit '))
+  expect(edits.map(l => l.split(' comment-edit ')[1]!.split(' ')[0])).toEqual(['1007', '1012'])
+  const out = await tool($, 'interview')
+  expect(out.isError).toBe(false)
+  expect(w.state()?.state).toBe('planning')
+  expect(interviewFile(w).closed?.asked).toBe(true)
+})
+
+test('a follow-up inside the round recaps the answer as it stands', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[0], { id: 'ttl', header: 'Lifetime', question: 'How long?', followUpTo: 'store', suggested: '1 day' }] })
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.press({ key: 'next' })
+  expect((await ui.find({ key: 'recap' }))?.text).toContain('Cookie')
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+})
+
+test('a question with no answer does not go on, and says why', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.input({ key: 'other-name', text: '', kind: 'change' })
+  await ui.press({ key: 'next' })
+  expect((await ui.find({ type: 'Text', text: /needs an answer/ }))?.text).toContain('Cookie name')
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+})
+
+test('Trust Me Bro keeps the answers given, fills in the recommendations, and stops the questions', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.press({ key: 'trust' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).trustMeBro).toBe(true)
+  expect(answersIn(r).answers.map(a => [a.id, a.selected[0] ?? a.other, a.source])).toEqual([['store', 'Cookie', undefined], ['name', 'sid', 'recommended'], ['browsers', 'Safari', 'recommended']])
+  expect(r.text).toContain('assumption')
+  const again = await tool($, 'interview', { interviewJson: { title: 'More', questions: [{ id: 'x', header: 'X', question: 'X?', suggested: 's' }] } })
+  expect(again.isError).toBe(true)
+  expect(again.text).toContain('Trust Me Bro')
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(w.state()?.state).toBe('planning')
+})
+
+test('Close for now returns what was answered as dismissed, and the state stays', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.press({ key: 'close' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).dismissed).toBe(true)
+  expect(answersIn(r).answers.map(a => a.id)).toEqual(['store'])
+  expect(answersIn(r).notAnswered).toEqual(['name', 'browsers'])
+  expect(w.state()?.state).toBe('interviewing')
+})
+
+test('the pane says when no round is open, and on a phone it sends the human to the terminal', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const empty = await $.ui.mount({ ...INTERVIEW_PANE, surface: 'terminal' })
+  expect(await empty.find({ type: 'Text', text: /No interview/ })).toBeDefined()
+  await empty.unmount()
+  const { done, ui } = await round($, w, ROUND, 'mobile')
+  expect(await ui.find({ type: 'Text', text: /Answer it in the terminal/ })).toBeDefined()
+  await ui.unmount()
+  const desk = await $.ui.mount({ ...INTERVIEW_PANE, surface: 'terminal' })
+  await desk.press({ key: 'close' })
+  await done()
+  await desk.unmount()
+})
+
+test('a draft saved by an earlier call comes back, and the draft is saved while the round is open', async ($, on) => {
+  const w = engine(on, { wf: asking(), files: { [INTERVIEW_FILE]: JSON.stringify({ version: 1, issue: 7, rounds: [], draft: { store: { selected: ['Cookie'], other: '', notes: 'kept', touched: true } } }) } })
+  await human($, w)
+  const { done, tick, ui } = await round($, w)
+  await ui.press({ key: 'next' })
+  await ui.input({ key: 'notes-name', text: 'typed', kind: 'change' })
+  await tick()
+  expect(JSON.parse(w.files.get(INTERVIEW_FILE)!).draft.name.notes).toBe('typed')
+  await ui.press({ key: 'trust' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).answers[0]).toEqual({ id: 'store', selected: ['Cookie'], notes: 'kept' })
+  expect(interviewFile(w).draft).toBeUndefined()
+})
+
+test('the watchdog stays quiet while a round is open, and Orca shows that the human is needed', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const { done, ui } = await round($, w)
+  expect(w.state()?.asking).toBeDefined()
+  expect(w.alerts.length).toBe(1)
+  const before = w.prompts.length
+  await idle(w)
+  await idle(w)
+  expect(w.prompts.length).toBe(before)
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+  expect(w.state()?.asking).toBeUndefined()
+})
+
+test('no question goes to a human who is not there: auto and a session with no human refuse, and name the way on', async ($, on) => {
+  const w = engine(on, { wf: asking({ steering: 'auto' }) })
+  await human($, w)
+  const auto = await tool($, 'interview', { interviewJson: ROUND })
+  expect(auto.isError).toBe(true)
+  expect(auto.text).toContain('auto steering')
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('in a session with no human the round refuses and names setSteering', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await start($, w)
+  const r = await tool($, 'interview', { interviewJson: ROUND })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('setSteering')
+  expect(w.state()?.state).toBe('interviewing')
+})
+
+test('a bad round refuses with each problem and opens no pane', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  const r = await tool($, 'interview', { interviewJson: { title: 'T', questions: [{ id: 'a', header: 'A', question: 'A?' }] } })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('suggested')
+  expect(w.state()?.asking).toBeUndefined()
+})
+
+test('interview() with no questions goes on when light, and a heavy issue refuses it, naming /flow skip', async ($, on) => {
+  const light = engine(on, { wf: asking({ mode: 'light' }) })
+  await human($, light)
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('No questions asked')
+  expect(light.state()?.state).toBe('developing')
+})
+
+test('a heavy issue with no answers cannot leave by itself, and a human can skip it', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('/flow skip')
+  expect(w.state()?.state).toBe('interviewing')
+  await command($, 'skip no decisions are open')
+  expect(w.state()?.state).toBe('planning')
+})
+
+test('when GitHub fails the agent still gets the answers and the failure, and the exit waits for the comments', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  w.s.ghFails = ' comment 7'
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  const r = await done()
+  await ui.unmount()
+  expect(answersIn(r).answers[0]!.other).toBe('sid')
+  expect(r.text).toContain('gh.sh comment 7')
+  expect(interviewFile(w).posted).toBe(false)
+  const refused = await tool($, 'interview')
+  expect(refused.isError).toBe(true)
+  expect(refused.text).toContain('gh.sh comment 7')
+  expect(w.state()?.state).toBe('interviewing')
+  w.s.ghFails = ''
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+  expect(interviewFile(w).commentIds?.issue).toBe(1007)
+})
+
+test('setSteering sets auto with a reason on the issue and the PR, leaves the interview, and takes nothing else', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  expect((await tool($, 'setSteering', { steering: 'interactive', reason: 'x' })).text).toContain('/flow steering interactive')
+  expect((await tool($, 'setSteering', { steering: 'auto' })).text).toContain('needs a reason')
+  expect(w.state()?.steering).toBe('interactive')
+  const r = await tool($, 'setSteering', { steering: 'auto', reason: 'this run uses claude -p' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.steering).toBe('auto')
+  expect(w.state()?.state).toBe('planning')
+  const said = w.gh.filter(l => l.includes('this run uses claude -p'))
+  expect(said.map(l => l.split(' comment ')[1]!.split(' ')[0])).toEqual(['7', '12'])
+})
+
+test('a followUp worker gets the interview files: the parent leaves them, and the child takes them at started', async ($, on) => {
+  const parent = { version: 1, issue: 7, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }] }
+  const w = engine(on, { wf: { mode: 'heavy' }, config: { steering: 'interactive' }, files: { [INTERVIEW_FILE]: JSON.stringify(parent) } })
+  await human($, w)
+  w.s.orcaOn = true
+  const r = await tool($, 'followUp', { mode: 'worktree', message: 'Add the child\nThe body' })
+  expect(r.isError).toBe(false)
+  const left = [...w.files.keys()].find(k => k.startsWith('/main/.git/ndev-interview-handover-'))
+  expect(left).toBeDefined()
+  expect(JSON.parse(w.files.get(left!)!).files[0].name).toBe('.neil-dev.issue-7.json')
+  expect(w.orcaCalls.some(c => c.join(' ').includes('.neil-dev.issue-7.json'))).toBe(true)
+})
+
+test('the child of a followUp takes the answers at started, and a heavy child can leave with no questions', async ($, on) => {
+  const parentFile = JSON.stringify({ version: 1, issue: 3, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }] })
+  const handOver = '/main/.git/ndev-interview-handover-7.json'
+  const w = engine(on, { wf: null, config: { mode: 'heavy', steering: 'interactive' }, files: { [handOver]: JSON.stringify({ followUpOf: 3, at: 5, files: [{ name: '.neil-dev.issue-3.json', text: parentFile }] }) } })
+  await human($, w)
+  await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(w.state()?.state).toBe('interviewing')
+  expect(w.files.get(`${ROOT}/.neil-dev.issue-3.json`)).toBe(parentFile)
+  expect(JSON.parse(w.files.get(INTERVIEW_FILE)!).startedByFollowUp).toEqual({ of: 3, at: 5 })
+  const r = await tool($, 'interview')
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('planning')
+})

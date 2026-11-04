@@ -12,7 +12,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { LoadedConfig } from '../config'
 import { git, readChecks, readPrHealth } from './effects'
 import type { Checks, PrHealth } from './effects'
-import { blockWorkflow, boundRoot, factsFor, labelOf, loadWorkflow, moved, recordOfReviewer, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
+import { blockWorkflow, boundRoot, factsFor, isInterviewRunning, labelOf, loadWorkflow, moved, recordOfReviewer, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
 import type { Workflow } from './tools'
 import { liveName, shownValue, writeLive } from './live'
 
@@ -39,7 +39,7 @@ export async function watcherNote($: EngineInterface): Promise<{ at: number; why
 
 // A finished workflow is watched too, until its PR merges: the base can move under a PR that waits
 // for a human, and then the PR is not ready after all.
-const isWatched = (wf: Workflow | undefined): wf is Workflow => !!wf && !wf.off && wf.state !== 'blocked' && wf.state !== 'wait' && wf.state !== 'developed' && !(wf.state === 'done' && (wf.prsClosed || !wf.prs.length))
+const isWatched = (wf: Workflow | undefined): wf is Workflow => !!wf && !wf.off && !isInterviewRunning(wf.issue) && wf.state !== 'blocked' && wf.state !== 'wait' && wf.state !== 'developed' && !(wf.state === 'done' && (wf.prsClosed || !wf.prs.length))
 
 const hashOf = (s: string) => [...s].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7).toString(16)
 

@@ -64,6 +64,7 @@ patch. A resume with feedback is never trivial.
 
 ## F7 — Questions
 
+- **Under a workflow with interactive steering**, the state `interviewing` asks the questions that come before the plan. The `interview` skill has the method, and the answers are in the `.neil-dev.issue-*.json` files. Use the points below for a question that comes later.
 - **Write the question clearly:** the decision, the options and the issue numbers. Keep it short so
   the reader can answer quickly.
 - **Attended** (a user or dispatcher can answer): on a real blocking ambiguity (scope, a product

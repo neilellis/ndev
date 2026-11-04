@@ -5,10 +5,12 @@ import type { Facts, State, Tool } from '../hooks/workflow/machine'
 import { inferChangeTypes, isDocsOnly, pagesOf, reviewerBrief } from '../hooks/workflow/change-types'
 
 const facts = (extra: Partial<Facts> = {}): Facts => ({ mode: 'heavy', steering: 'auto', ...extra })
-const ACTIVE: State[] = ['setup', 'planning', 'developing', 'reviewing', 'ci', 'smoke', 'finishing', 'revising']
+const ACTIVE: State[] = ['setup', 'interviewing', 'planning', 'developing', 'reviewing', 'ci', 'smoke', 'finishing', 'revising']
 
 // Each legal move, written out so that the table in the code is not its own expected value.
 const MOVES: [State, Tool, State, Partial<Facts>?][] = [
+  ['interviewing', 'interview', 'planning'],
+  ['interviewing', 'interview', 'developing', { mode: 'light' }],
   ['planning', 'finishedPlan', 'developing'],
   ['developing', 'finishedDevelopment', 'reviewing'],
   ['reviewing', 'finishedReview', 'ci'],
@@ -41,7 +43,7 @@ test('a tool called in the wrong state changes nothing, and the message names th
 })
 
 test('only the moves in the table are legal', () => {
-  const tools: Tool[] = ['finishedPlan', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'done', 'checkpoint']
+  const tools: Tool[] = ['interview', 'finishedPlan', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'done', 'checkpoint']
   const legal = new Set(MOVES.map(([from, tool]) => `${from}/${tool}`))
   for (const from of ACTIVE) {
     for (const tool of tools) {
@@ -53,6 +55,28 @@ test('only the moves in the table are legal', () => {
 
 test('the interactive plan waits for sign-off in blocked, and resumes in developing', () => {
   expect(afterTool({ state: 'planning' }, 'finishedPlan', facts({ steering: 'interactive' }))).toEqual({ state: 'blocked', previous: 'developing' })
+})
+
+test('steering decides the first state: interactive asks first, and auto never does', () => {
+  const on = (mode: 'light' | 'heavy', steering: 'interactive' | 'auto') => afterStarted(undefined, { mode, steering })
+  expect(on('heavy', 'interactive')).toEqual({ state: 'interviewing' })
+  expect(on('light', 'interactive')).toEqual({ state: 'interviewing' })
+  expect(on('heavy', 'auto')).toEqual({ state: 'planning' })
+  expect(on('light', 'auto')).toEqual({ state: 'developing' })
+})
+
+test('a skip goes to the interview from setup when interactive, and past it from the interview', () => {
+  expect(afterSkip({ state: 'setup' }, 'heavy', 'interactive')).toEqual({ state: 'interviewing' })
+  expect(afterSkip({ state: 'setup' }, 'heavy', 'auto')).toEqual({ state: 'planning' })
+  expect(afterSkip({ state: 'interviewing' }, 'heavy', 'interactive')).toEqual({ state: 'planning' })
+  expect(afterSkip({ state: 'interviewing' }, 'light', 'interactive')).toEqual({ state: 'developing' })
+})
+
+test('setAuto leaves the interview, and each other state stays', () => {
+  expect(afterTool({ state: 'interviewing' }, 'setAuto', facts())).toEqual({ state: 'planning' })
+  expect(afterTool({ state: 'interviewing' }, 'setAuto', facts({ mode: 'light' }))).toEqual({ state: 'developing' })
+  expect(afterTool({ state: 'ci' }, 'setAuto', facts())).toEqual({ state: 'ci' })
+  expect(afterTool({ state: 'done' }, 'setAuto', facts())).toHaveProperty('refused')
 })
 
 test('blocked keeps the previous state, and unblocked restores it', () => {

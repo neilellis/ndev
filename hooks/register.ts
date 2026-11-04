@@ -10,7 +10,7 @@ import { fixAllPrs, fixAllPrsTurn, startFixAllPrs } from './fix-all-prs'
 import { initProjectSection, refreshInitProject, startInitProject } from './init-project'
 import { askCredentials, credentialsSection, startCredentials } from './credentials'
 import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index'
-import { releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowTools } from './workflow/tools'
+import { noteSessionHuman, releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowTools } from './workflow/tools'
 import { startWatchdog, workflowTurn, workflowWatchdog } from './workflow/watchdog'
 import { startWorkflowCommand, workflowCommand } from './workflow/command'
 import { askForIssue } from './workflow/ask-issue'
@@ -19,6 +19,7 @@ import { startWorktreeStacks, stopWorktreeStacks, worktreeStacksSection } from '
 import { learnAfterPush } from './learn'
 import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
+import { interviewPane } from './workflow/interview'
 import { startTriage, triage } from './triage'
 import { resourceView, startView } from './view'
 import { ensureRecord, readSettings, saveWorktreeSetting } from './worktree-settings'
@@ -263,6 +264,7 @@ export const register: Register = (on, options) => {
   componentCheck(on, () => project)
   fixAllPrs(on)
   responsiveCheck(on)
+  interviewPane(on)
   resourceView(on)
   triage(on, () => project)
   workflowTools(on, () => project)
@@ -362,6 +364,7 @@ export const register: Register = (on, options) => {
     }
     await update($, mode, () => (worktree?.settings.mode as Mode | undefined) ?? project?.config.mode ?? 'light')
     await update($, steering, () => (worktree?.settings.steering as Steering | undefined) ?? project?.config.steering ?? 'interactive')
+    await noteSessionHuman($, e.isInteractive)
     await showStatus($)
     void initWiki($)
     // One dialog at a time: the GitHub set-up first, then the credentials file.
