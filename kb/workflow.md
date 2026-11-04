@@ -269,7 +269,7 @@ The `interview` skill has the method. In this order, the agent reads each `.neil
 | Questions | 5 first questions and 5 follow-ups for the issue, across all rounds | No limit. The last round confirms the shared understanding. |
 | `interview()` with no answered round | Goes on. The record says that no questions were asked. | Refused, unless `followUp` started the worker. A human can skip with `/flow skip <reason>`. |
 
-**The pane.** The pane shows one question at a time, with a review before the answers go. A follow-up has a label, its chain of questions, and the answer that it follows. It has three ways to end:
+**The pane.** The pane shows one question at a time, with a review before the answers go. The review is a list with one box for each question: the full question, the answer in colour, the notes and an Edit button. A follow-up has a label, its chain of questions, and the answer that it follows, on the question and in the review. It has three ways to end:
 
 | Button | Result |
 | ------ | ------ |

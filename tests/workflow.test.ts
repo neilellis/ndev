@@ -2488,6 +2488,35 @@ test('a wait ends well when another writer gets in first', async ($, on) => {
   expect(w.state()?.state).toBe('developing')
 })
 
+test('a wait starts well when another writer gets in first', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  let answers = [{ exitCode: 0, stdout: 'S' }, { exitCode: 1 }]
+  w.s.probe = () => answers.shift() ?? { exitCode: 1 }
+  w.s.staleSaves = 1
+  const r = await tool($, 'waitForProcessEnd', { pid: 4242 })
+  expect(r.text).not.toContain('exited 5')
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait that raises its alert survives another writer getting in first', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  let n = 0
+  w.s.probe = () => {
+    n += 1
+    // The alert is saved after the check that passes half the attempts.
+    if (n === 2) w.s.staleSaves = 1
+    return n >= 3 ? { exitCode: 1 } : { exitCode: 0, stdout: 'S' }
+  }
+  const r = await tool($, 'waitForProcessEnd', { pid: 4242, attempts: 3 })
+  expect(r.text).not.toContain('exited 5')
+  expect(r.isError).toBe(false)
+})
+
 test('a wait that cannot go back says so and names the repair', async ($, on) => {
   const w = engine(on)
   await start($, w)
@@ -5010,6 +5039,42 @@ test('a follow-up inside the round recaps the answer as it stands', async ($, on
   await ui.select({ key: 'pick-store', value: 'Cookie' })
   await ui.press({ key: 'next' })
   expect((await ui.find({ key: 'recap' }))?.text).toContain('Cookie')
+  await ui.press({ key: 'close' })
+  await done()
+  await ui.unmount()
+})
+
+test('the review is a list of questions and answers, with the follow-up, the earlier rounds and real buttons', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  await human($, w)
+  const one = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await one.ui.press({ key: 'next' })
+  await one.ui.press({ key: 'submit' })
+  await one.done()
+  await one.ui.unmount()
+  const { done, ui } = await round($, w, { title: 'Two', questions: [ROUND.questions[0], { id: 'ttl', header: 'Lifetime', question: 'How long?', followUpTo: 'name', suggested: '1 day' }] })
+  await ui.select({ key: 'pick-store', value: 'Cookie' })
+  await ui.input({ key: 'notes-store', text: 'Only for now.', kind: 'change' })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'next' })
+  expect((await ui.find({ type: 'Text', text: /earlier round/ }))?.text).toBe('Q1 was answered in an earlier round.')
+  expect((await ui.find({ type: 'Text', text: /Session store/ }))?.text).toBe('Q2 Session store')
+  expect((await ui.find({ key: 'question-store' }))?.text).toContain('Where do **sessions** live?')
+  const answer = await ui.find({ type: 'Text', text: /Cookie/ })
+  expect(answer?.text).toBe('✔ Cookie')
+  expect(answer?.props.color).toBe('success')
+  expect((await ui.find({ type: 'Text', text: /Only for now/ }))?.text).toBe('Notes: Only for now.')
+  expect(await ui.find({ key: 'recap-store' })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /Follow-up/ }))?.text).toBe('Follow-up to Q1 · Q1 › Q3')
+  const recap = (await ui.find({ key: 'recap-ttl' }))?.text
+  expect(recap).toContain('What name?')
+  expect(recap).toContain('sid')
+  expect((await ui.find({ key: 'edit-store' }))?.props.plain).toBeUndefined()
+  const send = await ui.find({ key: 'submit' })
+  expect(send?.props.variant).toBe('primary')
+  expect(send?.props.autoFocus).toBe(true)
+  await ui.press({ key: 'edit-ttl' })
+  expect((await ui.find({ type: 'Text', text: /question 2 of 2/ }))?.text).toContain('question 2 of 2')
   await ui.press({ key: 'close' })
   await done()
   await ui.unmount()

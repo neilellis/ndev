@@ -2485,6 +2485,19 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
 
 const isStaleWrite = (error: unknown) => error instanceof Error && error.message.includes('set-workflow exited 5')
 
+// A save of a record that another writer changed first exits 5 and changes nothing. The change is read and made again.
+// After the last try the error names the record and both revisions, and its repair.
+async function retryStale<T>($: EngineInterface, step: () => Promise<T>): Promise<T> {
+  for (let tries = 1; ; tries += 1) {
+    await whenTurnsFree($)
+    try {
+      return await step()
+    } catch (error) {
+      if (tries >= 3 || !isStaleWrite(error)) throw error
+    }
+  }
+}
+
 // The record that a wait is on. The agent can go to another issue during the wait, so a wait names its own record.
 type WaitWho = { issue: number; pr?: number }
 const WAIT_RECORD_READS = 3
@@ -2598,7 +2611,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
   // A set time is not a retry, so waitForSeconds never raises the notice.
   const most = Math.min(attempts, Math.floor(timeoutS / spec.period))
   await whenTurnsFree($)
-  const { root, live, who } = await inTurn(async () => {
+  const { root, live, who } = await retryStale($, () => inTurn(async () => {
     const wf = await current($, c)
     if (name === 'waitForState' && issuesOf(wf).includes(Number(c.args.issue_id))) throw new Refuse(`Refused: waitForState cannot watch issue #${String(c.args.issue_id)}, because this agent is on it and its state stays "wait" while the wait holds it. Nothing changed. Repair: name another issue.`)
     legal(wf, 'wait', await factsFor($, wf.root, c.project, wf))
@@ -2607,7 +2620,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
     moved(wf, name, { state: 'wait', previous: wf.state }, startedAt)
     await saveWorkflow($, wf)
     return { root: wf.root, live: liveName(wf), who: { issue: wf.issue, pr: wf.pr } }
-  })
+  }))
   activeWaits.add(id)
   let alert: { group: string; pid?: number } | undefined
   let problem: string | undefined
@@ -2664,13 +2677,13 @@ async function waitAlert($: EngineInterface, root: string, who: WaitWho, id: str
   const { issue } = who
   const raised = await raiseAlert($, root, issue, `${name} for ${what} has run ${tries} of ${most} checks. Last: ${last} /unblock ends the wait.`, `ndev: #${issue}: a wait is past half its retries`)
   const alert = { group: raised.group, pid: raised.pid }
-  await inTurn(async () => {
+  await retryStale($, () => inTurn(async () => {
     const wf = await readWaitRecord($, root, who)
     if (wf?.waiting?.id === id) {
       wf.waiting.alert = alert
       await saveWorkflow($, wf)
     }
-  })
+  }))
   return { alert, problem: raised.problem }
 }
 

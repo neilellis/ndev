@@ -81,6 +81,23 @@ export function interviewPane(on: On) {
     const asked = call.round.questions
     const everything = [...call.earlier.map(q => q.question), ...asked]
     const labels = labelsOf(everything)
+    // What a follow-up follows: the chain, the parent question and its answer as it stands.
+    const followUp = (q: InterviewQuestion, recapKey: string) => {
+      const parent = q.followUpTo ? everything.find(x => x.id === q.followUpTo) : undefined
+      if (!parent) return null
+      const inRound = call.answers[parent.id]
+      const before = call.earlier.find(x => x.id === parent.id)
+      const text = inRound ? answerText(inRound) : (before?.answer ?? 'no answer')
+      const notes = (inRound ? inRound.notes : before?.notes) ?? ''
+      return (
+        <Box flexDirection="column">
+          <Text color="warning">{`Follow-up to ${labels[parent.id]} · ${chainOf(q.id, everything).map(id => labels[id]).join(' › ')}`}</Text>
+          <Box borderStyle="round" paddingX={1}>
+            <Markdown key={recapKey} text={fit(`${parent.question}\n\n**Answer:** ${text}${notes.trim() ? `\n\n**Notes:** ${notes.trim()}` : ''}`)} />
+          </Box>
+        </Box>
+      )
+    }
     const buttons = (first: unknown) => (
       <Box gap={2} flexWrap="wrap">
         {first as never}
@@ -90,19 +107,33 @@ export function interviewPane(on: On) {
     )
 
     if (call.stage === 'review') {
+      const before = call.earlier.map(x => labels[x.id]!)
+      const beforeText = before.length === 1 ? `${before[0]} was` : `${before[0]} to ${before[before.length - 1]} were`
       return (
         <Box flexDirection="column" gap={1}>
-          <Text weight="bold" color="claude">{call.round.title}: check your answers</Text>
+          <Box flexDirection="column">
+            <Text weight="bold" color="claude">{call.round.title}</Text>
+            <Text color="subtle">#{call.issue}: check your {asked.length === 1 ? 'answer' : `${asked.length} answers`}, then send</Text>
+            {before.length > 0 && <Text color="subtle">{`${beforeText} answered in an earlier round.`}</Text>}
+          </Box>
           {asked.map((q, i) => {
             const a = call.answers[q.id]!
             return (
-              <Box key={`row-${q.id}`} flexDirection="column">
-                <Text>{`${labels[q.id]} ${q.header}: ${answerText(a)}${a.notes.trim() ? ` (notes: ${a.notes.trim()})` : ''}`}</Text>
-                <Button key={`edit-${q.id}`} label={`Edit ${labels[q.id]}`} plain onPress={() => { void edit($, c => ({ ...c, stage: 'question', index: i })) }} />
+              <Box key={`row-${q.id}`} flexDirection="column" gap={1} borderStyle="round" borderColor="subtle" paddingX={1}>
+                <Box justifyContent="space-between" gap={2}>
+                  <Text weight="bold" color="claude">{`${labels[q.id]} ${q.header}`}</Text>
+                  <Button key={`edit-${q.id}`} label="Edit" onPress={() => { void edit($, c => ({ ...c, stage: 'question', index: i })) }} />
+                </Box>
+                {followUp(q, `recap-${q.id}`)}
+                <Markdown key={`question-${q.id}`} text={fit(q.question)} />
+                <Box flexDirection="column">
+                  <Text color="success" weight="bold">{`✔ ${answerText(a)}`}</Text>
+                  {a.notes.trim() ? <Text color="subtle">{`Notes: ${a.notes.trim()}`}</Text> : null}
+                </Box>
               </Box>
             )
           })}
-          {buttons(<Button key="submit" label="Send the answers" onPress={() => { void end($, 'submitted') }} />)}
+          {buttons(<Button key="submit" label="Send the answers" variant="primary" autoFocus onPress={() => { void end($, 'submitted') }} />)}
         </Box>
       )
     }
@@ -110,21 +141,12 @@ export function interviewPane(on: On) {
     const q = asked[call.index]!
     const a = call.answers[q.id]!
     const chain = chainOf(q.id, everything)
-    const parent = q.followUpTo ? everything.find(x => x.id === q.followUpTo) : undefined
-    const parentAnswer = q.followUpTo ? (call.answers[q.followUpTo] ? { text: answerText(call.answers[q.followUpTo]!), notes: call.answers[q.followUpTo]!.notes } : (() => { const p = call.earlier.find(x => x.id === q.followUpTo); return { text: p?.answer ?? 'no answer', notes: p?.notes ?? '' } })()) : undefined
     return (
       <Box flexDirection="column" gap={1}>
         <Text weight="bold" color="claude">{call.round.title}</Text>
         <Text color="subtle">#{call.issue}, question {call.index + 1} of {asked.length} in this round</Text>
         {call.index === 0 && call.round.intro && <Markdown key="intro" text={fit(call.round.intro)} />}
-        {parent && parentAnswer && (
-          <Box flexDirection="column">
-            <Text color="warning">{`Follow-up to ${labels[parent.id]} · ${chain.map(id => labels[id]).join(' › ')}`}</Text>
-            <Box borderStyle="round" paddingX={1}>
-              <Markdown key="recap" text={fit(`${parent.question}\n\n**Answer:** ${parentAnswer.text}${parentAnswer.notes.trim() ? `\n\n**Notes:** ${parentAnswer.notes.trim()}` : ''}`)} />
-            </Box>
-          </Box>
-        )}
+        {followUp(q, 'recap')}
         <Box flexDirection="column" gap={1} paddingLeft={(chain.length - 1) * 2}>
           <Text weight="bold">{labels[q.id]} {q.header}</Text>
           <Markdown key="question" text={fit(q.question)} />
