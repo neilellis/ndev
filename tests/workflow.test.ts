@@ -1702,6 +1702,27 @@ test('an agent that leaves an issue gives it up, so another agent can take it at
   expect(w.state(12)?.owner?.session).toBe('s1')
 })
 
+test('a session that Claude Code continued into this one keeps the workflow of the old session, with no takeOver', async ($, on) => {
+  const w = engine(on, { wf: { owner: { session: 'old', at: 0 } } })
+  await start($, w)
+  // The last line of the old transcript says: continued-in, continuedInSessionId s1.
+  w.s.probe = argv => ({ exitCode: 0, stdout: argv.includes('old') ? 's1\n' : '' })
+  const r = await tool($, 'blocked', { message: 'need the human' })
+  expect(r.text).not.toContain('owns this workflow')
+  expect(w.state()?.owner?.session).toBe('s1')
+  expect(w.s.probes.join('\n')).toContain('continuedInSessionId')
+})
+
+test('a session that no transcript continued into this one is still refused, and the refusal names the check', async ($, on) => {
+  const w = engine(on, { wf: { owner: { session: 'old', at: 0 } } })
+  await start($, w)
+  w.s.probe = () => ({ exitCode: 0, stdout: 'someone-else\n' })
+  const r = await tool($, 'blocked', { message: 'need the human' })
+  expect(r.text).toContain('owns this workflow')
+  expect(r.text).toContain('continued into')
+  expect(w.state()?.owner?.session).toBe('old')
+})
+
 test('an issue that another live agent owns in this worktree stays refused', async ($, on) => {
   const w = engine(on, { wf: { owner: { session: 'other', at: 0 } } })
   await start($, w)

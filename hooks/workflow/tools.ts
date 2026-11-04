@@ -617,6 +617,20 @@ const OFF_HERE = (wf: Workflow) => `Refused: the human turned this workflow off 
 // From the merge point on, these act on the PR and not on one issue.
 const PR_TOOLS = ['finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'done']
 
+// Claude Code continues a session that ran out of context in a new session id. It writes `continuedInSessionId`
+// into the old transcript, so the new session is the same agent and keeps the workflow of the old one.
+const CONTINUED_SCRIPT = 'for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$1".jsonl; do [ -f "$f" ] && grep -o \'"continuedInSessionId":"[^"]*"\' "$f" | tail -1 | cut -d\'"\' -f4; done'
+async function continuedInto($: EngineInterface, root: string, owner: string, session: string): Promise<boolean> {
+  let from = owner
+  for (let hop = 0; hop < 10 && from !== session; hop++) {
+    const r = await run($, ['bash', '-c', CONTINUED_SCRIPT, '_', from], { cwd: root, timeoutMs: 10_000 })
+    const next = r.stdout.trim().split('\n')[0]
+    if (r.exitCode !== 0 || !next) return false
+    from = next
+  }
+  return from === session
+}
+
 async function current($: EngineInterface, { project, args, tool }: Ctx): Promise<Workflow> {
   if (project?.config.workflow === false) throw new Refuse(OFF_PROJECT(project.path))
   const root = (await read($, workflowRoot)) ?? project?.root
@@ -634,7 +648,7 @@ async function current($: EngineInterface, { project, args, tool }: Ctx): Promis
   if (wf.pr && tool && PR_TOOLS.includes(tool) && pr === undefined) throw new Refuse(`Refused: ${tool} acts on the PR from the review stage on, so give pr ${wf.pr}. It carries ${(wf.issues ?? [wf.issue]).map(n => `#${n}`).join(', ')}. Nothing changed.`)
   const session = await $.session.id()
   const now = await $.clock.now()
-  if (wf.owner && wf.owner.session !== session && now - wf.owner.at < OWNER_LIVE_MS) throw new Refuse(`Refused: the session ${wf.owner.session} owns this workflow. Nothing changed. Leave it to that session. If that session is dead, call started with takeOver true.`)
+  if (wf.owner && wf.owner.session !== session && now - wf.owner.at < OWNER_LIVE_MS && !(await continuedInto($, wf.root, wf.owner.session, session))) throw new Refuse(`Refused: the session ${wf.owner.session} owns this workflow, and no transcript of it says it continued into ${session}. Nothing changed. Leave it to that session. If that session is dead, call started with takeOver true.`)
   wf.owner = { session, at: now }
   return wf
 }
@@ -814,7 +828,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
       await refuseMergedBranch($, home, repo, branchHere, base, issue)
     }
   }
-  if (wf?.owner && wf.owner.session !== session && now - wf.owner.at < OWNER_LIVE_MS && args.takeOver !== true) {
+  if (wf?.owner && wf.owner.session !== session && now - wf.owner.at < OWNER_LIVE_MS && args.takeOver !== true && !(await continuedInto($, root, wf.owner.session, session))) {
     throw new Refuse(`Refused: the session ${wf.owner.session} owns issue #${issue} in ${root}, and it was active in the last 10 minutes. If that session is dead, call started again with takeOver true.`)
   }
 
