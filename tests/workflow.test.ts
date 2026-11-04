@@ -2135,6 +2135,70 @@ test('a generated report that opens with a machine marker is not feedback at don
   expect(w.state()?.state).not.toBe('revising')
 })
 
+// ---- a PR that a human merged while the workflow was in finishing ----
+const MERGED_PR = { state: 'closed', merged: true, mergeable: null, mergeable_state: 'unknown' }
+test('done on a PR that a human merged marks the work done and merged, and asks for no more checks', async ($, on) => {
+  const w = engine(on, { wf: { ...finishing(), evidence: {} }, pr: MERGED_PR, checks: CHECKS({ name: 'unit tests', conclusion: 'failure' }) })
+  await start($, w)
+  w.s.upstream = ''
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(r.isError).toBe(false)
+  expect(r.text).not.toContain('Call done again')
+  expect(w.state()?.state).toBe('done')
+  expect(w.state()?.merged).toBe(true)
+  expect(w.merges).toEqual([])
+})
+
+test('done on a merged PR reads no comment as feedback', async ($, on) => {
+  const w = engine(on, { wf: finishing(), pr: MERGED_PR })
+  await start($, w)
+  w.s.comments = [remark]
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(r.text).not.toContain('has no answer')
+  expect(w.state()?.state).toBe('done')
+})
+
+test('done on a merged PR names each listed migration, and how to record one that was applied by hand', async ($, on) => {
+  const path = 'supabase/migrations/20261104192428_prompt_store_tools.sql'
+  const w = engine(on, { wf: { ...finishing(), migrations: [{ name: 'prompt_store_tools', path }] }, names: [path], pr: MERGED_PR })
+  await start($, w)
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(w.state()?.state).toBe('done')
+  expect(r.text).toContain(path)
+  expect(r.text).toContain('/ndev:merge 12')
+  expect(r.text).toContain('supabase migration repair 20261104192428 --status applied')
+})
+
+test('done on a merged PR says when this worktree holds work that did not merge', async ($, on) => {
+  const w = engine(on, { wf: finishing(), pr: { ...MERGED_PR, head: { sha: 'f'.repeat(40), ref: 'issue-7' } } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(w.state()?.state).toBe('done')
+  expect(r.text).toContain('a.ts')
+  expect(r.text).toContain('not the merged head')
+})
+
+test('done on a PR closed with no merge still refuses, names the repair, and does not say to call again for mergeability', async ($, on) => {
+  const w = engine(on, { wf: finishing(), pr: { state: 'closed', merged: false, mergeable: null } })
+  await start($, w)
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('closed with no merge')
+  expect(r.text).toContain('gh pr reopen 12')
+  expect(r.text).not.toContain('has not finished computing')
+  expect(w.state()?.state).toBe('finishing')
+})
+
+test('feedback at done names how to answer a comment that asks for no change', async ($, on) => {
+  const w = engine(on, { wf: finishing() })
+  await start($, w)
+  w.s.comments = [remark]
+  const r = await tool($, 'done', { message: 'finished', remembered: 'nothing: small' })
+  expect(w.state()?.state).toBe('revising')
+  expect(r.text).toContain('ack:<its id>')
+})
+
 test('a PR head that this worktree lacks: finishedRevision names git pull', async ($, on) => {
   const w = engine(on, { wf: { state: 'revising' } })
   await start($, w)

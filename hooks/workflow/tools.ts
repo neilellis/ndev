@@ -12,7 +12,7 @@ import type { WorkflowLive } from '../../types'
 import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
-import { CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, run, runCheck, said, withdrawAlert } from './effects'
+import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check, Ran } from './effects'
 import { withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
@@ -498,7 +498,7 @@ async function unlistedMigrations($: EngineInterface, wf: Workflow): Promise<str
 
 const migrationText = (files: string[]) => `Nothing will run these migration files after the merge: ${files.join(', ')}. Repair: call addMigration with a name, move the SQL into the file it makes, and delete the old file.`
 
-async function doneProblems($: EngineInterface, wf: Workflow, sha: string): Promise<{ problems: string[]; feedback: string[] }> {
+async function doneProblems($: EngineInterface, wf: Workflow, sha: string, pr: Pr | undefined): Promise<{ problems: string[]; feedback: string[] }> {
   const { root, repo } = wf
   const problems: string[] = []
   const dirty = await porcelain($, root)
@@ -526,12 +526,12 @@ async function doneProblems($: EngineInterface, wf: Workflow, sha: string): Prom
     else if (size === '0') problems.push(`The migration ${m.path} is empty. Write its SQL and call checkpoint.`)
   }
   let feedback: string[] = []
-  if (!wf.direct && wf.prs[0]) {
-    const pr = await readPr($, root, repo, wf.prs[0])
-    if (pr.state !== 'open') problems.push(`PR #${pr.number} is ${pr.state}.`)
+  if (pr) {
+    if (pr.state !== 'open') problems.push(`PR #${pr.number} is closed with no merge. Repair: gh pr reopen ${pr.number} --repo ${repo}.`)
     if (pr.draft) problems.push(`PR #${pr.number} is still a draft. Repair: gh pr ready ${pr.number}.`)
-    if (pr.mergeable === false) problems.push(`PR #${pr.number} has conflicts with ${wf.base}. Merge ${wf.base} in and call checkpoint.`)
-    if (pr.mergeable === null) problems.push(`GitHub has not finished computing whether PR #${pr.number} can merge. Call done again.`)
+    // GitHub does not compute this for a closed PR, so calling again would never end.
+    if (pr.state === 'open' && pr.mergeable === false) problems.push(`PR #${pr.number} has conflicts with ${wf.base}. Merge ${wf.base} in and call checkpoint.`)
+    if (pr.state === 'open' && pr.mergeable === null) problems.push(`GitHub has not finished computing whether PR #${pr.number} can merge. Call done again.`)
     if (pr.head.sha !== sha) problems.push(`PR #${pr.number} is at ${pr.head.sha.slice(0, 8)}, not HEAD ${sha.slice(0, 8)}. Repair: git pull --rebase origin ${wf.branch} when the PR is ahead; call checkpoint with no files when HEAD is ahead.`)
     const body = pr.body ?? ''
     for (const f of wf.followUps.filter(x => x.mode === 'this_agent')) {
@@ -540,6 +540,26 @@ async function doneProblems($: EngineInterface, wf: Workflow, sha: string): Prom
     feedback = await newFeedback($, root, repo, wf.issue, pr, wf.feedbackAt ?? 0)
   }
   return { problems, feedback }
+}
+
+// A human merged the PR, so its checks and feedback are settled. What the merge left out is for the human to know.
+async function afterHumanMerge($: EngineInterface, wf: Workflow, pr: Pr, sha: string): Promise<string[]> {
+  const notes = [`PR #${pr.number} is already merged, so done ran no checks and read no feedback.`]
+  const dirty = await porcelain($, wf.root)
+  if (dirty.length) notes.push(`The tree is not clean: ${changedPaths(dirty).join(', ')}. That work did not merge.`)
+  if (pr.head.sha !== sha) notes.push(`HEAD ${sha.slice(0, 8)} is not the merged head ${pr.head.sha.slice(0, 8)}. Check that no commit here was left out.`)
+  const siblings = await prSiblings($, wf)
+  const migrations = [...new Set([wf, ...siblings].flatMap(o => o.migrations.map(m => m.path)))]
+  if (migrations.length) {
+    const repairs = migrations.map(path => `supabase migration repair ${/(\d+)_[^/]*$/.exec(path)?.[1] ?? '<version>'} --status applied`)
+    notes.push(`Migrations after merge: ${migrations.join(', ')}. Done did not run them. Ask the human to confirm each one. /ndev:merge ${pr.number} runs the pending ones and does not merge again. For one that was already applied by hand, record that with ${repairs.join(', ')}, so that nothing runs it again.`)
+  }
+  wf.merged = true
+  for (const o of siblings) {
+    o.merged = true
+    await saveWorkflow($, o)
+  }
+  return notes
 }
 
 async function setUpPr($: EngineInterface, wf: Workflow, title: string, shared?: number): Promise<void> {
@@ -1628,11 +1648,12 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   if (!maySkipReview(facts.level) && /^skipped\b/i.test(remembered)) throw new Refuse('Refused: a formal_project does not skip the remember hook. Do the step and call done again.')
   const sha = await head(wf.root, $)
   havePr(wf)
-  const { problems, feedback } = await doneProblems($, wf, sha)
+  const pr = !wf.direct && wf.prs[0] ? await readPr($, wf.root, wf.repo, wf.prs[0]) : undefined
+  const { problems, feedback } = pr?.merged ? { problems: [], feedback: [] } : await doneProblems($, wf, sha, pr)
   if (feedback.length) {
     await move($, c, wf, 'done', { ...facts, feedback: true })
     await saveWorkflow($, wf)
-    return answer($, wf, facts, [`Not done: this feedback has no answer:\n${feedback.join('\n')}`, ...problems.map(p => `Also: ${p}`)])
+    return answer($, wf, facts, [`Not done: this feedback has no answer:\n${feedback.join('\n')}\nThe workflow cannot tell your own unmarked note from a request by the human, because both use one GitHub login. If a comment asks for no change, call comment on the PR with the message "ack:<its id>", then finishedRevision.`, ...problems.map(p => `Also: ${p}`)])
   }
   if (wf.doneWaitsFor === sha) await saveWorkflow($, wf)
   if (problems.length) throw new Refuse(`Not done. Fix each of these, then call done again:\n- ${problems.join('\n- ')}`)
@@ -1640,7 +1661,8 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   const notes: string[] = []
   const n = wf.prs[0]
   let merged = false
-  if (n && !wf.direct) {
+  if (pr?.merged) notes.push(...(await afterHumanMerge($, wf, pr, sha)))
+  else if (n && !wf.direct) {
     await comment($, wf.root, wf.repo, n, `<!-- work-heavy-auto:state -->\n${MARKER}\n- next: waiting-human\n- sha: ${sha}\n\n${message}`)
     const siblings = await prSiblings($, wf)
     // An issue record ends in developed: its PR record goes on to done for it.

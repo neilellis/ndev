@@ -34,7 +34,7 @@ The `addMigration` workflow tool lists each migration in a marked section of the
 
 5. Load the `supabase` skill. Find the linked project with `supabase projects list` and the `supabase/.temp/project-ref` file in the folder that holds `supabase/`. If the target project is not clear, ask the human.
 
-6. Run `supabase migration list`, and read which listed files are not applied on the remote. Then run `supabase db push`. It applies all pending files, so if the list shows a pending file that this PR does not list, stop and ask.
+6. Run `supabase migration list`, and read which listed files are not applied on the remote. Then run `supabase db push`. It applies all pending files, so if the list shows a pending file that this PR does not list, stop and ask. If the list shows a listed file as pending and it was already applied by hand, `supabase db push` fails on it, for example on duplicate keys. Ask the human to confirm that it was applied, then run `supabase migration repair <timestamp of the file> --status applied`, and do not run its SQL again.
 
 7. Run `supabase migration list` again, and confirm that each listed file is now applied.
 
