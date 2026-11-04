@@ -2684,7 +2684,7 @@ test('the same bug again starts no second agent', async ($, on) => {
   expect(again.text).toContain('already')
 })
 
-test('a loop of new bugs stops at the daily limit and says so', async ($, on) => {
+test('a loop of new bugs stops at the hourly limit and says so', async ($, on) => {
   const w = engine(on)
   w.s.branch = 'main'
   for (let i = 0; i < 5; i++) await tool($, 'reportWorkflowBug', { title: `bug ${i}`, details: 'a' })
@@ -2693,6 +2693,33 @@ test('a loop of new bugs stops at the daily limit and says so', async ($, on) =>
   expect(over.isError).toBe(true)
   expect(over.text).toContain('bug six')
   expect(over.text).toContain('limit')
+})
+
+test('the limit of bug agents frees up after an hour, and only then', async ($, on) => {
+  const w = engine(on)
+  w.s.branch = 'main'
+  for (let i = 0; i < 5; i++) await tool($, 'reportWorkflowBug', { title: `bug ${i}`, details: 'a' })
+  w.s.now += 3_599_000
+  const inside = await tool($, 'reportWorkflowBug', { title: 'bug six', details: 'a' })
+  expect(inside.isError).toBe(true)
+  expect(inside.text).toContain('5 bug agents in an hour')
+  w.s.now += 2_000
+  const after = await tool($, 'reportWorkflowBug', { title: 'bug six', details: 'a' })
+  expect(after.isError).toBe(false)
+  expect(launches(w)).toHaveLength(6)
+})
+
+test('the same bug starts no second agent for 24 hours, past the hourly limit', async ($, on) => {
+  const w = engine(on)
+  w.s.branch = 'main'
+  await tool($, 'reportWorkflowBug', { title: 'done refuses a clean tree', details: 'a' })
+  w.s.now += 2 * 3_600_000
+  const again = await tool($, 'reportWorkflowBug', { title: 'done refuses a clean tree', details: 'b' })
+  expect(launches(w)).toHaveLength(1)
+  expect(again.text).toContain('already')
+  w.s.now += 22 * 3_600_000 + 1_000
+  await tool($, 'reportWorkflowBug', { title: 'done refuses a clean tree', details: 'c' })
+  expect(launches(w)).toHaveLength(2)
 })
 
 test('a plugin checkout that is not on main starts no agent, and the refusal names the branch and the report', async ($, on) => {

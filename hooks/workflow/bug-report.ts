@@ -4,8 +4,9 @@ import type { EngineInterface } from 'claude-code'
 
 import { git, Refuse, run, said } from './effects'
 
+const HOUR_MS = 3_600_000
 const DAY_MS = 86_400_000
-const MAX_PER_DAY = 5
+const MAX_PER_HOUR = 5
 const STORE_KEY = 'workflowBugs'
 // An outside failure, not a fault of the plugin: an agent cannot repair it in the plugin's code.
 const NOT_OUR_FAULT = /rate limit|timed out|timeout|could not resolve|network|HTTP 5\d\d|ECONN/i
@@ -33,7 +34,7 @@ export async function reportBug($: EngineInterface, title: string, details: stri
   const seen = (((await $.store.get(STORE_KEY)) ?? []) as Seen[]).filter(b => now - b.at < DAY_MS)
   const key = fingerprint(title)
   if (seen.some(b => b.key === key)) return `This bug was already reported in the last 24 hours, and an agent has it, so no second agent starts: ${title}`
-  if (seen.length >= MAX_PER_DAY) throw new Refuse(`Refused: the limit of ${MAX_PER_DAY} bug agents in 24 hours is reached, so that a fault cannot start agents without end. Tell the human about this bug.\n${report}`)
+  if (seen.filter(b => now - b.at < HOUR_MS).length >= MAX_PER_HOUR) throw new Refuse(`Refused: the limit of ${MAX_PER_HOUR} bug agents in an hour is reached, so that a fault cannot start agents without end. Tell the human about this bug.\n${report}`)
 
   const root = $.plugin.root
   const top = await git(root, $, 'rev-parse', '--show-toplevel')

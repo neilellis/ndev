@@ -356,7 +356,7 @@ A Haiku model in the plugin reads the source and answers.
 
 When the plugin does something wrong, `reportWorkflowBug(title, details)` starts an Orca agent in the plugin's own checkout. That agent works test first on `main`, commits there, and does not push. The tool also runs by itself when a workflow tool or the idle check meets an unexpected fault. An outside failure, such as a rate limit or a network error, does not start an agent.
 
-The same title starts no second agent for 24 hours. At most 5 agents start in 24 hours. A refusal that is correct and a bug in the project are not workflow bugs.
+The same title starts no second agent for 24 hours. At most 5 agents start in an hour. A refusal that is correct and a bug in the project are not workflow bugs.
 
 ## Staying on track
 
