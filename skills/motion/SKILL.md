@@ -33,6 +33,7 @@ Delight is motion that tells the reader something: their action landed, the work
 
 - Animate `opacity` and `transform` only. Do not animate layout properties on large sections.
 - Use `whileInView` with `viewport={{ once: true }}` for scroll reveals. Use `whileHover` and `whileTap` for interaction. Use `AnimatePresence` for mount and unmount.
+- Keep action feedback at the user’s current point of attention: animate or change the control they used, or the affected content beside it. Do not make a distant notification the only sign that something happened.
 - Keep durations short, approximately 0.3 to 0.8 seconds, with gentle easing. Keep feedback for an action at 150–200 ms.
 - Where the brand forbids overshoot, use a tween with the brand's easing. Springs, the default in many component libraries, can overshoot.
 - Animate a value when it changes, not when the component mounts. A chart that redraws from zero each time its tab opens becomes noise.
