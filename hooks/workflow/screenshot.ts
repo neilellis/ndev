@@ -9,9 +9,13 @@ import { Refuse, head, must, paths, run, said } from './effects'
 const REPAIR = 'Repair: start Orca with `orca open`, then call screenshot again. Without Orca, use the matrix script of the ndev:responsive-check skill.'
 const VIEWPORT = /^(\d{2,5})x(\d{2,5})$/
 const WAIT_LIMIT_SECONDS = 60
+// Each scrolled image overlaps the last, so that a pinned header or footer hides no content at the join.
+const PAGE_STEP = 0.8
+const PAGE_IMAGE_LIMIT = 40
 const LOGIN_PAGE = /^https?:\/\/(?:[^/?#]*\.)?(?:login|signin|accounts|auth|sso)\.|\/(?:login|log-in|signin|sign-in|sso|auth)(?=[/?#]|$)/i
 
 type Args = Record<string, unknown>
+type Shot = { view: string; scheme: string; part: number; file: string }
 type Asked = { url: string; viewports: string[]; schemes: string[]; fullPage: boolean; waitMs: number }
 class LoginPage extends Refuse {}
 
@@ -62,12 +66,76 @@ async function pageValue($: EngineInterface, root: string, page: string, express
   return String((await browser($, root, ['eval', '--expression', expression, '--page', page])).result)
 }
 
-async function shootEach($: EngineInterface, root: string, page: string, asked: Asked, folder: string): Promise<string[]> {
+// Orca's full-screenshot, and a viewport taller than the surface that Orca really has, repeat the top of the
+// page and never reach its end. A viewport image of a scrolled page is true, so a full page is a set of those.
+async function scrollPage($: EngineInterface, root: string, page: string, top: number): Promise<{ y: number; height: number; total: number }> {
+  const answer = await pageValue($, root, page, `(() => { scrollTo({ top: ${top}, behavior: 'instant' }); return JSON.stringify([scrollY, innerHeight, document.documentElement.scrollHeight]) })()`)
+  let measured: unknown
+  try {
+    measured = JSON.parse(answer)
+  } catch {
+    measured = undefined
+  }
+  if (!Array.isArray(measured) || measured.length !== 3 || !measured.every(n => typeof n === 'number')) throw new Refuse(`The page did not give its scroll position: it answered ${answer.slice(0, 200)}. No more images of it were saved. ${REPAIR}`)
+  const [y, height, total] = measured as [number, number, number]
+  return { y, height, total }
+}
+
+async function copyShot($: EngineInterface, root: string, shot: Record<string, unknown>, url: string, view: string, file: string): Promise<void> {
+  if (typeof shot.path !== 'string') throw new Refuse(`orca screenshot gave no file path for ${url} at ${view}: ${JSON.stringify(shot).slice(0, 200)}. The Orca version may differ from what this tool expects.`)
+  const copied = await run($, ['cp', shot.path, file], { cwd: root })
+  if (copied.exitCode !== 0) throw new Refuse(`cp ${shot.path} ${file} exited ${copied.exitCode}: ${said(copied)}`)
+}
+
+async function shootFullPage($: EngineInterface, root: string, page: string, asked: Asked, view: string, base: string): Promise<{ files: string[]; warning?: string }> {
+  const files: string[] = []
+  let top = 0
+  let last = -1
+  for (let part = 1; ; part++) {
+    const { y, height, total } = await scrollPage($, root, page, top)
+    const atEnd = y + height >= total - 1
+    if (y <= last && !atEnd) return { files, warning: `${base}: the page stopped at ${y + height} px of ${total} px and would not scroll on, so the images are not the whole page. Its content may scroll inside an element and not in the page.` }
+    const file = part === 1 && atEnd ? `${base}.png` : `${base}-part${part}.png`
+    await copyShot($, root, await browser($, root, ['screenshot', '--page', page, '--format', 'png']), asked.url, view, file)
+    files.push(file)
+    if (atEnd) return { files }
+    if (part === PAGE_IMAGE_LIMIT) return { files, warning: `${base}: the limit of ${PAGE_IMAGE_LIMIT} images ended at ${y + height} px of ${total} px, so these images are not the whole page.` }
+    last = y
+    top = y + Math.floor(height * PAGE_STEP)
+  }
+}
+
+// Files that are the same to the byte mean that the scheme changed nothing on the page.
+async function sameInBothSchemes($: EngineInterface, root: string, shots: Shot[]): Promise<string[]> {
+  const same: string[] = []
+  const dark = shots.filter(shot => shot.scheme === 'dark')
+  const light = shots.filter(shot => shot.scheme === 'light')
+  for (const view of new Set(dark.map(shot => shot.view))) {
+    const darkHere = dark.filter(shot => shot.view === view)
+    const lightHere = light.filter(shot => shot.view === view)
+    if (darkHere.length !== lightHere.length) continue
+    let identical = true
+    for (const shot of darkHere) {
+      const other = lightHere.find(l => l.part === shot.part)!
+      const compared = await run($, ['cmp', '-s', other.file, shot.file], { cwd: root })
+      if (compared.exitCode > 1) throw new Refuse(`cmp ${other.file} ${shot.file} exited ${compared.exitCode}: ${said(compared)}`)
+      if (compared.exitCode === 1) {
+        identical = false
+        break
+      }
+    }
+    if (identical) same.push(...darkHere.map(shot => shot.file))
+  }
+  return same
+}
+
+async function shootEach($: EngineInterface, root: string, page: string, asked: Asked, folder: string): Promise<{ shots: Shot[]; warnings: string[] }> {
   await browser($, root, ['wait', '--load', 'load', '--page', page])
   if (asked.waitMs) await browser($, root, ['wait', '--timeout', String(asked.waitMs), '--page', page])
   const landed = await pageValue($, root, page, 'location.href')
   if (isLoginPage(landed) && !isLoginPage(asked.url)) throw new LoginPage(`${asked.url} went to the login page ${landed}, so no image was saved. The tab stays open in Orca for the human, page ${page}. Repair: ask the human to sign in once in that tab (call blocked if nothing else can go on), then call screenshot again and close that tab with orca tab close --page ${page}.`)
-  const files: string[] = []
+  const shots: Shot[] = []
+  const warnings: string[] = []
   for (const scheme of asked.schemes) {
     await browser($, root, ['exec', '--page', page, '--command', `set media ${scheme}`])
     const dark = await pageValue($, root, page, "matchMedia('(prefers-color-scheme: dark)').matches")
@@ -77,15 +145,20 @@ async function shootEach($: EngineInterface, root: string, page: string, asked: 
       await browser($, root, ['viewport', '--width', width!, '--height', height!, '--page', page])
       const seen = await pageValue($, root, page, 'window.innerWidth')
       if (seen !== width) throw new Refuse(`Orca did not apply the viewport ${view} to ${asked.url}: the page is ${seen} wide, not ${width}. No image of it was saved. ${REPAIR}`)
-      const shot = await browser($, root, asked.fullPage ? ['full-screenshot', '--page', page] : ['screenshot', '--page', page, '--format', 'png'])
-      if (typeof shot.path !== 'string') throw new Refuse(`orca screenshot gave no file path for ${asked.url} at ${view}: ${JSON.stringify(shot).slice(0, 200)}. The Orca version may differ from what this tool expects.`)
-      const file = `${folder}/${slugOf(asked.url)}-${view}-${scheme}.png`
-      const copied = await run($, ['cp', shot.path, file], { cwd: root })
-      if (copied.exitCode !== 0) throw new Refuse(`cp ${shot.path} ${file} exited ${copied.exitCode}: ${said(copied)}`)
-      files.push(file)
+      const base = `${folder}/${slugOf(asked.url)}-${view}-${scheme}`
+      if (asked.fullPage) {
+        const { files, warning } = await shootFullPage($, root, page, asked, view, base)
+        files.forEach((file, index) => shots.push({ view, scheme, part: index + 1, file }))
+        if (warning) warnings.push(warning)
+        continue
+      }
+      await copyShot($, root, await browser($, root, ['screenshot', '--page', page, '--format', 'png']), asked.url, view, `${base}.png`)
+      shots.push({ view, scheme, part: 1, file: `${base}.png` })
     }
   }
-  return files
+  const same = await sameInBothSchemes($, root, shots)
+  if (same.length) warnings.push(`the page did not change between light and dark, so these images are not a true dark view: ${same.join(', ')}. The page may ignore prefers-color-scheme and set its theme from a stored value or a class. Repair: find its theme key, then run orca storage local set --key <key> --value dark --page <page> in a tab of that site, and call screenshot again with schemes ["dark"]. The value stays in the Orca profile, so set it back after.`)
+  return { shots, warnings }
 }
 
 // Undefined when the tab closed. A tab that stays open is a fault for the human to see, so it is named.
@@ -107,9 +180,9 @@ export async function takeScreenshots($: EngineInterface, root: string, args: Ar
   await must($, ['mkdir', '-p', folder], { cwd: root })
   const page = (await browser($, root, ['tab', 'create', '--url', asked.url])).browserPageId
   if (typeof page !== 'string') throw new Refuse(`orca tab create gave no browserPageId for ${asked.url}. The Orca version may differ from what this tool expects.`)
-  let files: string[]
+  let taken: { shots: Shot[]; warnings: string[] }
   try {
-    files = await shootEach($, root, page, asked, folder)
+    taken = await shootEach($, root, page, asked, folder)
   } catch (error) {
     if (error instanceof LoginPage) throw error
     const problem = await closeTab($, root, page)
@@ -117,8 +190,10 @@ export async function takeScreenshots($: EngineInterface, root: string, args: Ar
     throw error
   }
   const problem = await closeTab($, root, page)
+  const files = taken.shots.map(shot => shot.file)
   return [
     `Saved ${files.length} image${files.length === 1 ? '' : 's'} of ${asked.url} at commit ${sha}. Read each file and look for a defect. The images stay on this machine under the git folder: they are in no commit and do not reach the PR, so say what you saw in your result.`,
+    ...taken.warnings.map(warning => `WARNING: ${warning}`),
     ...files,
     problem ?? '',
   ].filter(Boolean).join('\n')

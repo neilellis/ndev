@@ -76,7 +76,7 @@ const engine = (on: On, opts: Opts = {}) => {
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
-    diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, dark: false, cpFails: '',
+    diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -326,6 +326,7 @@ const engine = (on: On, opts: Opts = {}) => {
       return ok('passed')
     }
     if (a[0] === 'mkdir') return ok()
+    if (a[0] === 'cmp') { if (s.cmpFails) return ok('', 2, s.cmpFails); return ok('', s.sameImages ? 0 : 1) }
     if (a[0] === 'cp') { if (s.cpFails) return ok('', 1, s.cpFails); copies.push(a.at(-1) as string); return ok() }
     if (a[0] === 'orca') {
       if (s.orcaGone) throw new Error('spawn orca ENOENT')
@@ -334,12 +335,18 @@ const engine = (on: On, opts: Opts = {}) => {
       const answer = (result: unknown) => ok(JSON.stringify({ ok: true, result }))
       if (a[1] === 'status') return answer({ runtime: { reachable: s.orcaReachable } })
       if (a[1] === 'tab' && a[2] === 'create') { if (s.orcaFails) return ok(JSON.stringify({ ok: false, error: { code: 'browser_host_unavailable', message: s.orcaFails } }), 1); s.pageUrl ??= a[a.indexOf('--url') + 1]; return answer({ browserPageId: 'page-1' }) }
-      if (a[1] === 'viewport') { s.viewportWidth = Number(a[a.indexOf('--width') + 1]); return answer({}) }
+      if (a[1] === 'viewport') { s.viewportWidth = Number(a[a.indexOf('--width') + 1]); s.viewportHeight = Number(a[a.indexOf('--height') + 1]); return answer({}) }
       if (a[1] === 'exec') { s.dark = a.join(' ').includes('set media dark'); return answer({ set: true }) }
       if (a[1] === 'eval') {
         const expression = a[a.indexOf('--expression') + 1] as string
+        if (expression.includes('scrollTo')) {
+          const total = s.pageHeight ?? s.viewportHeight
+          s.scrollY = Math.min(Number(/top:\s*(\d+)/.exec(expression)![1]), total - s.viewportHeight, s.stuckAt ?? Infinity)
+          return answer({ result: JSON.stringify([s.scrollY, s.viewportHeight, total]) })
+        }
         return answer({ result: expression.includes('innerWidth') ? String(s.pageWidth ?? s.viewportWidth) : expression.includes('location') ? s.pageUrl : String(s.dark) })
       }
+      if (a[1] === 'screenshot' || a[1] === 'full-screenshot') s.shotsAt.push(s.scrollY)
       if (a[1] === 'screenshot' || a[1] === 'full-screenshot') return answer({ format: 'png', path: `/tmp/orca-shots/${orcaCalls.length}.png` })
       if (a[2] === 'worker-start') return s.workerReceipt ? ok(JSON.stringify(s.workerReceipt), 1) : answer({ state: 'ready', dispatchId: 'ctx_1', runId: 'run_1', taskId: 'task_1' })
       if (a[1] === 'wait' || (a[1] === 'tab' && a[2] === 'close')) return answer({})
@@ -3917,9 +3924,79 @@ test('screenshot follows the viewports, schemes, fullPage and waitSeconds that i
   const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['dark'], fullPage: true, waitSeconds: 2 })
   expect(r.isError).toBe(false)
   expect(w.copies).toEqual([`${SHOTS}/x-test-home-320x640-dark.png`])
-  expect(orcaVerbs(w)).toContain('full-screenshot')
-  expect(orcaVerbs(w)).not.toContain('screenshot')
+  expect(orcaVerbs(w)).toContain('screenshot')
   expect(w.orcaCalls.some(c => c[0] === 'wait' && c.includes('2000'))).toBe(true)
+})
+
+// Orca's full-screenshot and a viewport taller than its real surface both wrap and repeat the top of the page.
+test('a full page taller than the viewport is taken in scrolled images that reach its end, and never with full-screenshot', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.pageHeight = 2000
+  const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
+  expect(r.isError).toBe(false)
+  expect(orcaVerbs(w)).not.toContain('full-screenshot')
+  expect(w.orcaCalls.filter(c => c[0] === 'viewport')).toHaveLength(1)
+  // Each step overlaps the one before, so that a pinned header hides nothing, and the last reaches the end.
+  expect(w.s.shotsAt).toEqual([0, 512, 1024, 1360])
+  expect(w.copies).toEqual([1, 2, 3, 4].map(n => `${SHOTS}/x-test-home-320x640-light-part${n}.png`))
+  expect(r.text).toContain('Saved 4 images')
+  expect(r.text).toContain('-part4.png')
+})
+
+test('a full page with no end stops at the limit and says how much it did not take', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.pageHeight = 1_000_000
+  const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
+  expect(r.isError).toBe(false)
+  expect(w.copies).toHaveLength(40)
+  expect(r.text).toContain('not the whole page')
+  expect(r.text).toContain('1000000')
+})
+
+test('a full page that will not scroll to its end says so', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.pageHeight = 2000
+  w.s.stuckAt = 0
+  const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
+  expect(r.isError).toBe(false)
+  expect(w.s.shotsAt).toEqual([0])
+  expect(r.text).toContain('not the whole page')
+})
+
+test('a page that looks the same in light and dark gets a warning that names the images and the repair', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sameImages = true
+  const r = await tool($, 'screenshot', { url: 'https://x.test/cart', viewports: ['320x640', '800x600'], schemes: ['light', 'dark'] })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('WARNING')
+  expect(r.text).toContain('did not change between light and dark')
+  expect(r.text).toContain(`${SHOTS}/x-test-cart-320x640-dark.png`)
+  expect(r.text).toContain(`${SHOTS}/x-test-cart-800x600-dark.png`)
+  expect(r.text).toContain('orca storage local set')
+})
+
+test('a page that changes between light and dark gets no warning, and one scheme is not compared', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  expect((await tool($, 'screenshot', { url: 'https://x.test/cart', viewports: ['320x640'] })).text).not.toContain('WARNING')
+  w.s.sameImages = true
+  expect((await tool($, 'screenshot', { url: 'https://x.test/cart', viewports: ['320x640'], schemes: ['dark'] })).text).not.toContain('WARNING')
+})
+
+test('a comparison that cannot run is a refusal that names the files and the cause', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.cmpFails = 'cmp: No such file or directory'
+  const r = await tool($, 'screenshot', { url: 'https://x.test/cart', viewports: ['320x640'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('exited 2')
+  expect(r.text).toContain('No such file')
+  expect(r.text).toContain(`${SHOTS}/x-test-cart-320x640-dark.png`)
+  expect(orcaVerbs(w).at(-1)).toBe('tab close')
 })
 
 test('screenshot works with no workflow, and for a helper', async ($, on) => {
