@@ -76,7 +76,7 @@ const engine = (on: On, opts: Opts = {}) => {
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
-    diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
+    duringDiff: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -208,6 +208,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'add') { s.staged = true; return ok() }
       if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
       if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
+      if (a[1] === 'diff' && a[2] === 'HEAD' && s.duringDiff) { const hold = s.duringDiff; s.duringDiff = undefined; return hold().then(() => ok(s.diffText)) as never }
       if (a[1] === 'diff' && a[2] === 'HEAD') return ok(s.diffText)
       if (a[1] === 'diff') return ok('', s.staged ? 1 : 0)
       if (a[1] === 'commit') { s.commitDirs.push(e.init?.cwd); const op = /Ndev-Op: (\S+)/.exec(line)?.[1]; if (op) s.ops.add(op); steps.push('commit'); commits.push(line); s.staged = false; s.sha = `bbbb${commits.length}`; return ok() }
@@ -697,6 +698,19 @@ test('a turn end says nothing when blocked, done, typed over, aborted or a helpe
   await tool($, 'blocked', { message: 'help' })
   await turnEnds($)
   expect(w.prompts).toEqual([])
+})
+
+// The host queues a prompt that comes while a turn runs, and gives it to the model only when that turn
+// ends: the reminder of PR #444 said "reviewing" 44 minutes later, after finishedReview had moved it to ci.
+test('a turn that starts while the turn-end reminder is built gets no stale reminder queued behind it', async ($, on) => {
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  const w = engine(on)
+  await start($, w)
+  // A queued prompt (a review's answer) starts the next turn while the reminder reads the worktree.
+  w.s.duringDiff = () => $.turn.start({ text: 'the review has ended', turnId: 't2' })
+  await turnEnds($)
+  expect(w.prompts).toEqual([])
+  expect(await command($, 'status')).toContain('a turn started before the reminder')
 })
 
 test('three turn ends with no progress reach the human as a block', async ($, on) => {

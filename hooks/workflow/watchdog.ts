@@ -85,8 +85,18 @@ async function ready($: EngineInterface, project: LoadedConfig | undefined): Pro
   return wf
 }
 
+// The host queues a prompt that comes while a turn runs, and the model reads it only when that turn
+// ends, maybe long after the state moved on. A turn that started meanwhile (a queued prompt, such as a
+// review's answer) gets its own turn-end check, with the state as it is then.
+async function turnStarted($: EngineInterface, wf: Workflow): Promise<boolean> {
+  if (!(await read($, activity)).isTurnRunning) return false
+  await note($, `quiet: a turn started before the reminder for ${labelOf(wf)} (state "${wf.state}") went out, so it was not sent; the end of that turn checks again`)
+  return true
+}
+
 async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | undefined, why: 'turn' | 'idle' | 'checks', problems: string[] = [], sha = ''): Promise<void> {
   const print = await fingerprint($, wf, problems)
+  if (await turnStarted($, wf)) return
   const count = wf.nudges.fingerprint === print ? wf.nudges.count : 0
   if (count >= (why === 'idle' ? IDLE_LIMIT : TURN_END_LIMIT)) {
     await blockWorkflow($, wf, `${labelOf(wf)} made no progress in the state "${wf.state}" after ${count} reminder(s).${problems.length ? ` ${problems.join(' ')}` : ''}`)
@@ -107,6 +117,7 @@ async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | u
     if ((await loadWorkflow($, wf.root))?.state !== wf.state) return
   }
   if (why === 'checks') {
+    if (await turnStarted($, wf)) return
     const tool = wf.state === 'ci' ? 'finishedChecks' : 'done'
     const text = problems.length
       ? `The workflow read the PR of ${labelOf(wf)}. ${problems.join(' ')} Do not run a wait helper after the push: the workflow goes on watching.`
@@ -116,6 +127,7 @@ async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | u
     })
     return
   }
+  if (await turnStarted($, wf)) return
   const lead = why === 'idle' ? 'This session was idle for a long time.' : 'The workflow is not finished, so the turn does not end here.'
   const found = problems.length ? ` Fix these first: ${problems.join(' ')}` : ''
   void $.prompt.submit({ text: `${lead}${found} ${labelOf(wf)} is in the state "${wf.state}". ${stepOf(wf, facts)} Wait for a long process in the foreground with one wait helper, because a turn that ends on a background wait gets this reminder again. Do not end the turn before you call done or blocked.` }).catch((error: unknown) => {
