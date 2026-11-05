@@ -10,11 +10,15 @@ type Git = {
   moves?: string
   // The Bash call itself reports a failure.
   failed?: boolean
+  // The ref that moves. A worktree shares refs/remotes with the other worktrees of its repository.
+  ref?: string
+  // Another worktree sent the moved commit, so this worktree's HEAD does not contain it.
+  fromSibling?: boolean
 }
 
 // A fake engine: a git repository at /proj with no .neil-dev.json, and ~/dev-wiki present.
 // Beneath the plugin, each Bash call can move the remote-tracking ref. The answer counts the git ref reads.
-const engine = async ($: Engine, on: On, { moves, failed = false }: Git = {}) => {
+const engine = async ($: Engine, on: On, { moves, failed = false, ref = 'refs/remotes/origin/feature', fromSibling = false }: Git = {}) => {
   let sha = 'aaa'
   const reads = { count: 0 }
   on('command.register', (_, e) => ({ value: { command: e.name } }))
@@ -31,9 +35,13 @@ const engine = async ($: Engine, on: On, { moves, failed = false }: Git = {}) =>
   on('process.run', (_, e) => {
     if (e.argv[1] === 'for-each-ref') {
       reads.count += 1
-      return ran(`refs/remotes/origin/feature ${sha}\n`)
+      return ran(`${ref} ${sha}\n`)
     }
     if (e.argv[1] === 'reflog') return ran(`${moves ?? ''}\n`)
+    if (e.argv[1] === 'merge-base') {
+      expect(e.argv.slice(2)).toEqual(['--is-ancestor', 'bbb', 'HEAD'])
+      return { value: { ...ran().value, exitCode: fromSibling ? 1 : 0 } }
+    }
     return e.argv[0] === 'git' ? ran('/proj\n') : ran()
   })
   on('tool.call', () => {
@@ -107,6 +115,22 @@ test('a push with nothing to send asks for no ingest', async ($, on) => {
 test('a fetch that moves a remote-tracking ref asks for no ingest', async ($, on) => {
   await engine($, on, { moves: 'fetch origin: fast-forward' })
   expect(await context($, 'git fetch origin; echo push')).not.toContain('ndev:dev-wiki')
+})
+
+test('a push from another worktree during a refused push asks for no ingest', async ($, on) => {
+  await engine($, on, { moves: PUSHED, ref: 'refs/remotes/origin/sibling', fromSibling: true, failed: true })
+  const command = 'git push > push.log 2>&1; echo "push exit $?"; scripts/github/wait-for-pr-change.sh 464'
+  expect(await context($, command)).not.toContain('ndev:dev-wiki')
+})
+
+test('a push of a branch that is not checked out, named in the command, asks for the ingest', async ($, on) => {
+  await engine($, on, { moves: PUSHED, ref: 'refs/remotes/origin/release/1.2', fromSibling: true })
+  asksForIngest(await context($, 'git push origin release/1.2'))
+})
+
+test('the ingest request names the ref that the push moved', async ($, on) => {
+  await engine($, on, { moves: PUSHED })
+  expect(await context($, 'git push origin feature')).toContain('A push just landed on origin/feature.')
 })
 
 test('a dry-run push asks for no ingest', async ($, on) => {

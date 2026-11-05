@@ -183,6 +183,7 @@ const engine = (on: On, opts: Opts = {}) => {
       // Each read of the remote refs differs, so a Bash call that names a push lands.
       if (a[1] === 'for-each-ref') return ok(`refs/remotes/origin/issue-7 ${++refReads}\n`)
       if (a[1] === 'reflog') return ok('update by push\n')
+      if (a[1] === 'merge-base') return ok()
       if (a[1] === 'fetch') return ok()
       if (line.includes('--abbrev-ref')) return ok(`${s.branch ?? 'issue-7'}\n`)
       if (a[1] === 'rev-parse' && a[2] === 'HEAD') return ok(`${s.sha}\n`)

@@ -14,10 +14,10 @@ const DRY_RUN = /\s--dry-run\b/
 const INGEST =
   'run the dev-wiki ingest: load the `ndev:dev-wiki` skill and follow its "Ingest after a push" section. Review this session since the last ingest for development, design and copywriting lessons that hold outside this project and its domain, and record each one in ~/dev-wiki. A project or domain fact goes to the project wiki (the `remember` skill) instead. If there is no new lesson, say so in one line.'
 
-export const ingestText = (background: boolean) =>
-  background
+export const ingestText = (landedOn?: string) =>
+  landedOn === undefined
     ? `A push is running in the background. When it finishes with exit 0, ${INGEST}`
-    : `A push just landed. Before you go on, ${INGEST}`
+    : `A push just landed on ${landedOn}. Before you go on, ${INGEST}`
 
 export const isPush = (command: string) => PUSH.test(command) && !DRY_RUN.test(command)
 
@@ -32,14 +32,21 @@ const remoteRefs = async ($: Parameters<Parameters<On>[2]>[0], cwd: string) => {
 // Git records each push that lands in the reflog of the remote-tracking ref, and a fetch or a refused
 // push does not write that entry. The command text and its exit status cannot say this: a grep can name
 // a push, a script can hide one, and a later command in the call can set the exit status.
-const pushLanded = async ($: Parameters<Parameters<On>[2]>[0], cwd: string, before: Set<string>) => {
+// Worktrees share refs/remotes, so the entry can also be the push of another worktree during this call.
+// This call sent the commit only if HEAD contains it or the command names the branch.
+// The answer is the ref, without refs/remotes/.
+const pushLanded = async ($: Parameters<Parameters<On>[2]>[0], cwd: string, before: Set<string>, command: string) => {
   for (const line of (await remoteRefs($, cwd)) ?? []) {
     if (before.has(line)) continue
-    const ref = line.split(' ')[0]
+    const [ref, sha] = line.split(' ') as [string, string]
     const reflog = await $.process.run(['git', 'reflog', 'show', '-n', '1', '--format=%gs', ref], { cwd, timeoutMs: 10000 })
-    if (reflog.stdout.startsWith('update by push')) return true
+    if (!reflog.stdout.startsWith('update by push')) continue
+    const short = ref.replace('refs/remotes/', '')
+    if (command.includes(short.slice(short.indexOf('/') + 1))) return short
+    const inHead = await $.process.run(['git', 'merge-base', '--is-ancestor', sha, 'HEAD'], { cwd, timeoutMs: 10000 })
+    if (inHead.exitCode === 0) return short
   }
-  return false
+  return undefined
 }
 
 // While a workflow runs, its finishing step asks for the ingest instead.
@@ -52,9 +59,10 @@ export const learnAfterPush = (on: On, getProject: () => LoadedConfig | undefine
     const before = background ? undefined : await remoteRefs($, cwd)
     const ran = await next(e)
     if (ran.deny !== undefined) return ran
-    const asks = background ? isPush(command) && ran.isError !== true : before !== undefined && (await pushLanded($, cwd, before))
+    const landedOn = before === undefined ? undefined : await pushLanded($, cwd, before, command)
+    const asks = background ? isPush(command) && ran.isError !== true : landedOn !== undefined
     if (!asks) return ran
     if (await workflowOwnsChecks($, getProject())) return ran
-    return { ...ran, context: [...(ran.context ?? []), ingestText(background)] }
+    return { ...ran, context: [...(ran.context ?? []), ingestText(landedOn)] }
   })
 }
