@@ -36,6 +36,8 @@ The `addMigration` workflow tool lists each migration in a marked section of the
 
 6. Run `supabase migration list`, and read which listed files are not applied on the remote. Then run `supabase db push`. It applies all pending files, so if the list shows a pending file that this PR does not list, stop and ask. If the list shows a listed file as pending and it was already applied by hand, `supabase db push` fails on it, for example on duplicate keys. Ask the human to confirm that it was applied, then run `supabase migration repair <timestamp of the file> --status applied`, and do not run its SQL again.
 
+   If `supabase db push` refuses with `Found local migration files to be inserted before the last migration on remote database`, a listed file is older than a version on the remote, because another PR applied a newer migration first. Do not rename the file, because it is on the base branch now. Run `supabase db push --include-all --dry-run`, and read the files that it names. If it names a file that this PR does not list, stop and ask. Read the SQL of each older file. If it needs a change from a newer migration, stop and ask, because a new database runs the files in timestamp order. Otherwise run `supabase db push --include-all`.
+
 7. Run `supabase migration list` again, and confirm that each listed file is now applied.
 
 ## If a migration fails
