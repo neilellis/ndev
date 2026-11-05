@@ -4706,6 +4706,34 @@ test('addMigration lists the migrations of each issue on the PR, and not only of
     expect(body).toContain('mine_one')
 })
 
+test('addMigration refuses a listed migration whose file is gone, and names the repair', async ($, on) => {
+  const w = engine(on, { wf: { state: 'smoke', migrations: [{ name: 'audiences', path: 'supabase/migrations/20261105153912_audiences.sql' }] } })
+  w.files.set(`${ROOT}/supabase/config.toml`, '')
+  await start($, w)
+  const r = await tool($, 'addMigration', { name: 'audiences' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain(`${ROOT}/supabase/migrations/20261105153912_audiences.sql does not exist`)
+  expect(r.text).toContain('newVersion')
+})
+
+test('addMigration with newVersion gives a listed migration a new version, carries its SQL and lists the new path only', async ($, on) => {
+  const old = 'supabase/migrations/20261105153912_audiences.sql'
+  const w = engine(on, { wf: { state: 'smoke', migrations: [{ name: 'audiences', path: old }] } })
+  w.files.set(`${ROOT}/supabase/config.toml`, '')
+  w.files.set(`${ROOT}/${old}`, 'create table t();\n')
+  w.s.now = Date.UTC(2026, 10, 5, 16, 30, 0)
+  await start($, w)
+  const r = await tool($, 'addMigration', { name: 'audiences', newVersion: true })
+  expect(r.isError).toBe(false)
+  const fresh = 'supabase/migrations/20261105163000_audiences.sql'
+  expect(w.files.get(`${ROOT}/${fresh}`)).toBe('create table t();\n')
+  expect(r.text).toContain(`${ROOT}/${fresh}`)
+  expect(r.text).toContain(`delete ${ROOT}/${old}`)
+  const body = w.files.get(bodyFile(w))!
+  expect(body).toContain(fresh)
+  expect(body).not.toContain(old)
+})
+
 test('the answer of a code review reaches the PR record, while the agent is on another issue', async ($, on) => {
   const w = engine(on, { wf: { state: 'developing' } })
   w.files.set(RECORD, JSON.stringify({ version: 2, resources: {}, workflows: { 7: seven({ state: 'developed' }), 31: flow({ issue: 31, state: 'developing', ...mine() }) }, prs: { 12: flow({ pr: 12, issues: [7, 31], state: 'reviewing', hooks: { review: { firedAt: 1, agentId: 'rev-1' } } }) } }))

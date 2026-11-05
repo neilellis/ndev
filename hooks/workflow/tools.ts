@@ -2004,19 +2004,38 @@ async function addMigration($: EngineInterface, c: Ctx): Promise<string> {
   const workdir = text(args, 'workdir').replace(/\/$/, '')
   const prefix = workdir ? `${workdir}/` : ''
   if (!(await $.fs.exists(`${wf.root}/${prefix}supabase/config.toml`))) throw new Refuse(`Refused: ${wf.root}/${prefix}supabase/config.toml does not exist. Repair: run supabase init there, or pass workdir with the folder that holds supabase/.`)
+  const stamp = async () => new Date(await $.clock.now()).toISOString().replace(/\D/g, '').slice(0, 14)
+  const notes: string[] = []
   let entry = wf.migrations.find(m => m.name === name)
   if (!entry) {
-    const stamp = new Date(await $.clock.now()).toISOString().replace(/\D/g, '').slice(0, 14)
-    entry = { name, path: `${prefix}supabase/migrations/${stamp}_${name}.sql` }
+    entry = { name, path: `${prefix}supabase/migrations/${await stamp()}_${name}.sql` }
     await $.fs.write(`${wf.root}/${entry.path}`, '')
     wf.migrations.push(entry)
     await saveWorkflow($, wf)
+  } else if (args.newVersion === true) {
+    // A newer migration reached the database first: the file needs a later version before the merge.
+    const old = entry.path
+    const sql = (await $.fs.exists(`${wf.root}/${old}`)) ? await $.fs.read(`${wf.root}/${old}`) : ''
+    entry.path = `${prefix}supabase/migrations/${await stamp()}_${name}.sql`
+    if (entry.path === old) throw new Refuse(`Refused: the new version of ${old} would be the same as the old one. Call addMigration again a second later.`)
+    await $.fs.write(`${wf.root}/${entry.path}`, sql)
+    await saveWorkflow($, wf)
+    // The PR record and each issue on the PR keep their own copy of the list.
+    for (const o of await prSiblings($, wf)) {
+      const listed = o.migrations.find(m => m.path === old)
+      if (!listed) continue
+      listed.path = entry.path
+      await saveWorkflow($, o)
+    }
+    notes.push(`New version: ${wf.root}/${entry.path} replaces ${old} in the list${sql ? ' and holds its SQL' : ''}. Now delete ${wf.root}/${old}, and commit both with checkpoint.`)
+  } else if (!(await $.fs.exists(`${wf.root}/${entry.path}`))) {
+    throw new Refuse(`Refused: the listed migration ${wf.root}/${entry.path} does not exist. Repair: put its file back, or call addMigration with name ${JSON.stringify(name)} and newVersion true to give it a new version.`)
   }
   const lines = [...new Set([wf, ...(await prSiblings($, wf))].flatMap(o => o.migrations.map(m => m.path)))].map(path => `- \`${path}\``).join('\n')
   const section = `<!-- ndev:migrations -->\n## Migrations to run after merge\n\n${lines}\n<!-- /ndev:migrations -->\n`
   await editBody($, wf, old => (SECTION.test(old) ? old.replace(SECTION, section) : `${old.trimEnd()}\n\n${section}`))
   await saveWorkflow($, wf)
-  return answer($, wf, facts, [`Migration file: ${wf.root}/${entry.path}. Write its SQL and commit it with checkpoint. /ndev:merge runs it after the merge.`])
+  return answer($, wf, facts, notes.length ? notes : [`Migration file: ${wf.root}/${entry.path}. Write its SQL and commit it with checkpoint. /ndev:merge runs it after the merge.`])
 }
 
 async function status($: EngineInterface, c: Ctx): Promise<string> {
@@ -2123,7 +2142,7 @@ const SPEC_LIST: Spec[] = [
   { name: 'unblocked', description: 'The block is resolved: withdraw the notification and go back to the earlier state.', properties: { message: STR }, required: [] },
   { name: 'done', description: 'All the work is complete. The tool checks all of it, lists every problem, and marks it done. It merges only when the project level lets the agent merge. remembered is needed only when the review stage was skipped: what you recorded in the docs and the wiki, or "nothing: <reason>".', properties: { message: STR, remembered: STR }, required: ['message'] },
   { name: 'followUp', description: 'File a new issue for work that does not belong to this issue, and act by mode: this_agent (this PR carries it), subagent, worktree (a new Orca workspace with a supervised worker and its own PR) or issue_only. With the mode worktree, issues names existing issues instead: nothing is filed, and one worker carries them all on one PR.', properties: { mode: { type: 'string', enum: ['this_agent', 'subagent', 'worktree', 'issue_only'] }, message: { ...STR, description: 'The first line is the issue title. With issues, it names the workspace, and the whole message is the brief for the worker' }, issues: { type: 'array', items: { type: 'number' }, description: 'Only with the mode worktree: the open issues that the one worker and PR carry' } }, required: ['mode', 'message'], forSubagents: true },
-  { name: 'addMigration', description: 'Add a named Supabase migration, to run after the merge. This makes the empty migration file and lists it in the PR body. /ndev:merge runs it.', properties: { name: { ...STR, description: 'Lower-case letters, digits and underscores' }, workdir: { ...STR, description: 'The folder that holds supabase/, when it is not the root' } }, required: ['name'] },
+  { name: 'addMigration', description: 'Add a named Supabase migration, to run after the merge. This makes the empty migration file and lists it in the PR body. /ndev:merge runs it.', properties: { name: { ...STR, description: 'Lower-case letters, digits and underscores' }, workdir: { ...STR, description: 'The folder that holds supabase/, when it is not the root' }, newVersion: { type: 'boolean', description: 'Only for a listed migration, before the merge: give it a new version, such as when a newer migration reached the database first. The SQL moves to the new file, and the list names it.' } }, required: ['name'] },
   { name: 'reportWorkflowBug', description: 'The ndev workflow or plugin itself did something wrong: a tool answered wrongly, crashed, or refused for no reason. This starts an Orca agent that fixes it on main of the plugin, so go on with your own work. Not for a bug in the project, and not for a refusal that is correct.', properties: { title: { type: 'string', description: 'One line that names the bug' }, details: { type: 'string', description: 'The tool and arguments, what it answered, and what you expected' } }, required: ['title', 'details'], forSubagents: true },
   { name: 'iNeedA', description: 'Ask the plugin for guidance before you choose or write one of these, so that the work keeps to the approved set: react-component, library, brand-style (a call on a font, a colour and so on) or animation (a micro-interaction, a simple animation or a full showy one). The answer gives suggestions and where to get them. It is guidance: you can still choose otherwise and say why.', properties: { kind: { type: 'string', enum: [...NEED_KINDS] }, description: { type: 'string', description: 'What it is for: the component type, the job of the library, the style question or the moment to animate' } }, required: ['kind', 'description'], forSubagents: true },
   { name: 'screenshot', description: 'Take images of one page in the Orca browser, at each viewport and colour scheme, and save them as files. The answer gives each full path. The answer warns when the page did not change between light and dark. The tab closes after, unless the page lands on a login, which the human signs in to once. Orca must run. It makes no GitHub call, and the images do not reach the PR.', properties: { url: { ...STR, description: 'The full http or https URL' }, viewports: { type: 'array', items: STR, description: 'Sizes such as 390x844. The default is 390x844, 820x1180 and 1440x900.' }, schemes: { type: 'array', items: { type: 'string', enum: ['light', 'dark'] }, description: 'The default is light and dark.' }, fullPage: { type: 'boolean', description: 'Take the whole page and not only the viewport: one image for each scrolled step, named -part1, -part2 and so on when the page is taller than the viewport.' }, waitSeconds: { type: 'number', description: 'A pause after the load, for a page that fills in late.' } }, required: ['url'], forSubagents: true },
