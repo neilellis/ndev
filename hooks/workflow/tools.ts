@@ -904,7 +904,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   }
   if (!record.shortName) notes.push(`This workflow has no shortName, so its Orca workspace keeps its name. Call started again with a shortName: two to five lower-case words from the issue "${issueInfo.title}".`)
   if (to.state === 'setup') {
-    notes.push(`These check scripts are missing or not executable: ${missing.join(', ')}. fast-checks.sh takes the changed files as arguments and runs only very fast tools on them, such as ruff, ty, oxlint and ast-grep; start from ${$.plugin.root}/scripts/workflow/fast-checks-template.sh. pre-commit-check.sh runs the full lint and typecheck. pre-push-check.sh runs the unit tests. pre-ready-check.sh runs the full suite and E2E. Each exits non-zero on failure. Take the commands from the project's CLAUDE.md.`)
+    notes.push(`These check scripts are missing or not executable: ${missing.join(', ')}. fast-checks.sh takes the changed files as arguments and runs only very fast tools on them, such as ruff, ty, oxlint and ast-grep; start from ${$.plugin.root}/scripts/workflow/fast-checks-template.sh. pre-commit-check.sh runs the full lint and typecheck. pre-push-check.sh runs the unit tests. pre-ready-check.sh runs the full suite and E2E. Each exits non-zero on failure. A check that compares with the base reads NDEV_MERGE_BASE, not git merge-base HEAD, which is the old base while a merge commit is made. Take the commands from the project's CLAUDE.md.`)
   }
   if (to.state === 'blocked' && record.state !== 'blocked') {
     const message = `Issue #${issue} waits for ${blockers.map(b => `#${b.number}`).join(', ')}.`

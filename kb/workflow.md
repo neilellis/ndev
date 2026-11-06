@@ -225,6 +225,8 @@ The engine runs git with the repository's hooks off, so the tools run the checks
 
 **The base check.** After the interview and before any code, one check runs on the base, so that a base that is already broken shows while nothing depends on it. Light mode runs `pre-commit-check.sh`, in `interview()` when it goes on to development, or in `finishedInterview` under auto steering. Heavy mode runs `pre-push-check.sh`, in `finishedPlan`, before the sign-off, and the sign-off message names a failure. A failure of the base check does not stop the tool. The answer gives the script, the exit code, the output and the log. The agent then fixes it if the fix is small, files it with `followUp`, or calls `blocked`. The later commits run the same checks, so the failure also stops them until it is fixed. An agent that `followUp` started has no interview, and an issue that `followUp` adds to this PR has none, so this does not apply to them.
 
+**The merge base.** Each script gets `NDEV_MERGE_BASE`: the merge base that the commit will have with `origin/<base>`. A check that compares with the base reads it, not `git merge-base HEAD origin/<base>`. When a commit ends a merge of the base into the branch, the checks run before that commit, so `HEAD` is still the commit before the merge, and `git merge-base HEAD` gives the old base: errors that the base brought in then count as the branch's. A failed check during a merge says so and gives the value.
+
 Each other failed script stops the tool. The message gives the script, the exit code and the last lines of output. When the base branch has the script, the tool runs the base version, so a branch cannot weaken its own check.
 
 ## What the workflow took over from the hooks

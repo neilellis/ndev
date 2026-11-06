@@ -93,6 +93,9 @@ export async function missingChecks($: EngineInterface, root: string): Promise<s
 // Runs a check script. The engine runs git with the repository's hooks off, so these are the hooks.
 // When the base branch has the script, its version runs, so a branch cannot pass by editing its own
 // check. The return value notes a script that the base does not have, or that the branch changed.
+// NDEV_MERGE_BASE is the merge base that the commit will have. While a merge is in progress the checks
+// run before its commit, so HEAD is still the commit before the merge, and `git merge-base HEAD
+// origin/<base>` gives the old base: what the base brought in would count as the branch's.
 export async function runCheck($: EngineInterface, root: string, base: string, check: Check, args: string[] = []): Promise<string | undefined> {
   const path = `${CHECK_DIR}/${check}`
   const { gitDir } = await paths($, root)
@@ -105,15 +108,19 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
     const changed = (await git(root, $, 'diff', '--quiet', `origin/${base}`, '--', path)).exitCode !== 0
     note = changed ? `This branch changes ${path}. The tool ran the version on ${base}, and a human must read the change in this PR.` : undefined
   }
+  const merging = (await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0
+  const mergeBase = merging ? await git(root, $, 'merge-base', `origin/${base}`, 'HEAD', 'MERGE_HEAD') : await git(root, $, 'merge-base', `origin/${base}`, 'HEAD')
+  const env: Record<string, string> = mergeBase.exitCode === 0 && mergeBase.stdout.trim() ? { NDEV_MERGE_BASE: mergeBase.stdout.trim() } : {}
   const before = (await porcelain($, root)).join('\n')
-  const r = await withStep($, check, 600_000, () => run($, ['bash', script, ...args], { cwd: root, timeoutMs: 600_000 }))
+  const r = await withStep($, check, 600_000, () => run($, ['bash', script, ...args], { cwd: root, timeoutMs: 600_000, env }))
   const log = `${gitDir}/ndev-${check}.log`
   await $.fs.write(log, checkLog(r, path))
   if (r.exitCode !== 0) {
     const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').slice(-20).join('\n').slice(-4000)
     const cut = outputCut(r, path)
     const output = `${cut ? `${cut}\n` : ''}${tail}`
-    throw new CheckFailed(`${path} exited ${r.exitCode} (a run longer than 10 minutes is stopped). Nothing was pushed. Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
+    const merge = merging ? ` A merge is in progress, so HEAD is the commit before the merge: a check that compares with \`git merge-base HEAD origin/${base}\` reads the old base. Repair: read the base from NDEV_MERGE_BASE=${env.NDEV_MERGE_BASE ?? '(git merge-base failed)'}, as ${base} merged in here.` : ''
+    throw new CheckFailed(`${path} exited ${r.exitCode} (a run longer than 10 minutes is stopped). Nothing was pushed.${merge} Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
   }
   const after = (await porcelain($, root)).join('\n')
   if (after !== before) throw new CheckFailed(`${path} passed but changed the working tree. Name the changed files in the tool call and call it again:\n${after}`, { path, exitCode: 0, log, output: after })

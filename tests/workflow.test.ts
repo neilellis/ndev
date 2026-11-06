@@ -77,6 +77,7 @@ const engine = (on: On, opts: Opts = {}) => {
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
+    merging: undefined as string | undefined, checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -187,7 +188,9 @@ const engine = (on: On, opts: Opts = {}) => {
       // Each read of the remote refs differs, so a Bash call that names a push lands.
       if (a[1] === 'for-each-ref') return ok(`refs/remotes/origin/issue-7 ${++refReads}\n`)
       if (a[1] === 'reflog') return ok('update by push\n')
-      if (a[1] === 'merge-base') return ok()
+      // As real git does: with MERGE_HEAD named, the base of the hypothetical merge of HEAD and MERGE_HEAD.
+      if (a[1] === 'merge-base') return a.includes('--is-ancestor') ? ok() : ok(`${a.includes('MERGE_HEAD') && s.merging ? NEW_BASE : OLD_BASE}\n`)
+      if (a[1] === 'rev-parse' && a.includes('MERGE_HEAD')) return s.merging ? ok(`${s.merging}\n`) : ok('', 1)
       if (a[1] === 'fetch') return ok()
       if (line.includes('--abbrev-ref')) return ok(`${s.branch ?? 'issue-7'}\n`)
       if (a[1] === 'rev-parse' && a[2] === 'HEAD') return ok(`${s.sha}\n`)
@@ -326,6 +329,7 @@ const engine = (on: On, opts: Opts = {}) => {
     }
     if (a[0] === 'bash' && a[1]?.includes('.sh')) {
       steps.push(`${a[1].split('/').pop()}${a.length > 2 ? ` ${a.slice(2).join(' ')}` : ''}`)
+      s.checkEnv[a[1].split('/').pop()!.replace(/^ndev-/, '')] = e.init?.env
       if (s.hugeCheck && a[1].includes(s.hugeCheck)) return { value: { exitCode: s.hugeExit, stdout: `${'x'.repeat(STREAM_CAP - 5)}\nlast`, stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
       if (s.checkHold) return (async () => { await s.checkHold; return s.failCheck && a[1]!.includes(s.failCheck) ? ok('lint: broken line', 3) : ok('passed') })() as never
       if (s.failCheck && a[1].includes(s.failCheck)) return ok('lint: broken line', 3)
@@ -1479,6 +1483,38 @@ test('a commit runs fast-checks.sh on the files, then pre-commit-check.sh, then 
   await tool($, 'checkpoint', { message: 'm', files: ['a.py', 'b.ts'] })
   const order = w.steps.filter(x => x.startsWith('ndev-') || x.includes('-check') || x.includes('fast-checks') || x === 'commit')
   expect(order.slice(0, 3)).toEqual(['fast-checks.sh a.py b.ts', 'pre-commit-check.sh', 'commit'])
+})
+
+const OLD_BASE = '2ce42c95'.padEnd(40, '0')
+const NEW_BASE = '13f28e82'.padEnd(40, '0')
+
+test('a commit that ends a merge of the base gives the checks the new merge base, not the old one', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = ['M  a.ts']
+  w.s.merging = NEW_BASE
+  await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['a.ts'] })
+  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(NEW_BASE)
+})
+
+test('a commit with no merge gives the checks the merge base of HEAD', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
+})
+
+test('a failed check during a merge says that HEAD is the commit before the merge, and names NDEV_MERGE_BASE', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = ['M  a.ts']
+  w.s.merging = NEW_BASE
+  w.s.failCheck = 'pre-commit-check'
+  const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('A merge is in progress')
+  expect(r.text).toContain(`NDEV_MERGE_BASE=${NEW_BASE}`)
 })
 
 test('a failed fast check stops the commit and the slower checks, and names the script', async ($, on) => {
