@@ -45,7 +45,7 @@ const message = (id: string, type: string, from: string, body: string, payload?:
 // A fake GitHub and Orca. Orca keeps its Tasks and workspaces: a Task with deps is pending until every dep's worker
 // reported success, and a workspace keeps the links and board status set on it.
 type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[] }
-function world(on: On, opts: { repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean } = {}) {
+function world(on: On, opts: { repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean } = {}) {
   const ran: string[][] = []
   const prompts: string[] = []
   const toasts: string[] = []
@@ -110,7 +110,8 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
       return reply(isFull ? { task: { id: t.id, run_id: 'run_1', status: t.status, deps: JSON.stringify(deps), task_title: t.title } } : { taskId: t.id, status: t.status })
     }
     if (args.startsWith('orca orchestration task-list')) {
-      const ready = args.includes('--ready') ? tasks.filter(t => t.status === 'ready') : tasks
+      const listed = args.includes('--ready') ? tasks.filter(t => t.status === 'ready') : tasks
+      const ready = opts.readyReversed ? listed.slice().reverse() : listed
       return reply({ runId: 'run_1', tasks: ready.map(t => ({ id: t.id, status: t.status, deps: JSON.stringify(t.deps) })), count: ready.length })
     }
     if (args.startsWith('orca orchestration worker-start')) {
@@ -631,4 +632,133 @@ test('a follower is told its base branch in Orca mail, and the worker_done names
   expect(sent[sent.indexOf('--body') + 1]).toMatch(/claude\/issue-/)
   expect(sent).toContain('--full')
   expect(w.orcaRan('worktree create')[1]).toContain('--base-branch')
+})
+
+test('/orca-triage start --codex sizes the groups for Codex and starts Codex workers, which follow the workflow by hand', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(5), issue(9)] })
+  await started($)
+  await $.command.run(command('start --codex'))
+  await until(() => w.prompts.length > 0)
+  // The model sizes the groups on Codex's models: sol, terra and luna, as Claude's are opus, sonnet and haiku.
+  expect(w.prompts[0]).toMatch(/gpt-6\.1-sol/)
+  expect(w.prompts[0]).toMatch(/gpt-6\.1-terra/)
+  expect(w.prompts[0]).toMatch(/gpt-6-luna/)
+  expect(w.prompts[0]).not.toMatch(/claude-/)
+  const accepted = await $.tool.call({ tool: TOOL, groups: [group([3], 'average'), group([5], 'complex'), group([9], 'very-simple')] } as never) as { isError?: boolean }
+  expect(accepted.isError).toBeFalsy()
+  await until(() => w.orcaRan('orchestration worker-start').length === 3, () => w.ran)
+  const starts = w.orcaRan('orchestration worker-start')
+  expect(starts[0]).toEqual(expect.arrayContaining(['--agent', 'codex', '--model', 'gpt-6.1-terra', '--effort', 'medium']))
+  expect(starts[1]).toEqual(expect.arrayContaining(['--agent', 'codex', '--model', 'gpt-6.1-sol', '--effort', 'high']))
+  expect(starts[2]).toEqual(expect.arrayContaining(['--agent', 'codex', '--model', 'gpt-6-luna', '--effort', 'medium']))
+  // Codex has no mcp__ndev__ tools, so its Task names none and gives the steps by hand.
+  const spec = w.orcaRan('orchestration task-create')[0]!
+  const text = spec[spec.indexOf('--spec') + 1]!
+  expect(text).not.toMatch(/mcp__ndev__/)
+  expect(text).toMatch(/kb\/workflow\.md/)
+  expect(text).toMatch(/pre-commit-check\.sh/)
+  expect(text).toMatch(/gh pr create --draft/)
+  expect(text).toMatch(/Closes #3/)
+  expect(text).toMatch(/orca orchestration ask --question .* --wait/)
+  expect(text).toMatch(/PR #<number>/)
+  expect(text.indexOf('gh pr ready')).toBeLessThan(text.indexOf('worker_done'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /Codex/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('--codex is an option of start only', async ($, on) => {
+  world(on, { issues: [issue(3)] })
+  await started($)
+  expect((await $.command.run(command('launch --codex'))).text).toMatch(/does not know "--codex"/)
+  expect((await $.command.run(command('start --codex --dry-run'))).text).toMatch(/Triage started/)
+})
+
+test('/orca-triage start --open takes every open issue, not only the board\'s, and leaves out the ones being worked on', async ($, on) => {
+  const w = world(on, {
+    board: { owner: 'acme', number: 4 },
+    cards: [{ number: 3, title: 'Card 3', status: 'Ready', itemId: 'PVTI_3', url: issue(3).url }],
+    issues: [issue(3), issue(7), issue(11)],
+    worktrees: [{ id: 'repo-1::/w/seven', projectId: 'github:acme/widgets', path: '/w/seven', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
+      linkedItems: [{ type: 'issue', number: 7, url: issue(7).url }] }],
+  })
+  await started($)
+  await $.command.run(command('start --open'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.ran.some(a => a.join(' ').includes('gh.sh board items'))).toBe(false)
+  // An issue with a pull request, or one an Orca workspace links, is being worked on.
+  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).toMatch(/-linked:pr/)
+  expect(w.prompts[0]).toMatch(/#3\b/)
+  expect(w.prompts[0]).toMatch(/#11\b/)
+  expect(w.prompts[0]).not.toMatch(/#7\b/)
+  // Claude stays the worker unless --codex is given.
+  expect(w.prompts[0]).toMatch(/claude-sonnet-5-5/)
+})
+
+test('/orca-triage start --sequential runs one worker at a time: the next ready group starts only when the last one is done', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start --sequential'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'average')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(w.orcaRan('orchestration worker-start')).toHaveLength(1)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /one at a time/ }))?.text).toBeDefined()
+  await ui.unmount()
+
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'PR #41.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+  expect(w.orcaRan('orchestration worker-start')[1]).toEqual(expect.arrayContaining(['--task', 'task_2']))
+})
+
+test('/orca-triage start --batch 2 runs the groups in batches of two: the next batch starts only when every worker of the last one is done', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9), issue(12)] })
+  await started($)
+  await $.command.run(command('start --batch 2'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).toMatch(/at most 2 workers at a time, in batches, in the order you list the groups/)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'average'), group([12], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(w.orcaRan('orchestration worker-start')).toHaveLength(2)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /batches of 2/ }))?.text).toBeDefined()
+  await ui.unmount()
+
+  // One worker of the batch is done: the batch still runs, so nothing starts.
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'PR #41.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await new Promise(resolve => setTimeout(resolve, 200))
+  expect(w.orcaRan('orchestration worker-start')).toHaveLength(2)
+
+  // The last worker of the batch is done, failed here: the next batch starts.
+  w.deliver({ deliveryId: 'delivery_2', messages: [message('msg_2', 'worker_done', 'term_2', 'Tests fail.', { taskId: 'task_2', dispatchId: 'ctx_2', outcome: 'failed' })] })
+  await until(() => w.orcaRan('orchestration worker-start').length === 3, () => w.ran)
+  expect(w.orcaRan('orchestration worker-start')[2]).toEqual(expect.arrayContaining(['--task', 'task_3']))
+})
+
+test('/orca-triage start --batch refuses a size that is not a whole number above 0, and --sequential with another size', async ($, on) => {
+  world(on, { issues: [issue(3)] })
+  await started($)
+  for (const args of ['start --batch', 'start --batch 0', 'start --batch two', 'start --batch 1.5', 'start --sequential --batch 2']) {
+    const r = await $.command.run(command(args)) as { text: string }
+    expect(r.text, args).toMatch(/--batch <size>/)
+    expect(r.text, args).not.toMatch(/Triage started/)
+  }
+  expect(((await $.command.run(command('start --sequential --batch 1'))) as { text: string }).text).toMatch(/Triage started/)
+})
+
+test('/orca-triage start --sequential asks the coordinator for the order and starts the groups in that order, whatever order Orca lists them', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)], readyReversed: true })
+  await started($)
+  await $.command.run(command('start --sequential'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).toMatch(/one worker at a time, in the order you list the groups/)
+  await $.tool.call({ tool: TOOL, groups: [group([9], 'average'), group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+  const first = w.orcaRan('orchestration worker-start')[0]!
+  const created = w.orcaRan('orchestration task-create')
+  const taskOf9 = `task_${created.findIndex(a => a.includes('issue-9')) + 1}`
+  expect(first[first.indexOf('--task') + 1]).toBe(taskOf9)
 })

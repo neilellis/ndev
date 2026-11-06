@@ -117,7 +117,9 @@ export type Loop = {
 }
 
 // The /triage run (hooks/triage.tsx): this session's model groups the open issues, and each group becomes
-// one Orca Task with a supervised Claude worker that opens one draft pull request.
+// one Orca Task with a supervised Claude or Codex worker that opens one draft pull request.
+export type TriageAgent = 'claude' | 'codex'
+
 export type TriageComplexity = 'very-complex' | 'complex' | 'average' | 'simple' | 'very-simple'
 
 export type TriageIssue = { number: number; title: string; url: string }
@@ -162,6 +164,14 @@ export type TriageView = {
   repo?: string
   phase: 'idle' | 'grouping' | 'planned' | 'running' | 'done'
   isDryRun?: boolean
+  // The agent of every worker; Claude when absent (/orca-triage start --codex sets Codex).
+  agent?: TriageAgent
+  // /orca-triage start --open: every open issue with no pull request, not only the board's.
+  isOpen?: boolean
+  // /orca-triage start --batch <n>: at most n workers at once, each batch after the last has ended (--sequential is 1).
+  batch?: number
+  // A triage saved before --batch: --sequential, one worker at a time.
+  isSequential?: boolean
   runId?: string
   // The issues the model is grouping.
   issues: TriageIssue[]

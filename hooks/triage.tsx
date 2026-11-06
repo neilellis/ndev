@@ -4,12 +4,13 @@ import type { EngineInterface, On } from 'claude-code'
 import type { LoadedConfig } from './config'
 import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, START_ORCA, type Run } from './fix-all-prs'
 import { pullUrl } from './links'
-import type { TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
+import type { TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
 // /dev triage (also /orca-triage): this session's model groups the open issues and then coordinates, and Orca does the
 // work. Each group becomes one Task of one Orca Run; Orca makes the workspace, linked to the group's issues, and starts a
 // supervised Claude worker in it that takes the group through the ndev workflow on one pull request. The session answers
 // the workers and reports to the human. The mod keeps only the plan and reads the rest back from Orca.
+// With --codex the workers are Codex: they have no mcp__ndev__ tools, so their Task gives the workflow's steps by hand.
 const PANE = 'triage'
 const TITLE = 'Triage'
 const TOOL = 'mcp__ndev__triage_groups'
@@ -19,14 +20,28 @@ const TICK_MS = 15 * 60_000
 const WAIT_MS = 300_000
 const LIMIT = 200
 
-const SIZES: Record<TriageComplexity, { model: string; effort: string; when: string }> = {
-  'very-complex': { model: 'claude-fable-5-1', effort: 'high', when: 'very complex, or an epic with more than 2 sub-issues' },
-  complex: { model: 'claude-opus-5-5', effort: 'high', when: 'complex' },
-  average: { model: 'claude-sonnet-5-5', effort: 'medium', when: 'average' },
-  simple: { model: 'claude-haiku-5-5', effort: 'xhigh', when: 'simple' },
-  'very-simple': { model: 'claude-haiku-5-5', effort: 'medium', when: 'very simple' },
+type Size = { model: string; effort: string; when: string }
+const WHEN: Record<TriageComplexity, string> = {
+  'very-complex': 'very complex, or an epic with more than 2 sub-issues', complex: 'complex', average: 'average', simple: 'simple', 'very-simple': 'very simple',
 }
-const isSize = (s: unknown): s is TriageComplexity => typeof s === 'string' && Object.hasOwn(SIZES, s)
+const sized = (m: Record<TriageComplexity, [string, string]>) =>
+  Object.fromEntries(Object.entries(m).map(([k, [model, effort]]) => [k, { model, effort, when: WHEN[k as TriageComplexity] }])) as Record<TriageComplexity, Size>
+// Codex's sol, terra and luna stand where Claude's opus, sonnet and haiku do.
+const SIZES: Record<TriageAgent, Record<TriageComplexity, Size>> = {
+  claude: sized({
+    'very-complex': ['claude-fable-5-1', 'high'], complex: ['claude-opus-5-5', 'high'], average: ['claude-sonnet-5-5', 'medium'],
+    simple: ['claude-haiku-5-5', 'xhigh'], 'very-simple': ['claude-haiku-5-5', 'medium'],
+  }),
+  codex: sized({
+    'very-complex': ['gpt-6.1-sol', 'xhigh'], complex: ['gpt-6.1-sol', 'high'], average: ['gpt-6.1-terra', 'medium'],
+    simple: ['gpt-6-luna', 'xhigh'], 'very-simple': ['gpt-6-luna', 'medium'],
+  }),
+}
+const isSize = (s: unknown): s is TriageComplexity => typeof s === 'string' && Object.hasOwn(WHEN, s)
+const agentOf = (v: Pick<TriageView, 'agent'>): TriageAgent => v.agent ?? 'claude'
+const AGENT_NAME: Record<TriageAgent, string> = { claude: 'Claude', codex: 'Codex' }
+// batch: how many workers run at once, each batch after the last has ended; 0 for no limit.
+type Options = { isDryRun: boolean; agent: TriageAgent; isOpen: boolean; batch: number }
 
 const EMPTY: TriageView = { phase: 'idle', issues: [], groups: [], log: [] }
 const view = atom({ plugin: 'ndev', key: 'triage' } as const, EMPTY, { shape: 'triage-1' })
@@ -56,18 +71,18 @@ function ask($: EngineInterface, what: string, text: string): void {
 const setGroup = ($: EngineInterface, lead: number, change: Partial<TriageGroup>) =>
   update($, view, v => ({ ...v, groups: v.groups.map(g => (g.lead === lead ? { ...g, ...change } : g)) }))
 
-// The issues to group: the board's Ready and In progress issue cards, else the open issues with no pull request.
-// An issue an Orca workspace already links is someone's work, so it is left out.
-async function collect($: EngineInterface, project: LoadedConfig | undefined, isDryRun: boolean): Promise<string> {
+// The issues to group: the board's Ready and In progress issue cards, else (and always with --open) the open issues
+// with no pull request. An issue an Orca workspace already links is someone's work, so it is left out.
+async function collect($: EngineInterface, project: LoadedConfig | undefined, o: Options): Promise<string> {
   const g = project?.config.github
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
   if (project?.config.workflow === false) throw new Error(`each triage worker needs the ndev workflow, and ${project.path} sets "workflow": false.\nRepair: remove that setting, or work the issues without /dev triage.`)
   const repo = g.repo
   if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /orca-triage refresh reads it again.`
-  await update($, view, () => ({ ...EMPTY, repo, isDryRun }))
+  await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined }))
   const run = runner($, 120_000)
   let issues: TriageIssue[]
-  if (g.board) {
+  if (g.board && !o.isOpen) {
     const env = { GH_REPO: repo, GH_PROJECT_OWNER: g.board.owner, GH_PROJECT_NUMBER: String(g.board.number) }
     const out = await runner($, 120_000, env)(['bash', `${$.plugin.root}/scripts/github/gh.sh`, 'board', 'items'])
     if (out.exitCode !== 0) {
@@ -81,7 +96,7 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, is
   } else {
     issues = await ghLines<TriageIssue>(run, ['issue-search', '-linked:pr', '--limit', String(LIMIT + 1)])
     if (issues.length > LIMIT) {
-      throw new Error(`${repo} has more than ${LIMIT} open issues with no pull request, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /orca-triage start again.`)
+      throw new Error(`${repo} has more than ${LIMIT} open issues with no pull request, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /orca-triage start again${g.board ? ' without --open' : ''}.`)
     }
   }
   const linked = new Set(ofRepo(await orcaWorktrees(run, ', then run /orca-triage start again'), repo).filter(w => !w.isArchived)
@@ -94,14 +109,14 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, is
   }
   await update($, view, (v): TriageView => ({ ...v, phase: 'grouping', issues: left }))
   await note($, `asked the model to group ${left.length} issues${skipped ? ` (${skipped} already in Orca workspaces)` : ''}`)
-  ask($, 'the issues to group', brief(repo, left))
+  ask($, 'the issues to group', brief(repo, left, o.agent, o.batch))
   return `Triage of ${repo}: ${left.length} issues sent to the model to group.`
 }
 
-function brief(repo: string, issues: TriageIssue[]): string {
-  const sizes = Object.entries(SIZES).map(([k, s]) => `  - ${k}: ${s.when} (${s.model}, effort ${s.effort})`).join('\n')
+function brief(repo: string, issues: TriageIssue[], agent: TriageAgent, batch: number): string {
+  const sizes = Object.entries(SIZES[agent]).map(([k, s]) => `  - ${k}: ${s.when} (${s.model}, effort ${s.effort})`).join('\n')
   return [
-    `Triage: group these ${issues.length} open issues of ${repo} for Orca workers, one draft pull request per group.`,
+    `Triage: group these ${issues.length} open issues of ${repo} for ${AGENT_NAME[agent]} Orca workers, one draft pull request per group.`,
     `Read each issue with \`gh issue view <n> --repo ${repo}\` (body, comments, sub-issues) and check the code for work already done.`,
     '',
     ...issues.map(i => `#${i.number} ${i.title} — ${i.url}`),
@@ -113,6 +128,8 @@ function brief(repo: string, issues: TriageIssue[]): string {
     '- hint: where the worker starts: the files, the cause, the approach.',
     '- implemented: true when the code already does what the issues ask, with evidence (file and line, or the commit).',
     '- after: the leads of groups that must finish first: when this group needs their change, or when both change the same files, so the two never edit the same lines at once. Groups with no after run in parallel.',
+    ...(batch === 1 ? ['- This triage runs one worker at a time, in the order you list the groups: you decide that order. Put first what unblocks others, is most urgent, or is smallest and safest, so each pull request can merge before the next starts. A group still waits for the groups in its after.'] : []),
+    ...(batch > 1 ? [`- This triage runs at most ${batch} workers at a time, in batches, in the order you list the groups: you decide that order. The next batch starts only when every worker of the last one has ended. Put first what unblocks others, is most urgent, or is smallest and safest, and put groups that touch the same files in different batches. A group still waits for the groups in its after.`] : []),
     '',
     `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }] }.`,
     'If it refuses, fix what it names and call it again.',
@@ -137,7 +154,7 @@ function problems(issues: TriageIssue[], groups: Proposed[]): string[] {
     if (g.after !== undefined && (!Array.isArray(g.after) || nums(g.after).length !== g.after.length)) {
       out.push(`the group led by #${lead} has after ${JSON.stringify(g.after)}; give the leads as numbers, as in [12]`)
     }
-    if (!isSize(g.complexity)) out.push(`"${String(g.complexity)}" is not a complexity; use one of ${Object.keys(SIZES).join(', ')}`)
+    if (!isSize(g.complexity)) out.push(`"${String(g.complexity)}" is not a complexity; use one of ${Object.keys(WHEN).join(', ')}`)
     if (typeof g.title !== 'string' || !g.title.trim()) out.push(`the group led by #${lead} has no title`)
     if (g.implemented === true && (typeof g.evidence !== 'string' || !g.evidence.trim())) out.push(`the group led by #${lead} is implemented but gives no evidence`)
     for (const n of own) if (!known.has(n)) out.push(`#${n} is not one of the issues to group`)
@@ -163,13 +180,13 @@ function problems(issues: TriageIssue[], groups: Proposed[]): string[] {
   return out
 }
 
-function toGroup(g: Proposed): TriageGroup {
+function toGroup(g: Proposed, agent: TriageAgent): TriageGroup {
   const issues = (g.issues as number[]).slice().sort((a, b) => a - b)
   const complexity = g.complexity as TriageComplexity
   const implemented = g.implemented === true
   const title = String(g.title).trim()
   return {
-    lead: issues[0]!, issues, complexity, ...SIZES[complexity], implemented,
+    lead: issues[0]!, issues, complexity, ...SIZES[agent][complexity], implemented,
     title: implemented && !title.startsWith('Confirm implemented:') ? `Confirm implemented: ${title}` : title,
     hint: typeof g.hint === 'string' ? g.hint : '', evidence: typeof g.evidence === 'string' ? g.evidence : undefined,
     after: Array.isArray(g.after) ? g.after.filter((n): n is number => Number.isInteger(n)) : [],
@@ -177,7 +194,8 @@ function toGroup(g: Proposed): TriageGroup {
 }
 
 // The worker's Task: Target, Change, Constraints, Ownership and Observable acceptance, as Orca's worker contract asks.
-function spec(repo: string, g: TriageGroup, issues: TriageIssue[]): string {
+function spec(repo: string, g: TriageGroup, issues: TriageIssue[], agent: TriageAgent, root: string): string {
+  if (agent === 'codex') return codexSpec(repo, g, issues, root)
   const url = (n: number) => issues.find(i => i.number === n)?.url ?? `https://github.com/${repo}/issues/${n}`
   const [lead, ...others] = g.issues
   return [
@@ -201,6 +219,36 @@ function spec(repo: string, g: TriageGroup, issues: TriageIssue[]): string {
     `- If the workflow blocks this issue, for example on an open blocked-by issue, read the message. ${g.after.length ? `When it names only issues of the groups that this group follows (${g.after.map(a => `#${a}`).join(', ')}), their change is in your branch, so call mcp__ndev__unblocked and go on. ` : ''}Ask the coordinator about any other block, and call mcp__ndev__unblocked when it is clear. If nobody can clear it, send worker_done with --outcome failed and the block message.`,
     'Ownership: this workspace and its branch only.',
     `Observable acceptance: mcp__ndev__done accepted a pull request that closes ${g.issues.map(n => `#${n}`).join(', ')}.`,
+    'Then send worker_done once, with --outcome succeeded and a body that starts with PR #<number>. If you cannot finish, send it with --outcome failed and the reason.',
+  ].join('\n')
+}
+
+// A Codex worker's Task. The mcp__ndev__ tools are in Claude Code only, so it follows the workflow's stages by hand,
+// with the project's check scripts, and stops at a ready pull request with green checks: a human merges it.
+function codexSpec(repo: string, g: TriageGroup, issues: TriageIssue[], root: string): string {
+  const url = (n: number) => issues.find(i => i.number === n)?.url ?? `https://github.com/${repo}/issues/${n}`
+  const closes = g.issues.map(n => `Closes #${n}`).join(', ')
+  return [
+    `Target: ${repo} ${g.issues.map(n => `#${n} (${url(n)})`).join(', ')}. ${g.title}`,
+    `Change: ${g.implemented ? `The code may already do this: ${g.evidence}. Confirm it with a test that proves the behaviour; change code only where it falls short. ` : ''}${g.hint}`,
+    'Constraints:',
+    `- Follow the ndev workflow by hand, with one pull request for this group. Its guide is ${root}/kb/workflow.md; read the states, Checks and Rules that the tools enforce. You have none of the ndev plugin\'s tools: they are in Claude Code only, so do each stage yourself as below.`,
+    '- No human is at this terminal, because the coordinator session answers you.',
+    '- Read each issue with `gh issue view` first. Work test first: a failing regression test through a public interface, watch it fail for the intended reason, then the smallest fix.',
+    '- Before each commit, run the project\'s checks in scripts/ndev/workflow/ when they are there: fast-checks.sh <staged files>, then pre-commit-check.sh. Before each push, run pre-push-check.sh. Never skip or weaken a check that fails: fix the cause, or ask the coordinator when the failure is not from this change.',
+    '- Commit with git on this workspace\'s branch and push it with `git push -u origin HEAD`. Never push to the default branch.',
+    `- After the first push, open the pull request with \`gh pr create --draft --repo ${repo}\`. Its body gives the problem, the result, the test evidence and the limits, then one line each: ${closes}. It ends with these lines: Model: ${g.model} and Effort: ${g.effort}. Then link it to this workspace with \`orca worktree set --worktree "path:$(git rev-parse --show-toplevel)" --pr <number> --workspace-status in-review --json\`, so the coordinator sees it.`,
+    ...(g.after.length
+      ? [
+          `- This group follows ${g.after.map(a => `#${a}`).join(', ')}. Your workspace starts from the branch of the first of their open pull requests, or from the default branch when none is open.${g.after.length > 1 ? ' Merge the branches of the other open pull requests into it first.' : ''} Orca mail with the subject "Base branch" names <that branch> when it is not the default branch. Then give your pull request that base, with \`gh pr create --base <that branch>\` or, once it is open, \`gh pr edit <number> --base <that branch>\`, so it shows only this group's change. With no such mail, keep the default base.`,
+          '- If a check or a review tells you to move or remove a file that came from a group this one follows, leave the file and ask the coordinator.',
+        ]
+      : []),
+    '- When the change is complete, review your own diff against the base for scope and accidental changes, run pre-ready-check.sh when it is there, push, and mark the pull request ready with `gh pr ready`. Then wait for its checks with `gh pr checks --watch` and fix each failure until they pass. Do not merge: a human merges.',
+    '- When you need a product or scope decision, ask the coordinator and never guess. Run `orca orchestration ask --question "<question>" --wait --timeout-ms 540000 --json` in the foreground, with a command timeout of 600000 ms. After a timeout, run `orca orchestration ask --resume <message_id> --wait --timeout-ms 540000 --json`. Do not end your turn while a question is open.',
+    `- If an open blocked-by issue blocks this work, ${g.after.length ? `and it is not one of ${g.after.map(a => `#${a}`).join(', ')}, whose change is in your branch, ` : ''}ask the coordinator. If a person must act on this machine, such as a sign-in, or nobody can clear a block, send worker_done with --outcome failed and the reason.`,
+    'Ownership: this workspace and its branch only.',
+    `Observable acceptance: a ready pull request on ${repo} whose checks pass and that closes ${g.issues.map(n => `#${n}`).join(', ')}.`,
     'Then send worker_done once, with --outcome succeeded and a body that starts with PR #<number>. If you cannot finish, send it with --outcome failed and the reason.',
   ].join('\n')
 }
@@ -247,7 +295,7 @@ async function create($: EngineInterface, v: TriageView): Promise<void> {
     const deps = g.after.map(a => taskOf.get(a)!)
     const made = (await orca(run, [
       'orchestration', 'task-create', '--run', runId, '--task-title', g.title, '--display-name', `issue-${g.lead}`,
-      '--spec', spec(repo, g, v.issues), ...(deps.length ? ['--deps', JSON.stringify(deps)] : []),
+      '--spec', spec(repo, g, v.issues, agentOf(v), $.plugin.root), ...(deps.length ? ['--deps', JSON.stringify(deps)] : []),
     ])) as { task?: { id?: string; status: string } }
     if (!made.task?.id) throw new Error(`orca orchestration task-create for #${g.lead} answered no Task id: ${JSON.stringify(made).slice(0, 300)}`)
     taskOf.set(g.lead, made.task.id)
@@ -262,16 +310,27 @@ function startReady($: EngineInterface): Promise<unknown> {
   return starting
 }
 
+const isInFlight = (g: TriageGroup) => !!g.dispatchId && !g.summary && !g.error
+// The batch size: --batch <n>, or 1 for a triage saved by --sequential before --batch; 0 for no limit.
+const batchOf = (v: TriageView) => v.batch ?? (v.isSequential ? 1 : 0)
+
 async function startNow($: EngineInterface): Promise<void> {
   const v = await read($, view)
   if (v.phase !== 'running' || !v.runId || !v.repo) return
+  // --batch: no start while a worker of the last batch has not reported worker_done.
+  const batch = batchOf(v)
+  if (batch && v.groups.some(isInFlight)) return
   const ready = (await orca(runner($, 60_000), ['orchestration', 'task-list', '--ready', '--run', v.runId])) as { tasks: { id: string }[] }
-  for (const t of ready.tasks) {
+  // --batch: the coordinator's order of the groups decides which ready groups start next.
+  const rank = (id: string) => { const i = v.groups.findIndex(x => x.taskId === id); return i < 0 ? Infinity : i }
+  const tasks = batch ? ready.tasks.slice().sort((a, b) => rank(a.id) - rank(b.id)) : ready.tasks
+  for (const t of tasks) {
+    if (batch && (await read($, view)).groups.filter(isInFlight).length >= batch) break
     const g = (await read($, view)).groups.find(x => x.taskId === t.id)
     if (!g || g.dispatchId || g.error) continue
     try {
       const worktree = g.worktree ?? await makeWorkspace($, v.repo, g, v.issues)
-      await startWorker($, v.runId, g, worktree)
+      await startWorker($, v.runId, g, worktree, agentOf(v))
       const now = (await read($, view)).groups.find(x => x.lead === g.lead)
       if (now?.dispatchId && !now.error && now.base) await tellBase($, v.runId, now, now.base)
     } catch (err) {
@@ -352,6 +411,9 @@ async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise
   return undefined
 }
 
+// Codex stops at a "Hooks need review" screen when a hook is new or changed, and orchestration worker-start passes no CLI flags.
+const HOOK_TRUST = 'Codex waits for the user to trust hooks that are new or changed. Repair: in Orca Settings → Agents, give Codex the default argument --dangerously-bypass-hook-trust (or choose "Trust all and continue" once in a Codex tab), then release this worker and start the Task again.'
+
 type StartReceipt = {
   dispatchId?: string; state?: string; failedStage?: string; lastError?: string; recovery?: string
   launch?: { effective?: { model?: string; effort?: string } }; effects?: { kind?: string; role?: string; id?: string }[]
@@ -359,9 +421,9 @@ type StartReceipt = {
 
 // worker-start prints its receipt with `ok: true` even when the start failed and it exits 1, so the receipt's
 // state decides, not the exit code.
-async function startWorker($: EngineInterface, runId: string, g: TriageGroup, worktree: string): Promise<void> {
+async function startWorker($: EngineInterface, runId: string, g: TriageGroup, worktree: string, agent: TriageAgent): Promise<void> {
   const args = ['orchestration', 'worker-start', '--task', g.taskId!, '--run', runId, '--worktree', `id:${worktree}`,
-    '--agent', 'claude', '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000', '--full', '--json']
+    '--agent', agent, '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000', '--full', '--json']
   const out = await $.process.run(['orca', ...args], { timeoutMs: 180_000 })
   let reply: { ok?: boolean; result?: StartReceipt; error?: { code?: string; message?: string } } | undefined
   try {
@@ -376,10 +438,11 @@ async function startWorker($: EngineInterface, runId: string, g: TriageGroup, wo
   const terminal = r.effects?.find(x => x.kind === 'terminal' && x.role === 'agent')?.id
   const effective = r.launch?.effective ? `${r.launch.effective.model ?? g.model} · ${r.launch.effective.effort ?? g.effort}` : undefined
   if (r.state !== 'ready') {
-    const waits = r.lastError === 'agent_prompt_blocked' ? '\nA prompt waits in the worker\'s terminal: Jump to it and answer it.' : ''
+    const waits = r.lastError === 'agent_prompt_blocked' ? '\nA prompt waits in the worker\'s terminal: Jump to it and answer it.'
+      : /hooks-review/.test(r.lastError ?? '') ? `\n${HOOK_TRUST}` : ''
     await setGroup($, g.lead, { dispatchId: r.dispatchId, terminal, error: `worker-start failed: ${r.lastError ?? r.state} at ${r.failedStage ?? 'an unknown stage'}${waits}\n${r.recovery ?? 'Orca gave no recovery.'}` })
     await note($, `#${g.lead}: the worker did not start: ${r.lastError ?? r.state}`)
-    askToDecide($, `the failed start of #${g.lead}`, `Triage: the worker for #${g.lead} (${g.title}) did not start: ${r.lastError ?? r.state} at ${r.failedStage ?? 'an unknown stage'}.`, r.recovery ?? 'Orca gave no recovery.', g, runId)
+    askToDecide($, `the failed start of #${g.lead}`, `Triage: the worker for #${g.lead} (${g.title}) did not start: ${r.lastError ?? r.state} at ${r.failedStage ?? 'an unknown stage'}.${waits}`, r.recovery ?? 'Orca gave no recovery.', g, runId)
     return
   }
   await setGroup($, g.lead, { dispatchId: r.dispatchId, terminal, effective })
@@ -537,7 +600,7 @@ export async function startTriage($: EngineInterface) {
   await $.command.register({
     name: 'orca-triage',
     description: 'Group the open issues with this session\'s model, then coordinate an Orca worker on each group, one pull request per group. Same as /dev triage',
-    argumentHint: '[start [--dry-run]|launch|refresh|reset]',
+    argumentHint: '[start [--dry-run] [--codex] [--open] [--batch <size>|--sequential]|launch|refresh|reset]',
   })
   await $.tool.register({
     name: 'triage_groups',
@@ -572,14 +635,32 @@ export async function startTriage($: EngineInterface) {
 }
 
 // /orca-triage <args> and /dev triage <args>. Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
+const START_OPTIONS = ['--dry-run', '--codex', '--open', '--sequential', '--batch']
+const BATCH_USAGE = '--batch <size> takes a whole number above 0: how many workers run at once, each batch after the last has ended. --sequential is --batch 1.'
+
+// The value of --batch <size>, with --sequential as 1; 0 when neither is given. A bad size returns the refusal.
+function batchOption(words: string[]): number | string {
+  const at = words.indexOf('--batch')
+  const isSequential = words.includes('--sequential')
+  if (at < 0) return isSequential ? 1 : 0
+  const raw = words[at + 1]
+  if (!raw || !/^[1-9]\d*$/.test(raw)) return `/orca-triage start --batch ${raw ?? ''}`.trimEnd() + ` is not a size. ${BATCH_USAGE}`
+  const size = Number(raw)
+  if (isSequential && size !== 1) return `/orca-triage start --sequential --batch ${size} asks for two sizes. ${BATCH_USAGE}`
+  return size
+}
+
 export async function triageCommand($: EngineInterface, args: string, project: () => LoadedConfig | undefined): Promise<{ text: string }> {
   const words = args.trim().split(/\s+/).filter(Boolean)
-  const [verb = 'status'] = words.filter(w => !w.startsWith('--'))
-  const unknown = words.find(w => w.startsWith('--') && (w !== '--dry-run' || verb !== 'start'))
-  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The one option is /orca-triage start --dry-run.` }
+  const at = words.indexOf('--batch')
+  const [verb = 'status'] = words.filter((w, i) => !w.startsWith('--') && !(at >= 0 && i === at + 1))
+  const unknown = words.find(w => w.startsWith('--') && (!START_OPTIONS.includes(w) || verb !== 'start'))
+  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The options are /orca-triage start ${START_OPTIONS.join(' ')}: --dry-run plans and starts nothing, --codex runs the fixes in Codex workers, --open takes every open issue and not only the board's, --batch <size> runs that many workers at once, batch after batch, and --sequential is --batch 1.` }
   void openPane($)
   if (verb === 'start') {
-    void collect($, project(), words.includes('--dry-run'))
+    const batch = batchOption(words)
+    if (typeof batch === 'string') return { text: batch }
+    void collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch })
       .then(text => $.ui.toast(text), fail($, 'start'))
     return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
   }
@@ -590,9 +671,9 @@ export async function triageCommand($: EngineInterface, args: string, project: (
     await update($, view, () => EMPTY)
     return { text: v.runId ? `Triage cleared. Orca Run ${v.runId} and its workspaces stay in Orca.` : 'Triage cleared.' }
   }
-  if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run], launch, refresh or reset.` }
+  if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run] [--codex] [--open] [--batch <size>|--sequential], launch, refresh or reset.` }
   const v = await read($, view)
-  return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups.` : 'No triage yet. /orca-triage start reads the issues.' }
+  return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups, ${AGENT_NAME[agentOf(v)]} workers.` : 'No triage yet. /orca-triage start reads the issues.' }
 }
 
 export const triage = (on: On, project: () => LoadedConfig | undefined) => {
@@ -608,7 +689,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     const groups = Array.isArray(input.groups) ? input.groups : []
     const wrong = problems(v.issues, groups)
     if (wrong.length) return { result: `Refused, nothing recorded:\n- ${wrong.join('\n- ')}\nFix these and call ${TOOL} again.`, isError: true as const }
-    const planned = groups.map(toGroup)
+    const planned = groups.map(g => toGroup(g, agentOf(v)))
     await update($, view, (x): TriageView => ({ ...x, phase: 'planned', groups: planned }))
     await note($, `the model made ${planned.length} groups`)
     if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /orca-triage launch starts them.` }
@@ -649,6 +730,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
             : g.task === 'failed' ? { word: 'failed', color: 'error' }
               : g.dispatchId ? { word: 'working', color: 'claude' }
                 : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
+    const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.isOpen ? ' · every open issue' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
     const phase = v.phase === 'grouping' ? `the model is grouping ${v.issues.length} issues`
       : v.phase === 'planned' ? `${v.groups.length} groups planned, nothing started${v.isDryRun ? ' (dry run)' : ''}`
         : v.phase === 'running' ? `Orca Run ${v.runId ?? 'not made yet'}` : v.phase === 'done' ? (v.runId ? `done · Orca Run ${v.runId}` : 'stopped: no Orca Run was made') : 'not started'
@@ -665,11 +747,11 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
               {v.checkedAt ? ` · ${new Date(v.checkedAt).toLocaleTimeString()}` : ''}
             </Text>
           </Box>
-          <Text color="subtle">{fit(phase, columns - 4)}</Text>
+          <Text color="subtle">{fit(`${phase}${workers}`, columns - 4)}</Text>
         </Box>
         <Box gap={2}>
           {v.phase !== 'running' && v.phase !== 'grouping' &&
-            <Button key="start" label="Start" hotkey="s" plain onPress={() => { void collect($, project(), false).then(t => $.ui.toast(t), fail($, 'start')) }} />}
+            <Button key="start" label="Start" hotkey="s" plain onPress={() => { void collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v) }).then(t => $.ui.toast(t), fail($, 'start')) }} />}
           {v.phase === 'planned' && <Button key="launch" label="Launch" hotkey="l" plain onPress={() => { void launch($).catch(fail($, 'launch')) }} />}
           {v.runId && <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => { void tick($).catch(fail($, 'refresh')) }} />}
         </Box>
