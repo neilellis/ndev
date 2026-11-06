@@ -60,6 +60,8 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
   const prHeads = new Map<number, number>()
   // Deliveries the fake inbox hands out, one per blocking check; a check waits until one is queued.
   const inbox: { deliveryId: string; messages: unknown[] }[] = []
+  // The Run's workers as worker-list answers them, newest first, as Orca lists them.
+  const workers: { dispatchId: string; taskId: string; workerState: string; agentTerminalHandle: string }[] = []
   let wake: (() => void) | undefined
   const deliver = (d: { deliveryId: string; messages: unknown[] }) => { inbox.push(d); wake?.() }
   on('command.register', (_, e) => ({ value: { command: e.name } }))
@@ -132,6 +134,7 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
       const task = a[a.indexOf('--task') + 1]!
       const n = task.slice('task_'.length)
       const launch = { agent: 'claude', model: a[a.indexOf('--model') + 1]!, effort: a[a.indexOf('--effort') + 1]! }
+      workers.unshift({ dispatchId: `ctx_${n}`, taskId: task, workerState: opts.startFails ? 'failed' : 'ready', agentTerminalHandle: `term_${n}` })
       if (opts.startFails) {
         return result(1, JSON.stringify({ id: 'x', ok: true, result: {
           runId: 'run_1', taskId: task, dispatchId: `ctx_${n}`, state: 'failed', stage: 'dispatch_input', failedStage: 'dispatch_input',
@@ -165,13 +168,19 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
       const d = a[a.indexOf('--dispatch') + 1]!
       return reply({ worker: { dispatchId: d, agentTerminalHandle: `term_${d.slice('ctx_'.length)}` }, observation: { status: 'live', agentWait: null } })
     }
-    if (args.startsWith('orca orchestration worker-list')) return reply({ workers: [], page: { hasMore: false, nextCursor: null } })
+    if (args.startsWith('orca orchestration worker-list')) return reply({ workers, page: { hasMore: false, nextCursor: null } })
     return reply({})
   })
   const orcaRan = (verb: string) => ran.filter(a => a[0] === 'orca' && a.slice(1, 3).join(' ') === verb)
   // What the worker does after it opens its pull request: link it to the workspace and move the card to review.
   const linkPr = (path: string, pr: number) => { const wt = worktrees.find(x => x.path === path)!; wt.linkedPR = pr; wt.workspaceStatus = 'in-review'; prHeads.set(pr, Number(path.split('-').pop())) }
-  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock }
+  // What a coordinator does by hand with `orca orchestration worker-start --retry-of <old ctx>`: a new Dispatch of the
+  // same Task, which the mod did not start.
+  const restart = (task: string, dispatchId: string) => {
+    workers.unshift({ dispatchId, taskId: task, workerState: 'ready', agentTerminalHandle: `term_${dispatchId.slice('ctx_'.length)}` })
+    tasks.find(t => t.id === task)!.status = 'dispatched'
+  }
+  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart }
 }
 
 // A pull request as the fake GitHub answers it: REST's mergeable and mergeable_state, and its check runs as [name, status, conclusion].
@@ -850,4 +859,83 @@ test('every 10 minutes the triage reads each open pull request, and prods its wo
   expect(w.fire(10 * 60_000)).toBe(1)
   await settled()
   expect([calls('pr-read'), calls('commit-checks'), prods().length]).toEqual([reads, checks, 3])
+})
+
+// A coordinator restarts a failed Task by hand with worker-start --retry-of; Orca then holds a new Dispatch of the Task.
+test('a refresh follows a worker restarted by hand: the group runs again, Jump goes to the new terminal, and its follower starts', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)], startFails: true })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'average'), group([9], 'simple', { after: [3] })] } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await ui.find({ type: 'Text', text: /^done · Orca Run run_1/ })) !== undefined, () => w.ran)
+
+  w.restart('task_1', 'ctx_1b')
+  await $.command.run(command('refresh'))
+  await until(async () => (await ui.find({ type: 'Text', text: /^working/ })) !== undefined, () => w.ran)
+  // The old failure and the follower's block are gone, and the triage runs again.
+  expect(await ui.find({ type: 'Text', text: /worker-start failed/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^blocked/ })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^Orca Run run_1/ }))?.text).toBeDefined()
+  await ui.press({ key: 'jump-3' })
+  await until(() => w.orcaRan('terminal switch').length > 0, () => w.ran)
+  expect(w.orcaRan('orchestration worker-show')[0]).toEqual(expect.arrayContaining(['--dispatch', 'ctx_1b']))
+  expect(w.orcaRan('terminal switch')[0]).toEqual(expect.arrayContaining(['--terminal', 'term_1b']))
+
+  // The restarted worker succeeds, so the group that follows it starts.
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1b', 'PR #41 is done.', { taskId: 'task_1', dispatchId: 'ctx_1b', outcome: 'succeeded' })] })
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+  expect(w.orcaRan('orchestration worker-start')[1]).toEqual(expect.arrayContaining(['--task', 'task_2']))
+  await ui.unmount()
+})
+
+test('a message from an unknown Dispatch of a known Task moves the group to it, and the PR watch prods the new worker afresh', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration check').length > 0, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'question', 'term_1', 'Which test?')] })
+  await until(() => w.ran.some(a => a.includes('--ack') && a.includes('delivery_1')))
+  const prods = (ctx: string) => w.orcaRan('orchestration send').filter(a => a.includes(`dispatch:${ctx}`))
+  w.prs[41] = { mergeable: false, state: 'dirty', checks: [] }
+  expect(w.fire(10 * 60_000)).toBe(1)
+  await until(() => prods('ctx_1').length === 1, () => w.ran)
+
+  // The coordinator restarts the Task by hand; the new worker's first message names its Dispatch and Task.
+  w.restart('task_1', 'ctx_1b')
+  w.deliver({ deliveryId: 'delivery_2', messages: [message('msg_2', 'question', 'term_1b', 'Where was I?', { taskId: 'task_1', dispatchId: 'ctx_1b' })] })
+  await until(() => w.prompts.some(p => /Where was I\?/.test(p)), () => w.prompts)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'jump-3' })
+  await until(() => w.orcaRan('terminal switch').length > 0, () => w.ran)
+  expect(w.orcaRan('orchestration worker-show').at(-1)).toEqual(expect.arrayContaining(['--dispatch', 'ctx_1b']))
+  await ui.unmount()
+
+  // The same fault on the same head, within 30 minutes: the new worker has not heard it, so it is sent to it at once.
+  expect(w.fire(10 * 60_000)).toBe(1)
+  await until(() => prods('ctx_1b').length === 1, () => w.ran)
+  expect(prods('ctx_1')).toHaveLength(1)
+})
+
+test('the PR watch sends its prod to a worker restarted since the last refresh, never to the old Dispatch', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration check').length > 0, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'question', 'term_1', 'Which test?')] })
+  await until(() => w.ran.some(a => a.includes('--ack') && a.includes('delivery_1')))
+  w.restart('task_1', 'ctx_1b')
+  w.prs[41] = { mergeable: false, state: 'dirty', checks: [] }
+  expect(w.fire(10 * 60_000)).toBe(1)
+  const sends = () => w.orcaRan('orchestration send')
+  await until(() => sends().length === 1, () => w.ran)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(sends().map(a => a[a.indexOf('--to') + 1])).toEqual(['dispatch:ctx_1b'])
 })

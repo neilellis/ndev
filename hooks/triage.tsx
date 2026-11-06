@@ -511,8 +511,18 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
     await note($, `Orca rejected a ${m.type} from ${m.from_handle}: ${payload._orcaLifecycleRejection.code ?? ''} ${payload._orcaLifecycleRejection.reason ?? ''}`)
     return
   }
-  const v = await read($, view)
-  const g = v.groups.find(x => (payload.dispatchId && x.dispatchId === payload.dispatchId) || (payload.taskId && x.taskId === payload.taskId) || x.terminal === m.from_handle)
+  let v = await read($, view)
+  let g = v.groups.find(x => (payload.dispatchId && x.dispatchId === payload.dispatchId) || (payload.taskId && x.taskId === payload.taskId) || x.terminal === m.from_handle)
+  // A Dispatch the triage does not hold, of a Task it knows: the coordinator may have restarted the Task by hand.
+  if (g && payload.dispatchId && payload.taskId === g.taskId && g.dispatchId !== payload.dispatchId && v.runId) {
+    await followRestarts($, v.runId)
+    v = await read($, view)
+    g = v.groups.find(x => x.lead === g!.lead)
+    if (g?.dispatchId !== payload.dispatchId) {
+      await note($, `#${g?.lead}: a ${m.type} from Dispatch ${payload.dispatchId}, which is not the Task's newest in Orca (${g?.dispatchId ?? 'none'}), was left out: ${firstLine(m.body)}`)
+      return
+    }
+  }
   const who = g ? `#${g.lead} (${g.title})` : `an unknown worker (${m.from_handle})`
   if (m.type === 'question') {
     if (g) await setGroup($, g.lead, { question: { id: m.id, text: m.body } })
@@ -546,6 +556,59 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
   }
 }
 
+type Worker = { dispatchId: string; taskId?: string; workerState?: string; agentTerminalHandle?: string | null; projection?: { liveness?: { verdict?: string } } }
+
+// A coordinator restarts a failed Task by hand (orca orchestration worker-start --retry-of <old ctx>), and Orca makes a
+// new Dispatch of the same Task. worker-list lists a Run's workers newest first, so the first one of a Task is its
+// current Dispatch. Each group whose Task has a newer Dispatch than the one it holds takes it: its terminal, no old
+// failure or summary, a fresh PR-watch prod, and its followers no longer blocked by it. Returns the leads it moved.
+function restarted(groups: TriageGroup[], workers: Worker[]): { groups: TriageGroup[]; moved: { lead: number; from?: string; to: string; isFailed: boolean }[] } {
+  const moved: { lead: number; from?: string; to: string; isFailed: boolean }[] = []
+  let out = groups.map((g): TriageGroup => {
+    const w = g.taskId ? workers.find(x => x.taskId === g.taskId) : undefined
+    if (!w || w.dispatchId === g.dispatchId) return g
+    const isFailed = w.workerState === 'failed'
+    moved.push({ lead: g.lead, from: g.dispatchId, to: w.dispatchId, isFailed })
+    return {
+      ...g, dispatchId: w.dispatchId, terminal: w.agentTerminalHandle ?? undefined, prod: undefined, question: undefined, summary: undefined, blockedBy: undefined,
+      error: isFailed ? `the restarted worker ${w.dispatchId} failed too; \`orca orchestration worker-show --dispatch ${w.dispatchId} --json\` shows why` : undefined,
+    }
+  })
+  // A follower blocked by a group that runs again waits again; settle blocks it once more if another of its groups is stuck.
+  const freed = new Set(moved.filter(x => !x.isFailed).map(x => x.lead))
+  for (let changed = true; changed;) {
+    changed = false
+    out = out.map(g => {
+      if (g.blockedBy === undefined || !freed.has(g.blockedBy)) return g
+      freed.add(g.lead)
+      changed = true
+      return { ...g, blockedBy: undefined }
+    })
+  }
+  return { groups: out, moved }
+}
+
+async function adoptRestarts($: EngineInterface, workers: Worker[]): Promise<void> {
+  let moved: ReturnType<typeof restarted>['moved'] = []
+  await update($, view, (x): TriageView => {
+    const r = restarted(x.groups, workers)
+    moved = r.moved
+    if (!moved.length) return x
+    // A triage that ended because this group failed runs again.
+    const isRunning = x.phase === 'done' && moved.some(m => !m.isFailed)
+    return { ...x, groups: r.groups, phase: isRunning ? 'running' : x.phase }
+  })
+  for (const m of moved) {
+    await note($, `#${m.lead}: Orca holds a newer worker for its Task, ${m.to}${m.from ? ` (was ${m.from})` : ''}, so the triage follows it${m.isFailed ? '; it failed too' : ''}`)
+  }
+}
+
+// One worker-list read, for a message or a prod that may concern a worker restarted by hand.
+async function followRestarts($: EngineInterface, runId: string): Promise<void> {
+  const listed = (await orca(runner($, 60_000), ['orchestration', 'worker-list', '--run', runId])) as { workers: Worker[] }
+  await adoptRestarts($, listed.workers)
+}
+
 // Reads Orca's own state back: each Task's status, each worker's liveness, each workspace's board status and pull request.
 async function refresh($: EngineInterface): Promise<void> {
   const v = await read($, view)
@@ -553,9 +616,10 @@ async function refresh($: EngineInterface): Promise<void> {
   const run = runner($, 60_000)
   const [tasks, workers, worktrees] = await Promise.all([
     orca(run, ['orchestration', 'task-list', '--run', v.runId]) as Promise<{ tasks: { id: string; status: string }[] }>,
-    orca(run, ['orchestration', 'worker-list', '--run', v.runId]) as Promise<{ workers: { dispatchId: string; projection?: { liveness?: { verdict?: string } } }[] }>,
+    orca(run, ['orchestration', 'worker-list', '--run', v.runId]) as Promise<{ workers: Worker[] }>,
     orcaWorktrees(run),
   ])
+  await adoptRestarts($, workers.workers)
   const now = await $.clock.now()
   for (const g of v.groups) {
     if (g.task !== 'failed' && tasks.tasks.find(t => t.id === g.taskId)?.status === 'failed') {
@@ -600,13 +664,23 @@ async function watchPrs($: EngineInterface): Promise<void> {
     const v = await read($, view)
     if (v.phase !== 'running' || !v.runId || !v.repo) return
     const run = runner($, 120_000)
-    for (const g of v.groups) {
-      if (!g.pr || g.prClosed === g.pr) continue
+    let hasFollowed = false
+    for (const listed of v.groups) {
+      if (!listed.pr || listed.prClosed === listed.pr) continue
+      let g: TriageGroup & { pr: number } = { ...listed, pr: listed.pr }
       const r = await readPullRow(run, v.repo, g.pr).catch(async (err: unknown) => { await note($, `#${g.lead}: PR #${g.pr} not read: ${message(err)}`); return undefined })
       if (!r) continue
       if (r.state !== 'OPEN') { await setGroup($, g.lead, { prClosed: g.pr }); continue }
       const problems = unready(r)
       if (!problems.length) continue
+      // A worker restarted by hand since the last refresh has a new Dispatch: one worker-list read per pass finds it.
+      if (!hasFollowed) {
+        hasFollowed = true
+        await followRestarts($, v.runId)
+        // The pull request is the one this pass read.
+        const fresh = (await read($, view)).groups.find(x => x.lead === g.lead)
+        if (fresh) g = { ...fresh, pr: g.pr }
+      }
       const key = `${r.head} ${problems.join('; ')}`
       const now = await $.clock.now()
       if (g.prod?.key === key && now - g.prod.at < PROD_AGAIN_MS) continue
@@ -636,7 +710,9 @@ async function prTick($: EngineInterface): Promise<void> {
 }
 
 async function tick($: EngineInterface): Promise<void> {
-  if ((await read($, view)).phase !== 'running') return
+  const v = await read($, view)
+  // A triage that ended still reads Orca back, because a Task restarted by hand makes it run again.
+  if (v.phase !== 'running' && !(v.phase === 'done' && v.runId)) return
   await refresh($).catch((err: unknown) => update($, view, v => ({ ...v, error: `Orca not read: ${message(err)}` })))
   await startReady($)
   waitLater($)
