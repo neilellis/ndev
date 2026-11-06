@@ -2379,6 +2379,18 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
 // inTurn queue, or /unblock could not get in. A hook's budget of ten seconds runs on through
 // $.clock.sleep and not through a $ call in flight, so the pause is a short process.
 const WAIT_SLICE_S = 2
+
+// One pause of a waiting loop. The host aborts a pause that outran its limit, as when the computer
+// slept through it. Its time has passed, so it did its work, and the loop reads the clock again.
+// A pause that fails before its time cannot start, and that is a failure.
+async function pause($: EngineInterface, root: string, secs: number): Promise<void> {
+  const from = await $.clock.now()
+  const r = await run($, ['sleep', String(secs)], { cwd: root, timeoutMs: Math.ceil((secs + 10) * 1000) })
+  if (r.exitCode === 0) return
+  const ran = (await $.clock.now()) - from
+  if (ran >= secs * 1000) return
+  throw new Error(`sleep ${secs} exited ${r.exitCode} after ${ran}ms in ${root}: ${r.stderr.trim().slice(0, 300) || 'no output'}`)
+}
 const WAIT_BUDGET_LOW_MS = 2_000
 const WAIT_TOOLS = ['waitForSubAgent', 'waitForURL', 'waitForProcessEnd', 'waitForSeconds', 'waitFor', 'waitForPR', 'waitForIssue', 'waitForState']
 const activeWaits = new Set<string>()
@@ -2754,8 +2766,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
       const nextAt = Math.min(lastCheckAt, (await $.clock.now()) + spec.period * 1000)
       for (let now = await $.clock.now(); now < nextAt; now = await $.clock.now()) {
         const secs = Math.min(WAIT_SLICE_S, (nextAt - now) / 1000)
-        const pause = await run($, ['sleep', String(secs)], { cwd: root, timeoutMs: Math.ceil((secs + 10) * 1000) })
-        if (pause.exitCode !== 0) throw new Error(`sleep ${secs} exited ${pause.exitCode}: ${pause.stderr.trim().slice(0, 300)}`)
+        await pause($, root, secs)
         if (limits.signal.aborted || !(await waitGoesOn($, root, who, id))) break
       }
     }
@@ -3109,8 +3120,7 @@ async function askInterview($: EngineInterface, c: Ctx, limits: WaitLimits): Pro
       }
       if (limits.signal.aborted) throw new Refuse('Refused: the interview round was interrupted. The answers so far are saved. Repair: call interview again with the same round, and the pane restores them.')
       if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse("Refused: the host's time budget for one hook is nearly spent. The answers so far are saved. Repair: call interview again with the same round, and the pane restores them.")
-      const pause = await run($, ['sleep', String(WAIT_SLICE_S)], { cwd: root, timeoutMs: (WAIT_SLICE_S + 10) * 1000 })
-      if (pause.exitCode !== 0) throw new Error(`sleep ${WAIT_SLICE_S} exited ${pause.exitCode}: ${pause.stderr.trim().slice(0, 300)}`)
+      await pause($, root, WAIT_SLICE_S)
     }
   } catch (error) {
     await release()

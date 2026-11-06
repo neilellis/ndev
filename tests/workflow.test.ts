@@ -75,7 +75,7 @@ const engine = (on: On, opts: Opts = {}) => {
     otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined,
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
-    probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
+    probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
@@ -166,6 +166,10 @@ const engine = (on: On, opts: Opts = {}) => {
     if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 600_000)) throw new Error('ndev: process.run: init.timeoutMs is a whole number of ms, 1 to 600000 (host check)')
     if (a[0] === 'rm' && s.rmFails) return ok('', 1, s.rmFails)
     if (a[0] === 'rm') { files.delete(a.at(-1)!); return ok() }
+    // The host aborts a pause that outran its limit, as when the computer slept through it: the time has
+    // passed, and the call rejects. A hook that throws is skipped, so the call rejects as no implementation.
+    if (a[0] === 'sleep' && s.sleepAborts > 0) { s.sleepAborts -= 1; s.now += limit ?? 0; throw new Error(`ndev: $.process.run(sleep) aborted: still running after ${limit}ms`) }
+    if (a[0] === 'sleep' && s.sleepFails) throw new Error(s.sleepFails)
     if (a[0] === 'sleep') return (async () => { if (s.sleepYields) await new Promise(r => setTimeout(r, 1)); await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
@@ -2516,6 +2520,19 @@ test('waitFor checks until the command exits 0, holds the state "wait" meanwhile
   expect(w.s.now).toBe(10_000)
   expect(w.state()?.state).toBe('developing')
   expect(r.text).toContain('State: developing')
+})
+
+test('waitFor goes on past a pause that the host aborts after it ran over', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.sleepAborts = 1
+  let exits = [1, 0]
+  w.s.probe = () => ({ exitCode: exits.shift() ?? 0 })
+  const r = await tool($, 'waitFor', { shell_command: 'test -f /tmp/x', period: 2 })
+  expect(r.isError).toBe(false)
+  expect(w.s.sleepAborts).toBe(0)
+  expect(w.state()?.state).toBe('developing')
 })
 
 test('waitFor gives up after its attempts, names the last result and goes back', async ($, on) => {
@@ -5523,6 +5540,31 @@ test('the next round edits the two comments in place, and interview() goes on: p
   expect(out.isError).toBe(false)
   expect(w.state()?.state).toBe('planning')
   expect(interviewFile(w).closed?.asked).toBe(true)
+})
+
+test('a pause that the host aborts after it ran over does not end the round, as when the computer slept', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  w.s.sleepAborts = 2
+  const { done, ui } = await round($, w, { title: 'One', questions: [ROUND.questions[1]] })
+  await ui.press({ key: 'next' })
+  await ui.press({ key: 'submit' })
+  const r = await done()
+  await ui.unmount()
+  expect(r.isError).toBe(false)
+  expect(w.s.sleepAborts).toBe(0)
+  expect(answersIn(r).answers.map(a => a.id)).toEqual(['name'])
+})
+
+test('a pause that cannot start still fails the round, and names the command and the cause', async ($, on) => {
+  const w = engine(on, { wf: asking() })
+  await human($, w)
+  w.s.sleepFails = 'spawn sleep ENOENT'
+  const answer = tool($, 'interview', { interviewJson: { title: 'One', questions: [ROUND.questions[1]] } })
+  const r = await answer
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('sleep 2 exited 127 after 0ms in /proj')
+  expect(r.text).toContain('sleep did not run')
 })
 
 test('a follow-up inside the round recaps the answer as it stands', async ($, on) => {
