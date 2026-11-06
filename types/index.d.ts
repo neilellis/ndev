@@ -154,6 +154,10 @@ export type TriageGroup = {
   pr?: number
   // The worker's open question, sent to this session's model to answer.
   question?: { id: string; text: string }
+  // The PR watch: the pull request it found merged or closed, which it no longer reads, and its last prod, keyed by
+  // the head and the faults, so the same fault on the same head is sent again only after a while.
+  prClosed?: number
+  prod?: { key: string; at: number }
   error?: string
   // The lead of the failed or blocked group this one waits for; it never starts.
   blockedBy?: number

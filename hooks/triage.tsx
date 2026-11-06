@@ -2,9 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, START_ORCA, type Run } from './fix-all-prs'
+import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, START_ORCA, type Run } from './fix-all-prs'
 import { pullUrl } from './links'
-import type { TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
+import type { PrRow, TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
 // /dev triage (also /orca-triage): this session's model groups the open issues and then coordinates, and Orca does the
 // work. Each group becomes one Task of one Orca Run; Orca makes the workspace, linked to the group's issues, and starts a
@@ -16,6 +16,10 @@ const TITLE = 'Triage'
 const TOOL = 'mcp__ndev__triage_groups'
 // Orca's inbox wait hears each worker at once, so the timer is only the safety net: GitHub limits calls, and Orca may spend them.
 const TICK_MS = 15 * 60_000
+// How often each group's open pull request is read, and its worker prodded when the pull request cannot merge.
+const PR_CHECK_MS = 10 * 60_000
+// The same fault on the same head is sent again only after this long: a fix and its checks take a while.
+const PROD_AGAIN_MS = 30 * 60_000
 // One blocking inbox check at a time; a check that times out is an empty wait.
 const WAIT_MS = 300_000
 const LIMIT = 200
@@ -48,12 +52,15 @@ const view = atom({ plugin: 'ndev', key: 'triage' } as const, EMPTY, { shape: 't
 
 // Module state, which a reload resets: the tick starts the inbox wait again, and starts run one after another.
 let isWaiting = false
+let isWatchingPrs = false
 let starting: Promise<unknown> = Promise.resolve()
 // The inbox messages handled, so a delivery Orca sends again after a failed ack is not handled twice.
 const handled = new Set<string>()
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
-const runner = ($: EngineInterface, timeoutMs: number, env?: Record<string, string>): Run => makeRun($, timeoutMs, env)
+function runner($: EngineInterface, timeoutMs: number, env?: Record<string, string>): Run {
+  return makeRun($, timeoutMs, env)
+}
 
 async function note($: EngineInterface, text: string): Promise<void> {
   const at = await $.clock.now()
@@ -68,8 +75,9 @@ function ask($: EngineInterface, what: string, text: string): void {
   })
 }
 
-const setGroup = ($: EngineInterface, lead: number, change: Partial<TriageGroup>) =>
-  update($, view, v => ({ ...v, groups: v.groups.map(g => (g.lead === lead ? { ...g, ...change } : g)) }))
+function setGroup($: EngineInterface, lead: number, change: Partial<TriageGroup>) {
+  return update($, view, v => ({ ...v, groups: v.groups.map(g => (g.lead === lead ? { ...g, ...change } : g)) }))
+}
 
 // The issues to group: the board's Ready and In progress issue cards, else (and always with --open) the open issues
 // with no pull request. An issue an Orca workspace already links is someone's work, so it is left out.
@@ -570,6 +578,63 @@ async function refresh($: EngineInterface): Promise<void> {
   await settle($)
 }
 
+// What keeps an open pull request from merging that its worker can fix. Running checks are not a fault: they are read
+// again at the next check. A review the base branch requires is the human's, so a BLOCKED state alone is not one.
+function unready(r: PrRow): string[] {
+  const out: string[] = []
+  // A draft is still in development: the worker's own workflow brings it to ready.
+  if (r.isDraft) return out
+  if (r.mergeable === 'CONFLICTING' || r.mergeState === 'DIRTY') out.push('it conflicts with its base branch')
+  else if (r.mergeState === 'BEHIND') out.push('it is behind its base branch')
+  if (r.failing.length) out.push(`failing checks: ${r.failing.join(', ')}`)
+  return out
+}
+
+// Every PR_CHECK_MS while the triage runs (its inbox wait hears the answers only then): reads the open pull request of
+// each group, and prods the worker of one that is not mergeable and green. A send to a worker that has ended opens a
+// follow-up turn for it in Orca, so a finished worker hears it too.
+async function watchPrs($: EngineInterface): Promise<void> {
+  if (isWatchingPrs) return
+  isWatchingPrs = true
+  try {
+    const v = await read($, view)
+    if (v.phase !== 'running' || !v.runId || !v.repo) return
+    const run = runner($, 120_000)
+    for (const g of v.groups) {
+      if (!g.pr || g.prClosed === g.pr) continue
+      const r = await readPullRow(run, v.repo, g.pr).catch(async (err: unknown) => { await note($, `#${g.lead}: PR #${g.pr} not read: ${message(err)}`); return undefined })
+      if (!r) continue
+      if (r.state !== 'OPEN') { await setGroup($, g.lead, { prClosed: g.pr }); continue }
+      const problems = unready(r)
+      if (!problems.length) continue
+      const key = `${r.head} ${problems.join('; ')}`
+      const now = await $.clock.now()
+      if (g.prod?.key === key && now - g.prod.at < PROD_AGAIN_MS) continue
+      await setGroup($, g.lead, { prod: { key, at: now } })
+      const url = pullUrl(v.repo, g.pr)
+      if (!g.dispatchId) {
+        await note($, `#${g.lead}: PR #${g.pr} cannot merge (${problems.join('; ')}), and the group has no worker to prod`)
+        askToDecide($, `the stuck PR of #${g.lead}`, `Triage: PR #${g.pr} (${url}) of #${g.lead} (${g.title}) cannot merge, and no Orca worker holds it:`, problems.join('\n'), g, v.runId)
+        continue
+      }
+      const body = [
+        `PR #${g.pr} (${url}) is not mergeable and green at ${r.head}: ${problems.join('; ')}.`,
+        'Fix it now: merge the base branch and resolve the conflicts, fix the cause of each failing check (never weaken or skip a check), and push the fix through the workflow (mcp__ndev__checkpoint, or by hand when you have no ndev tools). Then wait for the checks.',
+        'If you cannot fix it, send an escalation that says why and what you need.',
+      ].join('\n')
+      await orca(runner($, 60_000), ['orchestration', 'send', '--to', `dispatch:${g.dispatchId}`, '--run', v.runId, '--subject', `PR #${g.pr} is not mergeable and green`, '--body', body])
+        .then(() => note($, `#${g.lead}: PR #${g.pr} cannot merge (${problems.join('; ')}); prodded its worker`))
+        .catch((err: unknown) => note($, `#${g.lead}: PR #${g.pr} cannot merge, and the prod to its worker failed: ${message(err)}`))
+    }
+  } finally {
+    isWatchingPrs = false
+  }
+}
+
+async function prTick($: EngineInterface): Promise<void> {
+  await watchPrs($).catch((err: unknown) => note($, `the pull request check stopped: ${message(err)}`))
+}
+
 async function tick($: EngineInterface): Promise<void> {
   if ((await read($, view)).phase !== 'running') return
   await refresh($).catch((err: unknown) => update($, view, v => ({ ...v, error: `Orca not read: ${message(err)}` })))
@@ -632,6 +697,7 @@ export async function startTriage($: EngineInterface) {
     isDeferred: false,
   })
   $.clock.every(TICK_MS, () => { void tick($) })
+  $.clock.every(PR_CHECK_MS, () => { void prTick($) })
 }
 
 // /orca-triage <args> and /dev triage <args>. Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.

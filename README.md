@@ -554,4 +554,4 @@ Background work is held to a budget, because each session of the plugin runs its
 
 - `/fix-prs` makes no GitHub call in a session that did not start the loop. It reads when a person asks.
 - A running `/fix-prs` loop checks GitHub every 15 minutes, and reads only its current pull request (2 calls). A whole-queue read is one call. A person's request and a `blocked` report read at once. Set `NDEV_PR_CHECK_MS` to change the time.
-- `/orca-triage` hears its workers through Orca's inbox. Its safety-net timer runs every 15 minutes.
+- `/orca-triage` hears its workers through Orca's inbox. Its safety-net timer runs every 15 minutes. While it runs, every 10 minutes it reads the open PR of each group (2 calls each), and sends the worker a message when the PR conflicts, is behind, or has a failing check (the same fault on the same head at most once per 30 minutes).

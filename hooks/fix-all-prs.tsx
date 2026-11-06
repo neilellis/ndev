@@ -209,6 +209,11 @@ async function readPull(run: Run, repo: string, n: number): Promise<GhPr> {
   }
 }
 
+// One pull request as the loop reads it: merge state and the checks of its head, from REST (two calls).
+export async function readPullRow(run: Run, repo: string, n: number): Promise<PrRow> {
+  return toRow(await readPull(run, repo, n))
+}
+
 // The open pull requests of the signed-in user, oldest first, in one call. When that call fails (GraphQL is used up,
 // or the query is too large), REST answers with two calls for each pull request.
 async function openRows(run: Run, repo: string): Promise<PrRow[]> {

@@ -46,6 +46,11 @@ const message = (id: string, type: string, from: string, body: string, payload?:
 // reported success, and a workspace keeps the links and board status set on it.
 type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[] }
 function world(on: On, opts: { repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean } = {}) {
+  // Each open pull request's merge state and checks, as GitHub answers pr-read and commit-checks; the test changes them.
+  const prs: Record<number, Pr> = {}
+  // Each period of `$.clock.every`, by its length, waits here until the test fires it.
+  const timers = new Map<number, (() => void)[]>()
+  const fire = (ms: number) => { const due = timers.get(ms) ?? []; timers.set(ms, []); due.forEach(f => f()); return due.length }
   const ran: string[][] = []
   const prompts: string[] = []
   const toasts: string[] = []
@@ -62,8 +67,10 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
   on('env.get', () => ({ value: '/home/neil' }))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
   on('fs.read', () => ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null }, ...(opts.workflowOff ? { workflow: false } : {}) }) }))
-  on('clock.every', () => new Promise(() => {}))
-  on('clock.now', () => ({ value: 1_800_000_000_000 }))
+  on('clock.every', (_, e) => new Promise(resolve => { timers.set(e.ms, [...(timers.get(e.ms) ?? []), () => resolve({ value: undefined })]) }))
+  // The time the mod reads; a test moves it on.
+  const clock = { now: 1_800_000_000_000 }
+  on('clock.now', () => ({ value: clock.now }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', (_, e) => { toasts.push(JSON.stringify(e)); return { value: undefined } })
   on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -84,7 +91,14 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     if (args.includes('gh.sh board items')) return ok((opts.cards ?? []).map(c => `${JSON.stringify(c)}\n`).join(''))
     if (args.includes('gh.sh pr-read')) {
       const pr = Number(a[a.length - 1])
-      return ok(JSON.stringify({ state: opts.merged?.includes(pr) ? 'closed' : 'open', merged: !!opts.merged?.includes(pr), head: { ref: `claude/issue-${prHeads.get(pr)}` } }))
+      const p = prs[pr]
+      return ok(JSON.stringify({ number: pr, title: `PR ${pr}`, draft: p?.draft ?? false, created_at: '2026-11-06T00:00:00Z', merge_commit_sha: null,
+        mergeable: p ? p.mergeable : true, mergeable_state: p?.state ?? 'clean',
+        state: opts.merged?.includes(pr) || p?.merged ? 'closed' : 'open', merged: !!opts.merged?.includes(pr) || !!p?.merged, head: { ref: `claude/issue-${prHeads.get(pr)}`, sha: `head-${pr}` } }))
+    }
+    if (args.includes('gh.sh commit-checks')) {
+      const pr = Number(a[a.indexOf('--pr') + 1])
+      return ok(JSON.stringify({ check_runs: (prs[pr]?.checks ?? []).map(([name, status, conclusion]) => ({ name, status, conclusion })), statuses: [] }))
     }
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
     if (args.startsWith('orca worktree list')) return reply({ worktrees, totalCount: worktrees.length, truncated: false })
@@ -157,8 +171,11 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
   const orcaRan = (verb: string) => ran.filter(a => a[0] === 'orca' && a.slice(1, 3).join(' ') === verb)
   // What the worker does after it opens its pull request: link it to the workspace and move the card to review.
   const linkPr = (path: string, pr: number) => { const wt = worktrees.find(x => x.path === path)!; wt.linkedPR = pr; wt.workspaceStatus = 'in-review'; prHeads.set(pr, Number(path.split('-').pop())) }
-  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash }
+  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock }
 }
+
+// A pull request as the fake GitHub answers it: REST's mergeable and mergeable_state, and its check runs as [name, status, conclusion].
+type Pr = { mergeable: boolean | null; state: string; checks: [string, string, string | null][]; draft?: boolean; merged?: boolean }
 
 const command = (args: string) => ({ command: 'orca-triage', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const)
 
@@ -761,4 +778,76 @@ test('/orca-triage start --sequential asks the coordinator for the order and sta
   const created = w.orcaRan('orchestration task-create')
   const taskOf9 = `task_${created.findIndex(a => a.includes('issue-9')) + 1}`
   expect(first[first.indexOf('--task') + 1]).toBe(taskOf9)
+})
+
+test('every 10 minutes the triage reads each open pull request, and prods its worker when it is not mergeable and green', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration check').length > 0, () => w.ran)
+  // The worker opens #41; the refresh after its next message reads it from the workspace.
+  w.linkPr('/w/issue-3', 41)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'question', 'term_1', 'Which test?')] })
+  await until(() => w.ran.some(a => a.includes('--ack') && a.includes('delivery_1')))
+  const prods = () => w.orcaRan('orchestration send').filter(a => a.includes('dispatch:ctx_1'))
+  const calls = (verb: string) => w.ran.filter(a => a.join(' ').includes(`gh.sh ${verb} `)).length
+  // Fires the 10-minute timer, and waits for the pass to read the pull request and, when it is open, its checks.
+  const tick = async (isOpen = true) => {
+    const [reads, checks] = [calls('pr-read'), calls('commit-checks')]
+    expect(w.fire(10 * 60_000)).toBe(1)
+    await until(() => calls('pr-read') > reads && (!isOpen || calls('commit-checks') > checks), () => w.ran)
+  }
+  // A pass that sends nothing: the send would follow the read at once, so give it the time it would take.
+  const settled = () => new Promise(resolve => setTimeout(resolve, 200))
+
+  // Conflicting, with a failing check: the worker hears both, with the pull request's link and head.
+  w.prs[41] = { mergeable: false, state: 'dirty', checks: [['test', 'completed', 'failure'], ['lint', 'completed', 'success']] }
+  await tick()
+  await until(() => prods().length === 1, () => w.ran)
+  const body = prods()[0]![prods()[0]!.indexOf('--body') + 1]!
+  expect(body).toMatch(/https:\/\/github\.com\/acme\/widgets\/pull\/41/)
+  expect(body).toMatch(/head-41/)
+  expect(body).toMatch(/conflicts/)
+  expect(body).toMatch(/failing checks: test\b/)
+  expect(body).not.toMatch(/lint/)
+
+  // The same fault on the same head 10 minutes later: no second prod yet, as a fix and its checks take a while.
+  await tick()
+  await settled()
+  expect(prods()).toHaveLength(1)
+  // 30 minutes after the first prod, still the same: it is sent again.
+  w.clock.now += 30 * 60_000
+  await tick()
+  await until(() => prods().length === 2, () => w.ran)
+
+  // A new fault is sent at once: behind its base, with no conflict.
+  w.prs[41] = { mergeable: true, state: 'behind', checks: [['test', 'completed', 'success']] }
+  await tick()
+  await until(() => prods().length === 3, () => w.ran)
+  expect(prods()[2]![prods()[2]!.indexOf('--body') + 1]).toMatch(/behind its base branch/)
+
+  // Not faults: checks still running, a review the base needs, a draft with a failing check, and mergeable and green.
+  for (const pr of [
+    { mergeable: true, state: 'unstable', checks: [['test', 'in_progress', null]] },
+    { mergeable: true, state: 'blocked', checks: [['test', 'completed', 'success']] },
+    { mergeable: true, state: 'unstable', checks: [['test', 'completed', 'failure']], draft: true },
+    { mergeable: true, state: 'clean', checks: [['test', 'completed', 'success']] },
+  ] as Pr[]) {
+    w.prs[41] = pr
+    await tick()
+    await settled()
+    expect(prods()).toHaveLength(3)
+  }
+
+  // Merged: read once, with no checks, and never again.
+  w.prs[41] = { mergeable: null, state: 'unknown', checks: [], merged: true }
+  const checks = calls('commit-checks')
+  await tick(false)
+  await settled()
+  const reads = calls('pr-read')
+  expect(w.fire(10 * 60_000)).toBe(1)
+  await settled()
+  expect([calls('pr-read'), calls('commit-checks'), prods().length]).toEqual([reads, checks, 3])
 })
