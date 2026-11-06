@@ -1109,6 +1109,8 @@ async function followUpAgentWorktrees($: EngineInterface): Promise<string[]> {
 async function followUpCheckpoint($: EngineInterface, { args }: Ctx): Promise<string> {
   const root = text(args, 'worktree').replace(/\/$/, '')
   const known = await followUpAgentWorktrees($)
+  const hotfix = (await read($, hotfixWorktrees)).find(h => h.dir === root)
+  if (hotfix) throw new Refuse(`Refused: ${root} is the worktree of a hotfix, and checkpoint does not commit there. Nothing was committed. Repair: use plain git with -C and the full path: git -C ${root} commit, then git -C ${root} push origin ${hotfix.branch}.`)
   if (!known.includes(root)) throw new Refuse(`Refused: followUp did not start an agent in ${root}. Its worktrees in this session: ${known.join(', ') || 'none'}. Nothing was committed.`)
   const wf = await loadWorkflow($, root, Number(args.issue))
   if (!wf) throw new Refuse(`Refused: ${root}/${RECORD} holds no workflow for issue #${String(args.issue)}. Nothing was committed. Repair: the main agent calls followUp again with the same text.`)
@@ -2252,8 +2254,10 @@ async function commonDir($: EngineInterface, cwd: string, dir: string): Promise<
 
 // The guard is for the workflow's own repository: the wiki and each other repository have no checks here.
 // Only a single -C with a full path can show another repository. Anything else counts as the workflow's.
+// A redirection such as 2>&1 or 2>/dev/null is no argument of git, and its & does not end the command.
+const REDIRECTION = /\s(?:\d*>>?&?|&>>?|<)\s*[^\s;&|)]+/g
 function pushesOnly(tail: string, branch: string): boolean {
-  const words = (tail.split(/[;&|\n)]/)[0] ?? '').trim().split(/\s+/).filter(Boolean)
+  const words = (tail.replace(REDIRECTION, ' ').split(/[;&|\n)]/)[0] ?? '').trim().split(/\s+/).filter(Boolean)
   const [remote, ...refs] = words.filter(word => word !== '-u' && word !== '--set-upstream')
   if (remote !== undefined && remote !== 'origin') return false
   return refs.every(ref => [branch, 'HEAD', `HEAD:${branch}`, `HEAD:refs/heads/${branch}`, `${branch}:${branch}`].includes(ref))
@@ -2314,7 +2318,8 @@ export const workflowGitGuard = (on: Parameters<Register>[0], getProject: () => 
     if (!wf || !(await reachesWorkflowRepo($, wf, command))) return next(e)
     const own = wf.followUps.filter(f => f.worktree)
     if ((e as { agentId?: string }).agentId && own.length) return { deny: `workflow: a commit or push here runs no check script. An agent that followUp started calls mcp__ndev__checkpoint with its own issue and worktree: ${own.map(f => `#${f.issue} in ${f.worktree}`).join(', ')}. Any other helper reports to the agent that started it.` }
-    return { deny: `workflow: issue #${wf.issue} is in the state "${wf.state}", so this commit or push goes through the checkpoint tool, which runs the check scripts. From a hotfix worktree, a push goes only to the branch of the hotfix. It also ends a merge. With no files it pushes a held commit. A commit in another repository, such as ~/dev-wiki, passes when each git in the command names it with -C and a full path. A human can turn this off with /flow off.` }
+    const hotfixes = (await read($, hotfixWorktrees)).map(h => `git -C ${h.dir} push origin ${h.branch}`)
+    return { deny: `workflow: issue #${wf.issue} is in the state "${wf.state}", so this commit or push goes through the checkpoint tool, which runs the check scripts. From a hotfix worktree, a push goes only to the branch of the hotfix${hotfixes.length ? `, such as ${hotfixes.join(' or ')}` : ''}. It also ends a merge. With no files it pushes a held commit. A commit in another repository, such as ~/dev-wiki, passes when each git in the command names it with -C and a full path. A human can turn this off with /flow off.` }
   })
 }
 

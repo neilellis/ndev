@@ -6456,6 +6456,23 @@ test('a push from a hotfix worktree goes only to its own branch', async ($, on) 
   expect(await push(`--force origin ${branch}`)).toContain('hotfix')
 })
 
+test('a push from a hotfix worktree passes with its output redirected or piped, and a refusal names the hotfix branch', async ($, on) => {
+  const w = engine(on, { wf: { state: 'blocked' } })
+  await start($, w)
+  await tool($, 'hotfix', { shortName: 'fix-login' })
+  const branch = JSON.parse(w.files.get(`${CLAIMED}/.neil-dev.issue-31.json`)!).workflow.branch as string
+  const push = async (rest: string) => ((await $.tool.call({ tool: 'Bash', command: `git -C ${CLAIMED} push ${rest}` } as never)) as { deny?: string }).deny
+  expect(await push('2>&1')).toBeUndefined()
+  expect(await push('2>&1 | tail -5')).toBeUndefined()
+  expect(await push('origin HEAD 2>&1')).toBeUndefined()
+  expect(await push(`-u origin ${branch} 2>/dev/null; echo done`)).toBeUndefined()
+  expect(await push('origin HEAD:main 2>&1')).toContain(branch)
+  // checkpoint does not commit in a hotfix worktree, and its refusal names the plain git push.
+  const r = await tool($, 'checkpoint', { issue: 31, message: 'm', files: [], worktree: CLAIMED })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain(`git -C ${CLAIMED} push origin ${branch}`)
+})
+
 test('a retry with the issue files nothing more, and its worktree and PR pass the guards', async ($, on) => {
   const w = engine(on, { wf: { state: 'developing' } })
   await start($, w)
