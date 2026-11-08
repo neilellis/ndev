@@ -817,11 +817,14 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     else if (!info.isMain) neighbour = active
   }
   const beside = joined ?? neighbour
+  // The PR of this worktree has ended. A session here cannot change its folder to the main checkout,
+  // so the new issue gets a new worktree claimed from the main checkout, as a start there would.
+  let claimFromMain: string | undefined
   if (beside?.prs[0]) {
     const n = beside.prs[0]
     const prState = beside.merged ? 'merged' : (await readPr($, root, repo, n)).state
     if (prState !== 'open') {
-      if (!info.isMain) throw new Refuse(`Refused: PR #${n} of this worktree is ${prState}, so issue #${issue} cannot join it. Nothing changed. Repair: start #${issue} from the main checkout, which claims a new worktree.`)
+      if (!info.isMain) claimFromMain = `PR #${n} of ${root} is ${prState}, so issue #${issue} did not join it: it has a new worktree, claimed from the main checkout ${info.main}.`
       joined = undefined
     } else if (joined && (joined.state === 'blocked' || joined.state === 'wait')) {
       throw new Refuse(`Refused: ${whoOf(joined)} is in the state "${joined.state}", so issue #${issue} cannot join it now. Nothing changed. Repair: end that state first (unblocked, or /unblock <message> for a wait).`)
@@ -836,13 +839,14 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   let claimNote: string | undefined
   if (!wf && !joined) {
     if (directHere) direct = true
-    else if (info.isMain) {
+    else if (info.isMain || claimFromMain) {
       mayOpen()
-      await must($, ['git', 'fetch', 'origin', base], { cwd: home, timeoutMs: 120_000 })
-      const claimed = await run($, ['bash', `${$.plugin.root}/scripts/work/worktree_claim.sh`, home, String(issue), `origin/${base}`], { cwd: home, timeoutMs: 120_000 })
-      if (claimed.exitCode !== 0) throw new Refuse(`worktree_claim.sh exited ${claimed.exitCode} for issue #${issue}: ${said(claimed)}`)
+      const main = info.main
+      await must($, ['git', 'fetch', 'origin', base], { cwd: main, timeoutMs: 120_000 })
+      const claimed = await run($, ['bash', `${$.plugin.root}/scripts/work/worktree_claim.sh`, main, String(issue), `origin/${base}`], { cwd: main, timeoutMs: 120_000 })
+      if (claimed.exitCode !== 0) throw new Refuse(`worktree_claim.sh exited ${claimed.exitCode} for issue #${issue} in ${main}: ${said(claimed)}`)
       root = claimed.stdout.trim().split('\n').pop()!
-      claimNote = await initSubmodules($, project, home, root)
+      claimNote = await initSubmodules($, project, main, root)
     } else if (branchHere === base) {
       throw new Refuse(`Refused: ${home} is on the base branch ${base}. Create a branch first, or set "projectLevel": "straw_man" to commit to it from the main checkout.`)
     } else {
@@ -888,7 +892,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     if (pr.state === 'open') feedback = await newFeedback($, root, repo, issue, pr, record.feedbackAt ?? 0)
   }
   const to = afterStarted(isNew ? undefined : { state: record.state, previous: record.previous }, { mode: facts.mode, steering: facts.steering, scriptsMissing: missing.length > 0, blockerOpen: blockers.length > 0, feedback: feedback.length > 0 })
-  const notes: string[] = [...(claimNote ? [claimNote] : []), ...claimNotes]
+  const notes: string[] = [...(claimFromMain ? [claimFromMain] : []), ...(claimNote ? [claimNote] : []), ...claimNotes]
   notes.push(`Mode: ${facts.mode}, steering: ${facts.steering}, for issue #${issue}.`)
   notes.push('If this issue has the label "incomprehensible", a human could not understand it: rewrite it for clarity before any other work (work-heavy F0c).')
   if (active && !sameRecord(active, record)) {

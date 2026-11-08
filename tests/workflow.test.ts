@@ -74,7 +74,7 @@ const engine = (on: On, opts: Opts = {}) => {
     spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], untracked: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
     otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined,
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
-    main: opts.main ?? false, names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
+    main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, checkEnv: {} as Record<string, Record<string, string> | undefined>,
@@ -315,6 +315,7 @@ const engine = (on: On, opts: Opts = {}) => {
     if (a[0] === 'bash' && a[1]?.endsWith('init-worktree-submodules.sh')) {
       submodules.push({ command: JSON.parse(String(e.init?.stdin)).tool_input.command, paths: e.init?.env?.WORKTREE_SUBMODULES })
     }
+    if (a[0] === 'bash' && a[1]?.endsWith('worktree_claim.sh')) s.claims.push(a.slice(2).join(' '))
     if (a[0] === 'bash' && a[1]?.endsWith('worktree_claim.sh')) return s.claimFails ? ok('', 1, s.claimFails) : ok('/claimed/issue-7\n')
     if (a[0] === 'bash' && a[1]?.endsWith('board.sh')) {
       steps.push(`board.sh ${a.slice(2).join(' ')}`)
@@ -4704,21 +4705,23 @@ for (const stage of ['ci', 'smoke', 'finishing', 'done']) {
   })
 }
 
-test('a PR that has merged takes no new issue, and the refusal names its state', async ($, on) => {
+test('a PR that has merged takes no new issue: it goes to a new worktree, and the answer names the state', async ($, on) => {
   const w = engine(on, { wf: { state: 'done', merged: true }, pr: pull({ state: 'closed', merged: true }) })
     await start($, w)
     const r = await tool($, 'started', { issue: 31, shortName: 'more-work' })
-    expect(r.isError).toBe(true)
-    expect(r.text).toContain('merged')
+    expect(r.isError).toBe(false)
+    expect(r.text).toContain('PR #12 of /proj is merged')
+    expect(w.s.claims).toEqual(['/main 31 origin/main'])
     expect(w.issueRecord(31)).toBeUndefined()
 })
 
-test('a PR that was closed with no merge takes no new issue, and the refusal names its state', async ($, on) => {
+test('a PR that was closed with no merge takes no new issue: it goes to a new worktree, and the answer names the state', async ($, on) => {
   const w = engine(on, { wf: { state: 'done' }, pr: pull({ state: 'closed' }) })
     await start($, w)
     const r = await tool($, 'started', { issue: 31, shortName: 'more-work' })
-    expect(r.isError).toBe(true)
-    expect(r.text).toContain('closed')
+    expect(r.isError).toBe(false)
+    expect(r.text).toContain('PR #12 of /proj is closed')
+    expect(w.s.claims).toEqual(['/main 31 origin/main'])
 })
 
 test('an issue that opens the PR shares it with the issue it joined, which had none', async ($, on) => {
@@ -5197,15 +5200,20 @@ test('the end of a wait follows the steering of the issue', async ($, on) => {
   expect(r.text).not.toContain('Report this checkpoint')
 })
 
-test('started refuses to join the merged PR of a done record of another session', async ($, on) => {
-  const w = engine(on, { wf: { state: 'done', owner: { session: 'other', at: 0 } }, pr: { state: 'closed', merged: true } })
-  await start($, w)
-  const r = await tool($, 'started', { issue: 9, shortName: 'new-thing' })
-  expect(r.isError).toBe(true)
-  expect(r.text).toContain('cannot join')
-  expect(r.text).toContain('Repair')
-  expect(w.gh.some(line => line.includes('pr-new'))).toBe(false)
-})
+// A session in a worktree cannot change its folder to the main checkout, so started claims the new
+// worktree from the main checkout for it, and the merged PR gets nothing new.
+for (const owner of [undefined, { session: 'other', at: 0 }]) {
+  test(`started in a worktree whose PR has merged claims a new worktree from the main checkout (${owner ? 'another session' : 'this session'})`, async ($, on) => {
+    const w = engine(on, { wf: { state: 'done', ...(owner ? { owner } : {}) }, pr: { state: 'closed', merged: true } })
+    await start($, w)
+    const r = await tool($, 'started', { issue: 9, shortName: 'new-thing' })
+    expect(r.text).not.toContain('Refused')
+    expect(r.isError).toBe(false)
+    expect(w.s.claims).toEqual(['/main 9 origin/main'])
+    expect(r.text).toContain('/claimed/issue-7')
+    expect(w.issueRecord(9)).toBeUndefined()
+  })
+}
 
 test('followUp this_agent refuses when the PR has merged, and files no issue', async ($, on) => {
   const w = engine(on, { wf: { state: 'developing' }, pr: { state: 'closed', merged: true } })
