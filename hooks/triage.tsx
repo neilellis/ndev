@@ -58,6 +58,13 @@ let starting: Promise<unknown> = Promise.resolve()
 const handled = new Set<string>()
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
+// The host refuses each $ call once it has unloaded this mod, at the end of a session or a test.
+const isUnloaded = (err: unknown) => message(err).includes('no hooks module of that name is loaded')
+// Ends a chain that runs detached from its hook. Its own report of a failure calls $ too, so that report fails once
+// the mod is unloaded, and nothing is left to show it to. Any other failure is raised again, and stays unhandled.
+function detach(work: Promise<unknown>): void {
+  void work.catch((err: unknown) => { if (!isUnloaded(err)) throw err })
+}
 function runner($: EngineInterface, timeoutMs: number, env?: Record<string, string>): Run {
   return makeRun($, timeoutMs, env)
 }
@@ -69,10 +76,10 @@ async function note($: EngineInterface, text: string): Promise<void> {
 
 // Sends a prompt to this session's model; a prompt the engine drops is shown, never lost.
 function ask($: EngineInterface, what: string, text: string): void {
-  void $.prompt.submit({ text }).catch((err: unknown) => {
+  detach($.prompt.submit({ text }).catch((err: unknown) => {
     $.ui.toast(`/orca-triage could not send ${what} to the model: ${message(err)}`)
     return update($, view, v => ({ ...v, error: `${what} was not sent to the model: ${message(err)}` }))
-  })
+  }))
 }
 
 function setGroup($: EngineInterface, lead: number, change: Partial<TriageGroup>) {
@@ -473,8 +480,8 @@ type Message = { id: string; from_handle: string; type: string; body: string; pa
 function waitLater($: EngineInterface): void {
   if (isWaiting) return
   isWaiting = true
-  void waitLoop($).catch((err: unknown) => note($, `the Orca inbox wait stopped: ${message(err)}. The next tick starts it again.`))
-    .finally(() => { isWaiting = false })
+  detach(waitLoop($).catch((err: unknown) => note($, `the Orca inbox wait stopped: ${message(err)}. The next tick starts it again.`))
+    .finally(() => { isWaiting = false }))
 }
 
 async function waitLoop($: EngineInterface): Promise<void> {
@@ -772,8 +779,8 @@ export async function startTriage($: EngineInterface) {
     },
     isDeferred: false,
   })
-  $.clock.every(TICK_MS, () => { void tick($) })
-  $.clock.every(PR_CHECK_MS, () => { void prTick($) })
+  $.clock.every(TICK_MS, () => { detach(tick($)) })
+  $.clock.every(PR_CHECK_MS, () => { detach(prTick($)) })
 }
 
 // /orca-triage <args> and /dev triage <args>. Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
@@ -798,16 +805,16 @@ export async function triageCommand($: EngineInterface, args: string, project: (
   const [verb = 'status'] = words.filter((w, i) => !w.startsWith('--') && !(at >= 0 && i === at + 1))
   const unknown = words.find(w => w.startsWith('--') && (!START_OPTIONS.includes(w) || verb !== 'start'))
   if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The options are /orca-triage start ${START_OPTIONS.join(' ')}: --dry-run plans and starts nothing, --codex runs the fixes in Codex workers, --open takes every open issue and not only the board's, --batch <size> runs that many workers at once, batch after batch, and --sequential is --batch 1.` }
-  void openPane($)
+  detach(openPane($))
   if (verb === 'start') {
     const batch = batchOption(words)
     if (typeof batch === 'string') return { text: batch }
-    void collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch })
-      .then(text => $.ui.toast(text), fail($, 'start'))
+    detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch })
+      .then(text => $.ui.toast(text), fail($, 'start')))
     return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
   }
-  if (verb === 'launch') { void launch($).catch(fail($, 'launch')); return { text: 'Launching the planned groups in Orca.' } }
-  if (verb === 'refresh') { void tick($).catch(fail($, 'refresh')); return { text: 'Reading the triage back from Orca.' } }
+  if (verb === 'launch') { detach(launch($).catch(fail($, 'launch'))); return { text: 'Launching the planned groups in Orca.' } }
+  if (verb === 'refresh') { detach(tick($).catch(fail($, 'refresh'))); return { text: 'Reading the triage back from Orca.' } }
   if (verb === 'reset') {
     const v = await read($, view)
     await update($, view, () => EMPTY)
@@ -835,7 +842,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     await update($, view, (x): TriageView => ({ ...x, phase: 'planned', groups: planned }))
     await note($, `the model made ${planned.length} groups`)
     if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /orca-triage launch starts them.` }
-    void launch($).catch(fail($, 'launch'))
+    detach(launch($).catch(fail($, 'launch')))
     return { result: `Recorded ${planned.length} groups. The mod creates the Orca Run and starts the workers; the Triage pane shows them. You are the coordinator now: start no work on these issues, and wait for what the mod sends you.` }
   })
 
@@ -893,9 +900,9 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         </Box>
         <Box gap={2}>
           {v.phase !== 'running' && v.phase !== 'grouping' &&
-            <Button key="start" label="Start" hotkey="s" plain onPress={() => { void collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v) }).then(t => $.ui.toast(t), fail($, 'start')) }} />}
-          {v.phase === 'planned' && <Button key="launch" label="Launch" hotkey="l" plain onPress={() => { void launch($).catch(fail($, 'launch')) }} />}
-          {v.runId && <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => { void tick($).catch(fail($, 'refresh')) }} />}
+            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v) }).then(t => $.ui.toast(t), fail($, 'start'))) }} />}
+          {v.phase === 'planned' && <Button key="launch" label="Launch" hotkey="l" plain onPress={() => { detach(launch($).catch(fail($, 'launch'))) }} />}
+          {v.runId && <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => { detach(tick($).catch(fail($, 'refresh'))) }} />}
         </Box>
         {v.error && v.error.split('\n').map((line, i) => <Text key={`error-${i}`} color="error">{line}</Text>)}
         {v.phase === 'idle' && !v.error && <Text color="subtle">Start reads the open issues, has this session group them, and works each group in its own Orca workspace.</Text>}
@@ -914,7 +921,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
                     <Text> {fit(g.title)}</Text>
                   </Text>
                   <Box gap={2}>
-                    {g.dispatchId && <Button key={`jump-${g.lead}`} label="Jump" plain onPress={() => { void jump($, g).catch(fail($, 'jump')) }} />}
+                    {g.dispatchId && <Button key={`jump-${g.lead}`} label="Jump" plain onPress={() => { detach(jump($, g).catch(fail($, 'jump'))) }} />}
                     {g.pr && <Button key={`pr-${g.lead}`} label="PR" plain dimColor
                       onPress={() => { void $.process.run(['gh', 'pr', 'view', String(g.pr), '--repo', v.repo!, '--web']) }} />}
                     <Button key={`issue-${g.lead}`} label="Issue" plain dimColor onPress={() => { void $.process.run(['open', url(g.lead)]) }} />
