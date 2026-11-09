@@ -2019,7 +2019,15 @@ async function addMigration($: EngineInterface, c: Ctx): Promise<string> {
   const workdir = text(args, 'workdir').replace(/\/$/, '')
   const prefix = workdir ? `${workdir}/` : ''
   if (!(await $.fs.exists(`${wf.root}/${prefix}supabase/config.toml`))) throw new Refuse(`Refused: ${wf.root}/${prefix}supabase/config.toml does not exist. Repair: run supabase init there, or pass workdir with the folder that holds supabase/.`)
-  const stamp = async () => new Date(await $.clock.now()).toISOString().replace(/\D/g, '').slice(0, 14)
+  // A version must sort after every migration here, and a project may date its versions after the clock,
+  // so the clock alone can still sort before migrations already applied.
+  const stamp = async () => {
+    const dir = `${wf.root}/${prefix}supabase/migrations`
+    const versions = (await $.fs.exists(dir)) ? (await $.fs.list(dir)).map(e => /^(\d{14})_/.exec(e.name)?.[1]).filter((v): v is string => !!v) : []
+    const newest = versions.sort().pop()
+    const after = newest ? Date.UTC(+newest.slice(0, 4), +newest.slice(4, 6) - 1, +newest.slice(6, 8), +newest.slice(8, 10), +newest.slice(10, 12), +newest.slice(12, 14)) + 1000 : 0
+    return new Date(Math.max(await $.clock.now(), after)).toISOString().replace(/\D/g, '').slice(0, 14)
+  }
   const notes: string[] = []
   let entry = wf.migrations.find(m => m.name === name)
   if (!entry) {

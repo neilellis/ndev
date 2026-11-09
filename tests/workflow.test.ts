@@ -4819,6 +4819,22 @@ test('addMigration with newVersion gives a listed migration a new version, carri
   expect(body).not.toContain(old)
 })
 
+test('addMigration gives a version after the newest migration file, when that file is dated after the clock', async ($, on) => {
+  const old = 'supabase/migrations/20261105153912_audiences.sql'
+  const w = engine(on, { wf: { state: 'smoke', migrations: [{ name: 'audiences', path: old }] } })
+  w.files.set(`${ROOT}/supabase/config.toml`, '')
+  w.files.set(`${ROOT}/${old}`, 'create table t();\n')
+  w.files.set(`${ROOT}/supabase/migrations/20261109235959_future_dated.sql`, 'select 1;\n')
+  w.s.now = Date.UTC(2026, 10, 9, 12, 39, 18)
+  await start($, w)
+  const r = await tool($, 'addMigration', { name: 'audiences', newVersion: true })
+  expect(r.isError).toBe(false)
+  expect(w.files.get(`${ROOT}/supabase/migrations/20261110000000_audiences.sql`)).toBe('create table t();\n')
+  const added = await tool($, 'addMigration', { name: 'other_one' })
+  expect(added.isError).toBe(false)
+  expect(w.files.has(`${ROOT}/supabase/migrations/20261110000001_other_one.sql`)).toBe(true)
+})
+
 test('the answer of a code review reaches the PR record, while the agent is on another issue', async ($, on) => {
   const w = engine(on, { wf: { state: 'developing' } })
   w.files.set(RECORD, JSON.stringify({ version: 2, resources: {}, workflows: { 7: seven({ state: 'developed' }), 31: flow({ issue: 31, state: 'developing', ...mine() }) }, prs: { 12: flow({ pr: 12, issues: [7, 31], state: 'reviewing', hooks: { review: { firedAt: 1, agentId: 'rev-1' } } }) } }))
