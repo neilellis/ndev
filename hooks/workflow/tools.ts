@@ -438,7 +438,16 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   await saveWorkflow($, wf)
   const made = await gitOut(root, $, 'log', '-1', '--format=%H', `--grep=^Ndev-Op: ${op.id}$`)
   // A retry can carry a fix for what stopped the last try, so what is named is always committed.
-  if (files.length) await must($, ['git', 'add', '--', ...files], { cwd: root })
+  // A deletion that git rm staged is in neither the tree nor the index, so git add of its path exits 128.
+  // It is already staged: leave it out of git add, and the commit still carries it.
+  const removed = files.length ? (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=D')).split('\n').filter(Boolean) : []
+  // A named folder whose files were all removed is gone from the tree too.
+  const toAdd: string[] = []
+  for (const f of files) {
+    const under = removed.some(r => r === f || r.startsWith(`${f.replace(/\/$/, '')}/`))
+    if (!under || (!removed.includes(f) && (await $.fs.exists(`${root}/${f}`)))) toAdd.push(f)
+  }
+  if (toAdd.length) await must($, ['git', 'add', '--', ...toAdd], { cwd: root })
   const staged = (await git(root, $, 'diff', '--cached', '--quiet')).exitCode !== 0
   if (staged) {
     try {
