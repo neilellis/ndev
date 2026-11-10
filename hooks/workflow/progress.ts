@@ -1,4 +1,4 @@
-// A tool call can hold for many minutes: a check script runs for up to 10, and finishedReview runs two
+// A tool call can hold for many minutes: a check script runs for up to 60, and finishedReview runs two
 // of them and a push. The host draws no text for a call that runs, so the plugin's status line under the
 // prompt says which tool runs, which step it is on and for how long. A call that ends before the first tick
 // writes nothing. The host keeps one line for each plugin, so every feature writes it through this file.

@@ -237,3 +237,33 @@ test('the guide names each tool, each state and each stage hook', () => {
   for (const [, hook, state] of hooks) assert.match(guide, new RegExp(`\\| \`${hook}\` \\| \`${state}\``), `the guide has no row for the hook ${hook}`)
   assert.match(guide, /```mermaid\nflowchart TD/)
 })
+
+const RUN_CHECK = join(HERE, '..', 'run-check.sh')
+const runCheck = (args, env = {}) => spawnSync('bash', [RUN_CHECK, ...args], { encoding: 'utf8', env: { ...process.env, ...env } })
+
+test('run-check.sh runs a check detached, waits in parts and gives its exit code and streams', () => {
+  const dir = folder()
+  const check = program(dir, 'check.sh', 'echo "out $1 $NDEV_X"; echo err >&2; sleep 2; exit 5')
+  const started = runCheck(['start', join(dir, 'run'), check, 'a1'], { NDEV_X: 'env' })
+  assert.equal(started.status, 0, started.stderr)
+  const pid = started.stdout.trim()
+  assert.match(pid, /^\d+$/)
+  assert.equal(runCheck(['wait', join(dir, 'run'), pid, '0']).status, 124)
+  const ended = runCheck(['wait', join(dir, 'run'), pid, '20'])
+  assert.equal(ended.status, 0, ended.stderr)
+  assert.equal(ended.stdout.trim(), '5')
+  assert.equal(runCheck(['out', join(dir, 'run')]).stdout, 'out a1 env\n')
+  assert.equal(runCheck(['err', join(dir, 'run')]).stdout, 'err\n')
+})
+
+test('run-check.sh stop ends the check and the processes it started', () => {
+  const dir = folder()
+  const marker = `run-check-${process.pid}-${Date.now()}`
+  const check = program(dir, 'check.sh', `bash -c 'sleep 60; echo ${marker}' & sleep 60`)
+  const pid = runCheck(['start', join(dir, 'run'), check]).stdout.trim()
+  assert.equal(runCheck(['stop', pid]).status, 0)
+  const gone = runCheck(['wait', join(dir, 'run'), pid, '5'])
+  assert.equal(gone.status, 3)
+  assert.match(gone.stderr, /wrote no exit code/)
+  assert.notEqual(spawnSync('pgrep', ['-f', marker]).status, 0)
+})

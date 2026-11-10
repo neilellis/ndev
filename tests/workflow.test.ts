@@ -72,7 +72,7 @@ const engine = (on: On, opts: Opts = {}) => {
   }))
   const s = {
     spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], untracked: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
-    otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined,
+    otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined, checkMs: {} as Record<string, number>, checkStops: [] as string[],
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
@@ -159,6 +159,14 @@ const engine = (on: On, opts: Opts = {}) => {
   on('ui.log', () => ({ value: undefined }) as never)
   on('session.cwd', () => ({ value: ROOT }) as never)
   let refReads = 0
+  // What a check script answers: held while checkHold holds, failed for failCheck, cut for hugeCheck.
+  type Answer = { value: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean; isStderrTruncated: boolean } }
+  const checkAnswer = async (script: string): Promise<Answer> => {
+    if (s.hugeCheck && script.includes(s.hugeCheck)) return { value: { exitCode: s.hugeExit, stdout: `${'x'.repeat(STREAM_CAP - 5)}\nlast`, stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
+    if (s.checkHold) await s.checkHold
+    return s.failCheck && script.includes(s.failCheck) ? ok('lint: broken line', 3) : ok('passed')
+  }
+  const checkRuns = new Map<string, { at: number; ms: number; answer: Promise<Answer>; done?: Answer['value'] }>()
   on('process.run', (_, e) => {
     const a = e.argv.map(String)
     const line = a.join(' ')
@@ -330,13 +338,39 @@ const engine = (on: On, opts: Opts = {}) => {
       s.spawnedAtSweep = spawns.length
       return ok(s.sweepOutput, s.sweepExit)
     }
+    // run-check.sh starts a check detached and waits for it in parts, each shorter than the host's limit.
+    if (a[0] === 'bash' && a[1]?.endsWith('/run-check.sh')) {
+      const [sub, dir] = [a[2], a[3]!]
+      if (sub === 'start') {
+        const script = a[4]!
+        steps.push(`${script.split('/').pop()}${a.length > 5 ? ` ${a.slice(5).join(' ')}` : ''}`)
+        s.checkEnv[script.split('/').pop()!.replace(/^ndev-/, '')] = e.init?.env
+        const ms = Object.entries(s.checkMs).find(([name]) => script.includes(name))?.[1] ?? 0
+        checkRuns.set(dir, { at: s.now, ms, answer: checkAnswer(script) })
+        return ok('4242\n')
+      }
+      if (sub === 'stop') { s.checkStops.push(a[3]!); return ok() }
+      const one = checkRuns.get(dir)
+      if (!one) return ok('', 2, `run-check.sh: no run in ${dir}`)
+      if (sub === 'wait') {
+        const left = one.at + one.ms - s.now
+        if (left > Number(a[5]) * 1000) { s.now += Number(a[5]) * 1000; return ok('', 124) }
+        s.now += Math.max(0, left)
+        return (async () => { one.done = (await one.answer).value; return ok(`${one.done.exitCode}\n`) })() as never
+      }
+      if (sub === 'out' || sub === 'err') {
+        const d = one.done ?? { stdout: 'partial', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+        return { value: { exitCode: 0, stdout: sub === 'out' ? d.stdout : d.stderr, stderr: '', isStdoutTruncated: sub === 'out' ? d.isStdoutTruncated : d.isStderrTruncated, isStderrTruncated: false } }
+      }
+    }
     if (a[0] === 'bash' && a[1]?.includes('.sh')) {
       steps.push(`${a[1].split('/').pop()}${a.length > 2 ? ` ${a.slice(2).join(' ')}` : ''}`)
       s.checkEnv[a[1].split('/').pop()!.replace(/^ndev-/, '')] = e.init?.env
-      if (s.hugeCheck && a[1].includes(s.hugeCheck)) return { value: { exitCode: s.hugeExit, stdout: `${'x'.repeat(STREAM_CAP - 5)}\nlast`, stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
-      if (s.checkHold) return (async () => { await s.checkHold; return s.failCheck && a[1]!.includes(s.failCheck) ? ok('lint: broken line', 3) : ok('passed') })() as never
-      if (s.failCheck && a[1].includes(s.failCheck)) return ok('lint: broken line', 3)
-      return ok('passed')
+      // A check that runs for a time on the clock. The host stops a run that outlasts its limit, and the call rejects.
+      const ms = Object.entries(s.checkMs).find(([name]) => a[1]!.includes(name))?.[1]
+      if (ms !== undefined && limit !== undefined && ms > limit) { s.now += limit; throw new Error(`ndev: $.process.run(bash) aborted: still running after ${limit}ms`) }
+      if (ms !== undefined) s.now += ms
+      return checkAnswer(a[1]) as never
     }
     if (a[0] === 'mkdir') return ok()
     if (a[0] === 'cmp') { if (s.cmpFails) return ok('', 2, s.cmpFails); return ok('', s.sameImages ? 0 : 1) }
@@ -1676,6 +1710,31 @@ test('a failed pre-ready check stops the push', async ($, on) => {
   const r = await tool($, 'finishedReview', { remembered: 'nothing: small', review: 'clean', deadcode: 'clean' })
   expect(r.isError).toBe(true)
   expect(w.pushes.length).toBe(0)
+})
+
+test('a pre-ready check that runs for 19 minutes runs to the end, and the push goes on', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing' } })
+  await start($, w)
+  w.s.sha = 'cccc'
+  w.s.checkMs = { 'pre-ready-check.sh': 19 * 60_000 }
+  const r = await tool($, 'finishedReview', { remembered: 'nothing: small', review: 'clean', deadcode: 'clean' })
+  expect(r.text).not.toContain('exited 127')
+  expect(r.isError).toBe(false)
+  expect(w.pushes.length).toBe(1)
+})
+
+test('a check that outruns the whole limit is stopped, and the refusal names the limit, the time and the log', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing' } })
+  await start($, w)
+  w.s.sha = 'cccc'
+  w.s.checkMs = { 'pre-ready-check.sh': 5 * 60 * 60_000 }
+  const r = await tool($, 'finishedReview', { remembered: 'nothing: small', review: 'clean', deadcode: 'clean' })
+  expect(r.isError).toBe(true)
+  expect(w.pushes.length).toBe(0)
+  expect(r.text).toContain('pre-ready-check.sh was still running after 60 minutes')
+  expect(r.text).toContain('ndev-pre-ready-check.sh.log')
+  expect(r.text).not.toContain('exited 127')
+  expect(w.s.checkStops).toEqual(['4242'])
 })
 
 test('a held commit can be pushed with an empty checkpoint after a human skips the review', async ($, on) => {
@@ -4303,7 +4362,7 @@ test('a long tool call shows its name, its step and the time under the prompt, a
   const line = w.statuses.at(-1)!
   expect(line).toContain(String(shownBefore))
   expect(line).toContain('checkpoint 2m 5s')
-  expect(line).toMatch(/fast-checks\.sh 2m 5s of at most 10m/)
+  expect(line).toMatch(/fast-checks\.sh 2m 5s of at most 1h 0m/)
   release()
   expect((await held).isError).toBe(false)
   expect(w.statuses.at(-1)).toBe(shownBefore)

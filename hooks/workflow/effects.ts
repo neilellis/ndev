@@ -90,6 +90,43 @@ export async function missingChecks($: EngineInterface, root: string): Promise<s
   return missing
 }
 
+// The host stops one process after 10 minutes, and a full check on a loaded machine can run for longer.
+// So run-check.sh starts the check detached, and each wait for it is one process shorter than that limit.
+export const CHECK_MAX_MS = 60 * 60_000
+const WAIT_PART_S = 540
+async function runLong($: EngineInterface, root: string, dir: string, script: string, args: string[], env: Record<string, string>): Promise<Ran & { stoppedAfterMs?: number }> {
+  const runner = `${$.plugin.root}/scripts/workflow/run-check.sh`
+  const started = await run($, ['bash', runner, 'start', dir, script, ...args], { cwd: root, env, timeoutMs: 30_000 })
+  const pid = started.stdout.trim()
+  if (started.exitCode !== 0 || !/^\d+$/.test(pid)) return { exitCode: started.exitCode || 1, stdout: '', stderr: `run-check.sh did not start ${script} (exit ${started.exitCode}): ${said(started)}` }
+  const at = await $.clock.now()
+  let exitCode: number | undefined
+  let stoppedAfterMs: number | undefined
+  while (exitCode === undefined) {
+    const left = CHECK_MAX_MS - ((await $.clock.now()) - at)
+    if (left <= 0) {
+      stoppedAfterMs = CHECK_MAX_MS - left
+      const stop = await run($, ['bash', runner, 'stop', pid], { cwd: root, timeoutMs: 30_000 })
+      if (stop.exitCode !== 0) $.ui.log(`ndev: run-check.sh stop ${pid} exited ${stop.exitCode}: ${said(stop)}`, { to: 'debug' })
+      exitCode = 124
+      break
+    }
+    const secs = Math.max(1, Math.min(WAIT_PART_S, Math.ceil(left / 1000)))
+    const waited = await run($, ['bash', runner, 'wait', dir, pid, String(secs)], { cwd: root, timeoutMs: (secs + 30) * 1000 })
+    if (waited.exitCode === 124) continue
+    if (waited.exitCode !== 0 || !/^\d+$/.test(waited.stdout.trim())) {
+      await run($, ['bash', runner, 'stop', pid], { cwd: root, timeoutMs: 30_000 })
+      return { exitCode: waited.exitCode || 1, stdout: '', stderr: `run-check.sh wait ${dir} ${pid} exited ${waited.exitCode}, so the check (pid ${pid}) was stopped: ${said(waited)}` }
+    }
+    exitCode = Number(waited.stdout.trim())
+  }
+  // cat through the host keeps the first 4 MiB of each stream and says when it cut, as a direct run did.
+  const out = await run($, ['bash', runner, 'out', dir], { cwd: root, timeoutMs: 60_000 })
+  const err = await run($, ['bash', runner, 'err', dir], { cwd: root, timeoutMs: 60_000 })
+  const stderr = stoppedAfterMs === undefined ? err.stdout : `${err.stdout}\n[stopped by the tool after ${Math.round(stoppedAfterMs / 60_000)} minutes]`
+  return { exitCode, stdout: out.stdout, stderr, isStdoutTruncated: out.isStdoutTruncated, isStderrTruncated: err.isStdoutTruncated, ...(stoppedAfterMs === undefined ? {} : { stoppedAfterMs }) }
+}
+
 // Runs a check script. The engine runs git with the repository's hooks off, so these are the hooks.
 // When the base branch has the script, its version runs, so a branch cannot pass by editing its own
 // check. The return value notes a script that the base does not have, or that the branch changed.
@@ -112,15 +149,18 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   const mergeBase = merging ? await git(root, $, 'merge-base', `origin/${base}`, 'HEAD', 'MERGE_HEAD') : await git(root, $, 'merge-base', `origin/${base}`, 'HEAD')
   const env: Record<string, string> = mergeBase.exitCode === 0 && mergeBase.stdout.trim() ? { NDEV_MERGE_BASE: mergeBase.stdout.trim() } : {}
   const before = (await porcelain($, root)).join('\n')
-  const r = await withStep($, check, 600_000, () => run($, ['bash', script, ...args], { cwd: root, timeoutMs: 600_000, env }))
+  const r = await withStep($, check, CHECK_MAX_MS, () => runLong($, root, `${gitDir}/ndev-${check}.run`, script, args, env))
   const log = `${gitDir}/ndev-${check}.log`
   await $.fs.write(log, checkLog(r, path))
+  if (r.stoppedAfterMs !== undefined) {
+    throw new CheckFailed(`${path} was still running after ${CHECK_MAX_MS / 60_000} minutes, the most that a check may run, so the tool stopped it. Nothing was pushed. Repair: make the check faster, or run bash ${path} in a terminal to see where it spends the time, then call the tool again. Its output up to the stop is in the log: ${log}`, { path, exitCode: r.exitCode, log, output: r.stderr.trim() })
+  }
   if (r.exitCode !== 0) {
     const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').slice(-20).join('\n').slice(-4000)
     const cut = outputCut(r, path)
     const output = `${cut ? `${cut}\n` : ''}${tail}`
     const merge = merging ? ` A merge is in progress, so HEAD is the commit before the merge: a check that compares with \`git merge-base HEAD origin/${base}\` reads the old base. Repair: read the base from NDEV_MERGE_BASE=${env.NDEV_MERGE_BASE ?? '(git merge-base failed)'}, as ${base} merged in here.` : ''
-    throw new CheckFailed(`${path} exited ${r.exitCode} (a run longer than 10 minutes is stopped). Nothing was pushed.${merge} Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
+    throw new CheckFailed(`${path} exited ${r.exitCode}. Nothing was pushed.${merge} Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
   }
   const after = (await porcelain($, root)).join('\n')
   if (after !== before) throw new CheckFailed(`${path} passed but changed the working tree. Name the changed files in the tool call and call it again:\n${after}`, { path, exitCode: 0, log, output: after })

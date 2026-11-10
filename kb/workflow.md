@@ -441,7 +441,7 @@ To end a block with your answer, type `/unblock <message>`. The message is compu
 
 ## Progress during a long tool call
 
-A tool call can run for many minutes: a check script runs for up to 10, and `finishedReview` runs `pre-ready-check.sh`, `pre-push-check.sh` and a push. After 15 seconds, and every 15 seconds from then on, the status line under the prompt names the tool, its time, its step and the limit of that step, such as `dev: light · interactive · ndev finishedReview 4m 10s · pre-ready-check.sh 2m 5s of at most 10m`. The line goes back when the call ends. A wait tool and the interview have their own display and add nothing here. The line says what runs. It does not show the output of the script, which `$.process.run` gives only at the end: a hung script and a working one look the same until the limit.
+A tool call can run for many minutes: a check script runs for up to 60 (the host stops one process after 10, so `scripts/workflow/run-check.sh` starts the check detached and the tool waits for it in parts shorter than that), and `finishedReview` runs `pre-ready-check.sh`, `pre-push-check.sh` and a push. After 15 seconds, and every 15 seconds from then on, the status line under the prompt names the tool, its time, its step and the limit of that step, such as `dev: light · interactive · ndev finishedReview 4m 10s · pre-ready-check.sh 2m 5s of at most 1h 0m`. The line goes back when the call ends. A wait tool and the interview have their own display and add nothing here. The line says what runs. It does not show the output of the script, which `$.process.run` gives only at the end: a hung script and a working one look the same until the limit.
 
 ## Wait tools
 
