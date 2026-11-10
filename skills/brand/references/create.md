@@ -52,7 +52,7 @@ Write the config to the scratchpad:
 Work through the new site's `BRAND-TODO.md` from top to bottom. For each line:
 
 - **Tokens.** Write the project's values into `public/ds/tokens/*.css`. Keep the token names. They are a public interface, and the pages and tests use them. Add a token when the project has a value that no token holds. Remove a default token only when no page uses it.
-- **Derived data.** After you change a token, update the data that copies it: the `Swatch` hex values on the Colour page, `PAIRS`, `SPACE_SCALE`, `SPACE_PX` and `TypeScale` in `app/components/Specimens.tsx`. Calculate each contrast ratio again. Do not copy the old ratio.
+- **Derived data.** After you change a token, update the data that copies it: the `Swatch` hex values on the Colour page, and `SPACE_SCALE`, `SPACE_PX` and `TypeScale` in `app/components/Specimens.tsx`. Give each colour alias a dark value as well as a light one, in the three blocks of `colors.css`. The contrast table calculates its ratios from the tokens. Add a row to `PAIRS` in `lib/colors.ts` for each new text and background pair.
 - **Logo.** Put the project's logo SVG into `app/components/Wordmark.tsx` and its mark into `public/ds/assets/mark.svg`. Keep the `brand-*` class names, and update the Logo page's colour table.
 - **Components.** Change `public/ds/components.css` to match the project's markup and class names, so markup moves between the project and the guide unchanged.
 - **Content.** Replace the default examples with quotes from the project's real copy. Label invented layout text "Placeholder". Mark guidance that the project does not show as a recommendation. Replace each `placeholder.svg` with a project image, or delete the demo.

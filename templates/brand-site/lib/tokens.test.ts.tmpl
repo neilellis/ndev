@@ -8,7 +8,12 @@ let dir: string;
 
 beforeAll(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "tok-"));
-  await writeFile(path.join(dir, "colors.css"), ":root {\n  --white: #ffffff;\n  --blue-600: #2166ac;  /* BRAND */\n}\n");
+  await writeFile(
+    path.join(dir, "colors.css"),
+    ":root {\n  --white: #ffffff;\n  --blue-600: #2166ac;  /* BRAND */\n  --canvas: var(--white);\n}\n" +
+      "@media (prefers-color-scheme: dark) { :root { --canvas: #000000; } }\n" +
+      "@supports (color: light-dark(#000, #fff)) { :root { --canvas: light-dark(var(--white), #000000); } }\n",
+  );
   await writeFile(path.join(dir, "spacing.css"), "/* --ignored: 1px; */\n:root {\n  --space-1: 4px;\n  --radius-xs: 2px;\n}\n");
   await writeFile(path.join(dir, "elevation.css"), ":root {\n  --elevation-pane: 0 12px 35px #102b4a24;\n  --dur: 200ms;\n}\n");
 });
@@ -33,4 +38,10 @@ it("gives radius and motion tokens their own kinds and skips comments", async ()
   expect(all.find((t) => t.name === "--radius-xs")!.kind).toBe("radius");
   expect(all.find((t) => t.name === "--dur")!.kind).toBe("motion");
   expect(all.find((t) => t.name === "--ignored")).toBeUndefined();
+});
+
+it("lists a token set again for the dark scheme once, with its last value", async () => {
+  const colors = (await parseTokens(dir)).find((g) => g.file === "colors.css")!;
+  expect(colors.tokens.map((t) => t.name)).toEqual(["--white", "--blue-600", "--canvas"]);
+  expect(colors.tokens.find((t) => t.name === "--canvas")!.value).toBe("light-dark(var(--white), #000000)");
 });

@@ -4,7 +4,7 @@
 
 ## Values, from the project's source
 
-- [ ] Colours: `public/ds/tokens/colors.css`, then the `Swatch` hex values in `app/foundations/colour/page.mdx` and the `PAIRS` contrast table in `app/components/Specimens.tsx`.
+- [ ] Colours: `public/ds/tokens/colors.css`, light values and the night ramp for the dark scheme, then the `Swatch` hex values in `app/foundations/colour/page.mdx`. The contrast table reads the tokens. Add a row to `PAIRS` in `lib/colors.ts` for each new text and background pair; `npm test` fails on a pair below AA in either scheme.
 - [ ] Gradients: `public/ds/tokens/gradients.css`.
 - [ ] Type: `public/ds/tokens/typography.css` and `fonts.css`, the font files in `public/ds/assets/fonts/`, and `TypeScale` in `app/components/Specimens.tsx`.
 - [ ] Space and layout: `public/ds/tokens/spacing.css`, and `SPACE_SCALE` and `SPACE_PX` in `app/components/Specimens.tsx`.

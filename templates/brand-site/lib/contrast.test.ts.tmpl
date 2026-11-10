@@ -1,5 +1,9 @@
 import { it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { contrastRatio, rate } from "./contrast";
+import { PAIRS, schemeColors } from "./colors";
+import { TOKENS_DIR } from "./ds";
 
 it("matches known WCAG ratios", () => {
   expect(contrastRatio("#000", "#fff")).toBeCloseTo(21, 1);
@@ -15,4 +19,28 @@ it("rates ratios against WCAG thresholds", () => {
 
 it("rejects values that are not hex colours", () => {
   expect(() => contrastRatio("navy", "#fff")).toThrow();
+});
+
+const colors = schemeColors(readFileSync(path.join(TOKENS_DIR, "colors.css"), "utf8"));
+
+for (const scheme of ["light", "dark"] as const) {
+  it(`every brand pairing meets its WCAG minimum in the ${scheme} scheme`, () => {
+    const failures = PAIRS.map((p) => ({ p, ratio: contrastRatio(colors[scheme](p.fg), colors[scheme](p.bg)) }))
+      .filter(({ p, ratio }) => ratio < (p.level === "text" ? 4.5 : 3))
+      .map(({ p, ratio }) => `${p.fg} on ${p.bg}: ${ratio.toFixed(2)}:1`);
+    expect(failures).toEqual([]);
+  });
+}
+
+it("gives browsers without light-dark() the same dark values", () => {
+  const differ = colors.semantic.filter((t) => colors.fallbackDark(t) !== colors.dark(t));
+  expect(differ).toEqual([]);
+});
+
+it("keeps the light scheme's base values under light-dark()", () => {
+  // The first :root block is what browsers with neither light-dark() nor a dark preference use.
+  const css = readFileSync(path.join(TOKENS_DIR, "colors.css"), "utf8");
+  const baseOnly = schemeColors(css.replace(/@supports[\s\S]*$/, "@supports (color: light-dark(#000, #fff)) { :root { } }"));
+  const differ = colors.semantic.filter((t) => baseOnly.light(t) !== colors.light(t));
+  expect(differ).toEqual([]);
 });
