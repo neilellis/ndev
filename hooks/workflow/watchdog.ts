@@ -24,7 +24,8 @@ const NO_SESSION = /is not available in this mode: no session is bound/
 const TURN_END_LIMIT = 3 // Turn ends with no progress before the block.
 const IDLE_LIMIT = 1 // Idle nudges with no progress before the block.
 
-const activity = atom({ plugin: 'ndev', key: 'workflowActivity' } as const, { at: 0, isTurnRunning: false }, { shape: 'workflow-activity-1' })
+// turnId is the turn that runs now, so the end of an older turn does not mark a newer one as ended.
+const activity = atom({ plugin: 'ndev', key: 'workflowActivity' } as const, { at: 0, isTurnRunning: false } as { at: number; isTurnRunning: boolean; turnId?: string }, { shape: 'workflow-activity-2' })
 const checkRead = atom({ plugin: 'ndev', key: 'workflowCheckRead' } as const, { at: 0 }, { shape: 'workflow-check-read-1' })
 // What the last tick did or why it did nothing. /flow status shows it, so a quiet watcher can be explained.
 const watchNote = atom({ plugin: 'ndev', key: 'workflowWatchNote' } as const, { at: 0, why: 'the watcher has not run yet' }, { shape: 'workflow-watch-note-1' })
@@ -135,7 +136,7 @@ async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | u
   })
 }
 
-export async function workflowTurn($: EngineInterface, e: { reason?: string; agentId?: string; answer?: string }, project: LoadedConfig | undefined): Promise<void> {
+export async function workflowTurn($: EngineInterface, e: { reason?: string; agentId?: string; answer?: string; turnId?: string }, project: LoadedConfig | undefined): Promise<void> {
   if (e.agentId) {
     // The agent may be on another issue by now, so the search covers each record in the worktree.
     const wf = project ? await recordOfReviewer($, (await boundRoot($)) ?? project.root, e.agentId) : undefined
@@ -143,6 +144,13 @@ export async function workflowTurn($: EngineInterface, e: { reason?: string; age
     return
   }
   const now = await $.clock.now()
+  // The turn-end handlers before this one can take seconds, and a queued prompt can start the next turn
+  // meanwhile. That turn is still running: a reminder now would reach the model one turn late.
+  const running = await read($, activity)
+  if (running.isTurnRunning && running.turnId && e.turnId && running.turnId !== e.turnId) {
+    await note($, `quiet: the turn ${running.turnId} started before the end of the turn ${e.turnId} was checked, so no reminder went out; the end of ${running.turnId} checks again`)
+    return
+  }
   await update($, activity, () => ({ at: now, isTurnRunning: false }))
   // An aborted turn is the human stepping in, and an error is for the human to see.
   if (e.reason !== 'answer') return
@@ -258,7 +266,7 @@ export async function startWatchdog($: EngineInterface, project: () => LoadedCon
 
 export const workflowWatchdog = (on: Parameters<Register>[0]) => {
   on('turn.start', async ($, e, next) => {
-    if (!e.agentId) await update($, activity, a => ({ ...a, isTurnRunning: true }))
+    if (!e.agentId) await update($, activity, a => ({ ...a, isTurnRunning: true, turnId: e.turnId }))
     return next(e)
   })
 }

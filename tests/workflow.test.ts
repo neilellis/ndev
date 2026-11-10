@@ -76,7 +76,7 @@ const engine = (on: On, opts: Opts = {}) => {
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
-    duringDiff: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
+    duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, removed: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
@@ -123,7 +123,8 @@ const engine = (on: On, opts: Opts = {}) => {
   on('session.compact', (_, e) => { compacts.push(e); return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never })
   // A timer runs after the command's hook has returned, as in the host, which refuses a prompt before that.
   on('clock.after', () => new Promise(resolve => { pendingAfters.push(() => resolve({ value: undefined })) }))
-  on('turn.complete', () => ({ text: 'text' }) as never)
+  // The turn-end handlers that run before the workflow's own (fix-all-prs, walk-doc, dead waits) run after this one.
+  on('turn.complete', async () => { const hold = s.duringTurnEnd; s.duringTurnEnd = undefined; if (hold) await hold(); return { text: 'text' } as never })
   for (const name of ['Edit', 'Bash'] as const) on('tool.call', { tool: name }, () => ({ result: 'ok' }) as never)
   on('prompt.compose', () => ({ sections: [] }))
   on('prompt.read', () => ({ value: { text: s.draft, cursor: 0 } }))
@@ -758,6 +759,19 @@ test('a turn end says nothing when blocked, done, typed over, aborted or a helpe
   await tool($, 'blocked', { message: 'help' })
   await turnEnds($)
   expect(w.prompts).toEqual([])
+})
+
+// The turn-end handlers before the reminder can take seconds on a loaded machine. A queued prompt (a
+// plugin message) can start the next turn meanwhile, and the turn end of the old turn must not mark it
+// as ended: the reminder of #485 said "interviewing" one turn late, after blocked had moved it.
+test('a turn that starts while the earlier turn-end handlers run gets no stale reminder queued behind it', async ($, on) => {
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  const w = engine(on)
+  await start($, w)
+  w.s.duringTurnEnd = () => $.turn.start({ text: 'The ndev plugin sent a message', turnId: 't2' })
+  await turnEnds($)
+  expect(w.prompts).toEqual([])
+  expect(await command($, 'status')).toContain('quiet: the turn t2 started before the end of the turn t1 was checked')
 })
 
 // The host queues a prompt that comes while a turn runs, and gives it to the model only when that turn
