@@ -859,6 +859,34 @@ test('a read of GitHub that fails is said, not read as a clean PR, and the remin
   expect(w.prompts.length).toBe(1)
 })
 
+// #679 in fcc-proto: another writer saved the PR record while the idle check read GitHub, and the idle
+// check's own save then failed with "set-workflow exited 5 ... at revision 6, and this writer expected 5".
+test('an idle check that loses the save to another writer tries again at the next tick, and reports no bug', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.staleSaves = 1
+  await idle(w)
+  expect(w.toasts.join()).not.toContain('the idle check failed')
+  expect(w.prompts).toHaveLength(0)
+  await poll(w, 61_000)
+  expect(w.prompts).toHaveLength(1)
+  expect(w.toasts.join()).not.toContain('exited 5')
+})
+
+test('an idle check that loses its save on each tick says so, with the error and the repair', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.staleSaves = 99
+  await idle(w)
+  await poll(w, 61_000)
+  expect(w.toasts.join()).not.toContain('the idle check failed')
+  await poll(w, 61_000)
+  expect(w.toasts.join()).toContain('the idle check failed')
+  expect(w.toasts.join()).toContain('exited 5')
+  expect(w.toasts.join()).toContain('on 3 ticks in a row')
+  expect(w.prompts).toHaveLength(0)
+})
+
 test('idle under a draft in the prompt box makes no GitHub call', async ($, on) => {
   const w = engine(on)
   await start($, w)
@@ -1042,6 +1070,18 @@ test('a failed check reaches the agent as soon as it is read, with no compaction
   expect(w.prompts[0]).toContain('unit tests (failure)')
   expect(w.prompts[0]).toContain('checkpoint')
   expect(w.compacts).toEqual([])
+})
+
+test('a read of the checks that loses its save to another writer reads again at the next tick', async ($, on) => {
+  const w = engine(on, { wf: { state: 'ci' }, checks: CHECKS({ name: 'unit tests', conclusion: 'failure' }) })
+  await start($, w)
+  w.s.staleSaves = 1
+  await poll(w)
+  expect(w.toasts.join()).not.toContain('the idle check failed')
+  expect(w.prompts).toHaveLength(0)
+  await poll(w, 61_000)
+  expect(w.prompts).toHaveLength(1)
+  expect(w.prompts[0]).toContain('unit tests')
 })
 
 test('a merge conflict reaches the agent while the checks still run', async ($, on) => {

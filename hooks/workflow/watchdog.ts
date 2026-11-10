@@ -12,7 +12,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { LoadedConfig } from '../config'
 import { git, readChecks, readPrHealth } from './effects'
 import type { Checks, PrHealth } from './effects'
-import { blockWorkflow, boundRoot, factsFor, isInterviewRunning, labelOf, loadWorkflow, moved, recordOfReviewer, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
+import { blockWorkflow, boundRoot, factsFor, isInterviewRunning, labelOf, loadWorkflow, isStaleWrite, moved, recordOfReviewer, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
 import type { Workflow } from './tools'
 import { liveName, shownValue, writeLive } from './live'
 
@@ -23,6 +23,7 @@ const TICK_MS = 60_000
 const NO_SESSION = /is not available in this mode: no session is bound/
 const TURN_END_LIMIT = 3 // Turn ends with no progress before the block.
 const IDLE_LIMIT = 1 // Idle nudges with no progress before the block.
+const LOST_SAVE_LIMIT = 3 // Ticks in a row that lose their save to another writer before it shows as a fault.
 
 // turnId is the turn that runs now, so the end of an older turn does not mark a newer one as ended.
 const activity = atom({ plugin: 'ndev', key: 'workflowActivity' } as const, { at: 0, isTurnRunning: false } as { at: number; isTurnRunning: boolean; turnId?: string }, { shape: 'workflow-activity-2' })
@@ -159,14 +160,37 @@ export async function workflowTurn($: EngineInterface, e: { reason?: string; age
   if (wf && wf.state !== 'done' && !(await watchesChecks($, wf))) await nudge($, wf, project, 'turn')
 }
 
-async function tick($: EngineInterface, project: () => LoadedConfig | undefined): Promise<void> {
+// A check reads the record, then reads GitHub and git, then saves. A turn that starts meanwhile, or another
+// session or hook, can save the record first: the save exits 5 and changes nothing. That is no fault. The
+// times that the check set go back, so the next tick reads the record again and the reminder is not lost.
+async function tick($: EngineInterface, project: () => LoadedConfig | undefined, lost: { saves: number }): Promise<void> {
+  const now = await $.clock.now()
+  const idleFrom = (await read($, activity)).at
+  const checkedAt = (await read($, checkRead)).at
+  try {
+    await check($, project, now)
+    lost.saves = 0
+  } catch (error) {
+    if (!isStaleWrite(error)) throw error
+    lost.saves += 1
+    if (lost.saves >= LOST_SAVE_LIMIT) {
+      const tries = lost.saves
+      lost.saves = 0
+      throw new Error(`${(error as Error).message} The idle check read the record again on ${tries} ticks in a row, and each time another writer saved it first. Repair: find the writer that saves this record without a stop; the check tries again after the next idle period.`)
+    }
+    await update($, activity, a => (a.at === now ? { ...a, at: idleFrom } : a))
+    await update($, checkRead, c => (c.at === now ? { at: checkedAt } : c))
+    await note($, `quiet: another writer saved the record during this check, so the check changed nothing and the next tick reads it again: ${(error as Error).message.slice(0, 240)}`)
+  }
+}
+
+async function check($: EngineInterface, project: () => LoadedConfig | undefined, now: number): Promise<void> {
   const a = await read($, activity)
   if (a.isTurnRunning) return note($, 'quiet: a turn runs')
   const watched = await ready($, project())
-  if (watched && (await watchesChecks($, watched))) return watchChecks($, watched, project(), a.at)
+  if (watched && (await watchesChecks($, watched))) return watchChecks($, watched, project(), a.at, now)
   const raw = await $.env.get('NDEV_WORKFLOW_IDLE_MS')
   const limit = raw && Number(raw) > 0 ? Number(raw) : IDLE_MS
-  const now = await $.clock.now()
   if (now - a.at < limit) return note($, `idle for ${Math.round((now - a.at) / 1000)} s of ${Math.round(limit / 1000)} s`)
   const wf = await ready($, project())
   if (!wf) return
@@ -186,10 +210,9 @@ async function tick($: EngineInterface, project: () => LoadedConfig | undefined)
 
 // One read of the PR and one of the checks, once in each check period. Pending checks make no
 // prompt until they stick; a failed check or a conflict makes one at once, with the checks running.
-async function watchChecks($: EngineInterface, wf: Workflow, project: LoadedConfig | undefined, activeAt: number): Promise<void> {
+async function watchChecks($: EngineInterface, wf: Workflow, project: LoadedConfig | undefined, activeAt: number, now: number): Promise<void> {
   const raw = await $.env.get('NDEV_WORKFLOW_CHECK_MS')
   const limit = raw && Number(raw) > 0 ? Number(raw) : CHECK_MS
-  const now = await $.clock.now()
   const last = await read($, checkRead)
   if (now - Math.max(last.at, activeAt) < limit) return note($, `watching: next read of the checks in ${Math.round((limit - (now - Math.max(last.at, activeAt))) / 1000)} s`)
   // The time goes first, so a failed read waits for the next period.
@@ -253,9 +276,10 @@ export async function promptSince($: EngineInterface, since: number): Promise<bo
 export async function startWatchdog($: EngineInterface, project: () => LoadedConfig | undefined): Promise<void> {
   const now = await $.clock.now()
   await update($, activity, a => ({ ...a, at: now }))
+  const lost = { saves: 0 }
   void $.clock.every(TICK_MS, async () => {
     try {
-      await tick($, project)
+      await tick($, project, lost)
     } catch (error) {
       // The timer can fire in a process with no session. The host says to carry on: the next tick tries again.
       if (NO_SESSION.test(String(error))) return note($, 'quiet: no session is bound in this process yet')

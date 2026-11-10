@@ -2627,7 +2627,7 @@ async function waitCheck($: EngineInterface, name: string, a: Args, root: string
   }
 }
 
-const isStaleWrite = (error: unknown) => error instanceof Error && error.message.includes('set-workflow exited 5')
+export const isStaleWrite = (error: unknown) => error instanceof Error && error.message.includes('set-workflow exited 5')
 
 // A save of a record that another writer changed first exits 5 and changes nothing. The change is read and made again.
 // After the last try the error names the record and both revisions, and its repair.
