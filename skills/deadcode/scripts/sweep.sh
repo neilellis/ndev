@@ -58,13 +58,16 @@ scan() {  # scan <checkout-dir> <label> -> sorted "DCnn name path" lines
   ( cd "$1" && uv run --with deadcode deadcode "${ROOTS[@]}" ) \
     > "$TMP/$2.raw" 2> "$TMP/$2.err"
   status=$?
-  if [ "$status" -ne 0 ]; then
+  sed 's/\x1b\[[0-9;]*m//g' "$TMP/$2.raw" > "$TMP/$2.plain"
+  # deadcode exits 1 when it reports a finding, so 1 is a measurement, not a failure,
+  # but only when the output holds a finding. Any other status is a failed scan.
+  if [ "$status" -ne 0 ] && { [ "$status" -ne 1 ] || ! grep -qE ': DC[0-9]+ ' "$TMP/$2.plain"; }; then
     echo "sweep.sh: deadcode scan at $2 exited $status; no comparison was made." >&2
     echo "  A root that is absent at the base also fails here; pass only roots present at both." >&2
-    sed 's/^/  deadcode: /' "$TMP/$2.err" >&2
+    sed 's/^/  deadcode stderr: /' "$TMP/$2.err" >&2
+    sed 's/^/  deadcode stdout: /' "$TMP/$2.plain" | head -20 >&2
     return 2
   fi
-  sed 's/\x1b\[[0-9;]*m//g' "$TMP/$2.raw" > "$TMP/$2.plain"
   sed -nE "s/^([^:]+):([0-9]+):[0-9]+: (DC[0-9]+) [A-Za-z ]*${tick}([^${tick}]+)${tick}.*/\3 \4 \1/p" \
     "$TMP/$2.plain" | sort -u
   # Zero parsed findings is real only when deadcode says so ("Well done!"). Any other
