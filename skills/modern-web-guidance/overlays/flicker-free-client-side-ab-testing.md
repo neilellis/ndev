@@ -1,0 +1,1 @@
+Use `async` with `blocking="render"` for a small script that sets a `data-` attribute on `<html>`, and key the CSS to it. Do not use the `opacity: 0` fallback: content must show when scripts fail. Prefer server-side variants.

@@ -1,0 +1,1 @@
+Apply the shadow and gradient recipes only through the project's elevation and brand tokens: a layered shadow becomes a token value, not a per-component shadow. A gradient is allowed only when the brand defines it. Use `in oklab` / `in oklch` with the guide's `@supports` fallback.

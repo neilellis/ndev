@@ -1,0 +1,1 @@
+Do not use `image-set()` for icons. Use an SVG from the project's icon set as a `mask-image`, with `background-color` set to a token such as `currentColor`, so it follows the theme. Use `image-set()` only for decorative raster art that is the same in both themes.

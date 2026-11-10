@@ -1,0 +1,1 @@
+In a React app, keep the scroll lock that the shadcn dialog (Radix) applies. Do not remove it to follow this guide. Add the overscroll part on top of it, with no feature check: `overscroll-behavior: contain` on the dialog content and the overlay.

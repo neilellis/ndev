@@ -40,6 +40,7 @@ These rules come from the plugin. Each line links to its full page. You must not
 | Keep Claude and Codex rules in step | `harness-sync` |
 | Lint the project wiki | `wiki-lint`, `dev-wiki` |
 | Resolve a merge conflict | `resolving-merge-conflicts` |
+| Write or change HTML, CSS or client-side JavaScript | `modern-web-guidance` |
 
 ## Commands
 
@@ -80,3 +81,4 @@ bash scripts/push-checked.sh -u origin HEAD          # the only way to push
 <!-- Rules that apply to this project only. Keep each to one line, and link to the wiki page that explains it. -->
 
 - <rule> → `<wiki page>`
+- **Browser support:** <for example: Baseline Widely available features with no fallback; Newly available features with feature detection and a fallback of at most 20 lines and no new dependency>. `modern-web-guidance` reads this line.

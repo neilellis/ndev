@@ -1,0 +1,1 @@
+In a React app, use the shadcn `select` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` for options with icons and descriptions. Do not use `base-select` rich options there. Use the accessibility points for any rich list: a visible selected-state indicator, a visible label, and no `aria-label` in place of the option text.

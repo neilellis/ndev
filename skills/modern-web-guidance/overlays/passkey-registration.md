@@ -1,0 +1,1 @@
+Keep the error branches, but never use `alert()`. Show the message inline, beside the Create passkey button (the shadcn `alert`, danger variant), and name the next step. `NotAllowedError` needs no message. When passkeys are not supported, hide the button and show the text alternative, as in `passkey-management`.

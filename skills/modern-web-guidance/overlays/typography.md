@@ -1,0 +1,1 @@
+Use all of this guide. It changes one of our rules: the height tokens set `min-block-size`, not `height`, on controls that hold text (buttons, badges, tabs, chips), so text can grow under WCAG 1.4.12 text spacing. Font sizes are in `rem`. Our line length is 70ch where `responsive-check` checks it.

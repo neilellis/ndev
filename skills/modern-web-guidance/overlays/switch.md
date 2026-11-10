@@ -1,0 +1,1 @@
+In a React app, do not hand-write this control. Use the shadcn `switch` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`, only for a setting that takes effect at once. Do not use the native `switch` attribute and do not install `input-switch-polyfill`: it is not in `${CLAUDE_PLUGIN_ROOT}/kb/libraries.md`.
