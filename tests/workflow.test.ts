@@ -1497,6 +1497,32 @@ test('checkpoint refuses a worktree that followUp did not start, and names those
   expect(w.s.commitDirs).toEqual([])
 })
 
+// The session can lose its link to the record that holds the followUp entry (a lost hooks worker, a
+// restart). The agent's own record, which only followUp writes, still says that followUp started it.
+test('a followUp agent commits through checkpoint when the session no longer sees the followUp entry: its own record says followUp started it', async ($, on) => {
+  const w = engine(on, { files: { [`${CLAIMED}/.neil-dev.issue-31.json`]: JSON.stringify({ version: 1, issue: 31, workflow: flow({ issue: 31, root: CLAIMED, prs: [], owner: undefined, followUpOf: 7 }) }) } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { issue: 31, message: 'm', files: ['a.ts'], ...AGENT })
+  expect(r.text).not.toContain('Refused')
+  expect(r.isError).toBe(false)
+  expect(w.s.commitDirs).toEqual([CLAIMED])
+})
+
+test('checkpoint still refuses a worktree whose record followUp did not write, and says where it looked', async ($, on) => {
+  const elsewhere = '/claimed/issue-9'
+  const w = engine(on, { files: { [`${elsewhere}/.neil-dev.issue-9.json`]: JSON.stringify({ version: 1, issue: 9, workflow: flow({ issue: 9, root: elsewhere, prs: [], owner: undefined }) }) } })
+  await startFollowUp($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { issue: 9, message: 'm', files: ['a.ts'], agentId: 'agent-9', worktree: elsewhere })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('did not start an agent')
+  expect(r.text).toContain(`${elsewhere}/.neil-dev.issue-9.json`)
+  expect(r.text).toContain(ROOT)
+  expect(r.text).toContain(CLAIMED)
+  expect(w.s.commitDirs).toEqual([])
+})
+
 test('the worktree of a followUp agent is on the record, so another session can read it after a restart', async ($, on) => {
   const w = engine(on)
   await startFollowUp($, w)

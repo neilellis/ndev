@@ -1128,13 +1128,18 @@ async function followUpAgentWorktrees($: EngineInterface): Promise<string[]> {
   return [...issues, ...prs].flatMap(wf => (wf.followUps ?? []).flatMap(f => (f.mode === 'subagent' && f.worktree ? [f.worktree] : [])))
 }
 
-async function followUpCheckpoint($: EngineInterface, { args }: Ctx): Promise<string> {
+async function followUpCheckpoint($: EngineInterface, { args, project }: Ctx): Promise<string> {
   const root = text(args, 'worktree').replace(/\/$/, '')
   const known = await followUpAgentWorktrees($)
   const hotfix = (await read($, hotfixWorktrees)).find(h => h.dir === root)
   if (hotfix) throw new Refuse(`Refused: ${root} is the worktree of a hotfix, and checkpoint does not commit there. Nothing was committed. Repair: use plain git with -C and the full path: git -C ${root} commit, then git -C ${root} push origin ${hotfix.branch}.`)
-  if (!known.includes(root)) throw new Refuse(`Refused: followUp did not start an agent in ${root}. Its worktrees in this session: ${known.join(', ') || 'none'}. Nothing was committed.`)
   const wf = await loadWorkflow($, root, Number(args.issue))
+  // Only followUp writes followUpOf, so the agent's own record proves that followUp started it, also
+  // when this session no longer reads the record that holds the followUp entry (a lost hooks worker).
+  if (!known.includes(root) && wf?.followUpOf === undefined) {
+    const bound = (await read($, workflowRoot)) ?? project?.root
+    throw new Refuse(`Refused: followUp did not start an agent in ${root}: ${root}/${interviewFileName(Number(args.issue))} ${wf ? `holds issue #${wf.issue} with no followUpOf` : `holds no workflow for issue #${String(args.issue)}`}, and the followUp entries of this session's workflow in ${bound ?? 'no worktree'} name ${known.join(', ') || 'no worktree'}. Nothing was committed. Repair: the main agent calls followUp again with the same text.`)
+  }
   if (!wf) throw new Refuse(`Refused: ${root}/${RECORD} holds no workflow for issue #${String(args.issue)}. Nothing was committed. Repair: the main agent calls followUp again with the same text.`)
   const message = text(args, 'message')
   if (!message) throw new Refuse('Refused: checkpoint needs a commit message.')
