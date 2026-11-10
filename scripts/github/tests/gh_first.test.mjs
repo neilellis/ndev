@@ -28,7 +28,7 @@ if (rule.err) process.stderr.write(rule.err)
 process.exit(rule.exit ?? 0)
 `)
   chmodSync(stub, 0o755)
-  const env = { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, GH_REPO: opts.noRepo ? '' : 'o/r' }
+  const env = { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, GH_REPO: opts.noRepo ? '' : 'o/r', ...opts.env }
   const r = spawnSync('bash', [GHSH, ...args], { cwd: opts.cwd ?? dir, env, encoding: 'utf8' })
   const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []
   return { code: r.status, out: r.stdout, err: r.stderr, calls, lines: r.stdout.trim().split('\n').filter(Boolean) }
@@ -418,4 +418,49 @@ test('pr-search gives one shape by gh and by REST, with the body and the merge t
   assert.equal(json(viaGh).merged, true)
   assert.equal(json(viaGh).merged_at, 'm')
   assert.ok(viaRest.calls[1].includes('is:pr Closes #3 in:body'), viaRest.calls[1])
+})
+
+// A stacked PR: gh pr merge and the plain REST merge both refuse it. Only merge-async works.
+const STACKED_GH = 'GraphQL: This pull request is part of a stack and must be merged using the asynchronous merge REST API (mergePullRequest) (mergePullRequest)'
+const stackedPr = position => JSON.stringify({ ...REST_PR, draft: false, head: { sha: 'h1', ref: 'feat' }, stack: { position, size: 3 } })
+const stackRules = (position, polls) => [
+  { match: 'pr merge 12', err: STACKED_GH, exit: 1 },
+  { match: 'merge-async/u-1', out: polls },
+  { match: 'pulls/12/merge-async', out: '{"id":"u-1","status":"pending"}' },
+  { match: 'pulls/12/merge', err: 'gh: Merging stacked PRs via this endpoint is not supported. Use the asynchronous merge endpoint instead. (HTTP 403)', exit: 1 },
+  { match: 'api repos/o/r/pulls/12', out: stackedPr(position) },
+]
+const fast = { GH_MERGE_ASYNC_PERIOD: '0' }
+
+test('pr-merge merges a stacked PR at the bottom of its stack through merge-async and waits for the result', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], stackRules(1, '{"id":"u-1","status":"merged"}'), { env: fast })
+  assert.equal(r.code, 0, r.err)
+  const start = r.calls.find(c => c.includes('pulls/12/merge-async') && c.includes('-X PUT'))
+  assert.ok(start, r.calls.join('\n'))
+  for (const f of ['sha=h1', 'merge_method=merge', 'merge_action=direct_merge']) assert.ok(start.includes(f), start)
+  assert.ok(r.calls.some(c => c.includes('pulls/12/merge-async/u-1')), r.calls.join('\n'))
+  assert.ok(!r.calls.some(c => c.includes('-X PUT repos/o/r/pulls/12/merge ')), 'the sync REST merge is not tried for a stack')
+  assert.doesNotMatch(r.err, /rate_limit/)
+})
+
+test('pr-merge refuses a stacked PR above the bottom unless --stack is given, because it merges the PRs below', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], stackRules(2, '{"status":"merged"}'), { env: fast })
+  assert.notEqual(r.code, 0)
+  assert.match(r.err, /2 of 3/)
+  assert.match(r.err, /--stack/)
+  assert.doesNotMatch(r.err, /rate_limit/)
+  assert.ok(!r.calls.some(c => c.includes('merge-async')), r.calls.join('\n'))
+  const ok = ghsh(['pr-merge', '12', '--method', 'merge', '--stack'], stackRules(2, '{"status":"merged"}'), { env: fast })
+  assert.equal(ok.code, 0, ok.err)
+})
+
+test('pr-merge reports a failed or queued merge-async result with GitHub words, and not as merged', () => {
+  const failed = ghsh(['pr-merge', '12', '--method', 'merge'], stackRules(1, '{"status":"failed","message":"Required status check is failing"}'), { env: fast })
+  assert.notEqual(failed.code, 0)
+  assert.match(failed.err, /failed/)
+  assert.match(failed.err, /Required status check is failing/)
+  assert.match(failed.err, /u-1/)
+  const queued = ghsh(['pr-merge', '12', '--method', 'merge'], stackRules(1, '{"status":"enqueued"}'), { env: fast })
+  assert.notEqual(queued.code, 0)
+  assert.match(queued.err, /merge queue/)
 })

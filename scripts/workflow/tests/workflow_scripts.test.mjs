@@ -87,7 +87,9 @@ const merge = (pr, mergeBody = 'true', ...args) => {
   const dir = folder()
   writeFileSync(join(dir, 'pr.json'), JSON.stringify(ghPr(pr)))
   writeFileSync(join(dir, 'merged.json'), JSON.stringify(ghPr({ ...pr, merged: true, merge_commit_sha: 'abc' })))
+  writeFileSync(join(dir, 'rest.json'), JSON.stringify({ number: 12, state: 'open', head: { sha: 'h1', ref: 'b' }, base: { ref: 'main' }, stack: pr.stack ?? null }))
   program(dir, 'gh', `echo "$*" >> "${dir}/gh.log"
+if [[ "$*" == "api repos/o/r/pulls/12" ]]; then cat "${dir}/rest.json"; exit 0; fi
 if [[ "$*" == "pr merge"* || "$*" == *"-X PUT"* ]]; then ${mergeBody}; exit $?; fi
 if grep -q "pr merge" "${dir}/gh.log"; then cat "${dir}/merged.json"; else cat "${dir}/pr.json"; fi`)
   const r = spawnSync('bash', [MERGE, '12', '--repo', 'o/r', ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } })
@@ -137,6 +139,26 @@ test('a merge GitHub refuses exits 1 and prints its reason', () => {
   assert.equal(r.status, 1)
   assert.match(r.stderr, /refused the merge of PR #12 of o\/r/)
   assert.match(r.stderr, /Pull Request is not mergeable/)
+})
+
+// GitHub refuses gh pr merge and PUT .../merge for a stacked PR; only merge-async merges it.
+const STACKED = `case "$*" in
+  "pr merge"*) echo "GraphQL: This pull request is part of a stack and must be merged using the asynchronous merge REST API" >&2; exit 1 ;;
+  *merge-async*) echo '{"id":"u-1","status":"merged"}' ;;
+  *) echo "Merging stacked PRs via this endpoint is not supported. (HTTP 403)" >&2; exit 1 ;;
+esac`
+
+test('a stacked PR above the bottom of its stack is refused unless --stack is given, and then merged through merge-async', () => {
+  const stacked = { ...OPEN_PR, stack: { position: 2, size: 2 } }
+  const refused = merge(stacked, STACKED)
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /2 of 2 in a stack/)
+  assert.match(refused.stderr, /--stack/)
+  assert.doesNotMatch(refused.stderr, /rate_limit/)
+  const r = merge(stacked, STACKED, '--stack')
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(JSON.parse(r.stdout).sha, 'abc')
+  assert.ok(r.calls.some(c => c.includes('pulls/12/merge-async') && c.includes('sha=h1')), r.calls.join('\n'))
 })
 
 test('bad usage exits 2 and calls nothing', () => {

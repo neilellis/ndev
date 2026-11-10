@@ -28,6 +28,8 @@ The `addMigration` workflow tool lists each migration in a marked section of the
 
    It prints JSON with `sha`, `base` and `migrations`. If it exits non-zero, report its message and stop. Nothing has merged.
 
+   A stacked PR merges through GitHub's merge-async endpoint, which also merges each open PR below it in the stack. So merge.sh refuses a PR above the bottom of its stack. Ask the human whether to merge the PRs below it too; only on a yes, run it again with `--stack`.
+
 3. If `migrations` is empty, report the merge and stop.
 
 4. Run each migration from the merged code, not from the branch. In the main checkout, stop if the tree is not clean. Then `git switch <base>` and `git pull --ff-only`. Check that each listed file exists.

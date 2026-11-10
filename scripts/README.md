@@ -88,5 +88,5 @@ Tests are in `<area>/tests/`. Run them after a change.
 | Script | What it does | Used by |
 |---|---|---|
 | `notify.sh` | Raises and withdraws the notification of a blocked workflow, with `alerter`, and flags the Orca worktree. A click opens the Orca terminal. Tests: `tests/workflow_scripts.test.mjs`. | `hooks/workflow/` |
-| `merge.sh` | Merges a PR through REST and prints its base and migrations as JSON. It is safe to run twice. Tests: `tests/workflow_scripts.test.mjs`. | `merge` skill, `done` |
+| `merge.sh` | Merges a PR through REST and prints its base and migrations as JSON. A stacked PR goes through merge-async, and one above the bottom of its stack needs `--stack`. It is safe to run twice. Tests: `tests/workflow_scripts.test.mjs`. | `merge` skill, `done` |
 | `fast-checks-template.sh` | The template for a project's `fast-checks.sh`: ruff, ty, oxlint and ast-grep on the named files. Tests: `tests/workflow_scripts.test.mjs`. | Copied to `scripts/ndev/workflow/` |

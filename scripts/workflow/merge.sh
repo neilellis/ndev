@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Merge one pull request through REST, and name the migrations to run after it.
 #
-# Usage: merge.sh <pr> [--repo owner/name] [--method merge|squash|rebase]
+# Usage: merge.sh <pr> [--repo owner/name] [--method merge|squash|rebase] [--stack]
+#
+# A stacked PR merges through GitHub's merge-async endpoint, which also merges each open PR below it.
+# So a PR above the bottom of its stack is refused unless --stack is given.
 #
 # Safe to run twice: a merged pull request is not merged again. A migration is a path in the
 # marked section of the PR body, written by the addMigration tool.
@@ -11,12 +14,13 @@
 set -euo pipefail
 
 die() { echo "merge.sh: $2" >&2; exit "$1"; }
-pr="" repo="${GH_REPO:-}" method=merge
+pr="" repo="${GH_REPO:-}" method=merge stack=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) repo="${2:?--repo needs owner/name}"; shift 2 ;;
     --method) method="${2:?--method needs merge, squash or rebase}"; shift 2 ;;
-    -*) die 2 "unknown option $1. Usage: merge.sh <pr> [--repo owner/name] [--method merge|squash|rebase]" ;;
+    --stack) stack=(--stack); shift ;;
+    -*) die 2 "unknown option $1. Usage: merge.sh <pr> [--repo owner/name] [--method merge|squash|rebase] [--stack]" ;;
     *) pr="$1"; shift ;;
   esac
 done
@@ -45,7 +49,7 @@ else
   state="$(jq -r .state <<<"$json")"
   [ "$state" = open ] || die 1 "PR #$pr of $repo is $state and not merged"
   [ "$(jq -r .draft <<<"$json")" = false ] || die 1 "PR #$pr of $repo is a draft. Repair: gh pr ready $pr --repo $repo"
-  bash "$GHSH" pr-merge "$pr" --method "$method" >&2 || die 1 "GitHub refused the merge of PR #$pr of $repo (exit $?), see above"
+  bash "$GHSH" pr-merge "$pr" --method "$method" ${stack[@]+"${stack[@]}"} >&2 || die 1 "GitHub refused the merge of PR #$pr of $repo (exit $?), see above"
   # The merge has happened, so a failed read here must not stop the migrations.
   if ! sha="$(bash "$GHSH" pr-read "$pr" | jq -er '.merge_commit_sha // empty')"; then
     echo "merge.sh: PR #$pr is merged, but its merge sha could not be read. Repair: gh pr view $pr --repo $repo --json mergeCommit" >&2
