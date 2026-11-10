@@ -452,8 +452,17 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   if (staged) {
     try {
       // The fast tools first: they name the line in seconds, before the slower script starts.
-      const stagedFiles = (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=d')).split('\n').filter(Boolean)
-      for (const note of [await checked($, wf, 'fast-checks.sh', stagedFiles), await checked($, wf, 'pre-commit-check.sh')]) {
+      let stagedFiles = (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=d')).split('\n').filter(Boolean)
+      // A merge stages all that the base brought in. A file whose staged version is the base's version
+      // is not this branch's change: its faults are the base's, so the fast checks leave it out.
+      if ((await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0) {
+        const differs = new Set((await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=d', 'MERGE_HEAD')).split('\n').filter(Boolean))
+        const fromBase = stagedFiles.filter(f => !differs.has(f))
+        stagedFiles = stagedFiles.filter(f => differs.has(f))
+        if (fromBase.length) notes.push(`A merge is in progress: ${fromBase.length} staged files came from the base unchanged, so fast-checks.sh did not check them, and a fault in them is the base's (baseline), not this branch's: ${fromBase.slice(0, 10).join(', ')}${fromBase.length > 10 ? ', …' : ''}.`)
+      }
+      const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles) : undefined
+      for (const note of [fast, await checked($, wf, 'pre-commit-check.sh')]) {
         if (note) notes.push(note)
       }
     } catch (error) {

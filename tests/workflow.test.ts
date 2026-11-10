@@ -77,7 +77,7 @@ const engine = (on: On, opts: Opts = {}) => {
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
-    merging: undefined as string | undefined, removed: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
+    merging: undefined as string | undefined, removed: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -225,6 +225,8 @@ const engine = (on: On, opts: Opts = {}) => {
       if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
       if (a[1] === 'diff' && line.includes('--cached --name-only --diff-filter=D')) return ok(s.removed.map(f => `${f}\n`).join(''))
       if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
+      // As real git does: the staged files that differ from MERGE_HEAD, so not those that the base brought in unchanged.
+      if (a[1] === 'diff' && line.includes('--cached --name-only --diff-filter=d MERGE_HEAD')) return ok(s.names.filter(f => !s.fromBase.includes(f)).map(f => `${f}\n`).join(''))
       if (a[1] === 'diff' && a[2] === 'HEAD' && s.duringDiff) { const hold = s.duringDiff; s.duringDiff = undefined; return hold().then(() => ok(s.diffText)) as never }
       if (a[1] === 'diff' && a[2] === 'HEAD') return ok(s.diffText)
       if (a[1] === 'diff') return ok('', s.staged ? 1 : 0)
@@ -1590,6 +1592,17 @@ test('started asks for fast-checks.sh, and says it holds the fast tools only', a
 test('started initialises the submodules of the worktree it claims', async ($, on) => {
   const w = engine(on, { wf: null, main: true, config: QUALITY })
   await start($, w)
+test('a commit that ends a merge of the base runs fast-checks.sh only on the files that differ from the base, and says so', async ($, on) => {
+  const w = engine(on, { names: ['mine.ts', 'PublishView.tsx', 'TrackedClaims.tsx'] })
+  await start($, w)
+  w.s.dirty = ['M  mine.ts', 'M  PublishView.tsx', 'M  TrackedClaims.tsx']
+  w.s.merging = NEW_BASE
+  w.s.fromBase = ['PublishView.tsx', 'TrackedClaims.tsx']
+  const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['mine.ts', 'PublishView.tsx', 'TrackedClaims.tsx'] })
+  expect(w.steps).toContain('fast-checks.sh mine.ts')
+  expect(r.text).toContain('2 staged files came from the base unchanged')
+})
+
   expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
   expect(w.steps).toContain('init-worktree-submodules.sh')
   expect(w.submodules).toEqual([{ command: 'git worktree add /claimed/issue-7', paths: '.claude/agents' }])
