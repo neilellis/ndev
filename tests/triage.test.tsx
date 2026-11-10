@@ -968,7 +968,11 @@ test('/orca-triage clean asks the model to check each issue against the code and
   const p = w.prompts[0]!
   expect(p).toMatch(/#3\b/)
   expect(p).toMatch(/#9\b/)
-  expect(p).not.toMatch(/#7\b/)
+  // An issue an Orca workspace links is checked too, marked so the model weighs the work in that workspace.
+  expect(p).toMatch(/#7 .*\(linked to an Orca workspace\)/)
+  expect(p).toMatch(/linked to an Orca workspace.*branch/)
+  expect(p.indexOf('#3 ')).toBeLessThan(p.indexOf('#7 '))
+  expect(p.indexOf('#7 ')).toBeLessThan(p.indexOf('#9 '))
   expect(p).toMatch(/outdated or superseded/)
   expect(p).toMatch(/later pull requests/)
   // An issue a merged pull request fixed but never closed is the commonest leftover, so a clean reads the issues with a linked PR too.

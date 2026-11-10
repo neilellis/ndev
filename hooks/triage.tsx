@@ -121,24 +121,25 @@ async function clean($: EngineInterface, project: LoadedConfig | undefined, o: P
   const got = await openIssues($, repo, undefined, 'sort:created-asc', '/orca-triage clean again')
   // More than LIMIT: the oldest LIMIT go now, and the human is told; the closed ones drop out, so a second clean takes the next.
   const isCut = got.issues.length > LIMIT
-  const issues = got.issues.slice(0, LIMIT)
-  const left = got.left.filter(i => issues.includes(i))
-  const skipped = issues.length - left.length
-  if (!left.length) return `No issue of ${repo} is left to clean: ${issues.length} read, ${skipped} linked to an Orca workspace.`
-  ask($, 'the issues to clean', cleanBrief(repo, left, o.hint))
-  return `Clean of ${repo}: ${left.length} issues sent to the model to check${skipped ? ` (${skipped} in Orca workspaces left out)` : ''}.${isCut ? ` ${repo} has more than ${LIMIT} open issues: these are the oldest ${LIMIT}, and /orca-triage clean again takes the next.` : ''}`
+  // An issue an Orca workspace links is checked too: its work may have merged, or the workspace may be stale. The brief marks it.
+  const issues = got.issues.slice(0, LIMIT).sort((a, b) => a.number - b.number)
+  if (!issues.length) return `No open issue of ${repo} to clean.`
+  const inWorkspace = issues.filter(i => got.linked.has(i.number)).length
+  ask($, 'the issues to clean', cleanBrief(repo, issues, got.linked, o.hint))
+  return `Clean of ${repo}: ${issues.length} issues sent to the model to check${inWorkspace ? ` (${inWorkspace} linked to an Orca workspace)` : ''}.${isCut ? ` ${repo} has more than ${LIMIT} open issues: these are the oldest ${LIMIT}, and /orca-triage clean again takes the next.` : ''}`
 }
 
-function cleanBrief(repo: string, issues: TriageIssue[], hint: string): string {
+function cleanBrief(repo: string, issues: TriageIssue[], linked: Set<number>, hint: string): string {
   return [
     `Clean: find which of these ${issues.length} open issues of ${repo} are done, outdated or superseded, and close those once the user confirms. Do no other work on them.`,
     '',
-    ...issues.map(i => `#${i.number} ${i.title} — ${i.url}`),
+    ...issues.map(i => `#${i.number} ${i.title} — ${i.url}${linked.has(i.number) ? ' (linked to an Orca workspace)' : ''}`),
     '',
     'For each issue:',
     `- Read it with \`gh issue view <n> --repo ${repo} --comments\` (body, comments, sub-issues, linked pull requests).`,
     `- Look for a merged pull request that fixed or closes it but left it open: its linked pull requests, and \`gh pr list --repo ${repo} --state merged --search "<n>"\` or words from its title.`,
     '- Compare what it asks with the code as it is now on the default branch, and with later pull requests and commits (`git log --grep`, `git log -S`): work already done, code it names that is gone or replaced, or a later issue or pull request that covers it.',
+    '- An issue linked to an Orca workspace may be in progress: also check that workspace\'s branch and pull request (`orca worktree list`). Its work merged means done; open work means needs work.',
     '- Mark it done (fixed by a merged pull request or commit), outdated (the code or plan it is about is gone), superseded (a later issue or pull request covers it, name it), or needs work. When you are not sure, it needs work: leave it open.',
     '',
     'Then, for only the issues you are pretty sure of, ask the user with AskUserQuestion (multiSelect, at most 4 issues a question, 4 questions a call; ask again for the rest). Each option is one issue: "#<n> <title>", and its description gives the verdict and the evidence (the pull request, commit, or file and line).',
@@ -171,7 +172,7 @@ async function openIssues($: EngineInterface, repo: string, board: { owner: stri
   const linked = new Set(ofRepo(await orcaWorktrees(run, `, then run ${again}`), repo).filter(w => !w.isArchived)
     .flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number))
   const left = issues.filter(i => !linked.has(i.number)).sort((a, b) => a.number - b.number)
-  return { issues, left, skipped: issues.length - left.length }
+  return { issues, left, skipped: issues.length - left.length, linked }
 }
 
 function brief(repo: string, issues: TriageIssue[], agent: TriageAgent, batch: number, hint: string): string {
