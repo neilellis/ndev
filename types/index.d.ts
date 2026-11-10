@@ -174,6 +174,8 @@ export type TriageView = {
   isOpen?: boolean
   // /orca-triage start --batch <n>: at most n workers at once, each batch after the last has ended (--sequential is 1).
   batch?: number
+  // /orca-triage start --hint "<text>": the human's own steer, given to the coordinator with the issues.
+  hint?: string
   // A triage saved before --batch: --sequential, one worker at a time.
   isSequential?: boolean
   runId?: string

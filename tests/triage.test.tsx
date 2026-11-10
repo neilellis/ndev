@@ -939,3 +939,64 @@ test('the PR watch sends its prod to a worker restarted since the last refresh, 
   await new Promise(resolve => setTimeout(resolve, 100))
   expect(sends().map(a => a[a.indexOf('--to') + 1])).toEqual(['dispatch:ctx_1b'])
 })
+
+test('/orca-triage start --hint "<text>" gives the coordinator the human\'s hint; a --hint with no text is refused', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  const bare = await $.command.run(command('start --hint'))
+  expect(bare.text).toMatch(/--hint takes a text/)
+  expect(w.prompts).toEqual([])
+  await $.command.run(command('start --hint "close outdated/superseded issues" --dry-run'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.prompts[0]).toMatch(/The human's hint for this triage: close outdated\/superseded issues/)
+  expect(w.prompts[0]).toMatch(new RegExp(TOOL))
+  // An unquoted hint runs to the next option.
+  await $.command.run(command('reset'))
+  await $.command.run(command('start --hint group by area --open'))
+  await until(() => w.prompts.length > 1, () => [w.ran.slice(-1), w.toasts])
+  expect(w.prompts[1]).toMatch(/The human's hint for this triage: group by area\n/)
+})
+
+test('/orca-triage clean asks the model to check each issue against the code and later pull requests, and to close one only after the human confirms', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(7), issue(9)],
+    worktrees: [{ id: 'repo-1::/w/seven', projectId: 'github:acme/widgets', path: '/w/seven', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
+      linkedItems: [{ type: 'issue', number: 7, url: issue(7).url }] }] })
+  await started($)
+  const r = await $.command.run(command('clean --hint "older than June"'))
+  expect(r.text).toMatch(/clean/i)
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  const p = w.prompts[0]!
+  expect(p).toMatch(/#3\b/)
+  expect(p).toMatch(/#9\b/)
+  expect(p).not.toMatch(/#7\b/)
+  expect(p).toMatch(/outdated or superseded/)
+  expect(p).toMatch(/later pull requests/)
+  // An issue a merged pull request fixed but never closed is the commonest leftover, so a clean reads the issues with a linked PR too.
+  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).not.toMatch(/-linked:pr/)
+  expect(p).toMatch(/merged pull request that fixed or closes it/)
+  expect(p).toMatch(/AskUserQuestion/)
+  expect(p).toMatch(/gh issue close <n> --repo acme\/widgets --reason "not planned" --comment/)
+  expect(p).toMatch(/The human's hint for this clean: older than June/)
+  // A clean groups nothing and starts no worker.
+  expect(p).not.toMatch(new RegExp(TOOL))
+  const status = await $.command.run(command(''))
+  expect(status.text).toMatch(/No triage yet/)
+  expect(w.orcaRan('orchestration run-create')).toEqual([])
+  const bad = await $.command.run(command('clean --codex'))
+  expect(bad.text).toMatch(/does not know "--codex"/)
+})
+
+test('with a --hint, the groups report may list closed issues, which are then in no group; a closed issue it does not know is refused', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4), issue(9)] })
+  await started($)
+  await $.command.run(command('start --dry-run --hint "close outdated issues"'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).toMatch(/list them in closed instead of in a group/)
+  expect(w.prompts[0]).toMatch(/gh issue close <n> --repo acme\/widgets --comment/)
+  const bad = await $.tool.call({ tool: TOOL, groups: [group([3, 4, 9], 'simple')], closed: [12] } as never) as { result: string; isError?: boolean }
+  expect(bad.isError).toBe(true)
+  expect(bad.result).toMatch(/closed names 12/)
+  const r = await $.tool.call({ tool: TOOL, groups: [group([3, 9], 'simple')], closed: [4] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBeUndefined()
+  expect(r.result).toMatch(/Recorded 1 groups/)
+})
