@@ -54,7 +54,7 @@ ${CLAUDE_PLUGIN_ROOT}/scripts/docs/readability.sh <file> [<file>...]
 ${CLAUDE_PLUGIN_ROOT}/scripts/docs/readability.sh -            # stdin, as markdown
 ```
 
-Exit 0 is clean, 1 is errors to fix, and 2 means nothing was linted (vale is not installed, or a file is missing). Exit 2 is never a pass. The rules skip code, link targets and URLs.
+Exit 0 is clean, 1 is errors to fix, and 2 means something was not linted (vale is not installed, a file is missing, or Vale skipped a file whose extension has no section in `.vale.ini`). Exit 2 is never a pass. The rules skip code, link targets and URLs.
 
 The lint is only the mechanical half. A sentence can pass and still say nothing. For important prose, give the text alone to a fresh agent and ask what it could not decode.
 

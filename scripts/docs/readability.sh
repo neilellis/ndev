@@ -57,9 +57,33 @@ else
 fi
 
 set +e
-vale --config="$CONFIG" --minAlertLevel=suggestion "$@"
+VALE_OUT="$(vale --config="$CONFIG" --minAlertLevel=suggestion "$@" 2>&1)"
 VALE_STATUS=$?
 set -e
+printf '%s\n' "$VALE_OUT"
+
+# ⚠️ A FILE THAT VALE SKIPPED MUST NOT PASS THE GATE.
+# Vale lints only files whose extension matches a section of .vale.ini. Any other file
+# is silently dropped: "0 errors ... in 0 files", exit 0. That is how .mdx docs pages
+# went unlinted. Compare the count Vale checked with the count it was given.
+if [ "$VALE_STATUS" -le 1 ]; then
+  CHECKED="$(sed -nE 's/.* in ([0-9]+) files?\.$/\1/p' <<<"$VALE_OUT" | tail -n1)"
+  if [ -z "$CHECKED" ] && grep -q ' in stdin\.' <<<"$VALE_OUT"; then
+    CHECKED=0
+  fi
+  if [ -n "$CHECKED" ] && [ "$CHECKED" -lt $# ]; then
+    echo "readability.sh: vale checked $CHECKED of the $# files given; it skipped any file whose extension has no section in $CONFIG:" >&2
+    for path in "$@"; do
+      case "$path" in
+        *.md|*.mdx|*.txt) ;;
+        *) echo "  skipped: $path" >&2 ;;
+      esac
+    done
+    echo "  fix: rename the file to .md, or add its extension to [formats] and a section in $CONFIG" >&2
+    echo "  (those files were not linted — this is NOT a pass)" >&2
+    exit 2
+  fi
+fi
 
 # Suppressions are legitimate — a quotation cannot be rewritten to satisfy a linter.
 # They are also the only way this style learns it is too aggressive, and a suppression
