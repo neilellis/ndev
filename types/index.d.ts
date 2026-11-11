@@ -176,6 +176,16 @@ export type TriageView = {
   batch?: number
   // /orca-triage start --hint "<text>": the human's own steer, given to the coordinator with the issues.
   hint?: string
+  // /orca-triage start --since <n>: only the issues with a number above n.
+  since?: number
+  // /orca-triage start --reverse: the newest issues first.
+  isReverse?: boolean
+  // /orca-triage start --bugs-only: group only the bugs, and label each issue by its kind.
+  isBugsOnly?: boolean
+  // --bugs-only: each [issue, label] that the mod wrote in this triage.
+  labelled?: [number, string][]
+  // --bugs-only with --dry-run: each [issue, label] that /orca-triage launch writes.
+  labels?: [number, string][]
   // A triage saved before --batch: --sequential, one worker at a time.
   isSequential?: boolean
   runId?: string

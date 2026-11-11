@@ -91,6 +91,13 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     ran.push(a)
     if (args.includes('gh.sh issue-search')) return ok((opts.issues ?? []).map(i => `${JSON.stringify(i)}\n`).join(''))
     if (args.includes('gh.sh board items')) return ok((opts.cards ?? []).map(c => `${JSON.stringify(c)}\n`).join(''))
+    // gh.sh label <n> <label>: #13 has no such label to add.
+    if (args.includes('gh.sh label ')) return a[a.length - 2] === '13' ? result(1, '', "could not add label: 'bug' not found") : ok('1')
+    // gh api repos/<repo>/issues/<n>: an issue (or pull request) opened on 2026-0<n>-01, so a higher number is newer.
+    if (args.includes('gh.sh api repos/acme/widgets/issues/')) {
+      const n = Number(a[a.indexOf('api') + 1]!.split('/').pop())
+      return n === 404 ? result(1, '', 'gh: Not Found (HTTP 404)') : ok(JSON.stringify({ number: n, created_at: `2026-${String(n).padStart(2, '0')}-01T00:00:00Z` }))
+    }
     if (args.includes('gh.sh pr-read')) {
       const pr = Number(a[a.length - 1])
       const p = prs[pr]
@@ -988,6 +995,189 @@ test('/orca-triage clean asks the model to check each issue against the code and
   expect(w.orcaRan('orchestration run-create')).toEqual([])
   const bad = await $.command.run(command('clean --codex'))
   expect(bad.text).toMatch(/does not know "--codex"/)
+})
+
+test('/orca-triage start --since 5 groups only the issues above #5: it asks GitHub for issues opened from #5 on, and drops #5 and lower', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(5), issue(6), issue(9)] })
+  await started($)
+  await $.command.run(command('start --dry-run --since 5'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  const search = w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')
+  // GitHub search has no number range, so the date #5 was opened bounds the search, and the number check is exact.
+  expect(search).toMatch(/-linked:pr created:>=2026-05-01T00:00:00Z/)
+  // The date bound also matches #5, which the number check drops, so the search asks for one more to see a cut.
+  expect(search).toMatch(/--limit 202\b/)
+  expect(w.prompts[0]).toMatch(/#6\b/)
+  expect(w.prompts[0]).toMatch(/#9\b/)
+  expect(w.prompts[0]).not.toMatch(/#5\b/)
+  expect(w.prompts[0]).not.toMatch(/#3\b/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /above #5/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('with a board, /orca-triage start --since 5 takes only the Ready cards above #5', async ($, on) => {
+  const card = (n: number) => ({ number: n, title: `Card ${n}`, status: 'Ready', itemId: `PVTI_${n}`, url: `https://github.com/acme/widgets/issues/${n}` })
+  const w = world(on, { board: { owner: 'acme', number: 4 }, cards: [card(3), card(5), card(7)] })
+  await started($)
+  await $.command.run(command('start --dry-run --since 5'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.prompts[0]).toMatch(/#7\b/)
+  expect(w.prompts[0]).not.toMatch(/#5\b/)
+  expect(w.prompts[0]).not.toMatch(/#3\b/)
+})
+
+test('/orca-triage clean --since 5 checks only the issues above #5', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(5), issue(8)] })
+  await started($)
+  await $.command.run(command('clean --since 5'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).toMatch(/sort:created-asc created:>=2026-05-01T00:00:00Z/)
+  expect(w.prompts[0]).toMatch(/#8\b/)
+  expect(w.prompts[0]).not.toMatch(/#5\b/)
+  expect(w.prompts[0]).not.toMatch(/#3\b/)
+})
+
+test('/orca-triage start --reverse lists the issues newest first and asks for the groups newest first', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9), issue(6)] })
+  await started($)
+  await $.command.run(command('start --dry-run --reverse --batch 2'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  const p = w.prompts[0]!
+  expect(p.indexOf('#9 ')).toBeLessThan(p.indexOf('#6 '))
+  expect(p.indexOf('#6 ')).toBeLessThan(p.indexOf('#3 '))
+  expect(p).toMatch(/newest issues first/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /newest first/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('/orca-triage clean --reverse takes the newest issues first', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(8), issue(5)] })
+  await started($)
+  await $.command.run(command('clean --reverse'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).toMatch(/sort:created-desc/)
+  const p = w.prompts[0]!
+  expect(p.indexOf('#8 ')).toBeLessThan(p.indexOf('#5 '))
+  expect(p.indexOf('#5 ')).toBeLessThan(p.indexOf('#3 '))
+})
+
+test('/orca-triage start --bugs-only groups only the bugs, labels them bug and the enhancements enhancement, and the proposals proposed, and leaves the human actions unlabelled', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4), issue(5), issue(6), issue(7)] })
+  await started($)
+  await $.command.run(command('start --bugs-only'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  const p = w.prompts[0]!
+  expect(p).toMatch(/Group only the bugs/)
+  expect(p).toMatch(/enhancement/)
+  expect(p).toMatch(/human action/)
+  expect(p).toMatch(/proposal: a speculative idea/)
+  expect(p).toMatch(/screened/)
+  const labels = () => w.ran.filter(a => a.join(' ').includes('gh.sh label ')).map(a => a.slice(-2).join(' '))
+  // A bug in a group and in screened, a screened issue it does not know, and a kind it does not know are refused, and nothing is labelled.
+  const bad = await $.tool.call({ tool: TOOL, groups: [group([3, 4], 'simple')], screened: [{ issue: 4, kind: 'enhancement', reason: 'a new page' }, { issue: 5, kind: 'wish', reason: 'x' }, { issue: 12, kind: 'other', reason: 'x' }] } as never) as { result: string; isError?: boolean }
+  expect(bad.isError).toBe(true)
+  expect(bad.result).toMatch(/#4 is in a group and in screened/)
+  expect(bad.result).toMatch(/"wish" is not a kind/)
+  expect(bad.result).toMatch(/screened names 12/)
+  expect(labels()).toEqual([])
+  const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], screened: [{ issue: 4, kind: 'enhancement', reason: 'a new page' }, { issue: 5, kind: 'human', reason: 'needs a Stripe key' }, { issue: 6, kind: 'other', reason: 'a question' }, { issue: 7, kind: 'proposal', reason: 'maybe a mobile app one day' }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBeUndefined()
+  expect(labels().sort()).toEqual(['3 bug', '4 enhancement', '7 proposed'])
+  expect(r.result).toMatch(/Recorded 1 groups/)
+  expect(r.result).toMatch(/screened out 4/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /bugs only/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('/orca-triage start --bugs-only refuses the groups report when a label fails, and names the issue and the error; a dry run labels nothing', async ($, on) => {
+  const w = world(on, { issues: [issue(13), issue(14)] })
+  await started($)
+  await $.command.run(command('start --bugs-only'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  const r = await $.tool.call({ tool: TOOL, groups: [group([13], 'simple')], screened: [{ issue: 14, kind: 'enhancement', reason: 'a wish' }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBe(true)
+  expect(r.result).toMatch(/#13: gh.sh label 13 bug exited 1/)
+  expect(r.result).toMatch(/'bug' not found/)
+  expect(r.result).toMatch(/gh label create bug --repo acme\/widgets/)
+  expect((await $.command.run(command(''))).text).toMatch(/grouping/)
+  await $.command.run(command('reset'))
+  const before = w.ran.filter(a => a.join(' ').includes('gh.sh label ')).length
+  await $.command.run(command('start --dry-run --bugs-only'))
+  await until(() => w.prompts.length > 1, () => [w.ran.slice(-1), w.toasts])
+  const d = await $.tool.call({ tool: TOOL, groups: [group([13], 'simple')], screened: [{ issue: 14, kind: 'enhancement', reason: 'a wish' }] } as never) as { result: string; isError?: boolean }
+  expect(d.isError).toBeUndefined()
+  expect(d.result).toMatch(/dry run: no label written/)
+  expect(w.ran.filter(a => a.join(' ').includes('gh.sh label ')).length).toBe(before)
+})
+
+test('--bugs-only refuses an issue that screened names twice, and an item that is not an object, with no crash and no label', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4)] })
+  await started($)
+  await $.command.run(command('start --bugs-only'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], screened: [{ issue: 4, kind: 'enhancement', reason: 'a' }, { issue: 4, kind: 'proposal', reason: 'b' }, null] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBe(true)
+  expect(r.result).toMatch(/screened names #4 twice/)
+  expect(r.result).toMatch(/screened item 3 is not an object/)
+  expect(w.ran.filter(a => a.join(' ').includes('gh.sh label ')).length).toBe(0)
+})
+
+test('--bugs-only refuses a retry that gives a labelled issue another kind, and names the label and the repair', async ($, on) => {
+  const w = world(on, { issues: [issue(5), issue(13)] })
+  await started($)
+  await $.command.run(command('start --bugs-only'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  // #5 gets bug, then the label of #13 fails, so the call is refused with #5 labelled.
+  const first = await $.tool.call({ tool: TOOL, groups: [group([5], 'simple'), group([13], 'simple')] } as never) as { result: string; isError?: boolean }
+  expect(first.isError).toBe(true)
+  const before = w.ran.filter(a => a.join(' ').includes('gh.sh label ')).length
+  const r = await $.tool.call({ tool: TOOL, groups: [group([13], 'simple')], screened: [{ issue: 5, kind: 'enhancement', reason: 'a wish' }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBe(true)
+  expect(r.result).toMatch(/#5 has the label bug from an earlier call/)
+  expect(r.result).toMatch(/gh issue edit 5 --repo acme\/widgets --remove-label bug/)
+  expect(w.ran.filter(a => a.join(' ').includes('gh.sh label ')).length).toBe(before)
+})
+
+test('/orca-triage launch after a --bugs-only dry run writes the labels before it starts the workers', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4)] })
+  await started($)
+  await $.command.run(command('start --dry-run --bugs-only'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], screened: [{ issue: 4, kind: 'enhancement', reason: 'a new page' }] } as never)
+  const labels = () => w.ran.filter(a => a.join(' ').includes('gh.sh label ')).map(a => a.slice(-2).join(' '))
+  expect(labels()).toEqual([])
+  await $.command.run(command('launch'))
+  await until(() => w.orcaRan('orchestration run-create').length === 1, () => [w.ran.slice(-3), w.toasts])
+  expect(labels().sort()).toEqual(['3 bug', '4 enhancement'])
+})
+
+test('screened is refused without --bugs-only', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4)] })
+  await started($)
+  await $.command.run(command('start --dry-run'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).not.toMatch(/screened/)
+  const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], screened: [{ issue: 4, kind: 'other', reason: 'x' }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBe(true)
+  expect(r.result).toMatch(/screened needs \/orca-triage start --bugs-only/)
+})
+
+test('/orca-triage --since refuses a value that is not an issue number, and names the number GitHub does not know', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  for (const bad of ['start --since', 'start --since x', 'start --since 0', 'clean --since -2']) {
+    expect((await $.command.run(command(bad))).text).toMatch(/--since <n> takes an issue number above 0/)
+  }
+  expect(w.prompts).toEqual([])
+  await $.command.run(command('start --since 404'))
+  await until(() => w.toasts.some(t => t.includes('orca-triage start failed')), () => [w.ran.slice(-1), w.toasts])
+  const toast = w.toasts.find(t => t.includes('orca-triage start failed'))!
+  expect(toast).toMatch(/--since 404: GitHub did not give #404 of acme\/widgets/)
+  expect(toast).toMatch(/HTTP 404/)
+  expect(w.prompts).toEqual([])
 })
 
 test('with a --hint, the groups report may list closed issues, which are then in no group; a closed issue it does not know is refused', async ($, on) => {
