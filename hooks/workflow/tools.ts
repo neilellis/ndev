@@ -19,7 +19,7 @@ import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
 import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
-import { ATTEMPT_LIMIT, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
+import { ATTEMPT_LIMIT, BEFORE_REVIEW, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
 import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseRound, resultOf, startingAnswers } from './interview-model'
 import type { InterviewFile, InterviewRound } from './interview-model'
@@ -1678,13 +1678,25 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, project, wf)
-  legal(wf, 'done', facts)
+  const noChange = BEFORE_REVIEW.includes(wf.state)
+  if (!noChange) legal(wf, 'done', facts)
   await noAgentsRunning($)
   const message = text(args, 'message')
   if (!message) throw new Refuse('Refused: done needs a message that says what was finished.')
   const remembered = text(args, 'remembered') || wf.hooks?.remember?.result || ''
   if (!remembered) throw new Refuse('Refused: the remember hook has no result. Update the docs and the wiki, then call done with remembered: what you recorded, or "nothing: <reason>".')
   if (!maySkipReview(facts.level) && /^skipped\b/i.test(remembered)) throw new Refuse('Refused: a formal_project does not skip the remember hook. Do the step and call done again.')
+  if (noChange) {
+    const problems = await noChangeProblems($, wf)
+    if (problems.length) throw new Refuse(`Not done: in the state "${wf.state}", done only ends an issue that was closed with no change, such as one that another change fixed. Nothing changed. Fix each of these and call done again, or go on with finishedDevelopment:\n- ${problems.join('\n- ')}`)
+    wf.doneMessage = message
+    wf.hooks = { ...wf.hooks, remember: { firedAt: wf.hooks?.remember?.firedAt ?? (await $.clock.now()), result: remembered.slice(0, 2000) } }
+    // The PR is closed, so the watchdog has nothing to watch.
+    if (wf.prs.length) wf.prsClosed = true
+    await move($, c, wf, 'done', { ...facts, noChange: true })
+    await saveWorkflow($, wf)
+    return answer($, wf, facts, [`Issue ${issuesOf(wf).map(n => `#${n}`).join(', ')} was closed with no change, so the workflow ended with no review and no merge.`, ...(await stopResources($, wf, project))])
+  }
   const sha = await head(wf.root, $)
   havePr(wf)
   const pr = !wf.direct && wf.prs[0] ? await readPr($, wf.root, wf.repo, wf.prs[0]) : undefined
@@ -1731,6 +1743,29 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   await saveWorkflow($, wf)
   if (wf.state === 'done') notes.push(...(await stopResources($, wf, project)))
   return answer($, wf, facts, notes)
+}
+
+// Each reason that done cannot end an issue before its review: the issue must be closed, the branch must hold
+// no change from its base, and no PR may stay open. All of them are named, so that one pass fixes them.
+async function noChangeProblems($: EngineInterface, wf: Workflow): Promise<string[]> {
+  const problems: string[] = []
+  for (const n of issuesOf(wf)) {
+    const { state } = await ghOne<{ state: string }>($, wf.root, wf.repo, ['issue-read', String(n)])
+    if (state !== 'closed') problems.push(`issue #${n} is ${state}. If it needs no change, close it on GitHub with the reason. If it needs one, make it and call finishedDevelopment.`)
+  }
+  const range = `origin/${wf.base}...HEAD`
+  const diff = await git(wf.root, $, 'diff', '--name-only', range)
+  if (diff.exitCode !== 0) throw new Error(`git diff --name-only ${range} exited ${diff.exitCode} in ${wf.root}: ${said(diff)}`)
+  const changed = diff.stdout.split('\n').filter(Boolean)
+  if (changed.length) problems.push(`the branch ${wf.branch} changes ${changed.join(', ')} from origin/${wf.base}. A change goes through the review: call finishedDevelopment.`)
+  const dirty = await porcelain($, wf.root)
+  if (dirty.length) problems.push(`the tree is not clean: ${changedPaths(dirty).join(', ')}. Commit the work with finishedDevelopment, or remove it.`)
+  const n = wf.direct ? undefined : wf.prs[0]
+  if (n !== undefined) {
+    const pr = await readPr($, wf.root, wf.repo, n)
+    if (pr.state === 'open') problems.push(`PR #${n} is open. Repair: gh pr close ${n} --repo ${wf.repo} --comment "<why no change is needed>".`)
+  }
+  return problems
 }
 
 // The local stacks and dev servers of a finished worktree. Orca removes the worktree itself, so this does not.

@@ -722,6 +722,49 @@ test('done at poc merges the PR', async ($, on) => {
   expect(r.text).toContain('PR #12 is merged')
 })
 
+// An issue that another change already fixed: closed on GitHub, no diff on the branch, its draft PR closed.
+const alreadyFixed = (w: W) => { w.s.issueReadsFor = { 7: [{ state: 'closed', title: 'T' }] } }
+
+test('done in development ends the workflow of an issue that was closed with no change', async ($, on) => {
+  const w = engine(on, { pr: { state: 'closed', draft: true }, names: [] })
+  await start($, w)
+  alreadyFixed(w)
+  const r = await tool($, 'done', { message: 'already fixed on main by e22097f9', remembered: 'nothing: no change' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('done')
+  expect(w.state()?.doneMessage).toBe('already fixed on main by e22097f9')
+})
+
+test('done in development refuses while the issue is open, and says why', async ($, on) => {
+  const w = engine(on, { pr: { state: 'closed', draft: true }, names: [] })
+  await start($, w)
+  const r = await tool($, 'done', { message: 'already fixed', remembered: 'nothing: no change' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('issue #7 is open')
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('done in development refuses a branch that holds a change', async ($, on) => {
+  const w = engine(on, { pr: { state: 'closed', draft: true }, names: ['a.ts'] })
+  await start($, w)
+  alreadyFixed(w)
+  const r = await tool($, 'done', { message: 'already fixed', remembered: 'nothing: no change' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('a.ts')
+  expect(r.text).toContain('finishedDevelopment')
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('done in development refuses while the draft PR is open, and names the repair', async ($, on) => {
+  const w = engine(on, { pr: { draft: true }, names: [] })
+  await start($, w)
+  alreadyFixed(w)
+  const r = await tool($, 'done', { message: 'already fixed', remembered: 'nothing: no change' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('gh pr close 12')
+  expect(w.state()?.state).toBe('developing')
+})
+
 // ---- blocked ----
 test('blocked raises the alert, and unblocked withdraws it and restores the state', async ($, on) => {
   const w = engine(on)

@@ -30,6 +30,8 @@ export type Facts = {
   webFiles?: readonly string[]
   // False from the moment of the workflow's start until the base check has run. Undefined says nothing.
   baseChecked?: boolean
+  // Only for done before the review: the issue is closed, the branch holds no change and no PR is open.
+  noChange?: boolean
 }
 export type Position = { state: State; previous?: State }
 export type Move = Position | { refused: string }
@@ -40,7 +42,7 @@ export const maySkipReview = (level?: ProjectLevel) => level !== 'formal_project
 export const needsPlanSignOff = (steering: Steering, level?: ProjectLevel) => steering === 'interactive' && !mayMerge(level)
 
 const VALID_NOW: Record<State, string> = {
-  setup: 'started', interviewing: 'interview', planning: 'finishedPlan', developing: 'finishedDevelopment, after finishedInterview', developed: 'started, with an issue on this PR that is still in development', reviewing: 'finishedReview', ci: 'finishedChecks',
+  setup: 'started', interviewing: 'interview', planning: 'finishedPlan', developing: 'finishedDevelopment, after finishedInterview. For an issue that was closed with no change on this branch, done ends the workflow', developed: 'started, with an issue on this PR that is still in development', reviewing: 'finishedReview', ci: 'finishedChecks',
   smoke: 'finishedSmoke', finishing: 'done', revising: 'finishedRevision', blocked: 'unblocked', wait: 'none while a wait tool runs, and the human can end it with /unblock <message>. If no wait tool runs now, call started', done: 'checkpoint while the PR is open, or else followUp with issue_only',
 }
 
@@ -49,6 +51,8 @@ const wrong = (position: Position, tool: string): Move => ({
 })
 
 const PAST_DEVELOPMENT: State[] = ['reviewing', 'ci', 'smoke', 'finishing']
+// done can end an issue that was closed with no change before its review, such as one that another change fixed.
+export const BEFORE_REVIEW: State[] = ['interviewing', 'planning', 'developing']
 
 // Stage hooks: work that a change of state sets off. moved() in tools.ts fires them, so each way into
 // a state fires them: a tool, the heartbeat or a human. The tool that leaves the stage takes the result.
@@ -126,6 +130,7 @@ export function afterTool(position: Position, tool: Tool, facts: Facts): Move {
   if (tool === 'finishedChecks' && state === 'ci') return { state: facts.smoke ? 'smoke' : 'finishing' }
   if (tool === 'finishedSmoke' && state === 'smoke') return { state: 'finishing' }
   if (tool === 'finishedRevision' && state === 'revising') return { state: 'ci' }
+  if (tool === 'done' && facts.noChange && BEFORE_REVIEW.includes(state)) return { state: 'done' }
   if (tool === 'done' && state === 'finishing') return { state: facts.feedback ? 'revising' : 'done' }
   return wrong(position, tool)
 }
