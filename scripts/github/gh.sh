@@ -266,7 +266,7 @@ FOUND_FROM_GH='.[] | {number, title, state: (if .state == "MERGED" then "closed"
 FOUND_FROM_REST='.items[] | {number, title, state, merged: (.pull_request.merged_at != null), created_at, merged_at: .pull_request.merged_at, url: .html_url, user: {login: .user.login}, body: (.body // "")}'
 
 ROLLUP_TO_CHECKS='{check_runs: [.[] | select(.__typename == "CheckRun")
-    | {name, status: (.status | ascii_downcase), conclusion: (if (.conclusion // "") == "" then null else (.conclusion | ascii_downcase) end)}],
+    | {name, started_at: (.startedAt // null), status: (.status | ascii_downcase), conclusion: (if (.conclusion // "") == "" then null else (.conclusion | ascii_downcase) end)}],
   statuses: [.[] | select(.__typename == "StatusContext") | {context, state: (.state | ascii_downcase)}]}'
 
 rest_default_branch() { GH api "repos/$REPO" | jq -c '{default_branch}'; }
@@ -279,7 +279,7 @@ rest_checks() {
   runs="$(GH api "repos/$REPO/commits/$sha/check-runs?per_page=100&filter=latest")" || return $?
   statuses="$(GH api "repos/$REPO/commits/$sha/status?per_page=100")" || return $?
   jq -cn --argjson runs "$runs" --argjson statuses "$statuses" \
-    '{check_runs: [$runs.check_runs[] | {name, status, conclusion}], statuses: [$statuses.statuses[] | {context, state}]}'
+    '{check_runs: [$runs.check_runs[] | {name, started_at, status, conclusion}], statuses: [$statuses.statuses[] | {context, state}]}'
 }
 
 graph_checks() {

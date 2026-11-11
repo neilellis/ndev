@@ -54,7 +54,7 @@ const pull = (over: Record<string, unknown> = {}) => ({
   number: 12, state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean',
   body: 'Closes #7', created_at: '2026-11-01T00:00:00Z', head: { sha: SHA, ref: 'issue-7' }, ...over,
 })
-const CHECKS = (...runs: { name: string; status?: string; conclusion: string | null }[]) => ({ check_runs: runs.map(r => ({ status: 'completed', ...r })) })
+const CHECKS = (...runs: { name: string; status?: string; conclusion: string | null; started_at?: string }[]) => ({ check_runs: runs.map(r => ({ status: 'completed', ...r })) })
 
 type Opts = {
   refuseCommand?: RegExp; wf?: Record<string, unknown> | null; config?: Record<string, unknown>; pr?: Record<string, unknown>; checks?: unknown; scripts?: boolean; skillFiles?: boolean; files?: Record<string, string>; guide?: boolean; main?: boolean; names?: string[] }
@@ -833,6 +833,15 @@ test('idle with a failed check names it', async ($, on) => {
   await idle(w)
   expect(w.prompts[0]).toContain('failed checks')
   expect(w.prompts[0]).toContain('unit tests (failure)')
+})
+
+test('idle ignores a cancelled run that a newer run of the same check replaced', async ($, on) => {
+  const w = engine(on, { pr: { mergeable_state: 'blocked' }, checks: CHECKS(
+    { name: 'checks', conclusion: 'cancelled', started_at: '2026-01-01T10:00:00Z' },
+    { name: 'checks', status: 'in_progress', conclusion: null, started_at: '2026-01-01T10:00:02Z' }) })
+  await start($, w)
+  await idle(w)
+  expect(w.prompts.join('\n')).not.toContain('failed checks')
 })
 
 test('a clean PR needs no read of its checks; only another state costs that', async ($, on) => {

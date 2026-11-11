@@ -102,8 +102,8 @@ test('pr-list with no pull requests prints nothing and passes', () => {
   assert.equal(r.out, '')
 })
 
-const ROLLUP = { headRefOid: 'abc', statusCheckRollup: [{ __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS' }, { __typename: 'CheckRun', name: 'e2e', status: 'IN_PROGRESS', conclusion: '' }, { __typename: 'StatusContext', context: 'vercel', state: 'PENDING' }] }
-const CHECKS = { check_runs: [{ name: 'unit', status: 'completed', conclusion: 'success' }, { name: 'e2e', status: 'in_progress', conclusion: null }], statuses: [{ context: 'vercel', state: 'pending' }] }
+const ROLLUP = { headRefOid: 'abc', statusCheckRollup: [{ __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: 't1' }, { __typename: 'CheckRun', name: 'e2e', status: 'IN_PROGRESS', conclusion: '' }, { __typename: 'StatusContext', context: 'vercel', state: 'PENDING' }] }
+const CHECKS = { check_runs: [{ name: 'unit', started_at: 't1', status: 'completed', conclusion: 'success' }, { name: 'e2e', started_at: null, status: 'in_progress', conclusion: null }], statuses: [{ context: 'vercel', state: 'pending' }] }
 
 test('commit-checks reads the PR rollup in one gh call, in the shape of REST', () => {
   const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'pr view 12', out: JSON.stringify(ROLLUP) }])

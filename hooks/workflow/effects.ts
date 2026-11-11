@@ -193,9 +193,16 @@ export function markReady($: EngineInterface, root: string, repo: string, n: num
 export type Checks = { pending: string[]; red: string[]; green: string[] }
 // With the PR number this costs one gh call, because the PR rollup holds both kinds of check.
 export async function readChecks($: EngineInterface, root: string, repo: string, sha: string, pr?: number): Promise<Checks> {
-  const { check_runs: runs, statuses } = await ghOne<{ check_runs: { name: string; status: string; conclusion: string | null }[]; statuses: { context: string; state: string }[] }>($, root, repo, ['commit-checks', sha, ...(pr ? ['--pr', String(pr)] : [])])
+  const { check_runs: runs, statuses } = await ghOne<{ check_runs: { name: string; status: string; conclusion: string | null; started_at?: string | null }[]; statuses: { context: string; state: string }[] }>($, root, repo, ['commit-checks', sha, ...(pr ? ['--pr', String(pr)] : [])])
   const out: Checks = { pending: [], red: [], green: [] }
+  // A concurrency group cancels the older run of a check when a newer one starts, and both stay listed.
+  // Only the latest run of each name counts: the cancelled one is no failure.
+  const latest = new Map<string, (typeof runs)[number]>()
   for (const c of runs) {
+    const seen = latest.get(c.name)
+    if (!seen || (c.started_at ?? '') >= (seen.started_at ?? '')) latest.set(c.name, c)
+  }
+  for (const c of latest.values()) {
     if (c.status !== 'completed') out.pending.push(c.name)
     else if (['success', 'skipped', 'neutral'].includes(c.conclusion ?? '')) out.green.push(c.name)
     else out.red.push(`${c.name} (${c.conclusion})`)
