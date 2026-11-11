@@ -2,6 +2,7 @@
 import type { EngineInterface } from 'claude-code'
 import { checkLog, outputCut } from './check-log'
 import { withStep } from './progress'
+import { parseEnvFile } from './secrets'
 
 export const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh'] as const
 export type Check = (typeof CHECKS)[number]
@@ -127,6 +128,17 @@ async function runLong($: EngineInterface, root: string, dir: string, script: st
   return { exitCode, stdout: out.stdout, stderr, isStdoutTruncated: out.isStdoutTruncated, isStderrTruncated: err.isStdoutTruncated, ...(stoppedAfterMs === undefined ? {} : { stoppedAfterMs }) }
 }
 
+// The project's keys in the worktree's .neil-dev.env, such as a database URL that the tests need, as CI sets them.
+async function projectEnv($: EngineInterface, root: string, path: string): Promise<Record<string, string>> {
+  const file = `${root}/.neil-dev.env`
+  if (!(await $.fs.exists(file))) return {}
+  try {
+    return parseEnvFile(await $.fs.read(file), file)
+  } catch (e) {
+    throw new Refuse(`${path} did not run: ${e instanceof Error ? e.message : String(e)} Nothing was pushed. Then call the tool again.`)
+  }
+}
+
 // Runs a check script. The engine runs git with the repository's hooks off, so these are the hooks.
 // When the base branch has the script, its version runs, so a branch cannot pass by editing its own
 // check. The branch's change is measured from the merge base (three dots): a script that only the base
@@ -148,7 +160,7 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   }
   const merging = (await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0
   const mergeBase = merging ? await git(root, $, 'merge-base', `origin/${base}`, 'HEAD', 'MERGE_HEAD') : await git(root, $, 'merge-base', `origin/${base}`, 'HEAD')
-  const env: Record<string, string> = mergeBase.exitCode === 0 && mergeBase.stdout.trim() ? { NDEV_MERGE_BASE: mergeBase.stdout.trim() } : {}
+  const env: Record<string, string> = { ...(await projectEnv($, root, path)), ...(mergeBase.exitCode === 0 && mergeBase.stdout.trim() ? { NDEV_MERGE_BASE: mergeBase.stdout.trim() } : {}) }
   const before = (await porcelain($, root)).join('\n')
   const r = await withStep($, check, CHECK_MAX_MS, () => runLong($, root, `${gitDir}/ndev-${check}.run`, script, args, env))
   const log = `${gitDir}/ndev-${check}.log`

@@ -1694,6 +1694,27 @@ test('a commit that ends a merge of the base runs fast-checks.sh only on the fil
 
   expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
   expect(w.steps).toContain('init-worktree-submodules.sh')
+test('the checks get the keys of the worktree .neil-dev.env, as the project tests need them', async ($, on) => {
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: '# graph\nFALKORDB_URL=redis://localhost:6379\nexport QUOTED="a b"\n' } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_URL).toBe('redis://localhost:6379')
+  expect(w.s.checkEnv['pre-commit-check.sh']?.QUOTED).toBe('a b')
+  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
+})
+
+test('a .neil-dev.env line that is not KEY=VALUE stops the check and names the file and the line, not the value', async ($, on) => {
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=redis://localhost:6379\nsecret-without-key\n' } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain(`${ROOT}/.neil-dev.env line 2 is not KEY=VALUE`)
+  expect(r.text).not.toContain('secret-without-key')
+  expect(w.steps).not.toContain('pre-commit-check.sh')
+})
+
   expect(w.submodules).toEqual([{ command: 'git worktree add /claimed/issue-7', paths: '.claude/agents' }])
 })
 

@@ -23,3 +23,18 @@ export function secretFiles(top: string, main: string, home: string | undefined)
     ...(home ? [`${home}/.zshrc`, `${home}/.bashrc`] : []),
   ]
 }
+
+// The values of a .neil-dev.env, by the rules of scripts/env/neil-dev-env.mjs parse: one KEY=VALUE per
+// line, # comments and blank lines, an optional export and quotes. A bad line names its number, never its text.
+export function parseEnvFile(text: string, file: string): Record<string, string> {
+  const values: Record<string, string> = {}
+  text.split('\n').forEach((raw, i) => {
+    const line = raw.trim()
+    if (line === '' || line.startsWith('#')) return
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line)
+    if (!m) throw new Error(`${file} line ${i + 1} is not KEY=VALUE (the line is not shown, as it may hold a secret). Repair: fix or remove that line.`)
+    const value = m[2] as string
+    values[m[1] as string] = /^(["']).*\1$/.test(value) ? value.slice(1, -1) : value
+  })
+  return values
+}
