@@ -129,7 +129,8 @@ async function runLong($: EngineInterface, root: string, dir: string, script: st
 
 // Runs a check script. The engine runs git with the repository's hooks off, so these are the hooks.
 // When the base branch has the script, its version runs, so a branch cannot pass by editing its own
-// check. The return value notes a script that the base does not have, or that the branch changed.
+// check. The branch's change is measured from the merge base (three dots): a script that only the base
+// moved on is not the branch's change. The return value notes a script that the base does not have, or that the branch changed.
 // NDEV_MERGE_BASE is the merge base that the commit will have. While a merge is in progress the checks
 // run before its commit, so HEAD is still the commit before the merge, and `git merge-base HEAD
 // origin/<base>` gives the old base: what the base brought in would count as the branch's.
@@ -142,7 +143,7 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   if (onBase) {
     script = `${gitDir}/ndev-${check}`
     await $.fs.write(script, await gitOut(root, $, 'show', `origin/${base}:${path}`))
-    const changed = (await git(root, $, 'diff', '--quiet', `origin/${base}`, '--', path)).exitCode !== 0
+    const changed = (await git(root, $, 'diff', '--quiet', `origin/${base}...HEAD`, '--', path)).exitCode !== 0
     note = changed ? `This branch changes ${path}. The tool ran the version on ${base}, and a human must read the change in this PR.` : undefined
   }
   const merging = (await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0
