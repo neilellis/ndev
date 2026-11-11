@@ -830,6 +830,44 @@ test('a turn that starts while the turn-end reminder is built gets no stale remi
   expect(await command($, 'status')).toContain('a turn started before the reminder')
 })
 
+// The host holds a plugin's prompt until the session is idle. In analytics PR #2769 the reviews' answers started
+// a turn just as the reminder went out, and that turn ran for two hours: blocked was called in it, and then
+// the model read "reviewing". Nothing can take the prompt back, so the turn that it starts is cancelled.
+test('a reminder that the host delivers after the state moved cancels its own turn before the model reads it', async ($, on) => {
+  const aborted: string[] = []
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.abort', (_, e) => { aborted.push(e.turnId); return { value: undefined } as never })
+  const w = engine(on)
+  await start($, w)
+  await turnEnds($)
+  expect(w.prompts.length).toBe(1)
+  // Another prompt got in first, and its turn blocks the workflow.
+  await $.turn.start({ text: 'the review has ended', turnId: 't2' })
+  await tool($, 'blocked', { message: 'help' })
+  await $.turn.complete({ reason: 'answer', answer: 'text', durationMs: 1, isAborted: false, turnId: 't2' } as never)
+  await settle()
+  expect(w.prompts.length).toBe(1)
+  await $.turn.start({ text: `The ndev plugin sent a message:\n${w.prompts[0]}`, turnId: 't3' })
+  expect(aborted).toEqual(['t3'])
+  const status = await command($, 'status')
+  expect(status).toContain('named the state "developing"')
+  expect(status).toContain('is now in the state "blocked"')
+})
+
+test('a reminder that the host delivers while its state still holds starts its turn', async ($, on) => {
+  const aborted: string[] = []
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.abort', (_, e) => { aborted.push(e.turnId); return { value: undefined } as never })
+  const w = engine(on)
+  await start($, w)
+  await turnEnds($)
+  await $.turn.start({ text: `The ndev plugin sent a message:\n${w.prompts[0]}`, turnId: 't2' })
+  // A turn with other words is never cancelled, whatever the state.
+  await tool($, 'blocked', { message: 'help' })
+  await $.turn.start({ text: 'the human typed this', turnId: 't3' })
+  expect(aborted).toEqual([])
+})
+
 test('three turn ends with no progress reach the human as a block', async ($, on) => {
   const w = engine(on)
   await start($, w)

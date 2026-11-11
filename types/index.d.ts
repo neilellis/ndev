@@ -226,6 +226,8 @@ declare module 'claude-code' {
       workflowIssueAsked: Shaped<boolean>
       workflowCheckRead: Shaped<{ at: number }>
       workflowWatchNote: Shaped<{ at: number; why: string }>
+      // The reminders that went to the host, with the state that each one names.
+      workflowSentReminders: Shaped<{ text: string; label: string; state: string; root: string; at: number }[]>
       workflowActivity: Shaped<{ at: number; isTurnRunning: boolean }>
       // The /triage run (hooks/triage.tsx).
       triage: Shaped<TriageView>

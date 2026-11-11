@@ -31,6 +31,13 @@ const checkRead = atom({ plugin: 'ndev', key: 'workflowCheckRead' } as const, { 
 // What the last tick did or why it did nothing. /flow status shows it, so a quiet watcher can be explained.
 const watchNote = atom({ plugin: 'ndev', key: 'workflowWatchNote' } as const, { at: 0, why: 'the watcher has not run yet' }, { shape: 'workflow-watch-note-1' })
 
+// The reminders that went to the host, and the state that each one names. The host holds a plugin's prompt
+// until the session is idle, and nothing takes a held prompt back: the start of its turn compares it here.
+type Sent = { text: string; label: string; state: string; root: string; at: number }
+const SENT_KEPT = 5
+const sentReminders = atom({ plugin: 'ndev', key: 'workflowSentReminders' } as const, [] as Sent[], { shape: 'workflow-sent-reminders-1' })
+const FRAME = /^The \S+ plugin sent a message:\s*/
+
 async function note($: EngineInterface, why: string): Promise<void> {
   const at = await $.clock.now()
   await update($, watchNote, () => ({ at, why }))
@@ -96,6 +103,37 @@ async function turnStarted($: EngineInterface, wf: Workflow): Promise<boolean> {
   return true
 }
 
+// The last step of each reminder: the record of what it names, the last look for a started turn, and the prompt.
+async function send($: EngineInterface, wf: Workflow, text: string, what: string): Promise<void> {
+  const at = await $.clock.now()
+  await update($, sentReminders, list => [...list.filter(r => r.text !== text), { text, label: labelOf(wf), state: wf.state, root: wf.root, at }].slice(-SENT_KEPT))
+  if (await turnStarted($, wf)) return
+  void $.prompt.submit({ text }).catch((error: unknown) => {
+    $.ui.toast(`workflow: ${what} for #${wf.issue} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
+  })
+}
+
+// A turn that starts from a reminder whose state no longer holds is cancelled before its first model call.
+// The two looks for a started turn in nudge cannot see a prompt that enters the session at the same moment:
+// the host starts that prompt's turn, holds the reminder behind it, and delivers it when that turn ends.
+async function cancelStale($: EngineInterface, text: string, turnId: string): Promise<void> {
+  const body = text.replace(FRAME, '').trim()
+  const hit = (await read($, sentReminders)).find(r => r.text.trim() === body)
+  if (!hit) return
+  await update($, sentReminders, list => list.filter(r => r.text !== hit.text))
+  const now = await loadWorkflow($, hit.root)
+  if (isWatched(now) && labelOf(now) === hit.label && now.state === hit.state) return
+  const late = Math.round(((await $.clock.now()) - hit.at) / 1000)
+  const why = `a reminder for ${hit.label} named the state "${hit.state}", and the host delivered it ${late} s later, when ${now ? `${labelOf(now)} is now in the state "${now.state}"` : `no workflow is left in ${hit.root}`}`
+  await note($, `quiet: ${why}; the turn ${turnId} that it started was cancelled before the model read it`)
+  try {
+    await $.turn.abort({ turnId })
+  } catch (error) {
+    throw new Error(`${why}, and the turn ${turnId} that it started was not cancelled: ${error instanceof Error ? error.message : String(error)}. The model reads the old state. Repair: tell the agent to call mcp__ndev__status`)
+  }
+  $.ui.toast(`workflow: ${why}. The turn that it started was cancelled, so the agent did not act on it.`)
+}
+
 async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | undefined, why: 'turn' | 'idle' | 'checks', problems: string[] = [], sha = ''): Promise<void> {
   const print = await fingerprint($, wf, problems)
   if (await turnStarted($, wf)) return
@@ -119,22 +157,15 @@ async function nudge($: EngineInterface, wf: Workflow, project: LoadedConfig | u
     if ((await loadWorkflow($, wf.root))?.state !== wf.state) return
   }
   if (why === 'checks') {
-    if (await turnStarted($, wf)) return
     const tool = wf.state === 'ci' ? 'finishedChecks' : 'done'
     const text = problems.length
       ? `The workflow read the PR of ${labelOf(wf)}. ${problems.join(' ')} Do not run a wait helper after the push: the workflow goes on watching.`
       : `The checks of ${labelOf(wf)} have ended on ${sha.slice(0, 8)}, and none failed. Now call ${tool}.`
-    void $.prompt.submit({ text }).catch((error: unknown) => {
-      $.ui.toast(`workflow: the result of the checks for #${wf.issue} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
-    })
-    return
+    return send($, wf, text, 'the result of the checks')
   }
-  if (await turnStarted($, wf)) return
   const lead = why === 'idle' ? 'This session was idle for a long time.' : 'The workflow is not finished, so the turn does not end here.'
   const found = problems.length ? ` Fix these first: ${problems.join(' ')}` : ''
-  void $.prompt.submit({ text: `${lead}${found} ${labelOf(wf)} is in the state "${wf.state}". ${stepOf(wf, facts)} Wait for a long process in the foreground with one wait helper, because a turn that ends on a background wait gets this reminder again. Do not end the turn before you call done or blocked.` }).catch((error: unknown) => {
-    $.ui.toast(`workflow: the next step for #${wf.issue} was not sent to the model: ${error instanceof Error ? error.message : String(error)}`)
-  })
+  await send($, wf, `${lead}${found} ${labelOf(wf)} is in the state "${wf.state}". ${stepOf(wf, facts)} Wait for a long process in the foreground with one wait helper, because a turn that ends on a background wait gets this reminder again. Do not end the turn before you call done or blocked.`, 'the next step')
 }
 
 export async function workflowTurn($: EngineInterface, e: { reason?: string; agentId?: string; answer?: string; turnId?: string }, project: LoadedConfig | undefined): Promise<void> {
@@ -290,7 +321,14 @@ export async function startWatchdog($: EngineInterface, project: () => LoadedCon
 
 export const workflowWatchdog = (on: Parameters<Register>[0]) => {
   on('turn.start', async ($, e, next) => {
-    if (!e.agentId) await update($, activity, a => ({ ...a, isTurnRunning: true, turnId: e.turnId }))
-    return next(e)
+    if (e.agentId) return next(e)
+    await update($, activity, a => ({ ...a, isTurnRunning: true, turnId: e.turnId }))
+    const started = await next(e)
+    try {
+      await cancelStale($, e.text ?? '', e.turnId)
+    } catch (error) {
+      $.ui.toast(`workflow: ${String(error instanceof Error ? error.message : error).slice(0, 600)}`)
+    }
+    return started
   })
 }
