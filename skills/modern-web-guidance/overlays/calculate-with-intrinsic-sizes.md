@@ -1,0 +1,1 @@
+Use the visibility rule: closed content is `visibility: hidden`, transitioned with the size. Use `calc-size()` only when a size limit is needed. Our motion rules still say not to animate height when a section opens; the component-map accordion is the exception.

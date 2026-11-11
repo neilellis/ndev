@@ -1,0 +1,1 @@
+Keep the scroll-driven timeline and `scroll-padding-top`. Our motion rules allow only `transform`, `opacity` and colour on a frequent path, so keep the bar at a fixed height and scale or move the inner logo and title. Do not use the script fallback that sets `style.height` on each scroll event.

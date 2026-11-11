@@ -1,0 +1,1 @@
+This file is the same as `language-model`. Use the shadcn `progress` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` for download progress, with a visible label and the percentage as text. Use the rest as written.

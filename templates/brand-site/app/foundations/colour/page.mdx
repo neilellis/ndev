@@ -59,6 +59,23 @@ The website's globe and the film's network diagram sort ideas into two families.
   <Swatch token="--blue-100" hex="#d4e9fb" label="Light button hover" />
 </SwatchGrid>
 
+## Dark scheme
+
+The site follows the reader's light or dark setting. Components use the semantic tokens (`--canvas`, `--text-body`, `--surface-inverse` and the rest), and each one has a light and a dark value. The dark scheme is not taken from {{source}}. It is a recommendation, derived from the navy ramp. The navy band stays navy, one step lighter, and the primary button turns blue.
+
+<SwatchGrid>
+  <Swatch token="--night-950" hex="#0b1724" label="Canvas" />
+  <Swatch token="--night-900" hex="#122334" label="Cards" />
+  <Swatch token="--night-800" hex="#182c40" label="Tinted band" />
+  <Swatch token="--night-ink" hex="#eef3f8" label="Headings" />
+  <Swatch token="--navy-text" hex="#c4d5e6" label="Body" />
+  <Swatch token="--night-muted" hex="#9fb3c8" label="Muted" />
+  <Swatch token="--night-accent" hex="#7cb8ec" label="Accent and focus ring" />
+  <Swatch token="--blue-600" hex="#2166ac" label="Primary button" />
+</SwatchGrid>
+
+The [Accessibility](/accessibility) page rates every pairing in both schemes.
+
 ## Gradients
 
 Gradients come from the film. Use them for full-bleed dark scenes, end cards and soft light backgrounds. Never put a gradient on a button or behind body text in a card.

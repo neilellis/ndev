@@ -1,0 +1,1 @@
+For visual choices (colour, emoji, variants), use the choice-card radio group from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`. Use this guide's 3:1 rules for the selected state and the focus indicator, and its keyboard note (Up and Down still walk every option). A true grid picker is not in the component map: ask the owner before you build one.

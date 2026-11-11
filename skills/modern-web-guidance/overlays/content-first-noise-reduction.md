@@ -1,0 +1,1 @@
+Use the no-interruption rule, the 12% limit for bars, and the top bar that hides on scroll (with its fallback). In a React app, use the shadcn `popover`, `tooltip`, `hover-card`, `accordion`, the Dice UI `tour` and the Kibo UI `banner` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`, not native `popover` or `<details>`.

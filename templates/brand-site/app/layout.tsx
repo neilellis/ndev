@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Sidebar } from "./components/Sidebar";
 
@@ -7,6 +7,10 @@ export const metadata: Metadata = {
   description: "The {{name}} design system and brand guide, for the website, documents and film.",
   robots: { index: false, follow: false },
 };
+
+// <meta name="color-scheme" content="light dark">: the browser paints the canvas in the
+// reader's scheme before the stylesheet loads. The tokens follow the same scheme.
+export const viewport: Viewport = { colorScheme: "light dark" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

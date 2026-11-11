@@ -1,0 +1,1 @@
+Do not slide between pages: our motion rules reject page transitions in a work tool. Keep the opt-in (`navigation: auto`) and a short cross-fade under `prefers-reduced-motion: no-preference`, and `navigation: none` under reduce. Do not use the slide keyframes.

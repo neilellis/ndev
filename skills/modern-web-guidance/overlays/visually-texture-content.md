@@ -1,0 +1,1 @@
+Never put the mask on an element that holds text. If the brand defines a texture, put it on an `aria-hidden` decoration layer behind the content, on marketing pages only. Check contrast against the real text colour.

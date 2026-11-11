@@ -1,0 +1,1 @@
+Keep the shadcn ring as the one focus indicator. Add this guide's point: the ring is a `box-shadow`, which forced-colors mode removes, so add `@media (forced-colors: active) { outline: 2px solid CanvasText; }`. Use the elevation token for hover shadows. Keep press feedback at 150 to 200 ms. Take a popover's transform origin from Radix variables, not `position-area`.

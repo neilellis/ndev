@@ -1,0 +1,1 @@
+In a React app, do not apply `appearance: base-select` to the shadcn `select`. Use the select rows of the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`. On a page with no React, the checked-state indicator and the reduced-motion block are good to copy, but do not animate the picker's height, and keep its open time to 150 to 200 ms: a select opens many times a day.

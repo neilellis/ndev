@@ -40,13 +40,16 @@ export async function parseTokens(tokensDir: string): Promise<TokenGroup[]> {
   for (const file of files) {
     const css = (await readFile(path.join(tokensDir, file), "utf8")).replace(/\/\*[\s\S]*?\*\//g, "");
     const fileKind = KIND_BY_FILE[file] ?? "other";
-    const tokens: Token[] = [];
+    // A token set again later in the file (the dark scheme, or light-dark()) is listed
+    // once, in its first place, with the last value: the one the cascade uses.
+    const byName = new Map<string, Token>();
 
     for (const m of css.matchAll(TOKEN_RE)) {
       const name = m[1];
       const value = m[2].trim().replace(/\s+/g, " ");
-      tokens.push({ name, value, kind: kindOf(name, fileKind), file });
+      byName.set(name, { name, value, kind: kindOf(name, fileKind), file });
     }
+    const tokens = [...byName.values()];
 
     if (tokens.length) groups.push({ file, kind: fileKind, tokens });
   }

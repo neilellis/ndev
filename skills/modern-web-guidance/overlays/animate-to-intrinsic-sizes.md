@@ -1,0 +1,1 @@
+Our motion rules say: do not animate height when a section opens. The one exception is the accordion in the component map, which keeps its Radix height animation and removes it under reduced motion. Do not set `interpolate-size` globally. Use the visibility rule: closed content gets `visibility: hidden`, so it leaves the accessibility tree.

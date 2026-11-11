@@ -1,0 +1,1 @@
+Use sections 1 to 4, 6 and 7 as written. In a React app, section 5 does not apply: use the shadcn `dialog`, `popover` and `tooltip` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`. Do not add native anchor positioning to Radix content; its floating-ui styles conflict with it.
