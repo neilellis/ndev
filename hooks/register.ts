@@ -13,6 +13,7 @@ import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index
 import { endDeadWaits, noteSessionHuman, releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowSkillReset, workflowTools } from './workflow/tools'
 import { startWatchdog, workflowTurn, workflowWatchdog } from './workflow/watchdog'
 import { startWorkflowCommand, workflowCommand } from './workflow/command'
+import { epicLine, epicTools, startEpic } from './workflow/epic'
 import { askForIssue } from './workflow/ask-issue'
 import { reportFault } from './workflow/bug-report'
 import { startWorktreeStacks, stopWorktreeStacks, worktreeStacksSection } from './worktree-stacks'
@@ -278,6 +279,7 @@ export const register: Register = (on, options) => {
   resourceView(on)
   triage(on, () => project)
   workflowTools(on, () => project)
+  epicTools(on, () => project)
   workflowWatchdog(on)
   workflowCommand(on, () => project, next => { project = next })
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
@@ -365,6 +367,7 @@ export const register: Register = (on, options) => {
     const began = await $.clock.now()
     // Each part starts alone: another plugin can own the command's name, and that must not stop the watcher.
     await startFeature($, 'workflow tools', () => startWorkflow($, e.cwd))
+    await startFeature($, 'epic tools', () => startEpic($))
     await startFeature($, '/flow', () => startWorkflowCommand($))
     await startFeature($, 'workflow watcher', () => startWatchdog($, () => project))
     await startInitProject($, e.cwd)
@@ -453,12 +456,14 @@ export const register: Register = (on, options) => {
       .join('\n\n')
 
     const line = await workflowLine($, project).catch(error => `Workflow: the state was not read: ${String(error instanceof Error ? error.message : error).slice(0, 200)}`)
+    const epic = await epicLine($).catch(error => `Epic: the state was not read: ${String(error instanceof Error ? error.message : error).slice(0, 200)}`)
     return {
       sections: [
         ...composed.sections,
         { id: `${PLUGIN}:dev-mode`, text, scope: 'session' },
         ...[initProjectSection(), credentialsSection(), worktreeStacksSection()].filter(s => s !== undefined),
         ...(line ? [{ id: `${PLUGIN}:workflow`, text: line, scope: 'session' as const }] : []),
+        ...(epic ? [{ id: `${PLUGIN}:epic`, text: epic, scope: 'session' as const }] : []),
       ],
     }
   })

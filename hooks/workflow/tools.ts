@@ -119,7 +119,7 @@ export type Workflow = {
 }
 
 const OWNER_LIVE_MS = 10 * 60_000
-const SECTION = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->\n?/
+export const SECTION = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->\n?/
 
 const workflowRoot = atom({ plugin: 'ndev', key: 'workflowRoot' } as const, null as string | null, { shape: 'workflow-root-1' })
 // The issue that this agent works on now. A worktree can hold several; each agent has its own.

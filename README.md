@@ -98,6 +98,8 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `work-interactive` | Design an underspecified feature with the user, resolve assumptions and test entry points, then implement it or publish vertical-slice issues. |
 | `work-light` | The interactive lightweight development skill (light mode, the default). |
 | `work-light-auto` | The non-interactive lightweight development skill (light mode, auto steering). |
+| `epic-plan` | Plan an epic as its coordinator: frame, research with helpers, write the spec, settle the decisions, get a spec review, slice into sub-issues. Started by `/flow epic`. |
+| `epic-coordinate` | Coordinate an epic: an implementer and then a reviewer per sub-issue as Orca workers, rule on findings, verify, merge. |
 
 Shared scripts that the skills call are in `scripts/` (see `scripts/README.md`).
 

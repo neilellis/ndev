@@ -10,6 +10,7 @@ import { afterSkip } from './machine'
 import type { State } from './machine'
 import { boundRoot, endAsking, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, waitHolder, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
 import type { Workflow } from './tools'
+import { EPIC_HELP, epicCommand } from './epic'
 import { watcherNote } from './watchdog'
 
 const HELP = [
@@ -24,6 +25,7 @@ const HELP = [
   '/flow off [reason]: stop the tools and the reminders for the issue or PR that this agent is on. The record stays.',
   '/flow on: turn them back on.',
   '/flow off project, /flow on project: the same for the whole project, in .neil-dev.json.',
+  ...EPIC_HELP,
 ].join('\n')
 
 const GOTO: State[] = ['setup', 'interviewing', 'planning', 'developing', 'reviewing', 'ci', 'smoke', 'finishing', 'revising', 'done']
@@ -73,6 +75,7 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
   const tail = rest.join(' ')
   if (verb === 'help') return HELP
   if (verb === 'guide') return guide($)
+  if (verb === 'epic') return epicCommand($, rest, getProject())
   const project = getProject()
   if ((verb === 'off' || verb === 'on') && rest[0] === 'project') {
     if (!project) return 'Not saved: the project folder is not known yet.'
@@ -254,7 +257,7 @@ async function answerUnblock($: EngineInterface, args: string, getProject: () =>
 
 export async function startWorkflowCommand($: EngineInterface): Promise<void> {
   await $.command.register({ name: 'unblock', description: 'ndev: give the agent your answer and end its block or wait', argumentHint: '<message>', immediate: true })
-  await $.command.register({ name: 'flow', description: 'ndev: control the workflow of this worktree: status, guide, mode, steering, skip, goto, unblock, off, on', argumentHint: '[status|guide|skip [reason]|goto <state>|unblock|off [project]|on [project]]' })
+  await $.command.register({ name: 'flow', description: 'ndev: control the workflow of this worktree: status, guide, mode, steering, skip, goto, unblock, off, on, epic', argumentHint: '[status|guide|skip [reason]|goto <state>|unblock|off [project]|on [project]|epic [issue|title|status|skip|goto|off]]' })
 }
 
 export const workflowCommand = (on: Parameters<Register>[0], getProject: () => Project, setProject: (p: LoadedConfig) => void) => {

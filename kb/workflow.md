@@ -580,6 +580,45 @@ The name is `/flow`, not `/ndev:workflow` or `/workflow`. The engine refuses a c
 
 If you skip `reviewing`, the held commit is not pushed yet. The agent pushes it with `checkpoint` and no files, and `finishedChecks` tells it to do this.
 
+## The epic workflow
+
+An epic is one issue that is planned once and built as many sub-issues. One session is its **coordinator**: it plans, decides, verifies and merges, and it writes no product code. Orca workers implement and review each sub-issue. The coordinator session leaves the usual one-issue workflow and follows this one; each implementer worker stays under the usual workflow in its own worktree.
+
+`/flow epic [issue | title]` starts it. The skills are `epic-plan` (the states `framing` to `slicing`) and `epic-coordinate` (`coordinating` and `closing`).
+
+| State | Ends when | `epicPhase` needs |
+|---|---|---|
+| `framing` | The aim, the posture, the form of the spec and the gates are agreed | `aim` |
+| `researching` | Each research question has a findings file | `files` |
+| `specifying` | The spec is written and self-checked | `files` |
+| `deciding` | The human has ruled on every decision | `evidence` |
+| `spec-review` | Each finding of a review by a different model has a ruling | `files`, `evidence` |
+| `slicing` | Each sub-issue is filed with its blockers | `issues` |
+| `coordinating` | Every sub-issue is merged | |
+| `closing` | The epic is checked end to end | `evidence` |
+
+A sub-issue goes `waiting → implementing → reviewing → verified → merged`, with `reviewing ⇄ fixing` for each round of findings and `blocked` from any state. After three rounds the answer says to narrow the issue, split it or ask the human.
+
+| Tool | What it does |
+|---|---|
+| `epicStarted` | Starts or resumes the epic, binds the session and turns the usual workflow off for it. It keeps the Orca `run` and `repoId`, the roles (default: a Claude implementer, a Codex reviewer) and `parallel` (default 4). It refuses while a usual workflow of the session is open. |
+| `epicPhase` | Ends the current phase after its check. `slicing` refuses an empty list, a duplicate, an unknown blocker, a cycle and an issue that is not open. `closing` turns the usual workflow back on. |
+| `epicNext` | Read-only. The frontier: the waiting sub-issues whose blockers are all merged, in number order, cut to the free places. Code computes the order, never the model. |
+| `epicBrief` | Writes the implementer or reviewer brief to a file outside the worktree and answers with the filled `orca orchestration worker-start` command. The reviewer command works in the implementer's workspace and is refused while the record has none. The tool starts no worker: the coordinator runs the command. |
+| `epicIssue` | Records one move of a sub-issue. A start must be on the frontier. `reviewing → verified` runs the verify checks. `verified → merged` needs GitHub to say the PR is merged, and answers with the new frontier. |
+| `epicStatus` | Read-only. The state, the next step and the sub-issues by state. |
+
+The verify checks refuse unless the PR is open and not a draft, every check on its head commit has passed, it is mergeable, and each file that the diff adds under `supabase/migrations/` is in the section of the PR body that `addMigration` writes. The answer gives passed, failed and not run apart; a check that could not be read is not a pass.
+
+The record is `.neil-dev.epic-<issue>.json` in the worktree root, git-ignored. While the session is bound to an epic that is not done, the system text carries one line with the epic, its state and the next step, so a compaction does not lose it. Only the main agent may call the tools.
+
+| Command | What it does |
+|---|---|
+| `/flow epic [issue \| title]` | Tells the agent to start or resume the epic. With an epic bound, it shows the status. |
+| `/flow epic status` | Shows the state, the next step and the sub-issues. |
+| `/flow epic skip [reason]` / `goto <state> [reason]` | Moves the phase as the human decides, and records the reason as its evidence. |
+| `/flow epic off` | Unbinds the session and turns the usual workflow back on. The record stays. |
+
 ## Change types
 
 The review instructions change with the types of the change. The types are `web`, `backend`, `database`, `docs`, `tests` and `config`. Each type adds its own text to the review.

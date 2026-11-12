@@ -231,6 +231,8 @@ declare module 'claude-code' {
       // The reminders that went to the host, with the state that each one names.
       workflowSentReminders: Shaped<{ text: string; label: string; state: string; root: string; at: number }[]>
       workflowActivity: Shaped<{ at: number; isTurnRunning: boolean }>
+      // The epic that this session coordinates (hooks/workflow/epic.ts).
+      epicBound: Shaped<{ root: string; issue: number } | null>
       // The /triage run (hooks/triage.tsx).
       triage: Shaped<TriageView>
       // The /view pane (hooks/view.tsx).
