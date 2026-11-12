@@ -112,6 +112,14 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
       const pr = Number(a[a.indexOf('--pr') + 1])
       return ok(JSON.stringify({ check_runs: (prs[pr]?.checks ?? []).map(([name, status, conclusion]) => ({ name, status, conclusion })), statuses: [] }))
     }
+    // The fact reads of /dev triage clean: the default branch, one GraphQL query per batch of issues, the pull requests and git.
+    if (args.includes('gh.sh default-branch')) return ok(JSON.stringify({ default_branch: 'main' }))
+    if (args.includes('gh.sh api graphql')) {
+      const asked = [...a.find(x => x.startsWith('query='))!.matchAll(/i(\d+): issue\(number: (\d+)\)/g)].map(m => Number(m[2]))
+      return ok(JSON.stringify({ data: { repository: Object.fromEntries(asked.map(n => [`i${n}`, { ...(opts.issues ?? []).find(i => i.number === n), body: '' }])) } }))
+    }
+    if (args.includes('gh.sh pr-search')) return ok('')
+    if (a[0] === 'git') return ok('')
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
     if (args.startsWith('orca worktree list')) return reply({ worktrees, totalCount: worktrees.length, truncated: false })
     if (args.startsWith('orca worktree create')) {
@@ -1010,7 +1018,7 @@ test('/dev triage start --hint "<text>" gives the coordinator the human\'s hint;
   expect(w.prompts[1]).toMatch(/The human's hint for this triage: group by area\n/)
 })
 
-test('/dev triage clean asks the model to check each issue against the code and later pull requests, and to close one only after the human confirms', async ($, on) => {
+test('/dev triage clean asks the model to judge each issue from its fact record, against the code and later pull requests, before it asks or closes anything', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(7), issue(9)],
     worktrees: [{ id: 'repo-1::/w/seven', projectId: 'github:acme/widgets', path: '/w/seven', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
       linkedItems: [{ type: 'issue', number: 7, url: issue(7).url }] }] })
@@ -1026,13 +1034,14 @@ test('/dev triage clean asks the model to check each issue against the code and 
   expect(p).toMatch(/linked to an Orca workspace.*branch/)
   expect(p.indexOf('#3 ')).toBeLessThan(p.indexOf('#7 '))
   expect(p.indexOf('#7 ')).toBeLessThan(p.indexOf('#9 '))
-  expect(p).toMatch(/outdated or superseded/)
+  expect(p).toMatch(/done, outdated, superseded, duplicate or needs work/)
   expect(p).toMatch(/later pull requests/)
   // An issue a merged pull request fixed but never closed is the commonest leftover, so a clean reads the issues with a linked PR too.
   expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).not.toMatch(/-linked:pr/)
   expect(p).toMatch(/merged pull request that fixed or closes it/)
-  expect(p).toMatch(/AskUserQuestion/)
-  expect(p).toMatch(/gh issue close <n> --repo acme\/widgets --reason "not planned" --comment/)
+  // The asking and the closing come only once mcp__ndev__clean_verdicts has a verdict for every issue (tests/triage-clean.test.tsx).
+  expect(p).toMatch(/mcp__ndev__clean_verdicts/)
+  expect(p).not.toMatch(/gh issue close/)
   expect(p).toMatch(/The human's hint for this clean: older than June/)
   // A clean groups nothing and starts no worker.
   expect(p).not.toMatch(new RegExp(TOOL))

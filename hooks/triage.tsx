@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, START_ORCA, type Run } from './fix-all-prs'
+import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, START_ORCA, type OrcaWorktree, type Run } from './fix-all-prs'
 import { pullUrl } from './links'
 import type { PrRow, TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
@@ -143,45 +143,313 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
   return `Triage of ${repo}: ${left.length} issues sent to the model to group.`
 }
 
-// /dev triage clean: the model checks every open issue (the board's too, whatever its column) against the code and the pull requests after it, and closes
-// the ones it is sure are done, outdated or superseded, once the human confirms. It groups nothing and starts no worker,
-// and leaves the triage pane as it is. It reads the issues with a linked pull request too: one a merged pull request
-// fixed but never closed is the commonest leftover.
+// /dev triage clean: code gathers a fact record for every open issue (the board's too, whatever its column): its body,
+// comments, labels, sub-issues, parent, closing and cross-referenced pull requests, the merged pull requests and the
+// default branch's commits that name it, and its Orca workspace. Code flags what it can tell on its own. The model gets
+// the records in chunks of CLEAN_CHUNK and judges each issue through mcp__ndev__clean_verdicts, which refuses a chunk
+// that leaves an issue without a verdict, or a close verdict with no evidence. Only then is the model told to ask the
+// human and close the picked ones, and the end report is built from the recorded verdicts. A clean groups nothing,
+// starts no worker and leaves the triage pane as it is. It reads the issues with a linked pull request too: one a
+// merged pull request fixed but never closed is the commonest leftover.
+const CLEAN_TOOL = 'mcp__ndev__clean_verdicts'
+// Issues per chunk: few enough that the model judges each one and does not skim.
+const CLEAN_CHUNK = 10
+// Issues per GraphQL query.
+const GRAPHQL_BATCH = 20
+// The pull requests read for the ones that name an issue, newest first; the brief says when the list is cut.
+const PR_LIMIT = 300
+const LOG_LIMIT = 3000
+const VERDICTS = ['done', 'outdated', 'superseded', 'duplicate', 'needs_work'] as const
+type VerdictKind = (typeof VERDICTS)[number]
+const CONFIDENCES = ['high', 'medium', 'low'] as const
+// What a close verdict's evidence must name: a pull request or issue number, a commit sha or a file:line.
+const EVIDENCE = /#\d+|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b|[\w./-]+\.\w+:\d+/
+
+type IssueNode = {
+  number: number; title: string; url: string; body?: string | null
+  labels?: { nodes?: { name: string }[] }
+  comments?: { nodes?: { author?: { login?: string } | null; body?: string; createdAt?: string }[] }
+  subIssues?: { nodes?: { number: number; title?: string; state: string }[] }
+  parent?: { number: number; state: string } | null
+  closedByPullRequestsReferences?: { nodes?: Pull[] }
+  timelineItems?: { nodes?: { source?: (Partial<Pull> & { __typename?: string }) | null; willCloseTarget?: boolean }[] }
+}
+type Pull = { number: number; title: string; state: string; mergedAt: string | null; changedFiles?: number; headRefName?: string }
+type Found = { number: number; title: string; state: string; merged?: boolean; merged_at?: string | null; body?: string }
+type Workspace = { path: string; branch?: string; ahead: number | string; pr?: number }
+type CleanRecord = {
+  issue: TriageIssue; isLinked: boolean; body: string; labels: string[]; comments: string[]
+  subIssues: { number: number; state: string }[]; parent?: { number: number; state: string }
+  closingPrs: Pull[]; crossRefs: string[]; namingPrs: Found[]; commits: string[]; workspaces: Workspace[]; flags: string[]
+}
+type Verdict = { issue: number; verdict: VerdictKind; confidence: string; evidence: string; by?: number }
+type Cleaning = { repo: string; issues: TriageIssue[]; members: number[][]; chunks: string[]; at: number; verdicts: Map<number, Verdict> }
+// Module state, which a reload loses: the tool then says to run the clean again.
+let cleaning: Cleaning | undefined
+
+const ISSUE_FIELDS = `fragment F on Issue {
+  number title url body
+  labels(first: 20) { nodes { name } }
+  comments(last: 5) { nodes { author { login } body createdAt } }
+  subIssues(first: 50) { nodes { number title state } }
+  parent { number state }
+  closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title state mergedAt changedFiles headRefName } }
+  timelineItems(first: 50, itemTypes: [CROSS_REFERENCED_EVENT]) { nodes { ... on CrossReferencedEvent { willCloseTarget source { __typename ... on PullRequest { number title state mergedAt changedFiles } ... on Issue { number title state } } } } }
+}`
+
+const slices = <T,>(xs: T[], size: number) => Array.from({ length: Math.ceil(xs.length / size) }, (_, k) => xs.slice(k * size, (k + 1) * size))
+const flat = (s: string | null | undefined, max: number) => { const t = (s ?? '').replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t }
+const names = (n: number) => new RegExp(`(^|[^\\w&])#${n}\\b`)
+const words = (title: string) => new Set(title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))
+function likeness(a: Set<string>, b: Set<string>): number {
+  const both = [...a].filter(w => b.has(w)).length
+  return both / (a.size + b.size - both || 1)
+}
+const pullText = (p: Pull) => `#${p.number} ${p.state.toLowerCase()}${p.mergedAt ? ` (merged ${p.mergedAt.slice(0, 10)})` : ''}${p.changedFiles === 0 ? ' (no changed files)' : ''}`
+
 async function clean($: EngineInterface, project: LoadedConfig | undefined, o: Pick<Options, 'hint' | 'since' | 'isReverse' | 'isMine'>): Promise<string> {
   const g = project?.config.github
+  // A new clean ends the one before it, even when this one fails or finds nothing: its verdicts must not be taken for this one's.
+  cleaning = undefined
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
   const repo = g.repo
   const got = await openIssues($, repo, undefined, o.isReverse ? 'sort:created-desc' : 'sort:created-asc', '/dev triage clean again', o.since, o.isMine)
   // More than LIMIT: the oldest LIMIT (the newest with --reverse) go now, and the human is told; the closed ones drop out, so a second clean takes the next.
   const isCut = got.issues.length > LIMIT
-  // An issue an Orca workspace links is checked too: its work may have merged, or the workspace may be stale. The brief marks it.
+  // An issue an Orca workspace links is checked too: its work may have merged, or the workspace may be stale. Its record gives the workspace.
   const issues = ordered(ordered(got.issues, o.isReverse).slice(0, LIMIT), o.isReverse)
   const end = o.isReverse ? 'newest' : 'oldest'
   if (!issues.length) return `No open issue of ${repo}${o.since ? ` above #${o.since}` : ''} to clean.`
+  const { records, base, isPrListCut } = await cleanFacts($, repo, project!.root, issues, got.worktrees, got.linked)
+  const byNumber = new Map(records.map(r => [r.issue.number, r]))
+  const members = slices(issues.map(i => i.number), CLEAN_CHUNK)
+  const chunks = members.map((m, k) => chunkText(k, members.length, m.map(n => byNumber.get(n)!), base))
+  cleaning = { repo, issues, members, chunks, at: 0, verdicts: new Map() }
   const inWorkspace = issues.filter(i => got.linked.has(i.number)).length
-  ask($, 'the issues to clean', cleanBrief(repo, issues, got.linked, o.hint))
-  return `Clean of ${repo}: ${issues.length} issues sent to the model to check${inWorkspace ? ` (${inWorkspace} linked to an Orca workspace)` : ''}.${isCut ? ` ${repo} has more than ${LIMIT} open issues: these are the ${end} ${LIMIT}, and /dev triage clean again takes the next.` : ''}`
+  ask($, 'the issues to clean', cleanBrief(repo, issues.length, members.length, chunks[0]!, o.hint, isPrListCut))
+  return `Clean of ${repo}: a fact record for each of ${issues.length} issues sent to the model in ${members.length} chunks${inWorkspace ? ` (${inWorkspace} linked to an Orca workspace)` : ''}.${isCut ? ` ${repo} has more than ${LIMIT} open issues: these are the ${end} ${LIMIT}, and /dev triage clean again takes the next.` : ''}`
 }
 
-function cleanBrief(repo: string, issues: TriageIssue[], linked: Set<number>, hint: string): string {
+// One fact record for each issue, read in batches: one GraphQL query per GRAPHQL_BATCH issues, one list of the
+// repository's pull requests, one log of the default branch, and one rev-list for each linked Orca workspace.
+async function cleanFacts($: EngineInterface, repo: string, root: string, issues: TriageIssue[], worktrees: OrcaWorktree[], linked: Set<number>) {
+  const run = runner($, 120_000, { GH_REPO: repo })
+  const base = ((await gh(run, ['default-branch'])) as { default_branch?: string }).default_branch
+  if (!base) throw new Error(`gh.sh default-branch gave no default branch for ${repo}.\nRepair: run \`gh repo view ${repo} --json defaultBranchRef\` to see why, then /dev triage clean again.`)
+  const [owner, name] = repo.split('/')
+  const nodes = new Map<number, IssueNode>()
+  for (const batch of slices(issues.map(i => i.number), GRAPHQL_BATCH)) {
+    const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${batch.map(n => `i${n}: issue(number: ${n}) { ...F }`).join(' ')} } } ${ISSUE_FIELDS}`
+    const span = `#${batch[0]}–#${batch[batch.length - 1]}`
+    const got = (await gh(run, ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${query}`]).catch((err: unknown) => {
+      throw new Error(`the GraphQL read of ${span} of ${repo} failed: ${message(err)}`)
+    })) as { data?: { repository?: Record<string, IssueNode | null> } }
+    for (const n of batch) {
+      const x = got.data?.repository?.[`i${n}`]
+      if (!x) throw new Error(`the GraphQL read of issues ${batch.map(m => `#${m}`).join(' ')} of ${repo} gave no record for #${n}, so the clean cannot judge it: ${JSON.stringify(got).slice(0, 300)}\nRepair: check #${n} with \`gh issue view ${n} --repo ${repo}\`, then run /dev triage clean again.`)
+      nodes.set(n, x)
+    }
+  }
+  const pulls = await ghLines<Found>(run, ['pr-search', 'sort:updated-desc', '--limit', String(PR_LIMIT)])
+  // The log must be of the default branch as GitHub has it now, or a commit merged since the last fetch reads as missing.
+  const fetched = await run(['git', '-C', root, 'fetch', 'origin', base])
+  if (fetched.exitCode !== 0) throw new Error(`git -C ${root} fetch origin ${base} exited ${fetched.exitCode}: ${(fetched.stderr.trim() || fetched.stdout.trim()).slice(0, 300)}\nRepair: check the remote and the network with \`git -C ${root} remote -v\` and \`git -C ${root} fetch origin ${base}\`, then /dev triage clean again.`)
+  const log = await run(['git', '-C', root, 'log', `origin/${base}`, '-n', String(LOG_LIMIT), '--format=%h%x1f%s%x1f%b%x1e'])
+  if (log.exitCode !== 0) throw new Error(`git -C ${root} log origin/${base} exited ${log.exitCode}: ${(log.stderr.trim() || log.stdout.trim()).slice(0, 300)}\nRepair: run \`git -C ${root} fetch origin ${base}\`, then /dev triage clean again.`)
+  // A cut log would drop commits, and their issues would read "no commit names it".
+  if (log.isStdoutTruncated) throw new Error(`git -C ${root} log origin/${base} -n ${LOG_LIMIT} printed more than the engine keeps, so commits would be missing from the records.\nRepair: lower LOG_LIMIT in hooks/triage.tsx, then /dev triage clean again.`)
+  const commits = log.stdout.split('\x1e').map(c => c.trim()).filter(Boolean).map(c => c.split('\x1f'))
+  const ahead = new Map<string, number | string>()
+  for (const w of worktrees) {
+    if (!(w.linkedItems ?? []).some(i => i.type === 'issue' && issues.some(x => x.number === i.number))) continue
+    const r = await run(['git', '-C', w.path, 'rev-list', '--count', `origin/${base}..HEAD`])
+    // A workspace that git cannot read is a fact for the model too, and the record says why.
+    ahead.set(w.path, r.exitCode === 0 ? Number(r.stdout.trim()) : `not read (git rev-list exited ${r.exitCode}: ${flat(r.stderr || r.stdout, 200)})`)
+  }
+  const titles = issues.map(i => ({ number: i.number, title: i.title, words: words(i.title) }))
+  const records = issues.map((i): CleanRecord => {
+    const x = nodes.get(i.number)!
+    const n = i.number
+    const closingPrs = x.closedByPullRequestsReferences?.nodes ?? []
+    const subIssues = (x.subIssues?.nodes ?? []).map(s => ({ number: s.number, state: s.state }))
+    const refs = (x.timelineItems?.nodes ?? []).flatMap(t => (t.source?.number === undefined ? [] : [{ ...t.source, willCloseTarget: t.willCloseTarget }]))
+    const crossRefs = [...new Map(refs.map(r => [r.number, r])).values()].filter(r => !closingPrs.some(p => p.number === r.number))
+      .map(r => (r.__typename === 'PullRequest' ? `PR ${pullText(r as Pull)}` : `issue #${r.number} ${String(r.state).toLowerCase()}`))
+    const namingPrs = pulls.filter(p => names(n).test(`${p.title}\n${p.body ?? ''}`))
+    const named = commits.filter(([, s, b]) => names(n).test(`${s}\n${b ?? ''}`)).map(([sha, s]) => `${sha} ${s}`)
+    const workspaces = worktrees.filter(w => (w.linkedItems ?? []).some(l => l.type === 'issue' && l.number === n))
+      .map(w => ({ path: w.path, branch: w.branch, ahead: ahead.get(w.path) ?? 'not read', pr: w.linkedPR ?? undefined }))
+    const openPrs = [...closingPrs, ...refs.filter((r): r is Pull & { __typename?: string } => r.__typename === 'PullRequest')]
+    const flags = [
+      ...closingPrs.filter(p => p.mergedAt).map(p => `closed by merged PR #${p.number} (merged ${p.mergedAt!.slice(0, 10)}) but still open`),
+      ...(subIssues.length && subIssues.every(s => s.state === 'CLOSED') ? [`every sub-issue is closed: ${subIssues.map(s => `#${s.number}`).join(', ')}`] : []),
+      ...[...new Map(openPrs.filter(p => p.state === 'OPEN' && p.changedFiles === 0).map(p => [p.number, p])).values()].map(p => `open PR #${p.number} has no changed files`),
+      ...workspaces.filter(w => w.ahead === 0 && !w.pr).map(() => 'the workspace has no commits and no PR'),
+      ...titles.filter(t => t.number !== n && likeness(t.words, words(i.title)) >= 0.75).map(t => `title near #${t.number} "${t.title}": a possible duplicate`),
+      ...namingPrs.filter(p => p.merged && !closingPrs.some(c => c.number === p.number)).map(p => `merged PR #${p.number} names #${n} but does not close it`),
+    ]
+    return {
+      issue: i, isLinked: linked.has(n), body: flat(x.body, 1500), labels: (x.labels?.nodes ?? []).map(l => l.name),
+      comments: (x.comments?.nodes ?? []).map(c => `${c.author?.login ?? 'someone'} ${(c.createdAt ?? '').slice(0, 10)}: ${flat(c.body, 400)}`),
+      subIssues, parent: x.parent ?? undefined, closingPrs, crossRefs, namingPrs, commits: named, workspaces, flags,
+    }
+  })
+  return { records, base, isPrListCut: pulls.length >= PR_LIMIT }
+}
+
+function recordText(r: CleanRecord, base: string): string {
+  const n = r.issue.number
   return [
-    `Clean: find which of these ${issues.length} open issues of ${repo} are done, outdated or superseded, and close those once the user confirms. Do no other work on them.`,
+    `### #${n} ${r.issue.title} — ${r.issue.url}${r.isLinked ? ' (linked to an Orca workspace)' : ''}`,
+    `labels: ${r.labels.join(', ') || 'none'}${r.parent ? ` · parent: #${r.parent.number} (${r.parent.state.toLowerCase()})` : ''}`,
+    ...(r.subIssues.length ? [`sub-issues: ${r.subIssues.map(s => `#${s.number} ${s.state.toLowerCase()}`).join(', ')}`] : []),
+    `closing PRs: ${r.closingPrs.map(pullText).join(', ') || 'none'}`,
+    ...(r.crossRefs.length ? [`cross-referenced by: ${r.crossRefs.join(', ')}`] : []),
+    `PRs naming #${n}: ${r.namingPrs.map(p => `#${p.number} ${p.merged ? `merged ${(p.merged_at ?? '').slice(0, 10)}` : p.state} "${flat(p.title, 80)}"`).join(', ') || 'none'}`,
+    `commits naming #${n}: ${r.commits.join('; ') || `none on ${base}`}`,
+    ...r.workspaces.map(w => `workspace ${w.path} (branch ${w.branch ?? 'unknown'}): ${typeof w.ahead === 'number' ? `${w.ahead} commits ahead of ${base}` : `commits ahead of ${base} ${w.ahead}`}, ${w.pr ? `PR #${w.pr}` : 'no PR'}`),
+    `flags: ${r.flags.join('; ') || 'none'}`,
+    `body: ${r.body || '(empty)'}`,
+    ...r.comments.map(c => `comment by ${c}`),
+  ].join('\n')
+}
+
+function chunkText(k: number, total: number, records: CleanRecord[], base: string): string {
+  return [
+    `Chunk ${k + 1} of ${total}: ${records.map(r => `#${r.issue.number}`).join(', ')}`,
     '',
-    ...issues.map(i => `#${i.number} ${i.title} — ${i.url}${linked.has(i.number) ? ' (linked to an Orca workspace)' : ''}`),
+    records.map(r => recordText(r, base)).join('\n\n'),
     '',
-    'For each issue:',
-    `- Read it with \`gh issue view <n> --repo ${repo} --comments\` (body, comments, sub-issues, linked pull requests).`,
-    `- Look for a merged pull request that fixed or closes it but left it open: its linked pull requests, and \`gh pr list --repo ${repo} --state merged --search "<n>"\` or words from its title.`,
-    '- Compare what it asks with the code as it is now on the default branch, and with later pull requests and commits (`git log --grep`, `git log -S`): work already done, code it names that is gone or replaced, or a later issue or pull request that covers it.',
-    '- An issue linked to an Orca workspace may be in progress: also check that workspace\'s branch and pull request (`orca worktree list`). Its work merged means done; open work means needs work.',
-    '- Mark it done (fixed by a merged pull request or commit), outdated (the code or plan it is about is gone), superseded (a later issue or pull request covers it, name it), or needs work. When you are not sure, it needs work: leave it open.',
+    `Judge each of these ${records.length} issues, then call \`${CLEAN_TOOL}\` once with { verdicts } for exactly these ${records.length}.`,
+  ].join('\n')
+}
+
+function cleanBrief(repo: string, count: number, chunkCount: number, first: string, hint: string, isPrListCut: boolean): string {
+  return [
+    `Clean: judge each of these ${count} open issues of ${repo}: done, outdated, superseded, duplicate or needs work. Do no other work on them.`,
+    `Code has read every issue: the record of each gives its body, comments, labels, sub-issues, parent, closing and cross-referenced pull requests, the merged pull requests and commits on the default branch that name it, and its Orca workspace, with flags for what code could tell. The issues come in ${chunkCount} chunks; this message holds the first, and each answer of the tool holds the next.`,
+    ...(isPrListCut ? [`The pull request list holds the newest ${PR_LIMIT} pull requests of ${repo}: an older one that names an issue is not in its record.`] : []),
     '',
-    'Then, for only the issues you are pretty sure of, ask the user with AskUserQuestion (multiSelect, at most 4 issues a question, 4 questions a call; ask again for the rest). Each option is one issue: "#<n> <title>", and its description gives the verdict and the evidence (the pull request, commit, or file and line).',
-    `Close each issue the user picks, and only those: \`gh issue close <n> --repo ${repo} --reason "not planned" --comment "<verdict and evidence>"\`, or --reason completed when a merged pull request or commit fixed it. Never close an issue the user did not pick.`,
+    'For each issue of a chunk:',
+    '- Judge it from its record. Where the record does not settle it, compare what it asks with the code on the default branch and with later pull requests and commits (`git log --grep`, `git log -S`, the files it names).',
+    '- An issue linked to an Orca workspace may be in progress: its record gives the workspace branch, its commits ahead and its pull request. Its work merged means done; open work means needs_work.',
+    '- A flag is a lead, not a verdict. An open pull request alone does not make an issue need work, and a merged pull request that fixed or closes it is strong evidence of done.',
+    '- verdict: done (a merged pull request or commit fixed it), outdated (the code or plan it is about is gone), superseded (a later issue or pull request covers it: give it in by), duplicate (another issue asks the same: give it in by), or needs_work. confidence: high, medium or low. evidence: for every verdict but needs_work, a pull request or issue number (#n), a commit sha or a file:line. When you are not sure, the verdict is needs_work.',
+    `- Call \`${CLEAN_TOOL}\` with { verdicts: [{ issue, verdict, confidence, evidence, by }] } for exactly the issues of the chunk. If it refuses, fix what it names and call it again.`,
+    '- You may judge a chunk in a subagent: give it the chunk as it stands, and call the tool yourself with the verdicts it returns.',
+    '',
+    'When every issue has a verdict, the tool answers with the issues to ask the user about and how to close them. Ask nothing and close nothing before that.',
     ...(hint ? ['', `The human's hint for this clean: ${hint}`] : []),
     '',
-    'End with a short list: each issue closed and why, each issue left open, and each close that failed with its error.',
+    first,
   ].join('\n')
+}
+
+// The reasons a verdicts call is refused; none when it can be recorded.
+function verdictProblems(c: Cleaning, items: unknown[]): string[] {
+  const own = c.members[c.at]!
+  const range = `chunk ${c.at + 1} (${own.map(n => `#${n}`).join(', ')})`
+  const out: string[] = []
+  const seen = new Set<number>()
+  items.forEach((x, k) => {
+    if (x === null || typeof x !== 'object') { out.push(`verdict item ${k + 1} is not an object; give { issue, verdict, confidence, evidence, by }`); return }
+    const v = x as { issue?: unknown; verdict?: unknown; confidence?: unknown; evidence?: unknown; by?: unknown }
+    const n = v.issue
+    if (!Number.isInteger(n)) { out.push(`verdict item ${k + 1} names the issue ${JSON.stringify(n)}; give its number`); return }
+    const m = n as number
+    if (!own.includes(m)) {
+      out.push(c.issues.some(i => i.number === m) ? `#${m} is not in ${range}; give its verdict with its own chunk` : `#${m} is not one of the issues of this clean`)
+      return
+    }
+    if (seen.has(m)) out.push(`#${m} has two verdicts; give it one`)
+    seen.add(m)
+    if (typeof v.verdict !== 'string' || !(VERDICTS as readonly string[]).includes(v.verdict)) { out.push(`#${m}: ${JSON.stringify(v.verdict)} is not a verdict; use one of ${VERDICTS.join(', ')}`); return }
+    if (typeof v.confidence !== 'string' || !(CONFIDENCES as readonly string[]).includes(v.confidence)) out.push(`#${m}: ${JSON.stringify(v.confidence)} is not a confidence; use one of ${CONFIDENCES.join(', ')}`)
+    if (v.verdict === 'needs_work') return
+    if (typeof v.evidence !== 'string' || !EVIDENCE.test(v.evidence)) out.push(`#${m} is ${v.verdict} but its evidence names no PR number, commit sha or file:line`)
+    if ((v.verdict === 'superseded' || v.verdict === 'duplicate') && (!Number.isInteger(v.by) || v.by === m)) out.push(`#${m} is ${v.verdict} but gives no by: the number of the issue or pull request that covers it`)
+  })
+  for (const n of own) if (!seen.has(n)) out.push(`#${n} has no verdict`)
+  return out
+}
+
+const isAsked = (v: Verdict) => v.verdict !== 'needs_work' && v.confidence !== 'low'
+const verdictLine = (v: Verdict, title: string) =>
+  `- #${v.issue} ${v.verdict}${v.by ? ` ${v.verdict === 'superseded' ? 'by' : 'of'} #${v.by}` : ''}: ${v.evidence} (${v.confidence} confidence) — "${title}"`
+
+function askText(c: Cleaning): string {
+  const asked = [...c.verdicts.values()].filter(isAsked)
+  const title = (n: number) => c.issues.find(i => i.number === n)?.title ?? ''
+  if (!asked.length) return `Recorded: all ${c.issues.length} issues have a verdict, and none is a close you are sure of. Ask the user nothing and close nothing. Call \`${CLEAN_TOOL}\` with { closed: [] } for the end report, and give the user that report.`
+  return [
+    `Recorded: all ${c.issues.length} issues have a verdict. Ask the user which of these ${asked.length} to close with AskUserQuestion (multiSelect, at most 4 issues a question, 4 questions a call; ask again for the rest). Each option is one issue: "#<n> <title>", and its description gives the verdict and the evidence.`,
+    ...asked.map(v => verdictLine(v, title(v.issue))),
+    '',
+    `Close each issue the user picks, and only those: \`gh issue close <n> --repo ${c.repo} --reason "not planned" --comment "<verdict and evidence>"\`, or --reason completed for done. Never close an issue the user did not pick.`,
+    `Then call \`${CLEAN_TOOL}\` with { closed: [<each issue closed>], failed: [{ issue, error }] } for the end report, and give the user that report.`,
+  ].join('\n')
+}
+
+// The end report, from the recorded verdicts: what was closed, what failed, and what stays open and why.
+function cleanReport(c: Cleaning, closed: number[], failed: { issue: number; error: string }[]): string {
+  const done = new Set([...closed, ...failed.map(f => f.issue)])
+  const all = [...c.verdicts.values()].filter(v => !closed.includes(v.issue))
+  const list = (vs: Verdict[]) => vs.map(v => v.issue).sort((a, b) => a - b).map(n => `#${n}`).join(', ')
+  const needs = all.filter(v => v.verdict === 'needs_work')
+  const unsure = all.filter(v => v.verdict !== 'needs_work' && v.confidence === 'low')
+  const notPicked = all.filter(v => isAsked(v) && !done.has(v.issue))
+  const why = (n: number) => { const v = c.verdicts.get(n); return v ? `${v.verdict}${v.verdict !== 'needs_work' && v.confidence === 'low' ? ', low confidence' : ''}` : 'not in this clean' }
+  // A close the verdicts did not allow (needs work, low confidence, or an issue outside this clean) is reported, never hidden.
+  const stray = closed.filter(n => { const v = c.verdicts.get(n); return !v || !isAsked(v) })
+  return [
+    `Clean of ${c.repo}. Closed ${closed.length} of ${c.issues.length} issues${closed.length ? `: ${closed.map(n => `#${n} (${why(n)})`).join(', ')}` : ''}.`,
+    ...(stray.length ? [`Closed with no close verdict, so check them: ${stray.map(n => `#${n} (${why(n)})`).join(', ')}. To undo: \`gh issue reopen <n> --repo ${c.repo}\`.`] : []),
+    ...(failed.length ? [`Failed to close ${failed.length}: ${failed.map(f => `#${f.issue}: ${f.error}`).join('; ')}.`] : []),
+    ...(notPicked.length ? [`${notPicked.length} not picked and left open: ${list(notPicked)}.`] : []),
+    ...(unsure.length ? [`${unsure.length} left open with a low-confidence verdict: ${unsure.map(v => `#${v.issue} (${v.verdict})`).join(', ')}.`] : []),
+    `${needs.length} judged needs work and left open${needs.length ? `: ${list(needs)}` : ''}.`,
+  ].join('\n')
+}
+
+// The answer to one mcp__ndev__clean_verdicts call: a chunk's verdicts, or the closes for the end report.
+async function cleanVerdicts(input: { verdicts?: unknown; closed?: unknown; failed?: unknown }): Promise<{ result: string; isError?: true }> {
+  const c = cleaning
+  const refuse = (wrong: string[]) => ({ result: `Refused, nothing recorded:\n- ${wrong.join('\n- ')}\nFix these and call ${CLEAN_TOOL} again.`, isError: true as const })
+  if (!c) return { result: 'Refused: no /dev triage clean is waiting for verdicts (a reload ends one). Run /dev triage clean to start one.', isError: true }
+  if (input.closed !== undefined || input.failed !== undefined) {
+    const missing = c.issues.filter(i => !c.verdicts.has(i.number)).map(i => `#${i.number}`)
+    if (missing.length) return refuse([`${missing.join(', ')} ${missing.length === 1 ? 'has' : 'have'} no verdict yet: give the verdicts of chunk ${c.at + 1} first`])
+    const closed = Array.isArray(input.closed) ? input.closed : []
+    const failedItems = Array.isArray(input.failed) ? input.failed : []
+    const wrong: string[] = []
+    // Only malformed input is refused. A close that has already happened is reported whatever its verdict, so the human sees it.
+    const named = new Set<number>()
+    const check = (n: unknown, what: string) => {
+      if (!Number.isInteger(n) || (n as number) < 1) return wrong.push(`${what} names ${JSON.stringify(n)}, which is not an issue number`)
+      if (named.has(n as number)) return wrong.push(`#${n} is named twice; name each issue once, in closed or in failed`)
+      named.add(n as number)
+    }
+    closed.forEach(n => check(n, 'closed'))
+    const failed = failedItems.flatMap((f, k) => {
+      const x = f as { issue?: unknown; error?: unknown } | null
+      if (x === null || typeof x !== 'object' || typeof x.error !== 'string' || !x.error.trim()) { wrong.push(`failed item ${k + 1} needs { issue, error }`); return [] }
+      check(x.issue, 'failed')
+      return [{ issue: x.issue as number, error: x.error.trim() }]
+    })
+    if (wrong.length) return refuse(wrong)
+    cleaning = undefined
+    return { result: `${cleanReport(c, closed as number[], failed)}\nGive the user this report as it stands.` }
+  }
+  if (c.at >= c.members.length) return refuse([`every chunk has its verdicts; call ${CLEAN_TOOL} with { closed, failed } for the end report`])
+  const items = Array.isArray(input.verdicts) ? (input.verdicts as unknown[]) : []
+  const wrong = verdictProblems(c, items)
+  if (wrong.length) return refuse(wrong)
+  for (const x of items as Verdict[]) {
+    c.verdicts.set(x.issue, { issue: x.issue, verdict: x.verdict, confidence: x.confidence, evidence: typeof x.evidence === 'string' ? x.evidence.trim() : '', ...(Number.isInteger(x.by) ? { by: x.by } : {}) })
+  }
+  c.at += 1
+  if (c.at < c.members.length) return { result: `Recorded the verdicts of chunk ${c.at} of ${c.members.length}.\n\n${c.chunks[c.at]}` }
+  return { result: askText(c) }
 }
 
 // The open issues of repo: the board's Ready and In progress issue cards when board is given, else up to limit open
@@ -212,10 +480,10 @@ async function openIssues($: EngineInterface, repo: string, board: { owner: stri
     issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${isMine ? ' author:@me' : ''}${from}`, '--limit', String(LIMIT + (since ? 2 : 1))])
   }
   if (since) issues = issues.filter(i => i.number > since)
-  const linked = new Set(ofRepo(await orcaWorktrees(run, `, then run ${again}`), repo).filter(w => !w.isArchived)
-    .flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number))
+  const worktrees = ofRepo(await orcaWorktrees(run, `, then run ${again}`), repo).filter(w => !w.isArchived)
+  const linked = new Set(worktrees.flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number!))
   const left = issues.filter(i => !linked.has(i.number)).sort((a, b) => a.number - b.number)
-  return { issues, left, skipped: issues.length - left.length, linked }
+  return { issues, left, skipped: issues.length - left.length, linked, worktrees }
 }
 
 // The login that gh is signed in as, for --mine on a board, whose cards carry their author's login.
@@ -915,6 +1183,38 @@ export async function startTriage($: EngineInterface) {
     },
     isDeferred: false,
   })
+  await $.tool.register({
+    name: 'clean_verdicts',
+    description:
+      'Report the /dev triage clean verdicts, one chunk at a time: a verdict for each issue of the chunk, with evidence for each close. ' +
+      'Once every issue has one, call it again with the issues closed and the closes that failed, for the end report.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verdicts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              issue: { type: 'number' },
+              verdict: { type: 'string', enum: [...VERDICTS] },
+              confidence: { type: 'string', enum: [...CONFIDENCES] },
+              evidence: { type: 'string', description: 'For every verdict but needs_work: a PR or issue number (#n), a commit sha or a file:line' },
+              by: { type: 'number', description: 'superseded or duplicate: the issue or pull request that covers it' },
+            },
+            required: ['issue', 'verdict', 'confidence', 'evidence'],
+          },
+        },
+        closed: { type: 'array', items: { type: 'number' }, description: 'After every verdict: the issues closed on the user\'s pick' },
+        failed: {
+          type: 'array',
+          description: 'After every verdict: each close that failed, with its error',
+          items: { type: 'object', properties: { issue: { type: 'number' }, error: { type: 'string' } }, required: ['issue', 'error'] },
+        },
+      },
+    },
+    isDeferred: false,
+  })
   $.clock.every(TICK_MS, () => { detach(tick($)) })
   $.clock.every(PR_CHECK_MS, () => { detach(prTick($)) })
 }
@@ -1033,6 +1333,8 @@ export async function triageCommand($: EngineInterface, args: string, project: (
 }
 
 export const triage = (on: On, project: () => LoadedConfig | undefined) => {
+  // The engine passes the tool's arguments on the event itself, beside `tool`.
+  on('tool.call', { tool: CLEAN_TOOL }, async (_$, e) => cleanVerdicts(e as unknown as { verdicts?: unknown; closed?: unknown; failed?: unknown }))
   on('tool.call', { tool: TOOL }, async ($, e) => {
     // The engine passes the tool's arguments on the event itself, beside `tool`.
     const input = e as unknown as { groups?: Proposed[]; closed?: unknown; screened?: unknown }
