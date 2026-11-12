@@ -47,8 +47,9 @@ const AGENT_NAME: Record<TriageAgent, string> = { claude: 'Claude', codex: 'Code
 // batch: how many workers run at once, each batch after the last has ended; 0 for no limit.
 // hint: the human's own steer for the coordinator (--hint), empty for none.
 // since: only the issues with a number above it (--since <n>), 0 for all. isReverse: the newest issues first (--reverse).
+// isMine: only the issues that the gh login opened (--mine).
 // isBugsOnly: group only the bugs, and label each issue by its kind (--bugs-only).
-type Options = { isDryRun: boolean; agent: TriageAgent; isOpen: boolean; batch: number; hint: string; since: number; isReverse: boolean; isBugsOnly: boolean }
+type Options = { isDryRun: boolean; agent: TriageAgent; isOpen: boolean; batch: number; hint: string; since: number; isReverse: boolean; isBugsOnly: boolean; isMine: boolean }
 // With --bugs-only, each issue that is not a bug is screened out with one of these kinds, and gets its label when it has one.
 const SCREEN_KINDS: Record<string, { when: string; label?: string }> = {
   enhancement: { when: 'a feature or improvement to add now', label: 'enhancement' },
@@ -125,8 +126,8 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
   if (project?.config.workflow === false) throw new Error(`each triage worker needs the ndev workflow, and ${project.path} sets "workflow": false.\nRepair: remove that setting, or work the issues without /dev triage.`)
   const repo = g.repo
   if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /orca-triage refresh reads it again.`
-  await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined }))
-  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '-linked:pr', `/orca-triage start again${g.board ? ' without --open' : ''}`, o.since)
+  await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined, isMine: o.isMine || undefined }))
+  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '-linked:pr', `/orca-triage start again${g.board ? ' without --open' : ''}`, o.since, o.isMine)
   const { issues, skipped } = got
   const left = ordered(got.left, o.isReverse)
   if (issues.length > LIMIT) {
@@ -146,11 +147,11 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
 // the ones it is sure are done, outdated or superseded, once the human confirms. It groups nothing and starts no worker,
 // and leaves the triage pane as it is. It reads the issues with a linked pull request too: one a merged pull request
 // fixed but never closed is the commonest leftover.
-async function clean($: EngineInterface, project: LoadedConfig | undefined, o: Pick<Options, 'hint' | 'since' | 'isReverse'>): Promise<string> {
+async function clean($: EngineInterface, project: LoadedConfig | undefined, o: Pick<Options, 'hint' | 'since' | 'isReverse' | 'isMine'>): Promise<string> {
   const g = project?.config.github
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
   const repo = g.repo
-  const got = await openIssues($, repo, undefined, o.isReverse ? 'sort:created-desc' : 'sort:created-asc', '/orca-triage clean again', o.since)
+  const got = await openIssues($, repo, undefined, o.isReverse ? 'sort:created-desc' : 'sort:created-asc', '/orca-triage clean again', o.since, o.isMine)
   // More than LIMIT: the oldest LIMIT (the newest with --reverse) go now, and the human is told; the closed ones drop out, so a second clean takes the next.
   const isCut = got.issues.length > LIMIT
   // An issue an Orca workspace links is checked too: its work may have merged, or the workspace may be stale. The brief marks it.
@@ -184,9 +185,10 @@ function cleanBrief(repo: string, issues: TriageIssue[], linked: Set<number>, hi
 }
 
 // The open issues of repo: the board's Ready and In progress issue cards when board is given, else up to limit open
-// issues that match query, oldest first. With since above 0, only the issues with a higher number. An issue an Orca
+// issues that match query, oldest first. With since above 0, only the issues with a higher number. With isMine, only
+// the issues that the gh login opened. An issue an Orca
 // workspace already links is someone's work, so it is left out of left.
-async function openIssues($: EngineInterface, repo: string, board: { owner: string; number: number } | undefined, query: string, again: string, since = 0) {
+async function openIssues($: EngineInterface, repo: string, board: { owner: string; number: number } | undefined, query: string, again: string, since = 0, isMine = false) {
   const run = runner($, 120_000)
   let issues: TriageIssue[]
   if (board) {
@@ -198,20 +200,35 @@ async function openIssues($: EngineInterface, repo: string, board: { owner: stri
     const cards = out.stdout.split('\n').filter(Boolean).map(l => JSON.parse(l) as TriageIssue & { status?: string })
     // A shared board holds other repositories' cards, and a draft card has no url.
     const own = `https://github.com/${repo}/issues/`.toLowerCase()
+    const login = isMine ? await myLogin(run, again) : undefined
     issues = cards.filter(c => (c.status === 'Ready' || c.status === 'In progress') && typeof c.url === 'string' && c.url.toLowerCase().startsWith(own))
+      .filter(c => !login || (c as { author?: string | null }).author?.toLowerCase() === login.toLowerCase())
       .map(({ number, title, url }) => ({ number, title, url }))
   } else {
     // GitHub search has no range of numbers. Numbers go up with time, so the date that #since was opened bounds the
     // search, and the number check below drops #since itself and any issue opened in the same second.
     const from = since ? ` created:>=${await openedAt(run, repo, since)}` : ''
     // The date bound matches #since too, which the number check drops: one more result keeps a cut visible.
-    issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${from}`, '--limit', String(LIMIT + (since ? 2 : 1))])
+    issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${isMine ? ' author:@me' : ''}${from}`, '--limit', String(LIMIT + (since ? 2 : 1))])
   }
   if (since) issues = issues.filter(i => i.number > since)
   const linked = new Set(ofRepo(await orcaWorktrees(run, `, then run ${again}`), repo).filter(w => !w.isArchived)
     .flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number))
   const left = issues.filter(i => !linked.has(i.number)).sort((a, b) => a.number - b.number)
   return { issues, left, skipped: issues.length - left.length, linked }
+}
+
+// The login that gh is signed in as, for --mine on a board, whose cards carry their author's login.
+async function myLogin(run: Run, again: string): Promise<string> {
+  let got: unknown
+  try {
+    got = await gh(run, ['api', 'user'])
+  } catch (err) {
+    throw new Error(`--mine: GitHub did not give the signed-in user. ${err instanceof Error ? err.message : String(err)}\nRepair: run \`gh auth status\`, sign in with \`gh auth login\` if needed, then run ${again}.`)
+  }
+  const login = (got as { login?: unknown }).login
+  if (typeof login !== 'string' || !login) throw new Error(`--mine: GitHub gave the signed-in user with no login: ${JSON.stringify(got).slice(0, 200)}`)
+  return login
 }
 
 // When issue or pull request #n of repo was opened, as GitHub gives it (2026-05-01T00:00:00Z).
@@ -858,7 +875,7 @@ export async function startTriage($: EngineInterface) {
   await $.command.register({
     name: 'orca-triage',
     description: 'Group the open issues with this session\'s model, then coordinate an Orca worker on each group, one pull request per group. Same as /dev triage',
-    argumentHint: '[start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--since <n>] [--reverse] [--bugs-only] [--hint "<text>"]|clean [--since <n>] [--reverse] [--hint "<text>"]|launch|refresh|reset]',
+    argumentHint: '[start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--since <n>] [--reverse] [--bugs-only] [--mine] [--hint "<text>"]|clean [--since <n>] [--reverse] [--mine] [--hint "<text>"]|launch|refresh|reset]',
   })
   await $.tool.register({
     name: 'triage_groups',
@@ -904,8 +921,8 @@ export async function startTriage($: EngineInterface) {
 }
 
 // /orca-triage <args> and /dev triage <args>. Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
-const START_OPTIONS = ['--dry-run', '--codex', '--open', '--sequential', '--batch', '--since', '--reverse', '--bugs-only', '--hint']
-const CLEAN_OPTIONS = ['--since', '--reverse', '--hint']
+const START_OPTIONS = ['--dry-run', '--codex', '--open', '--sequential', '--batch', '--since', '--reverse', '--bugs-only', '--mine', '--hint']
+const CLEAN_OPTIONS = ['--since', '--reverse', '--mine', '--hint']
 // The options that take the next word as their value.
 const VALUED = ['--batch', '--since']
 const SINCE_USAGE = '--since <n> takes an issue number above 0: only the issues with a higher number, as in --since 120.'
@@ -951,19 +968,20 @@ export async function triageCommand($: EngineInterface, args: string, project: (
   const [verb = 'status'] = words.filter((w, i) => !w.startsWith('--') && !(i > 0 && VALUED.includes(words[i - 1]!)))
   const allowed = verb === 'start' ? START_OPTIONS : verb === 'clean' ? CLEAN_OPTIONS : []
   const unknown = [...words, ...(hint ? ['--hint'] : [])].find(w => w.startsWith('--') && !allowed.includes(w))
-  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The options are /orca-triage start ${START_OPTIONS.join(' ')} and /orca-triage clean ${CLEAN_OPTIONS.join(' ')}: --dry-run plans and starts nothing, --codex runs the fixes in Codex workers, --open takes every open issue and not only the board's, --batch <size> runs that many workers at once, batch after batch, --sequential is --batch 1, --since <n> takes only the issues above #n, --reverse works the newest issues first, --bugs-only groups only the bugs and labels each issue by its kind, and --hint "<text>" gives the model your own steer.` }
+  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The options are /orca-triage start ${START_OPTIONS.join(' ')} and /orca-triage clean ${CLEAN_OPTIONS.join(' ')}: --dry-run plans and starts nothing, --codex runs the fixes in Codex workers, --open takes every open issue and not only the board's, --batch <size> runs that many workers at once, batch after batch, --sequential is --batch 1, --since <n> takes only the issues above #n, --reverse works the newest issues first, --bugs-only groups only the bugs and labels each issue by its kind, --mine takes only the issues you opened, and --hint "<text>" gives the model your own steer.` }
   const since = sinceOption(verb, words)
   if (typeof since === 'string') return { text: since }
   const isReverse = words.includes('--reverse')
+  const isMine = words.includes('--mine')
   if (verb === 'clean') {
-    detach(clean($, project(), { hint, since, isReverse }).then(text => $.ui.toast(text), fail($, 'clean')))
+    detach(clean($, project(), { hint, since, isReverse, isMine }).then(text => $.ui.toast(text), fail($, 'clean')))
     return { text: 'Clean started: reading the open issues. The model checks each one and asks you before it closes any.' }
   }
   detach(openPane($))
   if (verb === 'start') {
     const batch = batchOption(words)
     if (typeof batch === 'string') return { text: batch }
-    detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch, hint, since, isReverse, isBugsOnly: words.includes('--bugs-only') })
+    detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch, hint, since, isReverse, isBugsOnly: words.includes('--bugs-only'), isMine })
       .then(text => $.ui.toast(text), fail($, 'start')))
     return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
   }
@@ -974,7 +992,7 @@ export async function triageCommand($: EngineInterface, args: string, project: (
     await update($, view, () => EMPTY)
     return { text: v.runId ? `Triage cleared. Orca Run ${v.runId} and its workspaces stay in Orca.` : 'Triage cleared.' }
   }
-  if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--since <n>] [--reverse] [--bugs-only] [--hint "<text>"], clean [--since <n>] [--reverse] [--hint "<text>"], launch, refresh or reset.` }
+  if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--since <n>] [--reverse] [--bugs-only] [--mine] [--hint "<text>"], clean [--since <n>] [--reverse] [--mine] [--hint "<text>"], launch, refresh or reset.` }
   const v = await read($, view)
   return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups, ${AGENT_NAME[agentOf(v)]} workers.` : 'No triage yet. /orca-triage start reads the issues.' }
 }
@@ -1081,7 +1099,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
             : g.task === 'failed' ? { word: 'failed', color: 'error' }
               : g.dispatchId ? { word: 'working', color: 'claude' }
                 : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
-    const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.isOpen ? ' · every open issue' : ''}${v.since ? ` · above #${v.since}` : ''}${v.isReverse ? ' · newest first' : ''}${v.isBugsOnly ? ' · bugs only' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
+    const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.isOpen ? ' · every open issue' : ''}${v.since ? ` · above #${v.since}` : ''}${v.isReverse ? ' · newest first' : ''}${v.isBugsOnly ? ' · bugs only' : ''}${v.isMine ? ' · opened by me' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
     const phase = v.phase === 'grouping' ? `the model is grouping ${v.issues.length} issues`
       : v.phase === 'planned' ? `${v.groups.length} groups planned, nothing started${v.isDryRun ? ' (dry run)' : ''}`
         : v.phase === 'running' ? `Orca Run ${v.runId ?? 'not made yet'}` : v.phase === 'done' ? (v.runId ? `done · Orca Run ${v.runId}` : 'stopped: no Orca Run was made') : 'not started'
@@ -1102,7 +1120,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         </Box>
         <Box gap={2}>
           {v.phase !== 'running' && v.phase !== 'grouping' &&
-            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly }).then(t => $.ui.toast(t), fail($, 'start'))) }} />}
+            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly, isMine: !!v.isMine }).then(t => $.ui.toast(t), fail($, 'start'))) }} />}
           {v.phase === 'planned' && <Button key="launch" label="Launch" hotkey="l" plain onPress={() => { detach(launch($).catch(fail($, 'launch'))) }} />}
           {v.runId && <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => { detach(tick($).catch(fail($, 'refresh'))) }} />}
         </Box>
