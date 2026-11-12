@@ -238,7 +238,7 @@ async function helpText($: EngineInterface) {
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
     '  /dev triage start [--dry-run]       group the open issues and coordinate an Orca worker on each group (Triage pane); --hint "<text>" steers the model',
     '  /dev triage clean [--hint "<text>"] close the open issues that are done, outdated or superseded, after you confirm each',
-    '    --codex: the workers are Codex (sol, terra, luna); --open: every open issue, not only the board\'s; --batch <size>: that many workers at once, batch after batch, in the order the coordinator chooses; --sequential: --batch 1',
+    '    --codex: the workers are Codex (sol, terra, luna); --open: every open issue, not only the board\'s; --batch <size>: that many workers at once (default 5), batch after batch, in the order the coordinator chooses; --sequential: --batch 1',
     '  /dev triage [launch|refresh|reset]  launch a dry run, read the triage back from Orca, or clear it; with no word, show its state',
     '  /dev-mode, /dev-steering, /dev-setup and /orca-triage still work as before.',
     '',

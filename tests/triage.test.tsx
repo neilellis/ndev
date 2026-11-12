@@ -771,6 +771,21 @@ test('/orca-triage start --batch 2 runs the groups in batches of two: the next b
   expect(w.orcaRan('orchestration worker-start')[2]).toEqual(expect.arrayContaining(['--task', 'task_3']))
 })
 
+test('/orca-triage start with no --batch or --sequential runs batches of 5', async ($, on) => {
+  const w = world(on, { issues: [3, 4, 5, 6, 7, 8].map(n => issue(n)) })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).toMatch(/at most 5 workers at a time, in batches, in the order you list the groups/)
+  await $.tool.call({ tool: TOOL, groups: [3, 4, 5, 6, 7, 8].map(n => group([n], 'simple')) } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 5, () => w.ran)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(w.orcaRan('orchestration worker-start')).toHaveLength(5)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /batches of 5/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
 test('/orca-triage start --batch refuses a size that is not a whole number above 0, and --sequential with another size', async ($, on) => {
   world(on, { issues: [issue(3)] })
   await started($)

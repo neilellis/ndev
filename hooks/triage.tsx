@@ -929,13 +929,15 @@ function hintOption(args: string): { rest: string; hint: string } | string {
   if (!hint) return `/orca-triage --hint has no text. ${HINT_USAGE}`
   return { rest: `${args.slice(0, m.index)} ${args.slice(m.index + m[0].length)}`, hint }
 }
-const BATCH_USAGE = '--batch <size> takes a whole number above 0: how many workers run at once, each batch after the last has ended. --sequential is --batch 1.'
+// Workers at once when start names no size: enough to make progress, few enough for one machine.
+const DEFAULT_BATCH = 5
+const BATCH_USAGE = `--batch <size> takes a whole number above 0: how many workers run at once, each batch after the last has ended (${DEFAULT_BATCH} when not given). --sequential is --batch 1.`
 
-// The value of --batch <size>, with --sequential as 1; 0 when neither is given. A bad size returns the refusal.
+// The value of --batch <size>, with --sequential as 1; DEFAULT_BATCH when neither is given. A bad size returns the refusal.
 function batchOption(words: string[]): number | string {
   const at = words.indexOf('--batch')
   const isSequential = words.includes('--sequential')
-  if (at < 0) return isSequential ? 1 : 0
+  if (at < 0) return isSequential ? 1 : DEFAULT_BATCH
   const raw = words[at + 1]
   if (!raw || !/^[1-9]\d*$/.test(raw)) return `/orca-triage start --batch ${raw ?? ''}`.trimEnd() + ` is not a size. ${BATCH_USAGE}`
   const size = Number(raw)
@@ -951,7 +953,7 @@ export async function triageCommand($: EngineInterface, args: string, project: (
   const [verb = 'status'] = words.filter((w, i) => !w.startsWith('--') && !(i > 0 && VALUED.includes(words[i - 1]!)))
   const allowed = verb === 'start' ? START_OPTIONS : verb === 'clean' ? CLEAN_OPTIONS : []
   const unknown = [...words, ...(hint ? ['--hint'] : [])].find(w => w.startsWith('--') && !allowed.includes(w))
-  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The options are /orca-triage start ${START_OPTIONS.join(' ')} and /orca-triage clean ${CLEAN_OPTIONS.join(' ')}: --dry-run plans and starts nothing, --codex runs the fixes in Codex workers, --open takes every open issue and not only the board's, --batch <size> runs that many workers at once, batch after batch, --sequential is --batch 1, --since <n> takes only the issues above #n, --reverse works the newest issues first, --bugs-only groups only the bugs and labels each issue by its kind, and --hint "<text>" gives the model your own steer.` }
+  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The options are /orca-triage start ${START_OPTIONS.join(' ')} and /orca-triage clean ${CLEAN_OPTIONS.join(' ')}: --dry-run plans and starts nothing, --codex runs the fixes in Codex workers, --open takes every open issue and not only the board's, --batch <size> runs that many workers at once, batch after batch (${DEFAULT_BATCH} by default), --sequential is --batch 1, --since <n> takes only the issues above #n, --reverse works the newest issues first, --bugs-only groups only the bugs and labels each issue by its kind, and --hint "<text>" gives the model your own steer.` }
   const since = sinceOption(verb, words)
   if (typeof since === 'string') return { text: since }
   const isReverse = words.includes('--reverse')
