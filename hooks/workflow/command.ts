@@ -8,7 +8,7 @@ import type { LoadedConfig } from '../config'
 import { comment, git, head, markReady, readPr, withdrawAlert } from './effects'
 import { afterSkip } from './machine'
 import type { State } from './machine'
-import { boundRoot, endAsking, factsFor, inTurn, isWaitRunning, labelOf, loadWorkflow, readHeld, waitHolder, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
+import { boundRoot, endAsking, factsFor, inTurn, isStaleWrite, isWaitRunning, labelOf, loadWorkflow, readHeld, waitHolder, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
 import type { Workflow } from './tools'
 import { EPIC_HELP, epicCommand } from './epic'
 import { watcherNote } from './watchdog'
@@ -37,6 +37,27 @@ async function clearBlock($: EngineInterface, wf: Workflow, notes: string[]) {
   const problem = await withdrawAlert($, wf.root, wf.blocked)
   if (problem) notes.push(problem)
   wf.blocked = undefined
+}
+
+// Another session or process can save the record between this command's read and its write. The save then exits 5
+// and changes nothing, so the command reads the record again and makes its change again. After the last try the
+// error names the record, both revisions, the tries and the repair.
+const FLOW_TRIES = 3
+async function saveFresh($: EngineInterface, wf: Workflow, verb: string, change: (w: Workflow) => Promise<void>): Promise<Workflow> {
+  let current = wf
+  for (let tries = 1; ; tries += 1) {
+    await change(current)
+    try {
+      await saveWorkflow($, current)
+      return current
+    } catch (error) {
+      if (!isStaleWrite(error)) throw error
+      if (tries >= FLOW_TRIES) throw new Error(`${(error as Error).message} /flow ${verb} read the record again ${tries} times, and each time another writer saved it first. Repair: run /flow status to see the record, then /flow ${verb} again.`)
+    }
+    const again = await loadWorkflow($, current.root, current.issue)
+    if (!again) throw new Error(`/flow ${verb}: the record of ${labelOf(current)} in ${current.root} is gone after another writer saved it. Nothing was changed. Repair: run /flow status.`)
+    current = again
+  }
 }
 
 // The agent learns the new state by a prompt: a command's text goes to the human.
@@ -125,11 +146,13 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
   const notes: string[] = []
 
   if (verb === 'off') {
-    await clearBlock($, wf, notes)
-    wf.off = { at: now, reason: tail || 'no reason given' }
-    await saveWorkflow($, wf)
-    await record($, wf, `off (${wf.off.reason}).`, notes)
-    return `The workflow of ${labelOf(wf)} is off: its tools refuse and no reminder comes. The state stays "${wf.state}".${said(notes)}`
+    const reason = tail || 'no reason given'
+    const saved = await saveFresh($, wf, 'off', async w => {
+      await clearBlock($, w, notes)
+      w.off = { at: now, reason }
+    })
+    await record($, saved, `off (${reason}).`, notes)
+    return `The workflow of ${labelOf(saved)} is off: its tools refuse and no reminder comes. The state stays "${saved.state}".${said(notes)}`
   }
   if (verb === 'on') {
     if (!wf.off) return `The workflow of ${labelOf(wf)} is already on, in the state "${wf.state}".`

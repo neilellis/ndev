@@ -3551,6 +3551,28 @@ test('/flow off stops the tools and the reminders; on starts them again', async 
   expect(w.prompts.length).toBe(1)
 })
 
+// #661 in fcc-proto: /flow off answered "set-workflow exited 5 ... at revision 41, and this writer expected 40"
+// and changed nothing, when the agent's own tool saved the record between the command's read and its write.
+test('/flow off reads the record again and turns the workflow off when another writer gets in first', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.staleSaves = 1
+  const text = await command($, 'off doing this by hand')
+  expect(text).not.toContain('exited 5')
+  expect(w.state()?.off).toMatchObject({ reason: 'doing this by hand' })
+})
+
+test('/flow off names its retries and the repair when another writer changes the record each time', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.staleSaves = 99
+  const text = await command($, 'off by hand')
+  expect(text).toContain('exited 5')
+  expect(text).toContain('/flow off read the record again 3 times')
+  expect(text).toContain('Repair:')
+  expect(w.state()?.off).toBeUndefined()
+})
+
 test('/flow off project writes .neil-dev.json and stops the reminders', async ($, on) => {
   const w = engine(on)
   await start($, w)
