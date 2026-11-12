@@ -532,9 +532,9 @@ function brief(repo: string, issues: TriageIssue[], agent: TriageAgent, batch: n
     ...(isReverse ? ['- This triage works the newest issues first: list the groups with the newest issues first, unless after or a risk needs another order.'] : []),
     ...(batch === 1 ? ['- This triage runs one worker at a time, in the order you list the groups: you decide that order. Put first what unblocks others, is most urgent, or is smallest and safest, so each pull request can merge before the next starts. A group still waits for the groups in its after.'] : []),
     ...(batch > 1 ? [`- This triage runs at most ${batch} workers at a time, in batches, in the order you list the groups: you decide that order. The next batch starts only when every worker of the last one has ended. Put first what unblocks others, is most urgent, or is smallest and safest, and put groups that touch the same files in different batches. A group still waits for the groups in its after.`] : []),
-    ...(hint ? ['', `The human's hint for this triage: ${hint}`, `Follow it where it goes beyond these rules. When it asks you to close issues that need no work, ask the user first with AskUserQuestion, close only those the user picks with \`gh issue close <n> --repo ${repo} --comment "<why>"\`, and list them in closed instead of in a group.`] : []),
+    ...(hint ? ['', `The human's hint for this triage: ${hint}`, `Follow it where it goes beyond these rules. When it asks you to close issues that need no work, ask the user first with AskUserQuestion, close only those the user picks with \`gh issue close <n> --repo ${repo} --comment "<why>"\`, and list them in closed instead of in a group. When it asks you to skip or leave out issues without closing them, list them in skipped as { issue, reason } instead of in a group: they stay open, untouched, and get no worker.`] : []),
     '',
-    `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }]${hint ? ', closed' : ''}${isBugsOnly ? ', screened' : ''} }.`,
+    `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }]${hint ? ', closed, skipped' : ''}${isBugsOnly ? ', screened' : ''} }.`,
     'If it refuses, fix what it names and call it again.',
     '',
     `You are the coordinator of this triage: one Orca worker takes each group through the ndev workflow (kb/workflow.md), and you do none of that work. Never call mcp__ndev__started for these issues, and never edit, commit or open a pull request for them. Answer the workers, decide what to do when one fails, and report to the user. The mod sends you each of these moments.`,
@@ -1169,6 +1169,11 @@ export async function startTriage($: EngineInterface) {
           },
         },
         closed: { type: 'array', items: { type: 'number' }, description: 'Issues closed on the human\'s --hint, after the human confirmed; they are in no group' },
+        skipped: {
+          type: 'array',
+          description: 'Only with /dev triage start --hint: each issue the hint says to skip, with the reason; it stays open and is in no group',
+          items: { type: 'object', properties: { issue: { type: 'number' }, reason: { type: 'string' } }, required: ['issue', 'reason'] },
+        },
         screened: {
           type: 'array',
           description: 'Only with /dev triage start --bugs-only: each issue that is not a bug, with its kind; they are in no group',
@@ -1337,7 +1342,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
   on('tool.call', { tool: CLEAN_TOOL }, async (_$, e) => cleanVerdicts(e as unknown as { verdicts?: unknown; closed?: unknown; failed?: unknown }))
   on('tool.call', { tool: TOOL }, async ($, e) => {
     // The engine passes the tool's arguments on the event itself, beside `tool`.
-    const input = e as unknown as { groups?: Proposed[]; closed?: unknown; screened?: unknown }
+    const input = e as unknown as { groups?: Proposed[]; closed?: unknown; screened?: unknown; skipped?: unknown }
     const v = await read($, view)
     if (v.phase !== 'grouping') return { result: `Refused: /dev triage is not waiting for groups (it is ${v.phase}). /dev triage start begins one.`, isError: true as const }
     const groups = Array.isArray(input.groups) ? input.groups : []
@@ -1361,9 +1366,27 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         ...(inGroups.has(x?.issue) ? [`#${String(x?.issue)} is in a group and in screened`] : []),
         ...(closed.includes(x?.issue) ? [`#${String(x?.issue)} is in closed and in screened`] : []),
       ])]
-    const out = new Set<unknown>([...closed, ...screened.map(x => x.issue)])
+    // With --hint, the issues the human's hint says to skip: they stay open and are in no group.
+    const skipItems = Array.isArray(input.skipped) ? (input.skipped as unknown[]) : []
+    const skipped = skipItems.filter((x): x is { issue?: unknown; reason?: unknown } => x !== null && typeof x === 'object')
+    const skipNamed = skipped.map(x => x.issue)
+    const screenedNamed = new Set(named)
+    const badSkipped = input.skipped !== undefined && !v.hint
+      ? ['skipped needs /dev triage start --hint "<text>" that asks to skip issues; put every issue in a group']
+      : [
+        ...skipItems.flatMap((x, i) => (x !== null && typeof x === 'object' ? [] : [`skipped item ${i + 1} is not an object; give { issue, reason }`])),
+        ...[...new Set(skipNamed.filter((n, i) => skipNamed.indexOf(n) !== i))].map(n => `skipped names #${String(n)} twice; give each issue once`),
+        ...skipped.flatMap(x => [
+          ...(!Number.isInteger(x.issue) || !known.has(x.issue as number) ? [`skipped names ${JSON.stringify(x.issue)}, which is not one of the issues to group`] : []),
+          ...(typeof x.reason !== 'string' || !x.reason.trim() ? [`skipped #${String(x.issue)} gives no reason`] : []),
+          ...(inGroups.has(x.issue) ? [`#${String(x.issue)} is in a group and in skipped`] : []),
+          ...(closed.includes(x.issue) ? [`#${String(x.issue)} is in closed and in skipped`] : []),
+          ...(screenedNamed.has(x.issue) ? [`#${String(x.issue)} is in screened and in skipped`] : []),
+        ]),
+      ]
+    const out = new Set<unknown>([...closed, ...screened.map(x => x.issue), ...skipNamed])
     const rest = v.issues.filter(i => !out.has(i.number))
-    const early = [...badClosed, ...badScreened]
+    const early = [...badClosed, ...badScreened, ...badSkipped]
     const wrong = [...early, ...(early.length ? [] : problems(rest, groups))]
     if (wrong.length) return { result: `Refused, nothing recorded:\n- ${wrong.join('\n- ')}\nFix these and call ${TOOL} again.`, isError: true as const }
     const kinds = screened as { issue: number; kind: string; reason: string }[]
@@ -1385,11 +1408,17 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
       }
       if (kinds.length) await note($, `the model screened out ${kinds.map(x => `#${x.issue} (${x.kind})`).join(' ')}`)
     }
-    const screenedText = kinds.length ? ` It screened out ${kinds.length} issues that are not bugs: ${kinds.map(x => `#${x.issue} ${x.kind}`).join(', ')}.${labelled}` : labelled
+    const skips = skipped as { issue: number; reason: string }[]
+    const skippedText = skips.length ? ` It skipped ${skips.length} issues on the hint: ${skips.map(x => `#${x.issue}`).join(', ')}; they stay open with no worker.` : ''
+    const screenedText = (kinds.length ? ` It screened out ${kinds.length} issues that are not bugs: ${kinds.map(x => `#${x.issue} ${x.kind}`).join(', ')}.${labelled}` : labelled) + skippedText
     if (closed.length) await note($, `the model closed ${closed.map(n => `#${String(n)}`).join(' ')}`)
+    // One line on the pane for each reason, so the human sees why each issue was left out.
+    const reasons = new Map<string, number[]>()
+    for (const x of skips) reasons.set(x.reason.trim(), [...(reasons.get(x.reason.trim()) ?? []), x.issue])
+    for (const [reason, ns] of reasons) await note($, `skipped ${ns.map(n => `#${n}`).join(' ')} on the hint: ${reason}`)
     if (!groups.length) {
       await update($, view, () => EMPTY)
-      return { result: `Recorded: no issue is left in a group, so there is nothing to start.${screenedText} Report the closed and screened issues to the user.` }
+      return { result: `Recorded: no issue is left in a group, so there is nothing to start.${screenedText} Report the closed, screened and skipped issues to the user.` }
     }
     const planned = groups.map(g => toGroup(g, agentOf(v)))
     await update($, view, (x): TriageView => ({ ...x, phase: 'planned', issues: rest, groups: planned, labels: v.isDryRun && wanted.length ? wanted : undefined }))

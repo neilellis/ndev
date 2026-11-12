@@ -1279,3 +1279,39 @@ test('with a --hint, the groups report may list closed issues, which are then in
   expect(r.isError).toBeUndefined()
   expect(r.result).toMatch(/Recorded 1 groups/)
 })
+
+test('with a --hint, the groups report may list skipped issues, which stay open, get no worker and show on the pane with the reason; a bad skipped item is refused', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4), issue(9), issue(10)] })
+  await started($)
+  await $.command.run(command('start --dry-run --hint "Disregard the KG issues"'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).toMatch(/list them in skipped/)
+  // An issue in a group and in skipped, one it does not know, one with no reason, and one named twice are refused.
+  const bad = await $.tool.call({ tool: TOOL, groups: [group([3, 4], 'simple')], skipped: [{ issue: 4, reason: 'KG' }, { issue: 12, reason: 'KG' }, { issue: 9, reason: ' ' }, { issue: 10, reason: 'KG' }, { issue: 10, reason: 'KG' }, 'x'] } as never) as { result: string; isError?: boolean }
+  expect(bad.isError).toBe(true)
+  expect(bad.result).toMatch(/#4 is in a group and in skipped/)
+  expect(bad.result).toMatch(/skipped names 12, which is not one of the issues to group/)
+  expect(bad.result).toMatch(/skipped #9 gives no reason/)
+  expect(bad.result).toMatch(/skipped names #10 twice/)
+  expect(bad.result).toMatch(/skipped item 6 is not an object/)
+  const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], skipped: [{ issue: 4, reason: 'a KG issue' }, { issue: 9, reason: 'a KG issue' }, { issue: 10, reason: 'the hint says so' }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBeUndefined()
+  expect(r.result).toMatch(/Recorded 1 groups/)
+  expect(r.result).toMatch(/skipped 3 issues on the hint: #4, #9, #10/)
+  expect(w.ran.filter(a => a.join(' ').includes('issue close'))).toEqual([])
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /skipped #4 #9 on the hint: a KG issue/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /skipped #10 on the hint: the hint says so/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('skipped is refused without --hint, so the model never leaves an issue out on its own', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4)] })
+  await started($)
+  await $.command.run(command('start --dry-run'))
+  await until(() => w.prompts.length > 0)
+  expect(w.prompts[0]).not.toMatch(/skipped/)
+  const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], skipped: [{ issue: 4, reason: 'x' }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBe(true)
+  expect(r.result).toMatch(/skipped needs \/dev triage start --hint/)
+})
