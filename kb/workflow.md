@@ -443,7 +443,7 @@ To see where a session is in the flow, type `/view`. It draws the flow as a chai
 
 ## blocked
 
-`blocked` runs `scripts/workflow/notify.sh`. It shows an `alerter` notification that stays until you dismiss it. A click on it opens the Orca terminal of the worktree. It also sets a comment and the unread flag on the Orca worktree. To install `alerter`: `brew install vjeantet/tap/alerter`. If `alerter` is missing, the Orca flag still appears, and the reply gives the install command.
+`blocked` runs `scripts/workflow/notify.sh`. It shows one macOS notification with `osascript` and leaves no process running. It also sets a comment and the unread flag on the Orca worktree, which stay until the issue is unblocked. macOS cannot withdraw an `osascript` notification, and a click on it does not open the Orca terminal: the Orca flag does both jobs. The notification stays on screen only if Script Editor's notification style is Alerts (System Settings > Notifications > Script Editor). If `osascript` fails, the Orca flag still appears, and the reply gives the exit code and output. The plugin used `alerter` before, which kept one process per alert until it was dismissed and leaked memory.
 
 To end a block with your answer, type `/unblock <message>`. The message is compulsory. The agent gets it in a prompt, with the next step. With no message, the command changes nothing and shows the block message. The notification and the flag are withdrawn.
 
@@ -486,7 +486,7 @@ A wait ends in one of these ways:
 - A wait reads its own record, so a change of issue during the wait does not lose it. If the record is missing, the wait reads it 3 times, 1 second apart, and then fails with the files it read and the repair.
 - `waitFor` runs the command that the agent gives, with the same rights as the Bash tool.
 - `waitForState` ends at once when the issue is done or has its workflow off and did not reach the state, and the answer says so. An issue with no record does not end the wait, because it may not have started. Its limit: it reads only the worktrees of this repository on this machine, so a removed worktree looks like an issue that has not started. Use `waitForIssue` for that case.
-- A wait that passes half of its retries tells the human as `blocked` does: a persistent notification and the Orca flag. The retries are `attempts`, or as many as `timeout` allows at this `period`. Half of `timeout` counts too. The wait goes on, and it withdraws the notice when it ends. `waitForSeconds` has no retries, so it never does this.
+- A wait that passes half of its retries tells the human as `blocked` does: a macOS notification and the Orca flag. The retries are `attempts`, or as many as `timeout` allows at this `period`. Half of `timeout` counts too. The wait goes on, and it clears the Orca flag when it ends. `waitForSeconds` has no retries, so it never does this.
 - In `ci`, the plugin still watches the checks. Use a wait tool for something else, not for the checks.
 
 The plugin pauses with a short `sleep` process and not with `$.clock.sleep`. A hook has 10 seconds of its own time, and a `$.clock` wait uses that time, but a `$.process.run` call does not.

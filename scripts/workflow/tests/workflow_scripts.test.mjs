@@ -1,4 +1,4 @@
-// Tests for notify.sh, merge.sh and fast-checks-template.sh. Fake alerter, orca and gh programs stand in for the real ones:
+// Tests for notify.sh, merge.sh and fast-checks-template.sh. Fake osascript, orca and gh programs stand in for the real ones:
 // no test raises a real alert or calls GitHub. Run: node --test scripts/workflow/tests/workflow_scripts.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -30,47 +30,43 @@ const until = (check, what) => {
 }
 
 // ---- notify.sh ----
-const notifyEnv = (dir, answer) => ({
+// A fake osascript records its arguments, one per line, then a blank line.
+const notifyEnv = (dir, body = '') => ({
   ...process.env,
-  NDEV_ALERTER: program(dir, 'alerter', `echo "$*" >> "${dir}/alerter.log"\n[ "$1" = --remove ] && exit 0\n${answer}`),
-  NDEV_ORCA: program(dir, 'orca', `echo "$*" >> "${dir}/orca.log"`),
+  NDEV_OSASCRIPT: program(dir, 'osascript', `printf '%s\\n' "$@" >> "${dir}/osascript.log"; echo >> "${dir}/osascript.log"\n${body}`),
 })
 const raise = (dir, env, ...extra) =>
-  spawnSync('bash', [NOTIFY, 'raise', '--group', 'g1', '--title', 'T', '--message', 'M', '--log', join(dir, 'n.log'), ...extra], { encoding: 'utf8', env })
+  spawnSync('bash', [NOTIFY, 'raise', '--group', 'g1', '--title', 'T "quoted"', '--message', 'M \\ $HOME', ...extra], { encoding: 'utf8', env })
 
-test('raise prints the watcher pid, and a click switches to the Orca terminal', () => {
+test('raise shows one notification, passes the text as arguments and leaves no process behind', () => {
   const dir = folder()
-  const r = raise(dir, notifyEnv(dir, 'echo @CONTENTCLICKED'), '--terminal', 't-1')
+  const r = raise(dir, notifyEnv(dir))
   assert.equal(r.status, 0, r.stderr)
-  assert.match(r.stdout.trim(), /^\d+$/)
-  until(() => lines(join(dir, 'orca.log')).length > 0, 'the Orca switch')
-  assert.deepEqual(lines(join(dir, 'orca.log')), ['terminal switch --terminal t-1'])
-  assert.match(lines(join(dir, 'alerter.log'))[0], /--group g1/)
+  assert.equal(r.stdout, '')
+  const said = readFileSync(join(dir, 'osascript.log'), 'utf8')
+  assert.match(said, /^T "quoted"$/m)
+  assert.match(said, /^M \\ \$HOME$/m)
 })
 
-test('a dismissed alert does not switch the terminal, and the log says what came back', () => {
+test('a failed osascript exits 3 and gives its exit code and output', () => {
   const dir = folder()
-  raise(dir, notifyEnv(dir, 'echo @CLOSED'), '--terminal', 't-1')
-  until(() => /alerter exited 0: @CLOSED/.test(existsSync(join(dir, 'n.log')) ? readFileSync(join(dir, 'n.log'), 'utf8') : ''), 'the log line')
-  assert.deepEqual(lines(join(dir, 'orca.log')), [])
-})
-
-test('withdraw stops the watcher and removes the alert', () => {
-  const dir = folder()
-  const env = notifyEnv(dir, 'exec sleep 60')
-  const pid = raise(dir, env).stdout.trim()
-  until(() => lines(join(dir, 'alerter.log')).length > 0, 'the alert')
-  const r = spawnSync('bash', [NOTIFY, 'withdraw', '--group', 'g1', '--pid', pid], { encoding: 'utf8', env })
-  assert.equal(r.status, 0, r.stderr)
-  assert.match(lines(join(dir, 'alerter.log')).at(-1), /--remove g1/)
-  until(() => spawnSync('kill', ['-0', pid]).status !== 0, 'the watcher to end')
-})
-
-test('a missing alerter exits 3 and names the install command', () => {
-  const dir = folder()
-  const r = raise(dir, { ...process.env, NDEV_ALERTER: join(dir, 'no-such-alerter') })
+  const r = raise(dir, notifyEnv(dir, 'echo "not allowed" >&2; exit 1'))
   assert.equal(r.status, 3)
-  assert.match(r.stderr, /brew install vjeantet\/tap\/alerter/)
+  assert.match(r.stderr, /osascript exited 1: not allowed/)
+})
+
+test('withdraw stops a watcher that an older version started', () => {
+  const dir = folder()
+  const old = spawnSync('bash', ['-c', 'nohup sleep 60 >/dev/null 2>&1 & echo $!'], { encoding: 'utf8' }).stdout.trim()
+  const r = spawnSync('bash', [NOTIFY, 'withdraw', '--group', 'g1', '--pid', old], { encoding: 'utf8', env: notifyEnv(dir) })
+  assert.equal(r.status, 0, r.stderr)
+  until(() => spawnSync('kill', ['-0', old]).status !== 0, 'the old watcher to end')
+  assert.equal(existsSync(join(dir, 'osascript.log')), false)
+})
+
+test('withdraw with no pid does nothing and succeeds', () => {
+  const dir = folder()
+  assert.equal(spawnSync('bash', [NOTIFY, 'withdraw', '--group', 'g1'], { encoding: 'utf8', env: notifyEnv(dir) }).status, 0)
 })
 
 test('bad usage exits 2', () => {

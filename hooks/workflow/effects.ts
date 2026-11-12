@@ -291,11 +291,9 @@ export async function orca($: EngineInterface, root: string, args: string[]): Pr
 export type Alert = { group: string; pid?: number; problem?: string }
 export async function raiseAlert($: EngineInterface, root: string, issue: number, message: string, title = `ndev: #${issue} is blocked`): Promise<Alert> {
   const group = `ndev-${root.split('/').pop()}-${issue}`
-  const { gitDir } = await paths($, root)
-  const terminal = String((await $.env.get('ORCA_TERMINAL_HANDLE')) ?? '')
-  const r = await run($, ['bash', `${$.plugin.root}/scripts/workflow/notify.sh`, 'raise', '--group', group, '--title', title, '--message', message.slice(0, 200), '--terminal', terminal, '--log', `${gitDir}/ndev-notify.log`], { cwd: root, timeoutMs: 20_000 })
+  const r = await run($, ['bash', `${$.plugin.root}/scripts/workflow/notify.sh`, 'raise', '--group', group, '--title', title, '--message', message.slice(0, 200)], { cwd: root, timeoutMs: 20_000 })
   if (r.exitCode !== 0) return { group, problem: said(r) }
-  return { group, pid: Number(r.stdout.trim()) || undefined }
+  return { group }
 }
 
 export async function withdrawAlert($: EngineInterface, root: string, alert: { group: string; pid?: number }): Promise<string | undefined> {
