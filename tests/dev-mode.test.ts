@@ -271,11 +271,11 @@ test('the /dev help lists /dev mode and /dev steering', async ($, on) => {
 })
 
 test('a command the engine refuses stops only its own feature: the toast names it, and the rest of the start goes on', async ($, on) => {
-  const { toasts } = engine(on, new Map([[CONFIG, '{ "mode": "heavy" }']]), true, 'orca-triage')
+  const { toasts } = engine(on, new Map([[CONFIG, '{ "mode": "heavy" }']]), true, 'view')
   await start($)
 
   expect(await section($)).toContain('HEAVY')
-  expect(toasts.join(' ')).toMatch(/ndev: orca-triage did not start: \S.*\/reload-plugins/)
+  expect(toasts.join(' ')).toMatch(/ndev: view did not start: \S.*\/reload-plugins/)
   const ran = await $.command.run({ command: 'dev-mode', args: '' })
   expect(ran.text).toContain('Development mode is now light.')
 })

@@ -20,7 +20,7 @@ import { learnAfterPush } from './learn'
 import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { interviewPane } from './workflow/interview'
-import { startTriage, triage, triageCommand } from './triage'
+import { startTriage, triage, triageCommand, TRIAGE_ARGUMENT_HINT, TRIAGE_HELP } from './triage'
 import { showIdleStatus } from './workflow/progress'
 import { resourceView, startView } from './view'
 import { ensureRecord, readSettings, saveWorktreeSetting } from './worktree-settings'
@@ -236,11 +236,8 @@ async function helpText($: EngineInterface) {
     '  /dev mode [light|heavy]             switch development mode (no value toggles)',
     '  /dev steering [interactive|auto]    switch steering (no value toggles)',
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
-    '  /dev triage start [--dry-run]       group the open issues and coordinate an Orca worker on each group (Triage pane); --hint "<text>" steers the model',
-    '  /dev triage clean [--hint "<text>"] close the open issues that are done, outdated or superseded, after you confirm each',
-    '    --codex: the workers are Codex (sol, terra, luna); --open: every open issue, not only the board\'s; --batch <size>: that many workers at once (default 5), batch after batch, in the order the coordinator chooses; --sequential: --batch 1',
-    '  /dev triage [launch|refresh|reset]  launch a dry run, read the triage back from Orca, or clear it; with no word, show its state',
-    '  /dev-mode, /dev-steering, /dev-setup and /orca-triage still work as before.',
+    ...TRIAGE_HELP,
+    '  /dev-mode, /dev-steering and /dev-setup are the same as /dev mode, /dev steering and /dev setup.',
     '',
     `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
   ].join('\n')
@@ -321,7 +318,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'dev',
       description: 'ndev: help, setup, mode, steering and triage (runs the set-up first if this project is not set up)',
-      argumentHint: '[help|setup|mode [light|heavy]|steering [interactive|auto]|triage [start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--hint "<text>"]|clean [--hint "<text>"]|launch|refresh|reset]]',
+      argumentHint: `[help|setup|mode [light|heavy]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}]`,
     })
     await $.command.register({
       name: 'dev-mode',
@@ -345,7 +342,7 @@ export const register: Register = (on, options) => {
     // project set-up below: the toast names it and the reason.
     await startFeature($, 'fix-all-prs', () => startFixAllPrs($))
     await startFeature($, 'responsive-check', () => startResponsiveCheck($))
-    await startFeature($, 'orca-triage', () => startTriage($))
+    await startFeature($, 'triage', () => startTriage($))
     await startFeature($, 'view', () => startView($, e.cwd))
     // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
     try {
@@ -416,7 +413,9 @@ export const register: Register = (on, options) => {
     if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering or /dev triage.` }
     if (project !== undefined && !project.error && missingGitHub(project.config).length > 0) return { text: await setup($, false) }
     return { text: await helpText($) }
-  })
+  }).catch(($, e, next) => ({
+    text: `/dev ${e.args} failed (${next.error.kind} after ${next.error.budget} ms): ${next.error.message ?? 'no message'}`,
+  }))
 
   on('command.run', { command: 'dev-setup' }, async $ => ({ text: await setup($, true) }))
 

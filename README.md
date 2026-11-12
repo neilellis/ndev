@@ -124,8 +124,8 @@ always shows the help. `/dev setup` asks all the set-up questions again (the sam
 coordinator of one Orca worker for each group. Each worker takes its group through the workflow on
 one pull request, and asks the coordinator when it needs a decision. `--codex` starts Codex workers
 in place of Claude workers, `--open` takes every open issue and not only the board's, `--batch <size>` (default 5) runs that many workers at once and starts the next batch only when the last one has ended, in the order the coordinator chooses, and `--sequential` is `--batch 1`: one pull request at a time. `--since <n>` takes only the issues with a number above `<n>`. `--reverse` works the newest issues first. `--bugs-only` groups only the bugs: it labels them `bug`, labels an enhancement `enhancement` and a speculative proposal `proposed`, and leaves out human actions and other issues. `--mine` takes only the issues you opened (`author:@me`; on a board, the cards whose author is your gh login). `--hint "<text>"` gives the coordinator your own steer, such as `--hint "close outdated/superseded issues"`. `/dev triage clean [--since <n>] [--reverse] [--mine] [--hint "<text>"]` only closes issues: the model checks each open issue against the code and the later pull requests, finds the ones a merged pull request fixed but left open, and closes those that are done, outdated or superseded once you confirm them. `/dev triage launch`, `refresh` and
-`reset` launch a dry run, read the triage back from Orca, and clear it. `/orca-triage` is the
-same command. The guide is [kb/workflow.md](kb/workflow.md).
+`reset` launch a dry run, read the triage back from Orca, and clear it. `/dev triage` is the one triage command, and `/dev help`
+lists each option. The guide is [kb/workflow.md](kb/workflow.md).
 
 ## Per-project settings: `.neil-dev.json`
 
@@ -555,4 +555,4 @@ Background work is held to a budget, because each session of the plugin runs its
 
 - `/fix-prs` makes no GitHub call in a session that did not start the loop. It reads when a person asks.
 - A running `/fix-prs` loop checks GitHub every 15 minutes, and reads only its current pull request (2 calls). A whole-queue read is one call. A person's request and a `blocked` report read at once. Set `NDEV_PR_CHECK_MS` to change the time.
-- `/orca-triage` hears its workers through Orca's inbox. Its safety-net timer runs every 15 minutes. While it runs, every 10 minutes it reads the open PR of each group (2 calls each), and sends the worker a message when the PR conflicts, is behind, or has a failing check (the same fault on the same head at most once per 30 minutes).
+- `/dev triage` hears its workers through Orca's inbox. Its safety-net timer runs every 15 minutes. While it runs, every 10 minutes it reads the open PR of each group (2 calls each), and sends the worker a message when the PR conflicts, is behind, or has a failing check (the same fault on the same head at most once per 30 minutes).

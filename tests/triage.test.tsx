@@ -64,7 +64,9 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
   const workers: { dispatchId: string; taskId: string; workerState: string; agentTerminalHandle: string }[] = []
   let wake: (() => void) | undefined
   const deliver = (d: { deliveryId: string; messages: unknown[] }) => { inbox.push(d); wake?.() }
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  // Each command the mod registers, with its argument hint.
+  const registered: { name: string; argumentHint?: string }[] = []
+  on('command.register', (_, e) => { registered.push({ name: e.name, argumentHint: e.argumentHint }); return { value: { command: e.name } } })
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
   on('env.get', () => ({ value: '/home/neil' }))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
@@ -188,13 +190,13 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     workers.unshift({ dispatchId, taskId: task, workerState: 'ready', agentTerminalHandle: `term_${dispatchId.slice('ctx_'.length)}` })
     tasks.find(t => t.id === task)!.status = 'dispatched'
   }
-  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart }
+  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart, registered }
 }
 
 // A pull request as the fake GitHub answers it: REST's mergeable and mergeable_state, and its check runs as [name, status, conclusion].
 type Pr = { mergeable: boolean | null; state: string; checks: [string, string, string | null][]; draft?: boolean; merged?: boolean }
 
-const command = (args: string) => ({ command: 'orca-triage', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const)
+const command = (args: string) => ({ command: 'dev', args: `triage ${args}`.trim(), origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const)
 
 const group = (issues: number[], complexity: string, more: Record<string, unknown> = {}) =>
   ({ issues, title: `Fix ${issues.map(n => `#${n}`).join(' ')}`, complexity, hint: `Look at area ${issues[0]}`, ...more })
@@ -203,7 +205,7 @@ async function started($: Parameters<Extract<Parameters<typeof test>[1], (...arg
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true } as never)
 }
 
-test('with no board, /orca-triage start asks the model to group the open issues with no PR that no Orca workspace links', async ($, on) => {
+test('with no board, /dev triage start asks the model to group the open issues with no PR that no Orca workspace links', async ($, on) => {
   const w = world(on, {
     issues: [issue(3), issue(7), issue(9)],
     worktrees: [{ id: 'repo-1::/w/seven', projectId: 'github:acme/widgets', path: '/w/seven', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
@@ -221,7 +223,7 @@ test('with no board, /orca-triage start asks the model to group the open issues 
   expect(w.prompts[0]).toMatch(new RegExp(TOOL))
 })
 
-test('with a board, /orca-triage start takes the issues in Ready and In progress', async ($, on) => {
+test('with a board, /dev triage start takes the issues in Ready and In progress', async ($, on) => {
   const card = (n: number, status: string, kind = 'issues') =>
     ({ number: n, title: `Card ${n}`, status, itemId: `PVTI_${n}`, url: `https://github.com/acme/widgets/${kind}/${n}` })
   const w = world(on, { board: { owner: 'acme', number: 4 }, cards: [card(3, 'Ready'), card(4, 'Done'), card(6, 'In progress'), card(8, 'Ready', 'pull'),
@@ -351,6 +353,10 @@ test('a group that follows another branches from that group\'s branch and target
   for (const c of creates()) expect(c).not.toContain('--base-branch')
   w.linkPr('/w/issue-3', 41)
   w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'Opened #41.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  // Groups run in batches (5 by default): #9 starts once the whole first batch, #3 and #12, has ended.
+  await new Promise(resolve => setTimeout(resolve, 200))
+  expect(creates()).toHaveLength(2)
+  w.deliver({ deliveryId: 'delivery_2', messages: [message('msg_2', 'worker_done', 'term_3', 'Opened #42.', { taskId: 'task_3', dispatchId: 'ctx_3', outcome: 'succeeded' })] })
   await until(() => creates().length === 3, () => w.ran)
   expect(creates()[2]).toEqual(expect.arrayContaining(['--name', 'issue-9', '--base-branch', 'origin/claude/issue-3']))
 })
@@ -466,7 +472,7 @@ test('the pane draws each group in its own box, listing each of its issues by nu
   await ui.unmount()
 })
 
-test('/orca-triage start --dry-run shows the groups and starts nothing in Orca', async ($, on) => {
+test('/dev triage start --dry-run shows the groups and starts nothing in Orca', async ($, on) => {
   const w = world(on, { issues: [issue(3)] })
   await started($)
   await $.command.run(command('start --dry-run'))
@@ -479,7 +485,7 @@ test('/orca-triage start --dry-run shows the groups and starts nothing in Orca',
   expect(w.orcaRan('orchestration run-create')).toHaveLength(0)
 })
 
-test('a failed group blocks the groups after it; the triage then ends, and /orca-triage start begins a new one', async ($, on) => {
+test('a failed group blocks the groups after it; the triage then ends, and /dev triage start begins a new one', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)], startFails: true })
   await started($)
   await $.command.run(command('start'))
@@ -512,7 +518,7 @@ test('a bad inbox message is logged, the rest of the delivery is still handled, 
   expect(w.ran.filter(a => a.includes('--ack') && a.includes('delivery_1'))).toHaveLength(1)
 })
 
-test('a launch that fails part way names /orca-triage reset, which clears the triage', async ($, on) => {
+test('a launch that fails part way names /dev triage reset, which clears the triage', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)], taskCreateFails: true })
   await started($)
   await $.command.run(command('start'))
@@ -520,7 +526,7 @@ test('a launch that fails part way names /orca-triage reset, which clears the tr
   await $.tool.call({ tool: TOOL, groups: [group([3], 'average'), group([9], 'simple')] } as never)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await until(async () => (await ui.find({ type: 'Text', text: /runtime_unavailable/ })) !== undefined, () => w.ran)
-  expect((await ui.find({ type: 'Text', text: /\/orca-triage reset/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /\/dev triage reset/ }))?.text).toBeDefined()
   await ui.unmount()
   await $.command.run(command('reset'))
   expect((await $.command.run(command(''))).text).toMatch(/No triage yet/)
@@ -547,17 +553,28 @@ test('an Orca reply with no Run id stops the launch with that reply and the repa
   await $.tool.call({ tool: TOOL, groups: [group([3], 'average')] } as never)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await until(async () => (await ui.find({ type: 'Text', text: /run-create answered no Run id.*a new shape/ })) !== undefined, () => w.ran)
-  expect((await ui.find({ type: 'Text', text: /\/orca-triage reset/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /\/dev triage reset/ }))?.text).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /undefined/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('/dev triage is the same command as /orca-triage', async ($, on) => {
+test('/dev triage is the one triage command: /orca-triage is not registered, and /dev help and its hint list every option', async ($, on) => {
   const w = world(on, { issues: [issue(3)] })
   await started($)
-  expect((await $.command.run({ ...command(''), command: 'dev', args: 'triage' })).text).toMatch(/No triage yet/)
-  expect((await $.command.run({ ...command(''), command: 'dev', args: 'help' })).text).toMatch(/\/dev triage start/)
-  await $.command.run({ ...command(''), command: 'dev', args: 'triage start' })
+  const names = w.registered.map(r => r.name)
+  const hints = w.registered.filter(r => r.name === 'dev').map(r => r.argumentHint ?? '')
+  expect(names).toContain('dev')
+  expect(names).not.toContain('orca-triage')
+  const help = ((await $.command.run({ ...command(''), args: 'help' })) as { text: string }).text
+  for (const option of ['--dry-run', '--codex', '--open', '--batch <size>', '--sequential', '--since <n>', '--reverse', '--bugs-only', '--mine', '--hint "<text>"']) {
+    expect(help, option).toContain(option)
+    expect(hints.join(' '), option).toContain(option)
+  }
+  expect(help).not.toContain('orca-triage')
+  expect(((await $.command.run(command(''))) as { text: string }).text).toMatch(/No triage yet\. \/dev triage start/)
+  const unknown = ((await $.command.run(command('start --nope'))) as { text: string }).text
+  expect(unknown).toMatch(/^\/dev triage start does not know "--nope"\. Use \/dev triage start .*--mine.* --hint "<text>" gives the model your own steer\.$/)
+  await $.command.run(command('start'))
   await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
   expect(w.prompts[0]).toMatch(/#3\b/)
 })
@@ -668,7 +685,7 @@ test('a follower is told its base branch in Orca mail, and the worker_done names
   expect(w.orcaRan('worktree create')[1]).toContain('--base-branch')
 })
 
-test('/orca-triage start --codex sizes the groups for Codex and starts Codex workers, which follow the workflow by hand', async ($, on) => {
+test('/dev triage start --codex sizes the groups for Codex and starts Codex workers, which follow the workflow by hand', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(5), issue(9)] })
   await started($)
   await $.command.run(command('start --codex'))
@@ -708,7 +725,7 @@ test('--codex is an option of start only', async ($, on) => {
   expect((await $.command.run(command('start --codex --dry-run'))).text).toMatch(/Triage started/)
 })
 
-test('/orca-triage start --open takes every open issue, not only the board\'s, and leaves out the ones being worked on', async ($, on) => {
+test('/dev triage start --open takes every open issue, not only the board\'s, and leaves out the ones being worked on', async ($, on) => {
   const w = world(on, {
     board: { owner: 'acme', number: 4 },
     cards: [{ number: 3, title: 'Card 3', status: 'Ready', itemId: 'PVTI_3', url: issue(3).url }],
@@ -729,7 +746,7 @@ test('/orca-triage start --open takes every open issue, not only the board\'s, a
   expect(w.prompts[0]).toMatch(/claude-sonnet-5-5/)
 })
 
-test('/orca-triage start --sequential runs one worker at a time: the next ready group starts only when the last one is done', async ($, on) => {
+test('/dev triage start --sequential runs one worker at a time: the next ready group starts only when the last one is done', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)] })
   await started($)
   await $.command.run(command('start --sequential'))
@@ -747,7 +764,7 @@ test('/orca-triage start --sequential runs one worker at a time: the next ready 
   expect(w.orcaRan('orchestration worker-start')[1]).toEqual(expect.arrayContaining(['--task', 'task_2']))
 })
 
-test('/orca-triage start --batch 2 runs the groups in batches of two: the next batch starts only when every worker of the last one is done', async ($, on) => {
+test('/dev triage start --batch 2 runs the groups in batches of two: the next batch starts only when every worker of the last one is done', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9), issue(12)] })
   await started($)
   await $.command.run(command('start --batch 2'))
@@ -772,7 +789,7 @@ test('/orca-triage start --batch 2 runs the groups in batches of two: the next b
   expect(w.orcaRan('orchestration worker-start')[2]).toEqual(expect.arrayContaining(['--task', 'task_3']))
 })
 
-test('/orca-triage start with no --batch or --sequential runs batches of 5', async ($, on) => {
+test('/dev triage start with no --batch or --sequential runs batches of 5', async ($, on) => {
   const w = world(on, { issues: [3, 4, 5, 6, 7, 8].map(n => issue(n)) })
   await started($)
   await $.command.run(command('start'))
@@ -787,7 +804,7 @@ test('/orca-triage start with no --batch or --sequential runs batches of 5', asy
   await ui.unmount()
 })
 
-test('/orca-triage start --batch refuses a size that is not a whole number above 0, and --sequential with another size', async ($, on) => {
+test('/dev triage start --batch refuses a size that is not a whole number above 0, and --sequential with another size', async ($, on) => {
   world(on, { issues: [issue(3)] })
   await started($)
   for (const args of ['start --batch', 'start --batch 0', 'start --batch two', 'start --batch 1.5', 'start --sequential --batch 2']) {
@@ -798,7 +815,7 @@ test('/orca-triage start --batch refuses a size that is not a whole number above
   expect(((await $.command.run(command('start --sequential --batch 1'))) as { text: string }).text).toMatch(/Triage started/)
 })
 
-test('/orca-triage start --sequential asks the coordinator for the order and starts the groups in that order, whatever order Orca lists them', async ($, on) => {
+test('/dev triage start --sequential asks the coordinator for the order and starts the groups in that order, whatever order Orca lists them', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)], readyReversed: true })
   await started($)
   await $.command.run(command('start --sequential'))
@@ -963,7 +980,7 @@ test('the PR watch sends its prod to a worker restarted since the last refresh, 
   expect(sends().map(a => a[a.indexOf('--to') + 1])).toEqual(['dispatch:ctx_1b'])
 })
 
-test('/orca-triage start --hint "<text>" gives the coordinator the human\'s hint; a --hint with no text is refused', async ($, on) => {
+test('/dev triage start --hint "<text>" gives the coordinator the human\'s hint; a --hint with no text is refused', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)] })
   await started($)
   const bare = await $.command.run(command('start --hint'))
@@ -980,7 +997,7 @@ test('/orca-triage start --hint "<text>" gives the coordinator the human\'s hint
   expect(w.prompts[1]).toMatch(/The human's hint for this triage: group by area\n/)
 })
 
-test('/orca-triage clean asks the model to check each issue against the code and later pull requests, and to close one only after the human confirms', async ($, on) => {
+test('/dev triage clean asks the model to check each issue against the code and later pull requests, and to close one only after the human confirms', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(7), issue(9)],
     worktrees: [{ id: 'repo-1::/w/seven', projectId: 'github:acme/widgets', path: '/w/seven', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
       linkedItems: [{ type: 'issue', number: 7, url: issue(7).url }] }] })
@@ -1013,7 +1030,7 @@ test('/orca-triage clean asks the model to check each issue against the code and
   expect(bad.text).toMatch(/does not know "--codex"/)
 })
 
-test('/orca-triage start --since 5 groups only the issues above #5: it asks GitHub for issues opened from #5 on, and drops #5 and lower', async ($, on) => {
+test('/dev triage start --since 5 groups only the issues above #5: it asks GitHub for issues opened from #5 on, and drops #5 and lower', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(5), issue(6), issue(9)] })
   await started($)
   await $.command.run(command('start --dry-run --since 5'))
@@ -1032,7 +1049,7 @@ test('/orca-triage start --since 5 groups only the issues above #5: it asks GitH
   await ui.unmount()
 })
 
-test('with a board, /orca-triage start --since 5 takes only the Ready cards above #5', async ($, on) => {
+test('with a board, /dev triage start --since 5 takes only the Ready cards above #5', async ($, on) => {
   const card = (n: number) => ({ number: n, title: `Card ${n}`, status: 'Ready', itemId: `PVTI_${n}`, url: `https://github.com/acme/widgets/issues/${n}` })
   const w = world(on, { board: { owner: 'acme', number: 4 }, cards: [card(3), card(5), card(7)] })
   await started($)
@@ -1043,7 +1060,7 @@ test('with a board, /orca-triage start --since 5 takes only the Ready cards abov
   expect(w.prompts[0]).not.toMatch(/#3\b/)
 })
 
-test('/orca-triage start --mine groups only the issues I opened: it asks GitHub for author:@me', async ($, on) => {
+test('/dev triage start --mine groups only the issues I opened: it asks GitHub for author:@me', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(6)] })
   await started($)
   await $.command.run(command('start --dry-run --mine'))
@@ -1054,7 +1071,7 @@ test('/orca-triage start --mine groups only the issues I opened: it asks GitHub 
   await ui.unmount()
 })
 
-test('with a board, /orca-triage start --mine takes only the Ready cards I opened', async ($, on) => {
+test('with a board, /dev triage start --mine takes only the Ready cards I opened', async ($, on) => {
   const card = (n: number, author: string) => ({ number: n, title: `Card ${n}`, status: 'Ready', itemId: `PVTI_${n}`, url: `https://github.com/acme/widgets/issues/${n}`, author })
   const w = world(on, { board: { owner: 'acme', number: 4 }, cards: [card(3, 'neil'), card(5, 'richard'), card(7, 'neil')] })
   await started($)
@@ -1065,7 +1082,7 @@ test('with a board, /orca-triage start --mine takes only the Ready cards I opene
   expect(w.prompts[0]).not.toMatch(/#5\b/)
 })
 
-test('/orca-triage clean --mine checks only the issues I opened', async ($, on) => {
+test('/dev triage clean --mine checks only the issues I opened', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(8)] })
   await started($)
   await $.command.run(command('clean --mine'))
@@ -1073,7 +1090,7 @@ test('/orca-triage clean --mine checks only the issues I opened', async ($, on) 
   expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).toMatch(/sort:created-asc author:@me/)
 })
 
-test('/orca-triage clean --since 5 checks only the issues above #5', async ($, on) => {
+test('/dev triage clean --since 5 checks only the issues above #5', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(5), issue(8)] })
   await started($)
   await $.command.run(command('clean --since 5'))
@@ -1084,7 +1101,7 @@ test('/orca-triage clean --since 5 checks only the issues above #5', async ($, o
   expect(w.prompts[0]).not.toMatch(/#3\b/)
 })
 
-test('/orca-triage start --reverse lists the issues newest first and asks for the groups newest first', async ($, on) => {
+test('/dev triage start --reverse lists the issues newest first and asks for the groups newest first', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9), issue(6)] })
   await started($)
   await $.command.run(command('start --dry-run --reverse --batch 2'))
@@ -1098,7 +1115,7 @@ test('/orca-triage start --reverse lists the issues newest first and asks for th
   await ui.unmount()
 })
 
-test('/orca-triage clean --reverse takes the newest issues first', async ($, on) => {
+test('/dev triage clean --reverse takes the newest issues first', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(8), issue(5)] })
   await started($)
   await $.command.run(command('clean --reverse'))
@@ -1109,7 +1126,7 @@ test('/orca-triage clean --reverse takes the newest issues first', async ($, on)
   expect(p.indexOf('#5 ')).toBeLessThan(p.indexOf('#3 '))
 })
 
-test('/orca-triage start --bugs-only groups only the bugs, labels them bug and the enhancements enhancement, and the proposals proposed, and leaves the human actions unlabelled', async ($, on) => {
+test('/dev triage start --bugs-only groups only the bugs, labels them bug and the enhancements enhancement, and the proposals proposed, and leaves the human actions unlabelled', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(4), issue(5), issue(6), issue(7)] })
   await started($)
   await $.command.run(command('start --bugs-only'))
@@ -1138,7 +1155,7 @@ test('/orca-triage start --bugs-only groups only the bugs, labels them bug and t
   await ui.unmount()
 })
 
-test('/orca-triage start --bugs-only refuses the groups report when a label fails, and names the issue and the error; a dry run labels nothing', async ($, on) => {
+test('/dev triage start --bugs-only refuses the groups report when a label fails, and names the issue and the error; a dry run labels nothing', async ($, on) => {
   const w = world(on, { issues: [issue(13), issue(14)] })
   await started($)
   await $.command.run(command('start --bugs-only'))
@@ -1187,7 +1204,7 @@ test('--bugs-only refuses a retry that gives a labelled issue another kind, and 
   expect(w.ran.filter(a => a.join(' ').includes('gh.sh label ')).length).toBe(before)
 })
 
-test('/orca-triage launch after a --bugs-only dry run writes the labels before it starts the workers', async ($, on) => {
+test('/dev triage launch after a --bugs-only dry run writes the labels before it starts the workers', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(4)] })
   await started($)
   await $.command.run(command('start --dry-run --bugs-only'))
@@ -1208,10 +1225,10 @@ test('screened is refused without --bugs-only', async ($, on) => {
   expect(w.prompts[0]).not.toMatch(/screened/)
   const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], screened: [{ issue: 4, kind: 'other', reason: 'x' }] } as never) as { result: string; isError?: boolean }
   expect(r.isError).toBe(true)
-  expect(r.result).toMatch(/screened needs \/orca-triage start --bugs-only/)
+  expect(r.result).toMatch(/screened needs \/dev triage start --bugs-only/)
 })
 
-test('/orca-triage --since refuses a value that is not an issue number, and names the number GitHub does not know', async ($, on) => {
+test('/dev triage --since refuses a value that is not an issue number, and names the number GitHub does not know', async ($, on) => {
   const w = world(on, { issues: [issue(3)] })
   await started($)
   for (const bad of ['start --since', 'start --since x', 'start --since 0', 'clean --since -2']) {
@@ -1219,8 +1236,8 @@ test('/orca-triage --since refuses a value that is not an issue number, and name
   }
   expect(w.prompts).toEqual([])
   await $.command.run(command('start --since 404'))
-  await until(() => w.toasts.some(t => t.includes('orca-triage start failed')), () => [w.ran.slice(-1), w.toasts])
-  const toast = w.toasts.find(t => t.includes('orca-triage start failed'))!
+  await until(() => w.toasts.some(t => t.includes('dev triage start failed')), () => [w.ran.slice(-1), w.toasts])
+  const toast = w.toasts.find(t => t.includes('dev triage start failed'))!
   expect(toast).toMatch(/--since 404: GitHub did not give #404 of acme\/widgets/)
   expect(toast).toMatch(/HTTP 404/)
   expect(w.prompts).toEqual([])

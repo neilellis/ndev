@@ -168,25 +168,25 @@ export type TriageView = {
   repo?: string
   phase: 'idle' | 'grouping' | 'planned' | 'running' | 'done'
   isDryRun?: boolean
-  // The agent of every worker; Claude when absent (/orca-triage start --codex sets Codex).
+  // The agent of every worker; Claude when absent (/dev triage start --codex sets Codex).
   agent?: TriageAgent
-  // /orca-triage start --open: every open issue with no pull request, not only the board's.
+  // /dev triage start --open: every open issue with no pull request, not only the board's.
   isOpen?: boolean
-  // /orca-triage start --batch <n>: at most n workers at once, each batch after the last has ended (--sequential is 1).
+  // /dev triage start --batch <n>: at most n workers at once, each batch after the last has ended (--sequential is 1).
   batch?: number
-  // /orca-triage start --hint "<text>": the human's own steer, given to the coordinator with the issues.
+  // /dev triage start --hint "<text>": the human's own steer, given to the coordinator with the issues.
   hint?: string
-  // /orca-triage start --since <n>: only the issues with a number above n.
+  // /dev triage start --since <n>: only the issues with a number above n.
   since?: number
-  // /orca-triage start --reverse: the newest issues first.
+  // /dev triage start --reverse: the newest issues first.
   isReverse?: boolean
-  // /orca-triage start --bugs-only: group only the bugs, and label each issue by its kind.
+  // /dev triage start --bugs-only: group only the bugs, and label each issue by its kind.
   isBugsOnly?: boolean
-  // /orca-triage start --mine: only the issues that the gh login opened.
+  // /dev triage start --mine: only the issues that the gh login opened.
   isMine?: boolean
   // --bugs-only: each [issue, label] that the mod wrote in this triage.
   labelled?: [number, string][]
-  // --bugs-only with --dry-run: each [issue, label] that /orca-triage launch writes.
+  // --bugs-only with --dry-run: each [issue, label] that /dev triage launch writes.
   labels?: [number, string][]
   // A triage saved before --batch: --sequential, one worker at a time.
   isSequential?: boolean
