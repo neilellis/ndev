@@ -579,6 +579,19 @@ test('/dev triage is the one triage command: /orca-triage is not registered, and
   expect(w.prompts[0]).toMatch(/#3\b/)
 })
 
+test('/dev triage with options and no verb starts nothing and names the start command they belong to', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  const text = ((await $.command.run(command('--batch 2'))) as { text: string }).text
+  expect(text).toBe('/dev triage --batch 2 names no verb, so nothing started. Did you mean /dev triage start --batch 2? /dev help lists every option.')
+  expect(((await $.command.run(command('--mine --hint "close old ones"'))) as { text: string }).text).toMatch(/Did you mean \/dev triage start --mine --hint "close old ones"\?/)
+  // An option no verb takes is refused as before.
+  expect(((await $.command.run(command('--nope'))) as { text: string }).text).toMatch(/^\/dev triage status does not know "--nope"/)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(w.orcaRan('orchestration run-create')).toHaveLength(0)
+  expect(w.prompts).toHaveLength(0)
+})
+
 test('the session is the coordinator: it is told so, and it hears of an escalation, a failed worker and the end', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(9)] })
   await started($)

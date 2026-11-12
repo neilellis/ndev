@@ -994,9 +994,15 @@ export async function triageCommand($: EngineInterface, args: string, project: (
   if (typeof hinted === 'string') return { text: hinted }
   const { hint } = hinted
   const words = hinted.rest.trim().split(/\s+/).filter(Boolean)
-  const [verb = 'status'] = words.filter((w, i) => !w.startsWith('--') && !(i > 0 && VALUED.includes(words[i - 1]!)))
+  const [named] = words.filter((w, i) => !w.startsWith('--') && !(i > 0 && VALUED.includes(words[i - 1]!)))
+  const verb = named ?? 'status'
+  const options = [...words, ...(hint ? ['--hint'] : [])].filter(w => w.startsWith('--'))
+  // Options with no verb, such as /dev triage --batch 2: start nothing, and name the start command they belong to.
+  if (!named && options.length && options.every(w => (START_OPTIONS as readonly string[]).includes(w))) {
+    return { text: `/dev triage ${args.trim()} names no verb, so nothing started. Did you mean /dev triage start ${args.trim()}? /dev help lists every option.` }
+  }
   const allowed: readonly string[] = verb === 'start' ? START_OPTIONS : verb === 'clean' ? CLEAN_OPTIONS : []
-  const unknown = [...words, ...(hint ? ['--hint'] : [])].find(w => w.startsWith('--') && !allowed.includes(w))
+  const unknown = options.find(w => !allowed.includes(w))
   if (unknown) return { text: `/dev triage ${verb} does not know "${unknown}". Use /dev triage ${VERBS}: ${OPTION_TEXT}.` }
   const since = sinceOption(verb, words)
   if (typeof since === 'string') return { text: since }
