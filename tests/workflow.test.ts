@@ -77,7 +77,7 @@ const engine = (on: On, opts: Opts = {}) => {
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
-    merging: undefined as string | undefined, removed: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
+    merging: undefined as string | undefined, removed: [] as string[], renamedFrom: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -222,9 +222,10 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'cat-file') return s.blobSize ? ok(`${s.blobSize}\n`) : ok('', 1)
       if (a[1] === 'worktree') return s.worktreeListFails ? ok('', 128, s.worktreeListFails) : ok([ROOT, ...s.otherWorktrees].map(path => `worktree ${path}\n`).join(''))
       // As real git does: a path whose deletion is already staged is in neither the tree nor the index, so no pathspec matches it.
-      if (a[1] === 'add') { const gone = a.slice(a.indexOf('--') + 1).find(f => s.removed.includes(f)); if (gone) return ok('', 128, `fatal: pathspec '${gone}' did not match any files`); s.staged = true; return ok() }
+      if (a[1] === 'add') { const gone = a.slice(a.indexOf('--') + 1).find(f => s.removed.includes(f) || s.renamedFrom.includes(f)); if (gone) return ok('', 128, `fatal: pathspec '${gone}' did not match any files`); s.staged = true; return ok() }
       if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
-      if (a[1] === 'diff' && line.includes('--cached --name-only --diff-filter=D')) return ok(s.removed.map(f => `${f}\n`).join(''))
+      // As real git does: rename detection lists the old path of a staged rename as R, and only --no-renames lists it as D.
+      if (a[1] === 'diff' && line.includes('--cached --name-only') && line.includes('--diff-filter=D')) return ok([...s.removed, ...(a.includes('--no-renames') ? s.renamedFrom : [])].map(f => `${f}\n`).join(''))
       if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
       // As real git does: the staged files that differ from MERGE_HEAD, so not those that the base brought in unchanged.
       if (a[1] === 'diff' && line.includes('--cached --name-only --diff-filter=d MERGE_HEAD')) return ok(s.names.filter(f => !s.fromBase.includes(f)).map(f => `${f}\n`).join(''))
@@ -609,6 +610,20 @@ for (const [name, args] of [['checkpoint', {}], ['finishedDevelopment', { prs: [
     w.s.dirty = ['D  sql/old.test.sql', ' M a.ts']
     w.s.removed = ['sql/old.test.sql']
     const r = await tool($, name, { ...args, message: 'Drop the old test', files: ['sql/old.test.sql', 'a.ts'] })
+    expect(r.text).not.toContain('pathspec')
+    expect(r.isError).toBe(false)
+    expect(w.commits.length).toBe(1)
+  })
+}
+
+for (const [name, args] of [['checkpoint', {}], ['finishedDevelopment', { prs: [12] }]] as const) {
+  test(`${name} commits a staged rename and a staged deletion when both old paths are named`, async ($, on) => {
+    const w = engine(on)
+    await start($, w)
+    w.s.dirty = ['D  src/report-inputs.ts', 'RM test/report-inputs.test.ts -> test/report-block.test.ts']
+    w.s.removed = ['src/report-inputs.ts']
+    w.s.renamedFrom = ['test/report-inputs.test.ts']
+    const r = await tool($, name, { ...args, message: 'Rename the test', files: ['src/report-inputs.ts', 'test/report-inputs.test.ts', 'test/report-block.test.ts'] })
     expect(r.text).not.toContain('pathspec')
     expect(r.isError).toBe(false)
     expect(w.commits.length).toBe(1)

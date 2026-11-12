@@ -440,7 +440,8 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   // A retry can carry a fix for what stopped the last try, so what is named is always committed.
   // A deletion that git rm staged is in neither the tree nor the index, so git add of its path exits 128.
   // It is already staged: leave it out of git add, and the commit still carries it.
-  const removed = files.length ? (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=D')).split('\n').filter(Boolean) : []
+  // The old path of a staged rename is such a deletion too, but rename detection lists it as R, so --no-renames.
+  const removed = files.length ? (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=D', '--no-renames')).split('\n').filter(Boolean) : []
   // A named folder whose files were all removed is gone from the tree too.
   const toAdd: string[] = []
   for (const f of files) {
