@@ -2818,6 +2818,40 @@ test('/unblock when nothing is blocked says so and changes nothing', async ($, o
 })
 
 // ---- the wait tools ----
+// On a loaded computer each slice of a pause costs the hook some of its own ten seconds. Past them the host
+// drops the hook, and the agent reads "no tool.call hook answered this call". The test kit counts that time
+// and does not drop the hook, so the proof is that the wait ends inside the pause, before the time is spent.
+// A large record makes each read of it slow, and that time is the hook's own.
+test('a wait whose own time runs low during a long pause stops inside the pause, and names the cause and the repair', { timeoutMs: 180_000 }, async ($, on) => {
+  const w = engine(on, { wf: { ballast: Array.from({ length: 3_000_000 }, (_, i) => ({ n: i, at: 0 })) } })
+  await start($, w)
+  w.s.sleepAdvances = true
+  w.s.probe = () => ({ exitCode: 1 })
+  const r = await tool($, 'waitFor', { shell_command: 'false', period: 1100 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('waitFor stopped its wait for `false` to exit 0 after 1 attempts')
+  expect(r.text).toContain("the host's time budget for one hook is nearly spent")
+  expect(r.text).toContain('ms are left of 10000 ms')
+  expect(r.text).toContain('Repair: call waitFor again')
+  // The next check is 1100 s after the first: the wait did not hold on for it.
+  expect(w.s.now).toBeLessThan(1_000_000)
+  expect(w.state()?.state).toBe('developing')
+})
+
+// Without an answer the agent reads only "no tool.call hook answered this call", as it does when a hook runs past its budget.
+test('a workflow tool whose hook the host drops still answers, with the tool, the cause and the repair', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  // The hook reads the clock before its own error handling starts, and again inside it.
+  Object.defineProperty(w.s, 'now', { get: () => { throw new Error('the clock broke') } })
+  const r = await tool($, 'waitFor', { shell_command: 'false' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('workflow waitFor gave no answer')
+  expect(r.text).toContain('its hook failed outside its own error handling')
+  expect(r.text).toContain('clock.now')
+  expect(r.text).toContain('Repair: call status and read the state, then call waitFor again')
+})
+
 test('waitFor checks until the command exits 0, holds the state "wait" meanwhile, and goes back', async ($, on) => {
   const w = engine(on)
   await start($, w)

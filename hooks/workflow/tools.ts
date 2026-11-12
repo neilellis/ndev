@@ -2820,7 +2820,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
     for (;;) {
       if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name, deadline))
       if (limits.signal.aborted) throw new Refuse(`Refused: ${name} for ${spec.what} was interrupted.\n${await waitEnds($, c, root, who, id, 'waitInterrupted', deadline)}`)
-      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts, because the host's time budget for one hook is nearly spent. Repair: call it again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
+      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts and ${Math.round(((await $.clock.now()) - startedAt) / 1000)} s, because the host's time budget for one hook is nearly spent: ${Math.round(limits.budget.remainingMs)} ms are left of ${limits.budget.ms} ms. That budget is the hook's own running time, and a busy computer spends it sooner. Repair: call ${name} again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
       // The time includes the checks, so none starts or runs past checksEndAt. waitForSeconds runs no process: its last check reads the clock.
       if (name !== 'waitForSeconds' && (await $.clock.now()) >= checksEndAt) throw await gaveUp()
       const check = await waitCheck($, name, c.args, root, startedAt, checksEndAt)
@@ -2842,7 +2842,10 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
       for (let now = await $.clock.now(); now < nextAt; now = await $.clock.now()) {
         const secs = Math.min(WAIT_SLICE_S, (nextAt - now) / 1000)
         await pause($, root, secs)
-        if (limits.signal.aborted || !(await waitGoesOn($, root, who, id))) break
+        // Each slice costs the hook some of its own time, and more on a busy computer. Past its budget the host
+        // drops the hook, and the agent reads only "no tool.call hook answered this call". So the pause ends here,
+        // and the top of the loop gives the answer.
+        if (limits.signal.aborted || limits.budget.remainingMs < WAIT_BUDGET_LOW_MS || !(await waitGoesOn($, root, who, id))) break
       }
     }
   } catch (error) {
@@ -3241,6 +3244,20 @@ async function liveStart($: EngineInterface, tool: string, args: Args, project: 
 
 async function liveEnd($: EngineInterface, logged: { root: string; name: string; at: number } | undefined, tool: string, outcome: 'ok' | 'refused' | 'failed', result: string): Promise<void> {
   if (logged) await liveCallEnd($, logged.root, logged.name, tool, logged.at, outcome, result)
+}
+
+// The host drops a hook that throws or that runs past its budget. The failure goes to the handler of the
+// outer tool.call hook, the walk-doc guard, which passes a call of the main agent on. Nothing beneath the plugin
+// answers a workflow tool, so the agent then reads only "no tool.call hook answered this call". The guard asks
+// here first: for a workflow tool, the answer names the tool, the cause and the repair.
+const HOOK_BUDGET_S = 10
+export function workflowToolLost(tool: string, error: { kind: 'throw' | 'timeout'; message?: string }): { result: string; isError: true } | undefined {
+  const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
+  if (!SPECS.some(s => s.name === name)) return undefined
+  const cause = error.kind === 'timeout'
+    ? `its hook ran past the host's time budget for one hook (${HOOK_BUDGET_S} s of its own running time, which a busy computer spends sooner)${error.message ? `: ${error.message}` : ''}`
+    : `its hook failed outside its own error handling: ${error.message ?? 'no message'}`
+  return { result: `workflow ${name} gave no answer, because ${cause}. The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call status and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
 }
 
 export const workflowTools = (on: Parameters<Register>[0], project: () => LoadedConfig | undefined) => {
