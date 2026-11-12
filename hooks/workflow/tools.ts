@@ -1697,15 +1697,17 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   if (!remembered) throw new Refuse('Refused: the remember hook has no result. Update the docs and the wiki, then call done with remembered: what you recorded, or "nothing: <reason>".')
   if (!maySkipReview(facts.level) && /^skipped\b/i.test(remembered)) throw new Refuse('Refused: a formal_project does not skip the remember hook. Do the step and call done again.')
   if (noChange) {
-    const problems = await noChangeProblems($, wf)
-    if (problems.length) throw new Refuse(`Not done: in the state "${wf.state}", done only ends an issue that was closed with no change, such as one that another change fixed. Nothing changed. Fix each of these and call done again, or go on with finishedDevelopment:\n- ${problems.join('\n- ')}`)
+    const { problems, merged } = await noChangeProblems($, wf)
+    if (problems.length) throw new Refuse(`Not done: in the state "${wf.state}", done only ends an issue that was closed with no change, such as one that another change fixed, or one whose PR has merged. Nothing changed. Fix each of these and call done again, or go on with finishedDevelopment:\n- ${problems.join('\n- ')}`)
     wf.doneMessage = message
     wf.hooks = { ...wf.hooks, remember: { firedAt: wf.hooks?.remember?.firedAt ?? (await $.clock.now()), result: remembered.slice(0, 2000) } }
     // The PR is closed, so the watchdog has nothing to watch.
     if (wf.prs.length) wf.prsClosed = true
+    // A PR merged outside the workflow, such as by gh pr merge, ends the work as a merge by done would.
+    const ended = merged ? await afterHumanMerge($, wf, merged, await head(wf.root, $)) : [`Issue ${issuesOf(wf).map(n => `#${n}`).join(', ')} was closed with no change, so the workflow ended with no review and no merge.`]
     await move($, c, wf, 'done', { ...facts, noChange: true })
     await saveWorkflow($, wf)
-    return answer($, wf, facts, [`Issue ${issuesOf(wf).map(n => `#${n}`).join(', ')} was closed with no change, so the workflow ended with no review and no merge.`, ...(await stopResources($, wf, project))])
+    return answer($, wf, facts, [...ended, ...(await stopResources($, wf, project))])
   }
   const sha = await head(wf.root, $)
   havePr(wf)
@@ -1757,25 +1759,27 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
 
 // Each reason that done cannot end an issue before its review: the issue must be closed, the branch must hold
 // no change from its base, and no PR may stay open. All of them are named, so that one pass fixes them.
-async function noChangeProblems($: EngineInterface, wf: Workflow): Promise<string[]> {
+// A merged PR carried the branch's change already: a squash merge leaves the branch different from its base.
+async function noChangeProblems($: EngineInterface, wf: Workflow): Promise<{ problems: string[]; merged?: Pr }> {
   const problems: string[] = []
-  for (const n of issuesOf(wf)) {
-    const { state } = await ghOne<{ state: string }>($, wf.root, wf.repo, ['issue-read', String(n)])
-    if (state !== 'closed') problems.push(`issue #${n} is ${state}. If it needs no change, close it on GitHub with the reason. If it needs one, make it and call finishedDevelopment.`)
-  }
-  const range = `origin/${wf.base}...HEAD`
-  const diff = await git(wf.root, $, 'diff', '--name-only', range)
-  if (diff.exitCode !== 0) throw new Error(`git diff --name-only ${range} exited ${diff.exitCode} in ${wf.root}: ${said(diff)}`)
-  const changed = diff.stdout.split('\n').filter(Boolean)
-  if (changed.length) problems.push(`the branch ${wf.branch} changes ${changed.join(', ')} from origin/${wf.base}. A change goes through the review: call finishedDevelopment.`)
-  const dirty = await porcelain($, wf.root)
-  if (dirty.length) problems.push(`the tree is not clean: ${changedPaths(dirty).join(', ')}. Commit the work with finishedDevelopment, or remove it.`)
   const n = wf.direct ? undefined : wf.prs[0]
-  if (n !== undefined) {
-    const pr = await readPr($, wf.root, wf.repo, n)
-    if (pr.state === 'open') problems.push(`PR #${n} is open. Repair: gh pr close ${n} --repo ${wf.repo} --comment "<why no change is needed>".`)
+  const pr = n === undefined ? undefined : await readPr($, wf.root, wf.repo, n)
+  const merged = pr?.merged ? pr : undefined
+  for (const issue of issuesOf(wf)) {
+    const { state } = await ghOne<{ state: string }>($, wf.root, wf.repo, ['issue-read', String(issue)])
+    if (state !== 'closed') problems.push(`issue #${issue} is ${state}. If it needs no change, close it on GitHub with the reason. If it needs one, make it and call finishedDevelopment.`)
   }
-  return problems
+  if (!merged) {
+    const range = `origin/${wf.base}...HEAD`
+    const diff = await git(wf.root, $, 'diff', '--name-only', range)
+    if (diff.exitCode !== 0) throw new Error(`git diff --name-only ${range} exited ${diff.exitCode} in ${wf.root}: ${said(diff)}`)
+    const changed = diff.stdout.split('\n').filter(Boolean)
+    if (changed.length) problems.push(`the branch ${wf.branch} changes ${changed.join(', ')} from origin/${wf.base}, and ${n === undefined ? 'it has no PR' : `PR #${n} is ${pr!.state} with no merge`}. A change goes through the review: call finishedDevelopment.`)
+  }
+  const dirty = await porcelain($, wf.root)
+  if (dirty.length) problems.push(`the tree is not clean: ${changedPaths(dirty).join(', ')}. ${merged ? `That work is not in the merged PR #${n}: commit it on a new issue, or remove it.` : 'Commit the work with finishedDevelopment, or remove it.'}`)
+  if (pr?.state === 'open') problems.push(`PR #${n} is open. Repair: gh pr close ${n} --repo ${wf.repo} --comment "<why no change is needed>".`)
+  return { problems, merged }
 }
 
 // The local stacks and dev servers of a finished worktree. Orca removes the worktree itself, so this does not.

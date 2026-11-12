@@ -12,7 +12,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { LoadedConfig } from '../config'
 import { git, readChecks, readPrHealth } from './effects'
 import type { Checks, PrHealth } from './effects'
-import { blockWorkflow, boundRoot, factsFor, isInterviewRunning, labelOf, loadWorkflow, isStaleWrite, moved, recordOfReviewer, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
+import { blockWorkflow, boundRoot, factsFor, hasDeclined, isInterviewRunning, labelOf, loadWorkflow, isStaleWrite, moved, recordOfReviewer, reviewerAnswered, saveWorkflow, stepOf, watchesChecks } from './tools'
 import type { Workflow } from './tools'
 import { liveName, shownValue, writeLive } from './live'
 
@@ -72,6 +72,12 @@ async function fingerprint($: EngineInterface, wf: Workflow, problems: string[])
 async function ready($: EngineInterface, project: LoadedConfig | undefined): Promise<Workflow | undefined> {
   if (project?.config.workflow === false) {
     await note($, 'quiet: .neil-dev.json turns the workflow off')
+    return undefined
+  }
+  // /flow off with no record of this agent turns the workflow off for the session, and says that no reminder comes.
+  // A record that this session comes to hold later, such as by a tool call that names its issue, does not undo that.
+  if (await hasDeclined($)) {
+    await note($, 'quiet: /flow off turned the workflow off for this session; /flow on turns it back on')
     return undefined
   }
   const root = (await boundRoot($)) ?? project?.root

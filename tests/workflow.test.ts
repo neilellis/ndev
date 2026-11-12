@@ -755,6 +755,20 @@ test('done in development refuses a branch that holds a change', async ($, on) =
   expect(w.state()?.state).toBe('developing')
 })
 
+// fcc-proto #465: PR #793 merged by hand with its issues closed, and done refused because the squashed branch
+// still differs from main. A merged PR is the end of the work, whatever the branch holds.
+test('done in development ends an issue whose PR merged outside the workflow', async ($, on) => {
+  const w = engine(on, { pr: { state: 'closed', merged: true }, names: ['a.ts'] })
+  await start($, w)
+  alreadyFixed(w)
+  const r = await tool($, 'done', { message: 'merged by hand as b366d05e', remembered: 'nothing: merged by hand' })
+  expect(r.text).not.toContain('Not done')
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('done')
+  expect(r.text).toContain('PR #12 is already merged')
+  expect(r.text).not.toContain('closed with no change')
+})
+
 test('done in development refuses while the draft PR is open, and names the repair', async ($, on) => {
   const w = engine(on, { pr: { draft: true }, names: [] })
   await start($, w)
@@ -3633,6 +3647,18 @@ test('/flow off names its retries and the repair when another writer changes the
   expect(text).toContain('/flow off read the record again 3 times')
   expect(text).toContain('Repair:')
   expect(w.state()?.off).toBeUndefined()
+})
+
+// fcc-proto #465: /flow off found no record of this agent, so it turned the workflow off for the session and said
+// "no reminder comes". A later tool call made this session the owner of #465, and the turn-end reminder came back.
+test('/flow off for the session stops the reminders, also for a record that this session holds later', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  expect(await command($, 'off')).toContain('off for this session')
+  w.files.set(RECORD, held(flow()))
+  await turnEnds($)
+  await idle(w)
+  expect(w.prompts).toEqual([])
 })
 
 test('/flow off project writes .neil-dev.json and stops the reminders', async ($, on) => {
