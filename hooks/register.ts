@@ -280,7 +280,7 @@ export const register: Register = (on, options) => {
   triage(on, () => project)
   workflowTools(on, () => project)
   epicTools(on, () => project)
-  workflowWatchdog(on)
+  workflowWatchdog(on, () => project)
   workflowCommand(on, () => project, next => { project = next })
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
   on('turn.complete', async ($, e, next) => {

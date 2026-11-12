@@ -37,6 +37,9 @@ type Sent = { text: string; label: string; state: string; root: string; at: numb
 const SENT_KEPT = 5
 const sentReminders = atom({ plugin: 'ndev', key: 'workflowSentReminders' } as const, [] as Sent[], { shape: 'workflow-sent-reminders-1' })
 const FRAME = /^The \S+ plugin sent a message:\s*/
+// The words of a turn-end or idle reminder, which name the record and its state. A reminder that an earlier
+// process or plugin version sent has no entry in sentReminders, and its words still say what it names.
+const REMINDER = /^(?:The workflow is not finished, so the turn does not end here\.|This session was idle for a long time\.)[\s\S]*? ((?:PR|issue) #\d+) is in the state "([a-z]+)"\./
 
 async function note($: EngineInterface, why: string): Promise<void> {
   const at = await $.clock.now()
@@ -116,15 +119,18 @@ async function send($: EngineInterface, wf: Workflow, text: string, what: string
 // A turn that starts from a reminder whose state no longer holds is cancelled before its first model call.
 // The two looks for a started turn in nudge cannot see a prompt that enters the session at the same moment:
 // the host starts that prompt's turn, holds the reminder behind it, and delivers it when that turn ends.
-async function cancelStale($: EngineInterface, text: string, turnId: string): Promise<void> {
+async function cancelStale($: EngineInterface, text: string, turnId: string, project: LoadedConfig | undefined): Promise<void> {
   const body = text.replace(FRAME, '').trim()
   const hit = (await read($, sentReminders)).find(r => r.text.trim() === body)
-  if (!hit) return
-  await update($, sentReminders, list => list.filter(r => r.text !== hit.text))
-  const now = await loadWorkflow($, hit.root)
-  if (isWatched(now) && labelOf(now) === hit.label && now.state === hit.state) return
-  const late = Math.round(((await $.clock.now()) - hit.at) / 1000)
-  const why = `a reminder for ${hit.label} named the state "${hit.state}", and the host delivered it ${late} s later, when ${now ? `${labelOf(now)} is now in the state "${now.state}"` : `no workflow is left in ${hit.root}`}`
+  if (hit) await update($, sentReminders, list => list.filter(r => r.text !== hit.text))
+  const words = hit || !FRAME.test(text) ? null : REMINDER.exec(body)
+  const root = hit?.root ?? (words ? ((await boundRoot($)) ?? project?.root) : undefined)
+  const named = hit ?? (words ? { label: words[1], state: words[2], root } : undefined)
+  if (!named) return
+  const now = named.root ? await loadWorkflow($, named.root) : undefined
+  if (isWatched(now) && labelOf(now) === named.label && now.state === named.state) return
+  const when = hit ? `the host delivered it ${Math.round(((await $.clock.now()) - hit.at) / 1000)} s later` : 'this process has no record of sending it (an earlier process or plugin version sent it, and the host held it)'
+  const why = `a reminder for ${named.label} named the state "${named.state}", and ${when}, when ${now ? `${labelOf(now)} is now in the state "${now.state}"` : `no workflow is left in ${named.root ?? 'this session, which has no bound worktree'}`}`
   await note($, `quiet: ${why}; the turn ${turnId} that it started was cancelled before the model read it`)
   try {
     await $.turn.abort({ turnId })
@@ -319,13 +325,13 @@ export async function startWatchdog($: EngineInterface, project: () => LoadedCon
   })
 }
 
-export const workflowWatchdog = (on: Parameters<Register>[0]) => {
+export const workflowWatchdog = (on: Parameters<Register>[0], project: () => LoadedConfig | undefined) => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId) return next(e)
     await update($, activity, a => ({ ...a, isTurnRunning: true, turnId: e.turnId }))
     const started = await next(e)
     try {
-      await cancelStale($, e.text ?? '', e.turnId)
+      await cancelStale($, e.text ?? '', e.turnId, project())
     } catch (error) {
       $.ui.toast(`workflow: ${String(error instanceof Error ? error.message : error).slice(0, 600)}`)
     }

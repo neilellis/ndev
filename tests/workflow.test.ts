@@ -854,6 +854,27 @@ test('a reminder that the host delivers after the state moved cancels its own tu
   expect(status).toContain('is now in the state "blocked"')
 })
 
+// In lens PR #315 a reminder for "reviewing" was queued on 11 Nov by a plugin process that kept no record of
+// it, and the host delivered it 41 hours later, after a restart, when finishedReview had moved the PR to ci.
+// The record of sent reminders did not hold it, so the turn was not cancelled. The words of the reminder name the state.
+test('a reminder with no record of its sending is cancelled when the state it names no longer holds', async ($, on) => {
+  const aborted: string[] = []
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.abort', (_, e) => { aborted.push(e.turnId); return { value: undefined } as never })
+  const w = engine(on)
+  await start($, w)
+  expect(w.state()?.state).toBe('developing')
+  const old = 'The workflow is not finished, so the turn does not end here. issue #7 is in the state "reviewing". Review: your last commit is not pushed yet. Do not end the turn before you call done or blocked.'
+  await $.turn.start({ text: `The ndev plugin sent a message:\n${old}`, turnId: 't2' })
+  expect(aborted).toEqual(['t2'])
+  const status = await command($, 'status')
+  expect(status).toContain('named the state "reviewing"')
+  expect(status).toContain('is now in the state "developing"')
+  // The same words with the state that holds start their turn.
+  await $.turn.start({ text: `The ndev plugin sent a message:\n${old.replace('"reviewing"', '"developing"')}`, turnId: 't3' })
+  expect(aborted).toEqual(['t2'])
+})
+
 test('a reminder that the host delivers while its state still holds starts its turn', async ($, on) => {
   const aborted: string[] = []
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
