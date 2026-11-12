@@ -1971,6 +1971,47 @@ test('a held commit can be pushed with an empty checkpoint after a human skips t
   expect(w.pushes.length).toBe(1)
 })
 
+// In fcc-proto PR #779 (state "reviewing", one held commit) the push hook named "checkpoint with no files"
+// as the way to push it, and checkpoint then refused for a missing file list. In review the commit is
+// held for finishedReview, so neither answer may name the empty checkpoint, and both name the real routes.
+test('in review the push hook does not offer an empty checkpoint, and names finishedReview', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing' } })
+  await start($, w)
+  const r = await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as never) as { deny?: string }
+  expect(r.deny).not.toContain('With no files it pushes a held commit')
+  expect(r.deny).toContain('finishedReview')
+  expect(r.deny).toContain('/flow skip')
+})
+
+test('while an issue waits for the others on its PR the push hook names finishedDevelopment, not a skip alone', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developed' } })
+  await start($, w)
+  const r = await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as never) as { deny?: string }
+  expect(r.deny).not.toContain('With no files it pushes a held commit')
+  expect(r.deny).toContain('finishedDevelopment')
+})
+
+test('after review the push hook still offers an empty checkpoint for a held commit', async ($, on) => {
+  const w = engine(on, { wf: { state: 'ci' } })
+  await start($, w)
+  const r = await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as never) as { deny?: string }
+  expect(r.deny).toContain('With no files it pushes a held commit')
+})
+
+test('an empty checkpoint in review names the held commit and finishedReview, not a missing file list', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing' } })
+  await start($, w)
+  w.s.sha = 'cccc1234'
+  const r = await tool($, 'checkpoint', { message: 'push the held commit', files: [] })
+  expect(r.isError).toBe(true)
+  expect(w.pushes.length).toBe(0)
+  expect(r.text).not.toContain('needs the files to commit')
+  expect(r.text).toContain('cccc1234')
+  expect(r.text).toContain('"reviewing"')
+  expect(r.text).toContain('finishedReview')
+  expect(r.text).toContain('/flow skip')
+})
+
 test('an empty checkpoint with nothing to push is still refused', async ($, on) => {
   const w = engine(on, { wf: { state: 'ci' } })
   await start($, w)

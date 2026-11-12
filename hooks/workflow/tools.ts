@@ -1082,6 +1082,12 @@ async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolea
   throw new Refuse(`Refused: PR #${n} is ${wf.merged || pr?.merged ? 'merged' : 'closed with no merge'}, so it cannot carry a new commit. Nothing changed. Repair: file the work with followUp and the mode issue_only.`)
 }
 
+// In these states the last commit waits for the review, so only finishedReview, or a human's skip of the review, pushes it.
+const holdsForReview = (state: string) => state === 'reviewing' || state === 'developed'
+const REVIEW_PUSH_ROUTES = 'finishedReview runs pre-ready-check.sh and pushes it. When that cannot pass, a human skips the review with /flow skip <reason>, and then checkpoint with no files pushes the held commit.'
+// "developed" has no phase to skip: the review starts when each issue on the PR has called finishedDevelopment.
+const reviewPushRoutes = (state: string) => (state === 'reviewing' ? REVIEW_PUSH_ROUTES : `the review starts once each issue on the PR has called finishedDevelopment, and then ${REVIEW_PUSH_ROUTES}`)
+
 async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const wf = await current($, c)
@@ -1097,10 +1103,14 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   const before = await head(wf.root, $)
   // An issue that finished development holds its commit for the review of the PR, so this one must not push it.
   const holders = wf.pr ? [] : (await prSiblings($, wf)).filter(o => !o.pr && o.state === 'developed')
-  const hold = wf.state === 'reviewing' || wf.state === 'developed' || holders.length > 0
+  const hold = holdsForReview(wf.state) || holders.length > 0
   // With no files, a checkpoint only pushes a held commit, such as after a human skips the review.
   const held = (await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)).stdout.trim() !== before
-  if (!files.length && (!held || hold)) throw new Refuse('Refused: checkpoint needs the files to commit, each by name.')
+  if (!files.length && !held) throw new Refuse('Refused: checkpoint needs the files to commit, each by name.')
+  if (!files.length && hold) {
+    const why = holdsForReview(wf.state) ? `issue #${wf.issue} is in the state "${wf.state}"` : `${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review`
+    throw new Refuse(`Refused: ${why}, so commit ${before.slice(0, 8)} is held for the review, and checkpoint with no files does not push it. Nothing was pushed. Repair: ${reviewPushRoutes(holdsForReview(wf.state) ? wf.state : 'developed')}`)
+  }
   const notes = await commitAndPush($, wf, 'checkpoint', message, files, !hold, declared)
   if (holders.length) notes.push(`This commit is held and not pushed, because ${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review.`)
   addTypes(wf, declared)
@@ -2389,7 +2399,7 @@ export const workflowGitGuard = (on: Parameters<Register>[0], getProject: () => 
     const own = wf.followUps.filter(f => f.worktree)
     if ((e as { agentId?: string }).agentId && own.length) return { deny: `workflow: a commit or push here runs no check script. An agent that followUp started calls mcp__ndev__checkpoint with its own issue and worktree: ${own.map(f => `#${f.issue} in ${f.worktree}`).join(', ')}. Any other helper reports to the agent that started it.` }
     const hotfixes = (await read($, hotfixWorktrees)).map(h => `git -C ${h.dir} push origin ${h.branch}`)
-    return { deny: `workflow: issue #${wf.issue} is in the state "${wf.state}", so this commit or push goes through the checkpoint tool, which runs the check scripts. From a hotfix worktree, a push goes only to the branch of the hotfix${hotfixes.length ? `, such as ${hotfixes.join(' or ')}` : ''}. It also ends a merge. With no files it pushes a held commit. A commit in another repository, such as ~/dev-wiki, passes when each git in the command names it with -C and a full path. A human can turn this off with /flow off.` }
+    return { deny: `workflow: issue #${wf.issue} is in the state "${wf.state}", so this commit or push goes through the checkpoint tool, which runs the check scripts. From a hotfix worktree, a push goes only to the branch of the hotfix${hotfixes.length ? `, such as ${hotfixes.join(' or ')}` : ''}. It also ends a merge. ${holdsForReview(wf.state) ? `In this state the last commit is held for the review: ${reviewPushRoutes(wf.state)}` : 'With no files it pushes a held commit.'} A commit in another repository, such as ~/dev-wiki, passes when each git in the command names it with -C and a full path. A human can turn this off with /flow off.` }
   })
 }
 
