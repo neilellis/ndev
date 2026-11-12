@@ -1,0 +1,1 @@
+In a React app, do not hand-write this control. Use the shadcn `spinner` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`: for waits under about 1 s or inside a button. Use a skeleton for content. Give each spinner an accessible name ("Loading" or the task name). Under reduced motion, slow the spin or show a static icon.

@@ -1,8 +1,12 @@
 // Presentational specimens for the foundations pages. Each renders a design value
 // through its live token, so a page shows the value rather than describing it.
 // Registered globally in mdx-components.tsx.
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type { ReactNode } from "react";
 import { contrastRatio, rate } from "@/lib/contrast";
+import { PAIRS, schemeColors } from "@/lib/colors";
+import { TOKENS_DIR } from "@/lib/ds";
 
 /** A labelled colour swatch filled by a colour token. */
 export function Swatch({ token, hex, label }: { token: string; hex: string; label: string }) {
@@ -33,15 +37,15 @@ export function GradientTile({ token, label }: { token: string; label: string })
 }
 
 const TYPE_SCALE = [
-  { label: "Display", fs: "--fs-display", note: "70–105px · tracking −0.057em", serif: false, track: "--tracking-display" },
-  { label: "Page title", fs: "--fs-page", note: "44–76px · tracking −0.045em", serif: false, track: "--tracking-section" },
-  { label: "Section", fs: "--fs-section", note: "40–65px · tracking −0.045em", serif: false, track: "--tracking-section" },
-  { label: "Title", fs: "--fs-h3", note: "29px · tracking −0.025em", serif: false, track: "--tracking-title" },
-  { label: "Article", fs: "--fs-h3", note: "30px serif", serif: true, track: "--tracking-title" },
-  { label: "Lead", fs: "--fs-lead", note: "22px", serif: false },
-  { label: "Body", fs: "--fs-body", note: "18px / 1.6", serif: false },
-  { label: "Small", fs: "--fs-sm", note: "16px · nav, buttons", serif: false },
-  { label: "Meta", fs: "--fs-xs", note: "14px", serif: false },
+  { label: "Display", fs: "--fs-display", note: "4.375–6.5625rem (70–105px) · tracking −0.057em", serif: false, track: "--tracking-display" },
+  { label: "Page title", fs: "--fs-page", note: "2.75–4.75rem (44–76px) · tracking −0.045em", serif: false, track: "--tracking-section" },
+  { label: "Section", fs: "--fs-section", note: "2.5–4.0625rem (40–65px) · tracking −0.045em", serif: false, track: "--tracking-section" },
+  { label: "Title", fs: "--fs-h3", note: "1.8125rem (29px) · tracking −0.025em", serif: false, track: "--tracking-title" },
+  { label: "Article", fs: "--fs-h3", note: "1.875rem (30px) serif", serif: true, track: "--tracking-title" },
+  { label: "Lead", fs: "--fs-lead", note: "1.375rem (22px)", serif: false },
+  { label: "Body", fs: "--fs-body", note: "1.125rem (18px) / 1.6", serif: false },
+  { label: "Small", fs: "--fs-sm", note: "1rem (16px) · nav, buttons", serif: false },
+  { label: "Meta", fs: "--fs-xs", note: "0.875rem (14px)", serif: false },
 ];
 
 /** The live type ladder, each level at its real size. */
@@ -102,43 +106,34 @@ export function ElevationCard({ token }: { token: string }) {
   );
 }
 
-const PAIRS: { fg: string; bg: string; fgName: string; bgName: string; use: string }[] = [
-  { fg: "#102846", bg: "#f6f8fa", fgName: "ink", bgName: "paper", use: "Headings, body ink" },
-  { fg: "#3f536a", bg: "#f6f8fa", fgName: "body", bgName: "paper", use: "Body copy" },
-  { fg: "#586b80", bg: "#f6f8fa", fgName: "muted", bgName: "paper", use: "Notes and meta" },
-  { fg: "#586b80", bg: "#e8eff5", fgName: "muted", bgName: "mist", use: "Notes on tinted sections" },
-  { fg: "#2166ac", bg: "#f6f8fa", fgName: "blue", bgName: "paper", use: "Eyebrow numbers, emphasis" },
-  { fg: "#2166ac", bg: "#ffffff", fgName: "blue", bgName: "white", use: "Accent on cards" },
-  { fg: "#6b8095", bg: "#f6f8fa", fgName: "faint", bgName: "paper", use: "Decorative labels only" },
-  { fg: "#ffffff", bg: "#102b4a", fgName: "white", bgName: "navy", use: "Headings on navy" },
-  { fg: "#c4d5e6", bg: "#102b4a", fgName: "navy text", bgName: "navy", use: "Body on navy" },
-  { fg: "#a7d8ff", bg: "#102b4a", fgName: "sky", bgName: "navy", use: "Accent on navy" },
-  { fg: "#b8cde3", bg: "#102b4a", fgName: "tab text", bgName: "navy", use: "Unselected tabs on navy" },
-  { fg: "#ffffff", bg: "#2166ac", fgName: "white", bgName: "blue", use: "Text on blue" },
-  { fg: "#173f35", bg: "#ffffff", fgName: "forest", bgName: "white", use: "Organisation family" },
-  { fg: "#a94f24", bg: "#ffffff", fgName: "rust", bgName: "white", use: "AI family" },
-  { fg: "#a42b24", bg: "#ffffff", fgName: "red", bgName: "white", use: "Errors" },
-];
-
-/** WCAG contrast for every text pairing the brand uses, computed at build time. */
-export function ContrastTable() {
+/** WCAG contrast for every text pairing the brand uses, in each colour scheme,
+    computed from colors.css at build time. */
+export async function ContrastTable() {
+  const colors = schemeColors(await readFile(path.join(TOKENS_DIR, "colors.css"), "utf8"));
+  const rows = PAIRS.flatMap((p) =>
+    (["light", "dark"] as const).map((scheme) => {
+      const fg = colors[scheme](p.fg);
+      const bg = colors[scheme](p.bg);
+      return { ...p, scheme, fgHex: fg, bgHex: bg, ratio: contrastRatio(fg, bg) };
+    }),
+  );
   return (
     <div className="table-scroll">
       <table className="contrast-table">
         <thead>
-          <tr><th>Sample</th><th>Text on background</th><th>Ratio</th><th>WCAG</th><th>Use</th></tr>
+          <tr><th>Sample</th><th>Scheme</th><th>Text on background</th><th>Ratio</th><th>WCAG</th><th>Use</th></tr>
         </thead>
         <tbody>
-          {PAIRS.map((p) => {
-            const r = contrastRatio(p.fg, p.bg);
-            const rating = rate(r);
+          {rows.map((r) => {
+            const rating = rate(r.ratio);
             return (
-              <tr key={p.fg + p.bg}>
-                <td><span className="contrast-sample" style={{ color: p.fg, background: p.bg }}>Aa</span></td>
-                <td>{p.fgName} <code>{p.fg}</code> on {p.bgName} <code>{p.bg}</code></td>
-                <td>{r.toFixed(2)}:1</td>
+              <tr key={`${r.fg} ${r.bg} ${r.scheme}`}>
+                <td><span className="contrast-sample" style={{ color: r.fgHex, background: r.bgHex }}>Aa</span></td>
+                <td>{r.scheme}</td>
+                <td><code>{r.fg}</code> <code>{r.fgHex}</code> on <code>{r.bg}</code> <code>{r.bgHex}</code></td>
+                <td>{r.ratio.toFixed(2)}:1</td>
                 <td><span className={`rating rating-${rating.replace(" ", "-").toLowerCase()}`}>{rating}</span></td>
-                <td>{p.use}</td>
+                <td>{r.use}{r.level === "large" ? " (3:1 minimum)" : ""}</td>
               </tr>
             );
           })}

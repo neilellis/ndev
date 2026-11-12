@@ -182,6 +182,8 @@ export type TriageView = {
   isReverse?: boolean
   // /orca-triage start --bugs-only: group only the bugs, and label each issue by its kind.
   isBugsOnly?: boolean
+  // /orca-triage start --mine: only the issues that the gh login opened.
+  isMine?: boolean
   // --bugs-only: each [issue, label] that the mod wrote in this triage.
   labelled?: [number, string][]
   // --bugs-only with --dry-run: each [issue, label] that /orca-triage launch writes.

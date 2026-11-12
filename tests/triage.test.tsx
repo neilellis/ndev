@@ -94,6 +94,7 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     // gh.sh label <n> <label>: #13 has no such label to add.
     if (args.includes('gh.sh label ')) return a[a.length - 2] === '13' ? result(1, '', "could not add label: 'bug' not found") : ok('1')
     // gh api repos/<repo>/issues/<n>: an issue (or pull request) opened on 2026-0<n>-01, so a higher number is newer.
+    if (args.includes('gh.sh api user')) return ok(JSON.stringify({ login: 'neil' }))
     if (args.includes('gh.sh api repos/acme/widgets/issues/')) {
       const n = Number(a[a.indexOf('api') + 1]!.split('/').pop())
       return n === 404 ? result(1, '', 'gh: Not Found (HTTP 404)') : ok(JSON.stringify({ number: n, created_at: `2026-${String(n).padStart(2, '0')}-01T00:00:00Z` }))
@@ -1040,6 +1041,36 @@ test('with a board, /orca-triage start --since 5 takes only the Ready cards abov
   expect(w.prompts[0]).toMatch(/#7\b/)
   expect(w.prompts[0]).not.toMatch(/#5\b/)
   expect(w.prompts[0]).not.toMatch(/#3\b/)
+})
+
+test('/orca-triage start --mine groups only the issues I opened: it asks GitHub for author:@me', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(6)] })
+  await started($)
+  await $.command.run(command('start --dry-run --mine'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).toMatch(/-linked:pr author:@me/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /opened by me/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('with a board, /orca-triage start --mine takes only the Ready cards I opened', async ($, on) => {
+  const card = (n: number, author: string) => ({ number: n, title: `Card ${n}`, status: 'Ready', itemId: `PVTI_${n}`, url: `https://github.com/acme/widgets/issues/${n}`, author })
+  const w = world(on, { board: { owner: 'acme', number: 4 }, cards: [card(3, 'neil'), card(5, 'richard'), card(7, 'neil')] })
+  await started($)
+  await $.command.run(command('start --dry-run --mine'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.prompts[0]).toMatch(/#3\b/)
+  expect(w.prompts[0]).toMatch(/#7\b/)
+  expect(w.prompts[0]).not.toMatch(/#5\b/)
+})
+
+test('/orca-triage clean --mine checks only the issues I opened', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(8)] })
+  await started($)
+  await $.command.run(command('clean --mine'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).toMatch(/sort:created-asc author:@me/)
 })
 
 test('/orca-triage clean --since 5 checks only the issues above #5', async ($, on) => {

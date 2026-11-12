@@ -1,0 +1,1 @@
+Use the technique (`view-transition-class`, `:only-child` for add and remove, `pointer-events: none` on `::view-transition`, reduced-motion `animation: none`), but not the example motion. Nothing flies in from off screen. Use opacity or a short move from the neighbour, 0.3 to 0.8 s, ease-out to enter and ease-in to leave.

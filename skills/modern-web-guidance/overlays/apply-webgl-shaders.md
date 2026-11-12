@@ -1,0 +1,1 @@
+Do not use shaders in application screens. On a marketing page, add the library to `${CLAUDE_PLUGIN_ROOT}/kb/libraries.md` first, and use the effect only as a layer behind the real controls, which keep focus, labels and state.

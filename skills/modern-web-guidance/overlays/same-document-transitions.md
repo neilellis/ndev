@@ -1,0 +1,1 @@
+Do not fade or slide between application views: our motion rules reject page transitions in a work tool. A shared-element transition (a thumbnail that becomes a hero) is allowed on marketing and content pages. Use this guide's focus rule, its reduced-motion CSS and its fallback (run the DOM update directly).

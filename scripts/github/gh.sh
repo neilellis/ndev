@@ -174,7 +174,7 @@ board_items() {
             pageInfo { hasNextPage endCursor }
             nodes {
               id
-              content { ... on Issue { number title url } ... on PullRequest { number title url } }
+              content { ... on Issue { number title url author { login } } ... on PullRequest { number title url author { login } } }
               status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
             }
           }
@@ -183,7 +183,7 @@ board_items() {
     }' \
   | jq -c --arg want "$want" '
       .data.node.items.nodes[]
-      | {number: .content.number, title: .content.title, status: (.status.name // null), itemId: .id, url: .content.url}
+      | {number: .content.number, title: .content.title, status: (.status.name // null), itemId: .id, url: .content.url, author: (.content.author.login // null)}
       | select($want == "" or .status == $want)'
 }
 

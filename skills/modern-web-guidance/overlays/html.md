@@ -1,0 +1,1 @@
+In a React app, use the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` for dialogs, popovers, tooltips, toasts, accordions, media players and search fields, not the native elements this guide names. All other rules here apply as written.

@@ -1,0 +1,1 @@
+Keep the shadcn `tabs` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`. Do not add the hand-written `aria-hidden`, `inert` and `focus()` switcher; Tabs already does this. If an inactive panel must stay rendered, put `content-visibility: hidden` on its wrapper, keep the `display: none` fallback, and check that the tab focus still works.

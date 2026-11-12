@@ -1,0 +1,1 @@
+A spotlight that follows the pointer is decoration. Use it only on public marketing pages, never in an application, and keep all content visible without it. Under reduced motion, also fix the spotlight at a static size and position; the guide's block stops only the transitions.

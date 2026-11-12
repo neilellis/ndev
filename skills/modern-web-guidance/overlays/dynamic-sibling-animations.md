@@ -1,0 +1,1 @@
+Do not stagger the first render of a list: our motion rules say nothing animates on first paint. Stagger only items added after load, and cap the total delay so a long list does not hold the reader. Keep `animation: none` under reduced motion.

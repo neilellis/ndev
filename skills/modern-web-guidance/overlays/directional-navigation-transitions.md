@@ -1,0 +1,1 @@
+Use direction only where it gives information, such as a multi-step flow with back and forward, at 0.3 to 0.4 s. Never slide tabs or panels. Otherwise use a short cross-fade. Keep the feature check (update the DOM directly when the API is not available) and `animation: none` under reduced motion.
