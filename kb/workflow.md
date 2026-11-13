@@ -227,6 +227,8 @@ The engine runs git with the repository's hooks off, so the tools run the checks
 
 **The merge base.** Each script gets `NDEV_MERGE_BASE`: the merge base that the commit will have with `origin/<base>`. A check that compares with the base reads it, not `git merge-base HEAD origin/<base>`. When a commit ends a merge of the base into the branch, the checks run before that commit, so `HEAD` is still the commit before the merge, and `git merge-base HEAD` gives the old base: errors that the base brought in then count as the branch's. A failed check during a merge says so and gives the value.
 
+**The change types.** Each script also gets `NDEV_CHANGE_TYPES`: the branch's change types, comma-separated, in the order `web,backend,database,docs,tests,config`. They are the types that a checkpoint or finishedDevelopment declared, the types already recorded for the issue, and the types of each staged path that differs from `NDEV_MERGE_BASE`. The checks before a commit run before the commit is made, so the staged files count. A script uses the list to choose its tests, such as no web tests for a change with no `web`. The variable is unset when the paths cannot be read or no type applies, and the tool's answer names the failed git command. A script that finds it unset or empty reads its own diff from `NDEV_MERGE_BASE`.
+
 Each other failed script stops the tool. The message gives the script, the exit code and the last lines of output. When the base branch has the script, the tool runs the base version, so a branch cannot weaken its own check.
 
 ## What the workflow took over from the hooks

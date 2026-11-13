@@ -198,6 +198,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'for-each-ref') return ok(`refs/remotes/origin/issue-7 ${++refReads}\n`)
       if (a[1] === 'reflog') return ok('update by push\n')
       // As real git does: with MERGE_HEAD named, the base of the hypothetical merge of HEAD and MERGE_HEAD.
+      if (a[1] === 'diff' && line.includes('--cached --name-only --no-renames') && s.diffFails) return ok('', 128, s.diffFails)
       if (a[1] === 'merge-base') return a.includes('--is-ancestor') ? ok() : ok(`${a.includes('MERGE_HEAD') && s.merging ? NEW_BASE : OLD_BASE}\n`)
       if (a[1] === 'rev-parse' && a.includes('MERGE_HEAD')) return s.merging ? ok(`${s.merging}\n`) : ok('', 1)
       if (a[1] === 'fetch') return ok()
@@ -4328,6 +4329,30 @@ test('with no types given, the paths decide, and the read costs no GitHub call',
   expect(w.state()?.webFiles).toEqual(['src/Card.tsx'])
   // Only the note for the human about the check scripts, which each commit in this fake sends, and the change map of the push.
   expect(w.gh.slice(before).filter(call => !call.includes('gh.sh comment') && !call.includes('gh.sh pr-read 12') && !call.includes('gh.sh pr-edit 12'))).toEqual([])
+})
+
+test('the checks get NDEV_CHANGE_TYPES: the declared types, those recorded, and those of each path that differs from the merge base', async ($, on) => {
+  const w = engine(on, { names: ['lib/a.ts', 'README.md'] })
+  await start($, w)
+  w.s.dirty = [' M lib/a.ts', ' M README.md']
+  await tool($, 'checkpoint', { message: 'm', files: ['lib/a.ts', 'README.md'], changeTypes: ['web'] })
+  for (const check of ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh']) expect(w.s.checkEnv[check]?.NDEV_CHANGE_TYPES).toBe('web,backend,docs')
+  // The checks run before the commit: a staged path is the branch's change already, and a recorded type stays.
+  w.s.names = ['lib/a.ts', 'README.md', 'supabase/migrations/1_a.sql']
+  w.s.dirty = ['A  supabase/migrations/1_a.sql']
+  await tool($, 'checkpoint', { message: 'n', files: ['supabase/migrations/1_a.sql'] })
+  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_CHANGE_TYPES).toBe('web,backend,database,docs')
+})
+
+test('when the branch paths cannot be read, the checks get no NDEV_CHANGE_TYPES and the answer says the scripts read their own diff', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.diffFails = 'fatal: bad revision'
+  const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'], changeTypes: ['web'] })
+  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_CHANGE_TYPES).toBeUndefined()
+  expect(r.text).toContain('NDEV_CHANGE_TYPES was not set')
+  expect(r.text).toContain('fatal: bad revision')
 })
 
 test('a type that is not in the list is refused, and nothing is committed', async ($, on) => {

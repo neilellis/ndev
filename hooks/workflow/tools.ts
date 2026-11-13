@@ -27,9 +27,9 @@ import { clearInterview, closeInterviewPane, interviewCall, openInterviewPane, s
 import type { EarlierQuestion } from './interview'
 import { SECRET_NAME, findInText, secretFiles } from './secrets'
 
-async function checked($: EngineInterface, wf: Workflow, check: Check, args: string[] = []): Promise<string | undefined> {
+async function checked($: EngineInterface, wf: Workflow, check: Check, args: string[] = [], declared: readonly ChangeType[] = []): Promise<string | undefined> {
   if (wf.noChecks && !(await $.fs.exists(`${wf.root}/${CHECK_DIR}/${check}`))) return `${CHECK_DIR}/${check} did not run: the human skipped the set-up.`
-  return runCheck($, wf.root, wf.base, check, args)
+  return runCheck($, wf.root, wf.base, check, args, [...(wf.changeTypes ?? []), ...declared])
 }
 
 export type Evidence = { sha: string; text: string }
@@ -462,8 +462,8 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
         stagedFiles = stagedFiles.filter(f => differs.has(f))
         if (fromBase.length) notes.push(`A merge is in progress: ${fromBase.length} staged files came from the base unchanged, so fast-checks.sh did not check them, and a fault in them is the base's (baseline), not this branch's: ${fromBase.slice(0, 10).join(', ')}${fromBase.length > 10 ? ', …' : ''}.`)
       }
-      const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles) : undefined
-      for (const note of [fast, await checked($, wf, 'pre-commit-check.sh')]) {
+      const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles, declared) : undefined
+      for (const note of [fast, await checked($, wf, 'pre-commit-check.sh', [], declared)]) {
         if (note) notes.push(note)
       }
     } catch (error) {
@@ -481,7 +481,7 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   }
   const upstream = await git(root, $, 'rev-parse', `origin/${branch}`)
   if (push && upstream.stdout.trim() !== (await head(root, $))) {
-    const note = await checked($, wf, 'pre-push-check.sh')
+    const note = await checked($, wf, 'pre-push-check.sh', [], declared)
     if (note) notes.push(note)
     const mapNote = await writeChangeMap($, wf, declared)
     if (mapNote) notes.push(mapNote)
@@ -927,7 +927,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   }
   if (!record.shortName) notes.push(`This workflow has no shortName, so its Orca workspace keeps its name. Call started again with a shortName: two to five lower-case words from the issue "${issueInfo.title}".`)
   if (to.state === 'setup') {
-    notes.push(`These check scripts are missing or not executable: ${missing.join(', ')}. fast-checks.sh takes the changed files as arguments and runs only very fast tools on them, such as ruff, ty, oxlint and ast-grep; start from ${$.plugin.root}/scripts/workflow/fast-checks-template.sh. pre-commit-check.sh runs the full lint and typecheck. pre-push-check.sh runs the unit tests. pre-ready-check.sh runs the full suite and E2E. Each exits non-zero on failure. A check that compares with the base reads NDEV_MERGE_BASE, not git merge-base HEAD, which is the old base while a merge commit is made. Take the commands from the project's CLAUDE.md.`)
+    notes.push(`These check scripts are missing or not executable: ${missing.join(', ')}. fast-checks.sh takes the changed files as arguments and runs only very fast tools on them, such as ruff, ty, oxlint and ast-grep; start from ${$.plugin.root}/scripts/workflow/fast-checks-template.sh. pre-commit-check.sh runs the full lint and typecheck. pre-push-check.sh runs the unit tests. pre-ready-check.sh runs the full suite and E2E. Each exits non-zero on failure. A check that compares with the base reads NDEV_MERGE_BASE, not git merge-base HEAD, which is the old base while a merge commit is made. A check that chooses its tests reads NDEV_CHANGE_TYPES (comma-separated web, backend, database, docs, tests, config), and reads its own diff when it is unset. Take the commands from the project's CLAUDE.md.`)
   }
   if (to.state === 'blocked' && record.state !== 'blocked') {
     const message = `Issue #${issue} waits for ${blockers.map(b => `#${b.number}`).join(', ')}.`
@@ -1255,7 +1255,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
 
   if (wf.direct) {
     if (named.length > 1) throw new Refuse(`Refused: a project that commits directly to the base branch has one issue at a time, and this call names ${named.map(n => `#${n}`).join(', ')}. Nothing was committed.`)
-    const notes = await commitAndPush($, wf, 'finishedDevelopment', message, files, false)
+    const notes = await commitAndPush($, wf, 'finishedDevelopment', message, files, false, declared)
     if (prBody !== undefined) notes.push(`This project commits directly to the base branch, so it has no PR and ${bodyPath} was not used.`)
     addTypes(wf, declared)
     return intoReview($, c, wf, facts, notes)
@@ -1284,7 +1284,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   if (problems.length) throw new Refuse(`Refused: finishedDevelopment cannot take these issues. Nothing was committed.\n- ${problems.join('\n- ')}`)
   const finishing = listed as Workflow[]
 
-  const notes = finishing.every(o => o.state === 'developed') && !files.length ? [] : await commitAndPush($, wf, 'finishedDevelopment', message, files, false)
+  const notes = finishing.every(o => o.state === 'developed') && !files.length ? [] : await commitAndPush($, wf, 'finishedDevelopment', message, files, false, declared)
   if (prBody !== undefined) await editBody($, wf, old => withBodySection(old, wf.issue, prBody))
   addTypes(wf, declared)
   for (const o of finishing.filter(x => x.state !== 'developed')) {

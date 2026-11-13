@@ -1,5 +1,6 @@
 // The outside world of the workflow tools: git, GitHub, Orca, the check scripts and the notification.
 import type { EngineInterface } from 'claude-code'
+import { CHANGE_TYPES, inferChangeTypes, type ChangeType } from './change-types'
 import { checkLog, outputCut } from './check-log'
 import { withStep } from './progress'
 import { loadConfigAt } from '../config'
@@ -153,7 +154,20 @@ async function projectEnv($: EngineInterface, root: string, path: string): Promi
 // NDEV_MERGE_BASE is the merge base that the commit will have. While a merge is in progress the checks
 // run before its commit, so HEAD is still the commit before the merge, and `git merge-base HEAD
 // origin/<base>` gives the old base: what the base brought in would count as the branch's.
-export async function runCheck($: EngineInterface, root: string, base: string, check: Check, args: string[] = []): Promise<string | undefined> {
+// NDEV_CHANGE_TYPES: the branch's change types, comma-separated, so that a check can choose its tests: those
+// declared or recorded, and those of each path in the index that differs from the merge base (a check
+// before a commit runs before the commit is made). Unset when the paths cannot be read, or no type
+// applies: the script then reads its own diff.
+async function changeTypesEnv($: EngineInterface, root: string, base: string, mergeBase: string, declared: readonly ChangeType[]): Promise<{ value?: string; note?: string }> {
+  if (!mergeBase) return { note: `NDEV_CHANGE_TYPES was not set: there is no merge base with origin/${base}, so the check scripts read their own diff. Repair: git fetch origin ${base}.` }
+  const r = await git(root, $, 'diff', '--cached', '--name-only', '--no-renames', mergeBase)
+  if (r.exitCode !== 0) return { note: `NDEV_CHANGE_TYPES was not set, so the check scripts read their own diff: git diff --cached --name-only --no-renames ${mergeBase.slice(0, 8)} exited ${r.exitCode}: ${said(r)}. Repair: git fetch origin ${base}.` }
+  const inPaths = inferChangeTypes(r.stdout.split('\n').filter(Boolean))
+  const types = CHANGE_TYPES.filter(t => declared.includes(t) || inPaths.includes(t))
+  return types.length ? { value: types.join(',') } : {}
+}
+
+export async function runCheck($: EngineInterface, root: string, base: string, check: Check, args: string[] = [], declared: readonly ChangeType[] = []): Promise<string | undefined> {
   const path = `${CHECK_DIR}/${check}`
   const { gitDir } = await paths($, root)
   const onBase = (await git(root, $, 'cat-file', '-e', `origin/${base}:${path}`)).exitCode === 0
@@ -167,8 +181,11 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   }
   const merging = (await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0
   const mergeBase = merging ? await git(root, $, 'merge-base', `origin/${base}`, 'HEAD', 'MERGE_HEAD') : await git(root, $, 'merge-base', `origin/${base}`, 'HEAD')
+  const baseSha = mergeBase.exitCode === 0 ? mergeBase.stdout.trim() : ''
+  const types = await changeTypesEnv($, root, base, baseSha, declared)
   const project = await projectEnv($, root, path)
-  const env: Record<string, string> = { ...project.env, ...(mergeBase.exitCode === 0 && mergeBase.stdout.trim() ? { NDEV_MERGE_BASE: mergeBase.stdout.trim() } : {}) }
+  const env: Record<string, string> = { ...project.env, ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types.value ? { NDEV_CHANGE_TYPES: types.value } : {}) }
+  note = [note, types.note].filter(Boolean).join(' ') || undefined
   const before = (await porcelain($, root)).join('\n')
   const r = await withStep($, check, CHECK_MAX_MS, () => runLong($, root, `${gitDir}/ndev-${check}.run`, script, args, env))
   const log = `${gitDir}/ndev-${check}.log`
