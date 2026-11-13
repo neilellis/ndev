@@ -10,10 +10,11 @@ import { makeRun, orca } from './fix-all-prs'
 // (the Hetzner project that pays), the SSH key it was made with, its floating IP (the id, and the address, which is
 // the remote's address), and the host key the first
 // build recorded, or the one a person confirmed at /dev remote import. The snapshot carries that host key, so a
-// restore trusts only it.
+// restore trusts only it. `imported`: /dev remote import wrote the record, so /dev remote remove first checks over SSH
+// that the server still presents that host key.
 export type Server = { id: string; name: string }
 export type Saved = Server & { savedAt?: string }
-export type HostRecord = { context: string; sshKey?: string; floatingIp?: number; ip?: string; hostKey?: string }
+export type HostRecord = { context: string; sshKey?: string; floatingIp?: number; ip?: string; hostKey?: string; imported?: boolean }
 export type Store = { projects: Record<string, Saved>; hosts: Record<string, HostRecord> }
 
 export async function storePath($: EngineInterface): Promise<string> {

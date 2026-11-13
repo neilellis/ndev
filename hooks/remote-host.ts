@@ -17,7 +17,7 @@ export const REMOTE_HOST_HELP = [
   '  /dev remote create <name> [options] make a Hetzner Cloud server for Orca: from the snapshot remove kept, else from the base image',
   '        options: --context <hcloud context>  --type <server type>  --location <location>  --ssh-key <key>  --floating-ip <name or id>  --yes',
   '        the address is a floating IPv4; on the server it is set by hand with: ip addr add <floating ip> dev eth0',
-  '  /dev remote remove <name> [options] shut the server down, snapshot it, and delete it only once the snapshot is available',
+  '  /dev remote remove <name> [options] shut the server down, snapshot it, and delete it only once the snapshot is available; an imported server must first present its saved host key over SSH',
   '        options: --context <hcloud context>  --floating-ip <name or id>  --forget (also delete the snapshot, the floating IP and the firewall)  --yes',
   '  /dev remote import <hetzner-id> --context <hcloud context> [options] hand a server made by hand to /dev remote: label it, its firewalls and its floating IPv4, and record its host key',
   '        options: --floating-ip <name or id> (when the server has several)  --name <the server\'s Hetzner name>  --yes (only for a host key already in known_hosts)',
@@ -55,6 +55,22 @@ export async function exec($: EngineInterface, argv: string[], init: { timeoutMs
   }
 }
 export const said = (o: Out) => (o.stderr.trim() || o.stdout.trim() || 'no output').slice(0, 800)
+
+// The ed25519 host key that the address presents, as "ssh-ed25519 <key>", or no key with ssh-keyscan's answer.
+// ssh-keyscan finishes the key exchange, so a key it reads is one the server holds the private half of. Reading it
+// trusts nothing.
+export async function scanKey($: EngineInterface, address: string): Promise<{ key?: string; out: Out }> {
+  const out = await exec($, ['ssh-keyscan', '-T', '15', '-p', SSH_PORT, '-t', 'ed25519', address], { timeoutMs: 30_000 })
+  const line = out.stdout.split('\n').map(l => l.trim().split(/\s+/)).find(f => f[1] === 'ssh-ed25519' && f[2])
+  return { key: out.exitCode === 0 && line ? `ssh-ed25519 ${line[2]}` : undefined, out }
+}
+
+export async function fingerprint($: EngineInterface, key: string): Promise<string> {
+  const o = await exec($, ['ssh-keygen', '-lf', '-'], { stdin: `${key}\n` })
+  const print = /SHA256:\S+/.exec(o.stdout)?.[0]
+  if (o.exitCode !== 0 || !print) throw new Error(`ssh-keygen -lf - printed no SHA256 fingerprint for a host key (exit ${o.exitCode}): ${said(o)}\nNothing changed.`)
+  return print
+}
 
 // hcloud takes an exported token before the context's own, so both variables are removed for every call.
 const HCLOUD = ['env', '-u', 'HCLOUD_TOKEN', '-u', 'HCLOUD_CONTEXT', 'hcloud']
@@ -470,6 +486,25 @@ export async function createHost($: EngineInterface, project: LoadedConfig | und
 
 // ---- /dev remote remove ----
 
+// A server that ndev made has its host key from the first boot. An imported one has only the key a person confirmed
+// at /dev remote import, and nothing else ties the Hetzner server of that name to the machine the person saw. So
+// before remove snapshots and deletes an imported server, it checks over SSH that the server still presents that key.
+// A record that import wrote before the `imported` marker is known by its host key with no SSH key of create.
+async function checkImportedKey($: EngineInterface, name: string, ctx: string, server: Srv, rec: HostRecord | undefined, path: string, again: string): Promise<void> {
+  if (!rec || !(rec.imported || (rec.hostKey && !rec.sshKey))) return
+  const reimport = `delete hosts.${name} from ${path}, run /dev remote import ${server.id} --context ${ctx} and confirm the key there, then run ${again} again`
+  if (!rec.hostKey) throw new Error(`the server ${name} (${server.id}) was imported, but ${path} saved no host key for ${name}, so remove cannot check that the server is the one that was imported. No snapshot was taken and nothing was deleted. Nothing changed.\nRepair: ${reimport}.`)
+  const saved = await fingerprint($, rec.hostKey)
+  const address = server.public_net.ipv4?.ip ?? rec.ip
+  const start = server.status === 'running' ? '' : `the server is ${server.status}: start it with hcloud --context ${ctx} server poweron ${server.id}; `
+  if (!address) throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that it still presents the host key ${saved}, the one ${path} saved for ${name}. But the server has no public IPv4 and ${path} saved no address for ${name}, so there is nowhere to check. No snapshot was taken and nothing was deleted. Nothing changed.\nRepair: give the server a public IPv4 or a floating IP that SSH answers on, then run ${again} again.`)
+  const { key, out } = await scanKey($, address)
+  if (!key) throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that it still presents the host key ${saved}, the one ${path} saved for ${name}. ssh-keyscan -p ${SSH_PORT} -t ed25519 ${address} read no ed25519 host key (exit ${out.exitCode}): ${said(out)}. No snapshot was taken and nothing was deleted. Nothing changed.\nRepair: ${start}check that SSH answers there (ssh -p ${SSH_PORT} root@${address}), then run ${again} again.`)
+  if (key === rec.hostKey) return
+  const seen = await fingerprint($, key)
+  throw new Error(`the server ${name} (${server.id}) was imported, and ${address} now presents the ed25519 host key ${seen}, not ${saved}, the one ${path} saved for ${name}. It may not be the server that was imported. No snapshot was taken and nothing was deleted. Nothing changed.\nRepair: read the server's own fingerprint in its Hetzner console (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub). If it is ${seen}, the server's key changed: ${reimport}. If it is not, another machine answers at ${address}: find out which before you remove anything.`)
+}
+
 export async function removeHost($: EngineInterface, project: LoadedConfig | undefined, given: string | undefined, o: HostOptions): Promise<string> {
   const name = nameOf(given, 'remove')
   const again = `/dev remote remove ${name}`
@@ -483,6 +518,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
   if (fip && fip.server !== null && fip.server !== server?.id) throw new Error(`the floating IP ${fip.ip} (${fip.id}) of ${name} is assigned to the server ${fip.server}, which is not the server ${name}, so it is in use. Nothing changed.\nRepair: look at it with hcloud --context ${ctx} floating-ip describe ${fip.id}; unassign it with hcloud --context ${ctx} floating-ip unassign ${fip.id} if that server must lose the address.`)
   const unfinished = snapshots.find(s => s.status !== 'available')
   if (unfinished) throw new Error(`the snapshot ${unfinished.id} of ${name} has the status "${unfinished.status}", not "available". Nothing changed.\nRepair: look at it with hcloud --context ${ctx} image describe ${unfinished.id}. When it is available, run ${again} again; delete a failed one with hcloud --context ${ctx} image delete ${unfinished.id}.`)
+  if (server) await checkImportedKey($, name, ctx, server, store.hosts[name], path, again)
   const cost = await pricing($, ctx)
 
   return steps($, async did => {
