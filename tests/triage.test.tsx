@@ -47,7 +47,7 @@ const message = (id: string, type: string, from: string, body: string, payload?:
 // environment: the saved Orca server that holds the workspace (--remote); none for this machine.
 type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[]; environment?: string }
 // environments: the saved Orca servers, as `orca environment list` answers them.
-function world(on: On, opts: { environments?: { id: string; name: string }[]; repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean } = {}) {
+function world(on: On, opts: { environments?: { id: string; name: string }[]; repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean; files?: Record<string, string> } = {}) {
   // Each open pull request's merge state and checks, as GitHub answers pr-read and commit-checks; the test changes them.
   const prs: Record<number, Pr> = {}
   // Each period of `$.clock.every`, by its length, waits here until the test fires it.
@@ -63,7 +63,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
   // Deliveries the fake inbox hands out, one per blocking check; a check waits until one is queued.
   const inbox: { deliveryId: string; messages: unknown[] }[] = []
   // The Run's workers as worker-list answers them, newest first, as Orca lists them.
-  const workers: { dispatchId: string; taskId: string; workerState: string; agentTerminalHandle: string }[] = []
+  const workers: { dispatchId: string; taskId: string; workerState: string; agentTerminalHandle: string; projection?: { liveness: { verdict: string } } }[] = []
   // The Dispatches that have finished on a paired server; a send to one is refused.
   const finished = new Set<string>()
   let wake: (() => void) | undefined
@@ -73,8 +73,11 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
   on('command.register', (_, e) => { registered.push({ name: e.name, argumentHint: e.argumentHint }); return { value: { command: e.name } } })
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
   on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
-  on('fs.read', () => ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null }, ...(opts.workflowOff ? { workflow: false } : {}) }) }))
+  const files = opts.files ?? {}
+  const inDir = (dir: string) => Object.keys(files).filter(k => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/'))
+  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' || e.path in files || inDir(e.path).length > 0 }))
+  on('fs.list', (_, e) => ({ value: inDir(e.path).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
+  on('fs.read', (_, e) => e.path in files ? { value: files[e.path] } : ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null }, ...(opts.workflowOff ? { workflow: false } : {}) }) }))
   on('clock.every', (_, e) => new Promise(resolve => { timers.set(e.ms, [...(timers.get(e.ms) ?? []), () => resolve({ value: undefined })]) }))
   // The time the mod reads; a test moves it on.
   const clock = { now: 1_800_000_000_000 }
@@ -218,7 +221,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
     workers.unshift({ dispatchId, taskId: task, workerState: 'ready', agentTerminalHandle: `term_${dispatchId.slice('ctx_'.length)}` })
     tasks.find(t => t.id === task)!.status = 'dispatched'
   }
-  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart, registered, finished }
+  return { ran, prompts, toasts, tasks, workers, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart, registered, finished }
 }
 
 // A pull request as the fake GitHub answers it: REST's mergeable and mergeable_state, and its check runs as [name, status, conclusion].
@@ -926,6 +929,36 @@ test('/dev triage start --batch 2 runs the groups in batches of two: the next ba
   expect(w.orcaRan('orchestration worker-start')[2]).toEqual(expect.arrayContaining(['--task', 'task_3']))
 })
 
+test('/dev triage start --batch 2 starts the next batch when a worker\'s Task is completed in Orca with no worker_done', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9), issue(12)] })
+  await started($)
+  await $.command.run(command('start --batch 2'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'average'), group([12], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'PR #41.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await new Promise(resolve => setTimeout(resolve, 200))
+  expect(w.orcaRan('orchestration worker-start')).toHaveLength(2)
+
+  // The worker of #9 exits with no worker_done: the coordinator hears of it once, and the batch still waits.
+  w.workers.find(x => x.dispatchId === 'ctx_2')!.projection = { liveness: { verdict: 'exited' } }
+  const asked = w.prompts.length
+  expect(w.fire(15 * 60_000)).toBe(1)
+  await until(() => w.prompts.length > asked, () => w.prompts)
+  expect(w.prompts[asked]).toMatch(/the worker ctx_2 of #9 \(Fix #9\) exited without worker_done; it recorded no pull request\. Its Task task_2 is dispatched/)
+  expect(w.prompts[asked]).toMatch(/orca orchestration task-update --id task_2 --status completed --run run_1 --json/)
+  expect(w.fire(15 * 60_000)).toBe(1)
+  await new Promise(resolve => setTimeout(resolve, 200))
+  expect(w.prompts.filter(p => /exited without worker_done/.test(p))).toHaveLength(1)
+  expect(w.orcaRan('orchestration worker-start')).toHaveLength(2)
+
+  // The coordinator completes its Task by hand: the next refresh reads the Task back, and the next batch starts.
+  w.tasks.find(t => t.id === 'task_2')!.status = 'completed'
+  expect(w.fire(15 * 60_000)).toBe(1)
+  await until(() => w.orcaRan('orchestration worker-start').length === 3, () => w.ran)
+  expect(w.orcaRan('orchestration worker-start')[2]).toEqual(expect.arrayContaining(['--task', 'task_3']))
+})
+
 test('/dev triage start with no --batch or --sequential runs batches of 5', async ($, on) => {
   const w = world(on, { issues: [3, 4, 5, 6, 7, 8].map(n => issue(n)) })
   await started($)
@@ -1436,4 +1469,36 @@ test('without --hint, skipped takes the issues the human asked in the conversati
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /skipped #4 as the human asked: the human said to stay off the KG epic/ }))?.text).toBeDefined()
   await ui.unmount()
+})
+
+test('/dev triage start leaves out an epic that a coordinator works, and its sub-issues, from the epic record in an Orca worktree', async ($, on) => {
+  const record = (epic: number, state: string, subs: number[]) =>
+    JSON.stringify({ epic, repo: 'acme/widgets', root: '/w/epic', title: `Epic ${epic}`, state, issues: Object.fromEntries(subs.map(n => [`k${n}`, { key: `k${n}`, issue: n, title: `Sub ${n}`, blockedBy: [], state: 'waiting' }])), history: [] })
+  const w = world(on, {
+    issues: [issue(3), issue(5), issue(6), issue(7), issue(11), issue(12)],
+    worktrees: [{ id: 'repo-1::/w/epic', projectId: 'github:acme/widgets', path: '/w/epic', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null, linkedItems: [] }],
+    files: { '/w/epic/.neil-dev.epic-5.json': record(5, 'coordinating', [6, 7]), '/w/epic/.neil-dev.epic-11.json': record(11, 'done', [12]), '/w/epic/.neil-dev.issue-3.json': '{}' },
+  })
+  await started($)
+  const r = await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0, () => [r.text, w.ran.slice(-1), w.toasts])
+  for (const n of [3, 11, 12]) expect(w.prompts[0]).toMatch(new RegExp(`#${n}\\b`))
+  for (const n of [5, 6, 7]) expect(w.prompts[0]).not.toMatch(new RegExp(`#${n}\\b`))
+  await until(() => w.toasts.some(t => /3 issues sent to the model to group\. It left out epic #5 and its sub-issues #6 #7: its coordinator works them \(\/w\/epic\/\.neil-dev\.epic-5\.json\)\./.test(t)), () => w.toasts)
+  expect(w.toasts.join(' ')).not.toMatch(/epic #11/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /left out epic #5 and its sub-issues #6 #7/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('/dev triage start names the epic record that is not JSON, with a repair', async ($, on) => {
+  const w = world(on, {
+    issues: [issue(3)],
+    worktrees: [{ id: 'repo-1::/w/epic', projectId: 'github:acme/widgets', path: '/w/epic', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null, linkedItems: [] }],
+    files: { '/w/epic/.neil-dev.epic-5.json': '{ not json' },
+  })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.toasts.some(t => /\/w\/epic\/\.neil-dev\.epic-5\.json is not valid JSON.*Repair: fix or delete the file, then run \/dev triage start again/.test(t)), () => w.toasts)
+  expect(w.prompts).toHaveLength(0)
 })

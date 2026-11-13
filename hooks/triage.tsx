@@ -4,6 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { LoadedConfig } from './config'
 import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, START_ORCA, type OrcaWorktree, type Run } from './fix-all-prs'
 import { pullUrl } from './links'
+import { loadEpic } from './workflow/epic'
 import type { PrRow, TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
 // /dev triage: this session's model groups the open issues and then coordinates, and Orca does the
@@ -131,19 +132,27 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
   const remote = o.remote === undefined ? undefined : await remoteServer($, o.remote)
   await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined, isMine: o.isMine || undefined, remote }))
   const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '-linked:pr', `/dev triage start again${g.board ? ' without --open' : ''}`, o.since, o.isMine, remote?.id)
-  const { issues, skipped } = got
-  const left = ordered(got.left, o.isReverse)
+  // An epic coordinator links no workspace to its epic, so its record says which issues it works. Only a workspace on
+  // this machine can be read.
+  const epics = await epicsInWork($, got.local, `/dev triage start again`)
+  const inEpic = new Set(epics.flatMap(e => [e.epic, ...e.subs]))
+  const { issues } = got
+  const left = ordered(got.left.filter(i => !inEpic.has(i.number)), o.isReverse)
+  const skipped = issues.length - left.length
+  const epicLines = epics.map(e => `left out epic #${e.epic}${e.subs.length ? ` and its sub-issues ${e.subs.map(n => `#${n}`).join(' ')}` : ''}: its coordinator works them (${e.path})`)
+  for (const line of epicLines) await note($, line)
+  const epicText = epicLines.map(l => ` It ${l}.`).join('')
   if (issues.length > LIMIT) {
     throw new Error(`${repo} has more than ${LIMIT} open issues with no pull request, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /dev triage start again${g.board ? ' without --open' : ''}. /dev triage clean closes the outdated ones first.`)
   }
   if (!left.length) {
-    await note($, `${issues.length} issues read${o.since ? ` above #${o.since}` : ''}; none is left without an Orca workspace`)
-    return `No issue of ${repo}${o.since ? ` above #${o.since}` : ''} is left to triage: ${issues.length} read, ${skipped} already linked to an Orca workspace.`
+    await note($, `${issues.length} issues read${o.since ? ` above #${o.since}` : ''}; none is left without an Orca workspace or an epic coordinator`)
+    return `No issue of ${repo}${o.since ? ` above #${o.since}` : ''} is left to triage: ${issues.length} read, ${skipped} already linked to an Orca workspace or in an epic that its coordinator works.${epicText}`
   }
   await update($, view, (v): TriageView => ({ ...v, phase: 'grouping', issues: left }))
-  await note($, `asked the model to group ${left.length} issues${skipped ? ` (${skipped} already in Orca workspaces)` : ''}`)
+  await note($, `asked the model to group ${left.length} issues${skipped ? ` (${skipped} already in Orca workspaces or epics)` : ''}`)
   ask($, 'the issues to group', brief(repo, left, o.agent, o.batch, o.hint, o.isReverse, o.isBugsOnly))
-  return `Triage of ${repo}: ${left.length} issues sent to the model to group.`
+  return `Triage of ${repo}: ${left.length} issues sent to the model to group.${epicText}`
 }
 
 // /dev triage clean: code gathers a fact record for every open issue (the board's too, whatever its column): its body,
@@ -485,11 +494,34 @@ async function openIssues($: EngineInterface, repo: string, board: { owner: stri
   if (since) issues = issues.filter(i => i.number > since)
   // With --remote, a workspace on this machine and one on the server are each someone's work.
   const retry = `, then run ${again}`
-  const all = environment ? (await Promise.all([orcaWorktrees(run, retry), orcaWorktrees(run, retry, environment)])).flat() : await orcaWorktrees(run, retry)
-  const worktrees = ofRepo(all, repo).filter(w => !w.isArchived)
+  const [local, far = []] = environment ? await Promise.all([orcaWorktrees(run, retry), orcaWorktrees(run, retry, environment)]) : [await orcaWorktrees(run, retry)]
+  const worktrees = ofRepo([...local, ...far], repo).filter(w => !w.isArchived)
   const linked = new Set(worktrees.flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number!))
   const left = issues.filter(i => !linked.has(i.number)).sort((a, b) => a.number - b.number)
-  return { issues, left, skipped: issues.length - left.length, linked, worktrees }
+  return { issues, left, skipped: issues.length - left.length, linked, worktrees, local: ofRepo(local, repo).filter(w => !w.isArchived) }
+}
+
+const EPIC_RECORD = /^\.neil-dev\.epic-([1-9]\d*)\.json$/
+
+// Each epic, not done, whose .neil-dev.epic-<n>.json sits in one of the worktrees: its coordinator owns it and its sub-issues.
+async function epicsInWork($: EngineInterface, worktrees: OrcaWorktree[], again: string) {
+  const found: { epic: number; subs: number[]; path: string }[] = []
+  for (const w of worktrees) {
+    if (!(await $.fs.exists(w.path))) continue
+    for (const entry of await $.fs.list(w.path)) {
+      const n = Number(EPIC_RECORD.exec(entry.name)?.[1])
+      if (!n) continue
+      const path = `${w.path}/${entry.name}`
+      let epic
+      try {
+        epic = await loadEpic($, w.path, n)
+      } catch (error) {
+        throw new Error(`${(error as Error).message.replace(/ Repair:.*$/s, '')}\nRepair: fix or delete the file, then run ${again}.`)
+      }
+      if (epic && epic.state !== 'done') found.push({ epic: n, subs: Object.values(epic.issues).map(i => i.issue).filter(i => typeof i === 'number'), path })
+    }
+  }
+  return found
 }
 
 // The saved Orca server for --remote: the one named by its id, the start of its id, or its name; the only one saved
@@ -744,14 +776,16 @@ function startReady($: EngineInterface): Promise<unknown> {
   return starting
 }
 
-const isInFlight = (g: TriageGroup) => !!g.dispatchId && !g.summary && !g.error
+// A worker is in flight until it reports worker_done or fails to start, or until its Task ends in Orca: a worker that
+// exits with no worker_done leaves its Task for the coordinator to complete or fail by hand.
+const isInFlight = (g: TriageGroup) => !!g.dispatchId && !g.summary && !g.error && g.task !== 'completed' && g.task !== 'failed'
 // The batch size: --batch <n>, or 1 for a triage saved by --sequential before --batch; 0 for no limit.
 const batchOf = (v: TriageView) => v.batch ?? (v.isSequential ? 1 : 0)
 
 async function startNow($: EngineInterface): Promise<void> {
   const v = await read($, view)
   if (v.phase !== 'running' || !v.runId || !v.repo) return
-  // --batch: no start while a worker of the last batch has not reported worker_done.
+  // --batch: no start while a worker of the last batch is in flight.
   const batch = batchOf(v)
   if (batch && v.groups.some(isInFlight)) return
   const ready = (await orca(runner($, 60_000), ['orchestration', 'task-list', '--ready', '--run', v.runId])) as { tasks: { id: string }[] }
@@ -1049,6 +1083,7 @@ async function refresh($: EngineInterface): Promise<void> {
     orcaWorktrees(run, '', v.remote?.id),
   ])
   await adoptRestarts($, workers.workers)
+  const wasExited = new Set((await read($, view)).groups.filter(g => g.liveness === 'exited').map(g => g.dispatchId))
   const now = await $.clock.now()
   for (const g of v.groups) {
     if (g.task !== 'failed' && tasks.tasks.find(t => t.id === g.taskId)?.status === 'failed') {
@@ -1068,6 +1103,14 @@ async function refresh($: EngineInterface): Promise<void> {
     })
     return { ...x, groups, checkedAt: now }
   })
+  // A worker that exits with no worker_done holds its batch until its Task ends, so the coordinator hears of it once.
+  for (const g of (await read($, view)).groups) {
+    if (!isInFlight(g) || g.liveness !== 'exited' || wasExited.has(g.dispatchId)) continue
+    const pr = g.pr ? `PR #${g.pr} (${pullUrl(v.repo, g.pr)}) ${g.prClosed === g.pr ? 'is merged or closed' : 'is open'}` : 'it recorded no pull request'
+    await note($, `#${g.lead}: worker ${g.dispatchId} exited without worker_done; ${pr}`)
+    askToDecide($, `the exited worker of #${g.lead}`, `Triage: the worker ${g.dispatchId} of #${g.lead} (${g.title}) exited without worker_done; ${pr}. Its Task ${g.taskId} is ${g.task ?? 'in an unknown state'}, so the groups after it wait.`,
+      `When its work is done: \`orca orchestration task-update --id ${g.taskId} --status completed --run ${v.runId} --json\`. The next refresh reads the Task back and starts the next groups.`, g, v.runId)
+  }
   await settle($)
 }
 
