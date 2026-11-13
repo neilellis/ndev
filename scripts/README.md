@@ -95,5 +95,5 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
-| `root-setup.sh` | The first build of a server that `/dev remote create` made from the base image: packages, Docker, key-only SSH, host keys that a snapshot restore keeps, and the workspace user. It runs on the server as root (`u=<user> bash -s` over SSH), never on a desktop, and prints the server's new host key. | `hooks/remote-host.ts` |
+| `root-setup.sh` | The first build of a server that `/dev remote create` made from the base image: packages, Docker, key-only SSH, host keys that a snapshot restore keeps, and the workspace user. It runs on the server as root (`u=<user> bash -s` over SSH), never on a desktop, and prints the server's new host key. A server that `/dev remote import <hetzner-id>` handed over was not built by it, and `import` runs no script on the server. | `hooks/remote-host.ts` |
 | `floating-ip.sh` | Puts a floating IPv4 on `eth0` of the server (`ip addr add <floating ip> dev eth0`) and writes Hetzner's netplan file so it survives a restart. It checks first, so a second run changes nothing. It runs on the server as root (`floating=<ip> bash -s` over SSH). | `hooks/remote-host.ts` |

@@ -9,7 +9,8 @@ import { makeRun, orca } from './fix-all-prs'
 // project folder when it has none). `hosts`: each Hetzner server /dev remote create made, by name: the hcloud context
 // (the Hetzner project that pays), the SSH key it was made with, its floating IP (the id, and the address, which is
 // the remote's address), and the host key the first
-// build recorded. The snapshot carries that host key, so a restore trusts only it.
+// build recorded, or the one a person confirmed at /dev remote import. The snapshot carries that host key, so a
+// restore trusts only it.
 export type Server = { id: string; name: string }
 export type Saved = Server & { savedAt?: string }
 export type HostRecord = { context: string; sshKey?: string; floatingIp?: number; ip?: string; hostKey?: string }
@@ -60,5 +61,8 @@ export async function orcaServers($: EngineInterface): Promise<Server[]> {
   const listed = (await orca(makeRun($, 60_000), ['environment', 'list'])) as { environments?: Server[] }
   return listed.environments ?? []
 }
+
+// Orca names the saved server of a recipe "<recipe id> VM <id>", so a server is found by the short name too.
+export const namedFor = (servers: Server[], name: string) => servers.filter(s => s.name === name || s.name.startsWith(`${name} VM `))
 
 export const each = (servers: Server[]) => servers.map(s => `${s.name} (${s.id})`).join(', ') || 'none'

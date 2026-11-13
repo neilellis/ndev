@@ -2,16 +2,16 @@ import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from './config'
 import { sessionHuman } from './workflow/tools'
-import { type HostRecord, orcaServers, projectKey, readStore, type Server, type Store, storePath, writeStore } from './remote-store'
+import { type HostRecord, namedFor, orcaServers, projectKey, readStore, type Server, type Store, storePath, writeStore } from './remote-store'
 
 // /dev remote create <name> and /dev remote remove <name>: a Hetzner Cloud server that is an SSH host for Orca
 // workspaces. remove shuts the server down, snapshots it, and deletes it only once the snapshot is available; create
 // restores the newest snapshot of the name, or builds from the base image when there is none. The remote's address
 // is a floating IPv4 that remove keeps and create assigns again, so the server type can change and the address and
 // host key stay. Everything it makes carries the labels managed-by=ndev and ndev-name=<name>, and it touches nothing
-// without them. Every hcloud call names its context and runs with no HCLOUD_TOKEN or HCLOUD_CONTEXT.
+// without them; /dev remote import (remote-import.ts) gives them to a server made by hand. Every hcloud call names its context and runs with no HCLOUD_TOKEN or HCLOUD_CONTEXT.
 
-export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; isForget: boolean; isYes: boolean }
+export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; isForget: boolean; isYes: boolean }
 
 export const REMOTE_HOST_HELP = [
   '  /dev remote create <name> [options] make a Hetzner Cloud server for Orca: from the snapshot remove kept, else from the base image',
@@ -19,47 +19,50 @@ export const REMOTE_HOST_HELP = [
   '        the address is a floating IPv4; on the server it is set by hand with: ip addr add <floating ip> dev eth0',
   '  /dev remote remove <name> [options] shut the server down, snapshot it, and delete it only once the snapshot is available',
   '        options: --context <hcloud context>  --floating-ip <name or id>  --forget (also delete the snapshot, the floating IP and the firewall)  --yes',
+  '  /dev remote import <hetzner-id> --context <hcloud context> [options] hand a server made by hand to /dev remote: label it, its firewalls and its floating IPv4, and record its host key',
+  '        options: --floating-ip <name or id> (when the server has several)  --name <the server\'s Hetzner name>  --yes (only for a host key already in known_hosts)',
 ]
 
 const DEFAULT_TYPE = 'cx33'
 const DEFAULT_LOCATION = 'fsn1'
 const BASE_IMAGE = 'ubuntu-24.04'
-const USER = 'orca'
-const SSH_PORT = '22'
+export const USER = 'orca'
+export const SSH_PORT = '22'
 const PACKAGES_TIMEOUT_MS = 600_000
 
-type Labels = Record<string, string>
+export type Labels = Record<string, string>
 type Price = { location: string; price_monthly: { gross: string } }
-type Srv = { id: number; name: string; status: string; labels: Labels; server_type: { name: string; disk: number; prices?: Price[] }; location?: { name: string }; public_net: { ipv4?: { ip: string } | null } }
-type Img = { id: number; description: string; created: string; status: string; disk_size: number; image_size: number | null; labels: Labels; architecture?: string }
-type Fip = { id: number; name: string; ip: string; labels: Labels; server: number | null; home_location: { name: string; network_zone?: string } }
-type Fw = { id: number; name: string; labels: Labels; rules?: { direction: string; protocol: string; port?: string | null }[] }
+export type Srv = { id: number; name: string; status: string; labels: Labels; server_type: { name: string; disk: number; prices?: Price[] }; location?: { name: string }; public_net: { ipv4?: { ip: string } | null; firewalls?: { id: number }[] } }
+export type Img = { id: number; description: string; created: string; status: string; disk_size: number; image_size: number | null; labels: Labels; architecture?: string }
+export type Fip = { id: number; name: string; ip: string; labels: Labels; server: number | null; home_location: { name: string; network_zone?: string } }
+export type Applied = { type: string; server?: { id: number }; label_selector?: { selector: string }; applied_to_resources?: { server?: { id: number } }[] }
+export type Fw = { id: number; name: string; labels: Labels; rules?: { direction: string; protocol: string; port?: string | null }[]; applied_to?: Applied[] }
 type ServerType = { name: string; disk: number; cores: number; memory: number; architecture?: string; prices: Price[] }
-type Out = { exitCode: number; stdout: string; stderr: string }
+export type Out = { exitCode: number; stdout: string; stderr: string }
 
 // ---- The one runner: hcloud, ssh and the small local commands all go through $.process.run ----
 
 // A command that did not start or outran its time reads as a failed command, with the reason in place of its output.
-async function exec($: EngineInterface, argv: string[], init: { timeoutMs?: number; stdin?: string } = {}): Promise<Out> {
+export async function exec($: EngineInterface, argv: string[], init: { timeoutMs?: number; stdin?: string } = {}): Promise<Out> {
   try {
     return await $.process.run(argv, { timeoutMs: 60_000, ...init })
   } catch (error) {
     return { exitCode: -1, stdout: '', stderr: `it did not run to its end: ${error instanceof Error ? error.message : String(error)}` }
   }
 }
-const said = (o: Out) => (o.stderr.trim() || o.stdout.trim() || 'no output').slice(0, 800)
+export const said = (o: Out) => (o.stderr.trim() || o.stdout.trim() || 'no output').slice(0, 800)
 
 // hcloud takes an exported token before the context's own, so both variables are removed for every call.
 const HCLOUD = ['env', '-u', 'HCLOUD_TOKEN', '-u', 'HCLOUD_CONTEXT', 'hcloud']
-const shown = (ctx: string, args: string[]) => `hcloud --context ${ctx} ${args.join(' ')}`
+export const shown = (ctx: string, args: string[]) => `hcloud --context ${ctx} ${args.join(' ')}`
 
-async function hc($: EngineInterface, ctx: string, args: string[], init: { timeoutMs?: number; stdin?: string } = {}): Promise<string> {
+export async function hc($: EngineInterface, ctx: string, args: string[], init: { timeoutMs?: number; stdin?: string } = {}): Promise<string> {
   const o = await exec($, [...HCLOUD, '--context', ctx, ...args], init)
   if (o.exitCode !== 0) throw new Error(`${shown(ctx, args)} exited ${o.exitCode}: ${said(o)}`)
   return o.stdout
 }
 
-async function hcJson<T>($: EngineInterface, ctx: string, args: string[]): Promise<T> {
+export async function hcJson<T>($: EngineInterface, ctx: string, args: string[]): Promise<T> {
   const text = await hc($, ctx, args)
   try {
     return JSON.parse(text) as T
@@ -74,38 +77,51 @@ async function pause($: EngineInterface, secs: number): Promise<void> {
 
 // The hcloud context is the Hetzner project that pays. It is named on the command or kept from an earlier create of
 // this name; the active context and HCLOUD_CONTEXT are never used.
-async function contextOf($: EngineInterface, name: string, wanted: string | undefined, store: Store, again: string): Promise<string> {
+// `whose` is what the context is for (a remote's name, or the server that import reads) and `kept` the one an earlier
+// command kept for it.
+export async function contextOf($: EngineInterface, whose: string, wanted: string | undefined, kept: string | undefined, again: string): Promise<string> {
   const listed = await exec($, [...HCLOUD, 'context', 'list', '-o', 'noheader', '-o', 'columns=name'])
   if (listed.exitCode !== 0) throw new Error(`hcloud context list exited ${listed.exitCode}: ${said(listed)}\nRepair: install hcloud (brew install hcloud) and make a context for the Hetzner project (hcloud context create <name>, which asks for the project's API token).`)
   const contexts = listed.stdout.split('\n').map(l => l.trim()).filter(Boolean)
   const here = `The contexts here: ${contexts.join(', ') || 'none'}.`
-  const ctx = wanted ?? store.hosts[name]?.context
-  if (!ctx) throw new Error(`no hcloud context is named for ${name}. The context is the Hetzner project that pays, so it must be named: the active context and HCLOUD_CONTEXT are never used. ${here} Nothing changed.\nRepair: run ${again} --context <context>.`)
+  const ctx = wanted ?? kept
+  if (!ctx) throw new Error(`no hcloud context is named for ${whose}. The context is the Hetzner project that pays, so it must be named: the active context and HCLOUD_CONTEXT are never used. ${here} Nothing changed.\nRepair: run ${again} --context <context>.`)
   if (!contexts.includes(ctx)) throw new Error(`there is no hcloud context "${ctx}". ${here} Nothing changed.\nRepair: name one of them, or make it with hcloud context create ${ctx} (it asks for the project's API token).`)
   return ctx
 }
 
+export const isRemoteName = (name: string) => /^[a-z][a-z0-9-]{0,38}[a-z0-9]$/.test(name)
+export const NAME_RULE = 'a name is 2 to 40 lower-case letters, digits and hyphens, and starts with a letter'
 function nameOf(name: string | undefined, word: string): string {
   if (!name) throw new Error(`it needs the name of the remote, as in /dev remote ${word} <name>. Nothing changed.`)
-  if (!/^[a-z][a-z0-9-]{0,38}[a-z0-9]$/.test(name)) throw new Error(`"${name}" cannot name a remote: a name is 2 to 40 lower-case letters, digits and hyphens, and starts with a letter. Nothing changed.`)
+  if (!isRemoteName(name)) throw new Error(`"${name}" cannot name a remote: ${NAME_RULE}. Nothing changed.`)
   return name
 }
 
 // ---- What Hetzner holds for a name, and whose it is ----
 
 const labelArgs = (name: string, more: Labels = {}) => Object.entries({ 'managed-by': 'ndev', 'ndev-name': name, ...more }).flatMap(([k, v]) => ['--label', `${k}=${v}`])
-const isOurs = (labels: Labels | undefined, name: string) => labels?.['managed-by'] === 'ndev' && labels['ndev-name'] === name
+export const isOurs = (labels: Labels | undefined, name: string) => labels?.['managed-by'] === 'ndev' && labels['ndev-name'] === name
 
-// /dev remote touches only what it made. `kind` is the hcloud resource word, so the repair is a command.
-function ours<T extends { id: number; labels: Labels }>(kind: 'server' | 'image' | 'floating-ip' | 'firewall', thing: T | undefined, title: string, name: string, ctx: string): T | undefined {
+export const labelsShown = (labels: Labels | undefined) => Object.entries(labels ?? {}).map(([k, v]) => `${k}=${v}`).join(', ') || 'none'
+
+// /dev remote touches only what it made or what /dev remote import handed to it. `kind` is the hcloud resource word,
+// so the repair is a command. `serverId` is the server of the name, when there is one: import of it labels the
+// firewalls applied to it and its floating IPv4. A snapshot, and a firewall or floating IP with no server, have only
+// the label command.
+function ours<T extends { id: number; labels: Labels }>(kind: 'server' | 'image' | 'floating-ip' | 'firewall', thing: T | undefined, title: string, name: string, ctx: string, serverId?: number): T | undefined {
   if (!thing || isOurs(thing.labels, name)) return thing
-  const has = Object.entries(thing.labels ?? {}).map(([k, v]) => `${k}=${v}`).join(', ') || 'none'
-  throw new Error(`the ${kind} ${title} (${thing.id}) in the hcloud context ${ctx} does not carry the labels managed-by=ndev and ndev-name=${name} (its labels: ${has}), so /dev remote did not make it and does not touch it. Nothing changed.\nRepair: use another name. Or, if it is yours to hand to /dev remote: hcloud --context ${ctx} ${kind} add-label ${thing.id} managed-by=ndev ndev-name=${name}`)
+  const byHand = `hcloud --context ${ctx} ${kind} add-label ${thing.id} managed-by=ndev ndev-name=${name}`
+  const repair =
+    kind === 'server' ? `/dev remote import ${thing.id} --context ${ctx}`
+    : serverId !== undefined && kind !== 'image' ? `/dev remote import ${serverId} --context ${ctx} labels it when it is ${kind === 'firewall' ? 'applied' : 'assigned'} to the server ${name}; when it is not, ${byHand}`
+    : byHand
+  throw new Error(`the ${kind} ${title} (${thing.id}) in the hcloud context ${ctx} does not carry the labels managed-by=ndev and ndev-name=${name} (its labels: ${labelsShown(thing.labels)}), so /dev remote did not make it and does not touch it. Nothing changed.\nRepair: use another name. Or, if it is yours to hand to /dev remote: ${repair}`)
 }
 
 // The floating IP of a remote: the one named with --floating-ip (by name or id), else the one an earlier command
 // kept for the name, else the one with the remote's name. One that was made by hand is adopted only once it carries
-// the labels; the refusal names the command, and the plugin never labels it itself.
+// the labels; the refusal names the command, and only /dev remote import labels it.
 async function look($: EngineInterface, ctx: string, name: string, flag: string | undefined, kept: number | undefined, path: string) {
   const wantedIp = flag ?? (kept === undefined ? undefined : String(kept))
   const server = ours('server', (await hcJson<Srv[]>($, ctx, ['server', 'list', '-o', 'json'])).find(s => s.name === name), name, name, ctx)
@@ -120,8 +136,8 @@ async function look($: EngineInterface, ctx: string, name: string, flag: string 
     if (flag === undefined) throw new Error(`the floating IP ${wantedIp} that ${path} keeps for ${name} is no longer in the hcloud context ${ctx}. ${there}\nRepair: name another with --floating-ip <name or id>. To have a new one made, delete "floatingIp" and "ip" from hosts.${name} in ${path}, then run the command again.`)
     throw new Error(`there is no floating IP "${wantedIp}" in the hcloud context ${ctx}. ${there}\nRepair: name one of them with --floating-ip <name or id>.`)
   }
-  const fip = ours('floating-ip', found, found?.name ?? name, name, ctx)
-  const firewall = ours('firewall', (await hcJson<Fw[]>($, ctx, ['firewall', 'list', '-o', 'json'])).find(f => f.name === `${name}-ssh`), `${name}-ssh`, name, ctx)
+  const fip = ours('floating-ip', found, found?.name ?? name, name, ctx, server?.id)
+  const firewall = ours('firewall', (await hcJson<Fw[]>($, ctx, ['firewall', 'list', '-o', 'json'])).find(f => f.name === `${name}-ssh`), `${name}-ssh`, name, ctx, server?.id)
   return { server, snapshots, fip, firewall }
 }
 
@@ -136,7 +152,7 @@ async function pricing($: EngineInterface, ctx: string) {
 }
 
 // Asks before any spend or deletion. With no one to ask, it refuses: only --yes confirms without a person.
-async function confirm($: EngineInterface, o: HostOptions, question: string, yes: string, nothing: string): Promise<void> {
+export async function confirm($: EngineInterface, o: HostOptions, question: string, yes: string, nothing: string): Promise<void> {
   if (o.isYes) return
   const refused = `no one confirmed it, so it is refused. ${nothing}\nRepair: run it where you can answer the question, or add --yes to confirm on the command line.`
   // A session with no person at it is not asked: an answer there would not be a person's.
@@ -151,7 +167,7 @@ async function confirm($: EngineInterface, o: HostOptions, question: string, yes
 }
 
 // Runs the steps of a command and, when one fails, adds what the earlier steps already did.
-async function steps($: EngineInterface, fn: (did: (what: string) => void) => Promise<string>): Promise<string> {
+export async function steps($: EngineInterface, fn: (did: (what: string) => void) => Promise<string>): Promise<string> {
   const done: string[] = []
   try {
     return await fn(what => {
@@ -314,7 +330,7 @@ async function orcaSide($: EngineInterface, project: LoadedConfig | undefined, s
   } catch (error) {
     return `Orca was not read, so the /dev remote setting of ${key} is not changed: ${error instanceof Error ? error.message : String(error)}\n${manual}`
   }
-  const found = servers.filter(s => s.name === name || s.name.startsWith(`${name} VM `))
+  const found = namedFor(servers, name)
   if (found.length > 1) return `Orca has ${found.length} saved servers named for ${name}: ${found.map(s => `${s.name} (${s.id})`).join(', ')}. The /dev remote setting of ${key} is not changed.\nRepair: run /dev remote <server> with the one that is this machine.`
   const server = found[0]
   if (!server) return manual
@@ -330,7 +346,7 @@ export async function createHost($: EngineInterface, project: LoadedConfig | und
   const home = (await $.env.get('HOME')) ?? ''
   const path = await storePath($)
   const store = await readStore($, path)
-  const ctx = await contextOf($, name, o.context, store, again)
+  const ctx = await contextOf($, name, o.context, store.hosts[name]?.context, again)
   const { server, snapshots, fip, firewall } = await look($, ctx, name, o.floatingIp, store.hosts[name]?.floatingIp, path)
   const record: HostRecord = { ...store.hosts[name], context: ctx }
 
@@ -343,7 +359,7 @@ export async function createHost($: EngineInterface, project: LoadedConfig | und
   // key is never trusted on first use. It is refused before any spend.
   if ((server || snapshot) && !record.hostKey) {
     const what = server ? `the server ${name} (${server.id}) exists` : `${name} has the snapshot ${snapshot!.id}`
-    throw new Error(`${what}, and ${path} on this machine holds no host key for ${name}, so this machine cannot check the server's identity. That is so when the first build did not finish, or when another machine made it. Nothing changed.\nRepair: if another machine made it, copy hosts.${name} from that machine's ~/.config/ndev/remote.json into ${path}.${server ? ` If its first build did not finish, delete it with hcloud --context ${ctx} server delete ${server.id}, then run ${again} again.` : ''}`)
+    throw new Error(`${what}, and ${path} on this machine holds no host key for ${name}, so this machine cannot check the server's identity. That is so when the first build did not finish, or when another machine made it. Nothing changed.\nRepair: if another machine made it, copy hosts.${name} from that machine's ~/.config/ndev/remote.json into ${path}.${server ? ` If the server is one you know, /dev remote import ${server.id} --context ${ctx} reads its host key, shows you the fingerprint and records it on yes. If its first build did not finish, delete it with hcloud --context ${ctx} server delete ${server.id}, then run ${again} again.` : ''}`)
   }
 
   const type = o.type ?? snapshot?.labels['ndev-type'] ?? DEFAULT_TYPE
@@ -456,7 +472,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
   projectKey(project)
   const path = await storePath($)
   const store = await readStore($, path)
-  const ctx = await contextOf($, name, o.context, store, again)
+  const ctx = await contextOf($, name, o.context, store.hosts[name]?.context, again)
   const { server, snapshots, fip, firewall } = await look($, ctx, name, o.floatingIp, store.hosts[name]?.floatingIp, path)
   const kept = [snapshots.length ? `snapshot ${snapshots.map(s => s.id).join(', ')}` : '', fip ? `floating IPv4 ${fip.ip}` : '', firewall ? `firewall ${firewall.name}` : ''].filter(Boolean).join(', ') || 'nothing'
   if (!server && !o.isForget) throw new Error(`there is no server named ${name} in the hcloud context ${ctx}, so there is nothing to remove. Kept for ${name}: ${kept}. Nothing changed.\nRepair: /dev remote create ${name} makes it again; ${again} --forget deletes what is kept.`)
