@@ -1,72 +1,31 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { makeRun, orca } from './fix-all-prs'
+import { createHost, hetznerListing, REMOTE_HOST_HELP, removeHost } from './remote-host'
+import { each, orcaServers, projectKey, readStore, type Saved, type Server, storePath, writeStore } from './remote-store'
+
+export { orcaServers, type Server }
 
 // /dev remote: which of Orca's saved servers this project uses as its remote machine, and the one matcher of a server
 // by id, id prefix or name. A saved server is an entry in this machine's Orca, so the setting is this machine's too: it
-// lives in ~/.config/ndev/remote.json, keyed by the project's GitHub repository (the project folder when it has none),
-// so every checkout and worktree of the project shares it and no commit can carry it.
-export type Server = { id: string; name: string }
-type Saved = Server & { savedAt?: string }
-type Store = { projects: Record<string, Saved> }
+// lives in ~/.config/ndev/remote.json (remote-store.ts), keyed by the project's GitHub repository (the project folder
+// when it has none), so every checkout and worktree of the project shares it and no commit can carry it.
+// /dev remote create and remove make and delete a Hetzner Cloud server for it (remote-host.ts).
 
 // The words after /dev remote that are subcommands, never server names. A server with one of these names is saved by its id.
 export const REMOTE_WORDS = ['list', 'off', 'create', 'remove'] as const
 export const REMOTE_ARGUMENT_HINT = `remote [<server>|${REMOTE_WORDS.join('|')}]`
 export const REMOTE_HELP = [
   '  /dev remote [<server>]              show the Orca server this project uses as its remote machine, or save one by name or id',
-  '  /dev remote list                    list Orca\'s saved servers and mark the one this project uses',
+  '  /dev remote list                    list Orca\'s saved servers and mark the one this project uses; also the Hetzner servers and snapshots ndev made',
   '  /dev remote off                     clear the setting; /dev triage start --remote then needs the only saved server, or a name',
+  ...REMOTE_HOST_HELP,
 ]
 
-async function storePath($: EngineInterface): Promise<string> {
-  const home = await $.env.get('HOME')
-  if (!home) throw new Error('HOME is not set, so the /dev remote setting (~/.config/ndev/remote.json) cannot be found.\nRepair: start Claude Code with HOME set.')
-  return `${home}/.config/ndev/remote.json`
-}
-
-// The key of the project's setting: its GitHub repository, else its folder.
-function projectKey(project: LoadedConfig | undefined): string {
-  if (project === undefined) throw new Error('the project folder is not known yet.\nRepair: run the command again once the session has started in the project.')
-  if (project.error) throw new Error(`${project.path} has an error (${project.error}).\nRepair: fix the file, then run the command again.`)
-  return project.config.github?.repo ?? project.root
-}
-
-async function readStore($: EngineInterface, path: string): Promise<Store> {
-  if (!(await $.fs.exists(path))) return { projects: {} }
-  let raw: unknown
-  try {
-    raw = JSON.parse(await $.fs.read(path))
-  } catch (error) {
-    throw new Error(`${path} is not valid JSON (${String(error).slice(0, 160)}).\nRepair: fix or delete the file, then run /dev remote <server> again.`)
-  }
-  const projects = (raw as { projects?: unknown } | null)?.projects
-  const bad = typeof projects !== 'object' || projects === null || Array.isArray(projects)
-    || Object.entries(projects).some(([, s]) => typeof (s as Saved)?.id !== 'string' || typeof (s as Saved)?.name !== 'string')
-  if (bad) throw new Error(`${path} does not hold { "projects": { "<owner/repo>": { "id": "<server id>", "name": "<server name>" } } }.\nRepair: fix or delete the file, then run /dev remote <server> again.`)
-  return { projects: projects as Record<string, Saved> }
-}
-
-async function writeStore($: EngineInterface, path: string, store: Store): Promise<void> {
-  const dir = path.slice(0, path.lastIndexOf('/'))
-  const made = await $.process.run(['mkdir', '-p', dir], { timeoutMs: 10_000 })
-  if (made.exitCode !== 0) throw new Error(`mkdir -p ${dir} exited ${made.exitCode}: ${(made.stderr.trim() || made.stdout.trim()).slice(0, 200)}\nRepair: make the folder writable, then run the command again.`)
-  await $.fs.write(path, `${JSON.stringify(store, null, 2)}\n`)
-}
-
-// The server saved for the project, or undefined when none is.
+// The savedRemote of the project, or undefined when none is.
 export async function savedRemote($: EngineInterface, project: LoadedConfig | undefined): Promise<Saved | undefined> {
   return (await readStore($, await storePath($))).projects[projectKey(project)]
 }
-
-// Orca's saved servers, as `orca environment list` answers them.
-export async function orcaServers($: EngineInterface): Promise<Server[]> {
-  const listed = (await orca(makeRun($, 60_000), ['environment', 'list'])) as { environments?: Server[] }
-  return listed.environments ?? []
-}
-
-const each = (servers: Server[]) => servers.map(s => `${s.name} (${s.id})`).join(', ') || 'none'
 
 // The saved Orca server named by its id, the start of its id, or its name; the only one saved when none is named. A
 // name that matches none, or no name when several or none are saved, is refused with the list. `what` begins each
@@ -109,14 +68,33 @@ export async function remoteCommand($: EngineInterface, args: string, project: L
   }
 }
 
-async function run($: EngineInterface, words: string[], project: LoadedConfig | undefined): Promise<string> {
+// --context <name> and --forget, taken out of the words wherever they stand.
+function options(all: string[]): { words: string[]; context?: string; forget: boolean } {
+  const words: string[] = []
+  let context: string | undefined
+  let forget = false
+  for (let i = 0; i < all.length; i++) {
+    if (all[i] === '--forget') forget = true
+    else if (all[i] === '--context') {
+      context = all[++i]
+      if (!context || context.startsWith('--')) throw new Error('--context needs the name of an hcloud context, as in --context <context>.\nRepair: run hcloud context list for the names.')
+    } else words.push(all[i]!)
+  }
+  return { words, ...(context ? { context } : {}), forget }
+}
+
+async function run($: EngineInterface, all: string[], project: LoadedConfig | undefined): Promise<string> {
+  const { words, context, forget } = options(all)
   const [first = '', ...rest] = words
   const word = first.toLowerCase()
   const key = projectKey(project)
   const path = await storePath($)
   if (word === 'create' || word === 'remove') {
-    return `/dev remote ${word} is not built yet: it is reserved for making and deleting a server, so "${word}" is never taken as a server name. To save a server that Orca already has, run /dev remote <server>.`
+    if (rest.length > 1) return `/dev remote ${word} takes one server name and got "${rest.join(' ')}". Nothing changed. Use /dev remote ${word} <name>.`
+    if (forget && word === 'create') return '--forget is an option of /dev remote remove only. Nothing changed.'
+    return word === 'create' ? createHost($, project!, rest[0], context) : removeHost($, project!, rest[0], context, forget)
   }
+  if (forget || (context && word !== 'list')) return `${forget ? '--forget' : '--context'} is an option of ${forget ? '/dev remote remove' : '/dev remote create, remove and list'} only. Nothing changed.`
   if (rest.length) return `/dev remote takes one server, by name or id, and got "${words.join(' ')}". Nothing changed. Use /dev remote <server>, /dev remote list or /dev remote off.`
   const store = await readStore($, path)
   const saved = store.projects[key]
@@ -130,7 +108,7 @@ async function run($: EngineInterface, words: string[], project: LoadedConfig | 
     const servers = await orcaServers($)
     const rows = servers.map(s => `  ${s.id === saved?.id ? '*' : ' '} ${s.name}  ${s.id}${s.id === saved?.id ? `  (saved for ${key})` : ''}`)
     const gone = saved && !servers.some(s => s.id === saved.id) ? [`Orca no longer has the server saved for ${key}, ${saved.name} (${saved.id}). ${STALE_REPAIR}`] : []
-    return [servers.length ? `Orca's saved servers:` : 'Orca has no saved server. Pair one in Orca (Settings → Remote servers).', ...rows, ...gone].join('\n')
+    return [servers.length ? `Orca's saved servers:` : 'Orca has no saved server. Pair one in Orca (Settings → Remote servers).', ...rows, ...gone, ...(await hetznerListing($, project!, context))].join('\n')
   }
   if (word === '') {
     let servers: Server[]
