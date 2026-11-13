@@ -3054,6 +3054,11 @@ export async function noteSessionHuman($: EngineInterface, isInteractive: boolea
   await update($, sessionHasHuman, () => isInteractive)
 }
 
+// Whether the session started with a person at it, as noteSessionHuman recorded.
+export async function sessionHuman($: EngineInterface): Promise<boolean> {
+  return read($, sessionHasHuman)
+}
+
 // ---- The interview ----
 // A round holds the tool call, as a wait does, so the agent stays blocked and spends nothing. The pane
 // changes its atom; this loop reads the atom, saves the draft, and acts on the outcome.

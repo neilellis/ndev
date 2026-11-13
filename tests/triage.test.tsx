@@ -74,11 +74,14 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
   // env: what the session's environment holds besides HOME, such as the markers Orca's Chat UI sets.
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/neil' : opts.env?.[e.name] }))
-  const files = opts.files ?? {}
+  // The project's files a test gives, plus the files the mod writes, such as the /dev remote setting;
+  // every other read is the project's .neil-dev.json.
+  const files: Record<string, string> = { ...(opts.files ?? {}) }
   const inDir = (dir: string) => Object.keys(files).filter(k => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/'))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' || e.path in files || inDir(e.path).length > 0 }))
   on('fs.list', (_, e) => ({ value: inDir(e.path).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => e.path in files ? { value: files[e.path] } : ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null }, ...(opts.workflowOff ? { workflow: false } : {}) }) }))
+  on('fs.write', (_, e) => { files[e.path] = e.text; return { value: undefined } })
   on('clock.every', (_, e) => new Promise(resolve => { timers.set(e.ms, [...(timers.get(e.ms) ?? []), () => resolve({ value: undefined })]) }))
   // The time the mod reads; a test moves it on.
   const clock = { now: 1_800_000_000_000 }
@@ -128,6 +131,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
     }
     if (args.includes('gh.sh pr-search')) return ok('')
     if (a[0] === 'git') return ok('')
+    if (a[0] === 'mkdir') return ok('')
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
     if (args.startsWith('orca environment list')) return reply({ environments: opts.environments ?? [{ id: 'env-1', name: 'build-server' }] })
     // A paired server's workspaces are listed only with its --environment, and this machine's only without one.
@@ -919,6 +923,51 @@ test('/dev triage start --remote names the server when several are saved, and re
   await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
   expect(w.orcaRan('worktree create')[0]).toEqual(expect.arrayContaining(['--environment', 'bb22-y']))
   expect(w.orcaRan('orchestration worker-start')[0]).toEqual(expect.arrayContaining(['--on', 'bb22-y']))
+})
+
+// /dev remote saves the server for this project; --remote with no server named takes it, and a server named still wins.
+const remoteCommand = (args: string) => ({ ...command(''), args: `remote ${args}` })
+test('/dev triage start --remote takes the server that /dev remote saved, and a server named on the command wins', async ($, on) => {
+  const w = world(on, { issues: [issue(3)], environments: [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'vm-b' }] })
+  await started($)
+  expect((await $.command.run(remoteCommand('vm-b'))).text).toMatch(/vm-b \(bb22-y\)/)
+
+  // Two servers are saved in Orca, so with no setting this would be refused.
+  await $.command.run(command('start --remote'))
+  await until(() => w.prompts.length > 0, () => w.toasts)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+  expect(w.orcaRan('worktree create')[0]).toEqual(expect.arrayContaining(['--environment', 'bb22-y']))
+  expect(w.orcaRan('orchestration worker-start')[0]).toEqual(expect.arrayContaining(['--on', 'bb22-y']))
+})
+
+test('a server named on /dev triage start --remote wins over the saved one', async ($, on) => {
+  const w = world(on, { issues: [issue(3)], environments: [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'vm-b' }] })
+  await started($)
+  await $.command.run(remoteCommand('vm-b'))
+
+  await $.command.run(command('start --remote vm-a'))
+  await until(() => w.prompts.length > 0, () => w.toasts)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+  expect(w.orcaRan('worktree create')[0]).toEqual(expect.arrayContaining(['--environment', 'aa11-x']))
+})
+
+test('/dev triage start --remote refuses a saved server that Orca no longer has, and does not switch to the one left', async ($, on) => {
+  const environments = [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'vm-b' }]
+  const w = world(on, { issues: [issue(3)], environments })
+  await started($)
+  await $.command.run(remoteCommand('vm-b'))
+  environments.splice(1, 1)
+
+  await $.command.run(command('start --remote'))
+  await until(() => w.toasts.some(t => /no longer/.test(t)), () => w.toasts)
+  const toast = w.toasts.find(t => /no longer/.test(t))!
+  expect(toast).toMatch(/vm-b \(bb22-y\)/)
+  expect(toast).toMatch(/\/dev remote <server>/)
+  expect(toast).toMatch(/\/dev remote off/)
+  expect(w.prompts).toHaveLength(0)
+  expect(w.orcaRan('worktree create')).toHaveLength(0)
 })
 
 test('--remote is an option of start, and not with --codex, whose Task names this machine\'s plugin files', async ($, on) => {

@@ -4,6 +4,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { LoadedConfig } from './config'
 import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, START_ORCA, type OrcaWorktree, type Run } from './fix-all-prs'
 import { pullUrl } from './links'
+import { triageRemote } from './remote'
 import { loadEpic } from './workflow/epic'
 import type { PrRow, TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
@@ -200,7 +201,7 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
   if (project?.config.workflow === false) throw new Error(`each triage worker needs the ndev workflow, and ${project.path} sets "workflow": false.\nRepair: remove that setting, or work the issues without /dev triage.`)
   const repo = g.repo
   if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /dev triage refresh reads it again.`
-  const remote = o.remote === undefined ? undefined : await remoteServer($, o.remote)
+  const remote = o.remote === undefined ? undefined : await triageRemote($, project, o.remote)
   await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined, isMine: o.isMine || undefined, remote }))
   const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '-linked:pr', `/dev triage start again${g.board ? ' without --open' : ''}`, o.since, o.isMine, remote?.id)
   // An epic coordinator links no workspace to its epic, so its record says which issues it works. Only a workspace on
@@ -593,23 +594,6 @@ async function epicsInWork($: EngineInterface, worktrees: OrcaWorktree[], again:
     }
   }
   return found
-}
-
-// The saved Orca server for --remote: the one named by its id, the start of its id, or its name; the only one saved
-// when none is named. A name that matches none, or no name when several or none are saved, is refused with the list.
-async function remoteServer($: EngineInterface, wanted: string): Promise<{ id: string; name: string }> {
-  const listed = (await orca(runner($, 60_000), ['environment', 'list'])) as { environments?: { id: string; name: string }[] }
-  const servers = listed.environments ?? []
-  const each = servers.map(s => `${s.name} (${s.id})`).join(', ')
-  if (!servers.length) throw new Error(`--remote: Orca has no saved server.\nRepair: pair a server in Orca (Settings → Remote servers), then run /dev triage start --remote again.`)
-  if (!wanted) {
-    if (servers.length === 1) return servers[0]!
-    throw new Error(`--remote: Orca has ${servers.length} saved servers: ${each}.\nRepair: name one, as in /dev triage start --remote <server>.`)
-  }
-  const found = servers.filter(s => s.id === wanted || s.name === wanted)
-  const byPrefix = found.length ? found : servers.filter(s => s.id.startsWith(wanted))
-  if (byPrefix.length === 1) return byPrefix[0]!
-  throw new Error(`--remote: ${byPrefix.length ? `"${wanted}" names more than one saved server` : `Orca has no saved server "${wanted}"`}. The saved servers: ${each}.\nRepair: run /dev triage start --remote <server> with one of them, by name or id.`)
 }
 
 // The login that gh is signed in as, for --mine on a board, whose cards carry their author's login.
@@ -1415,7 +1399,7 @@ const OPTIONS: Record<(typeof START_OPTIONS)[number], { value?: string; text: st
   '--reverse': { text: 'works the newest issues first' },
   '--bugs-only': { text: 'groups only the bugs and labels each issue by its kind' },
   '--mine': { text: 'takes only the issues you opened' },
-  '--remote': { value: '[<server>]', text: 'makes each workspace and runs each worker on a saved Orca server (the one saved, when you name none)' },
+  '--remote': { value: '[<server>]', text: 'makes each workspace and runs each worker on a saved Orca server: the one named, else the one /dev remote set, else the only one' },
   '--hint': { value: '"<text>"', text: 'gives the model your own steer' },
 }
 const named = (o: keyof typeof OPTIONS) => (OPTIONS[o].value ? `${o} ${OPTIONS[o].value}` : o)

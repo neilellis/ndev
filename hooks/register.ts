@@ -21,6 +21,7 @@ import { learnAfterPush } from './learn'
 import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { interviewPane } from './workflow/interview'
+import { remoteCommand, REMOTE_ARGUMENT_HINT, REMOTE_HELP } from './remote'
 import { startTriage, triage, triageCommand, TRIAGE_ARGUMENT_HINT, TRIAGE_HELP } from './triage'
 import { showIdleStatus } from './workflow/progress'
 import { resourceView, startView } from './view'
@@ -250,6 +251,7 @@ async function helpText($: EngineInterface) {
     '  /dev steering [interactive|auto]    switch steering (no value toggles)',
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
     ...TRIAGE_HELP,
+    ...REMOTE_HELP,
     '  /dev-mode, /dev-steering and /dev-setup are the same as /dev mode, /dev steering and /dev setup.',
     '',
     `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
@@ -331,8 +333,8 @@ export const register: Register = (on, options) => {
     startComponentCheck()
     await $.command.register({
       name: 'dev',
-      description: 'ndev: help, setup, mode, steering and triage (runs the set-up first if this project is not set up)',
-      argumentHint: `[help|setup|mode [light|heavy|hack]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}]`,
+      description: 'ndev: help, setup, mode, steering, triage and remote (runs the set-up first if this project is not set up)',
+      argumentHint: `[help|setup|mode [light|heavy|hack]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}|${REMOTE_ARGUMENT_HINT}]`,
     })
     await $.command.register({
       name: 'dev-mode',
@@ -425,7 +427,8 @@ export const register: Register = (on, options) => {
     if (word === 'setup') return { text: await setup($, true) }
     if (word === 'help') return { text: await helpText($) }
     if (word === 'triage') return triageCommand($, args, () => project)
-    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering or /dev triage.` }
+    if (word === 'remote') return remoteCommand($, args, project)
+    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering, /dev triage or /dev remote.` }
     if (project !== undefined && !project.error && missingGitHub(project.config).length > 0) return { text: await setup($, false) }
     return { text: await helpText($) }
   }).catch(($, e, next) => ({
