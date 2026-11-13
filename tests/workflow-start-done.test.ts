@@ -1,6 +1,6 @@
 // Workflow tests: started, the first commits, done, an issue closed or merged outside the workflow, and the turn-end reminders. The shared harness is in tests/workflow-harness.ts.
 import { expect, test } from 'claude-code/testing'
-import { CHECKS, engine, settle, start, tool, command, turnEnds, finishing, alreadyFixed } from './workflow-harness'
+import { ROOT, CHECKS, engine, settle, start, tool, command, turnEnds, finishing, alreadyFixed } from './workflow-harness'
 
 // ---- started ----
 test('started opens the workflow and answers with the next step', async ($, on) => {
@@ -100,6 +100,41 @@ test('finishedDevelopment commits the named files and moves on', async ($, on) =
   expect(w.commits.length).toBe(1)
   expect(w.pushes.length).toBe(0)
   expect(w.state()?.state).toBe('reviewing')
+})
+
+// #656 in fcc-proto: a turn-end reminder saved the issue record while the checks of finishedDevelopment ran,
+// and the save after the checks failed with "set-workflow exited 5 ... at revision 58, and this writer expected 57".
+test('finishedDevelopment commits once and moves on when another writer saves the record while its checks run', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const call = tool($, 'finishedDevelopment', { prs: [12], message: 'Add the thing', files: ['a.ts'] })
+  await settle()
+  // Another session or hook saves the record during the checks, as set-workflow does: one revision more.
+  const at = `${ROOT}/.neil-dev.issue-7.json`
+  const file = JSON.parse(w.files.get(at)!) as { workflow: Record<string, unknown> }
+  w.files.set(at, JSON.stringify({ ...file, workflow: { ...file.workflow, rev: Number(file.workflow.rev ?? 0) + 1, otherWriter: 'kept' } }))
+  release()
+  const r = await call
+  expect(r.text).not.toContain('exited 5')
+  expect(r.isError).toBe(false)
+  expect(w.commits).toHaveLength(1)
+  expect(w.state()?.state).toBe('reviewing')
+  expect(w.issueRecord(7)?.otherWriter).toBe('kept')
+})
+
+test('finishedDevelopment names its retries when another writer changes the record each time', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.staleSaves = 99
+  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'Add the thing', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('exited 5')
+  expect(r.text).toContain('finishedDevelopment read the record again 3 times')
+  expect(r.text).toContain('Ndev-Op')
 })
 
 test('finishedDevelopment takes a new file in an untracked folder when the file is named', async ($, on) => {

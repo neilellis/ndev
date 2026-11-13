@@ -15,7 +15,7 @@ const sources = approvedSources(readFileSync(CATALOGUE, 'utf8'))
 const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' })
 
 test('the catalogue table gives every approved source and its hosts', () => {
-  assert.equal(sources.size, 15)
+  assert.equal(sources.size, 16)
   assert.ok(sources.get('shadcn/ui').hosts.has('ui.shadcn.com'))
   assert.ok(sources.get('kokonut ui').hosts.has('kokonutui.com'))
   assert.ok(sources.get('coss ui').hosts.has('coss.com'))

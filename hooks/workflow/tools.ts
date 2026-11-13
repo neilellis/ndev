@@ -1136,6 +1136,10 @@ async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolea
   throw new Refuse(`Refused: PR #${n} is ${wf.merged || pr?.merged ? 'merged' : 'closed with no merge'}, so it cannot carry a new commit. Nothing changed. Repair: file the work with followUp and the mode issue_only.`)
 }
 
+// The checks between the read and the save can take minutes, and another session or hook can save the record
+// meanwhile. The save then refuses, so checkpoint reads the record again and redoes the call: the Ndev-Op
+// trailer finds a commit that the last try made, so the redo neither commits nor pushes twice.
+const CHECKPOINT_TRIES = 3
 // In these states the last commit waits for the review, so only finishedReview, or a human's skip of the review, pushes it.
 const holdsForReview = (state: string) => state === 'reviewing' || state === 'developed'
 // A hack keeps its commits on this computer until the review: in the hack, and in hardening.
@@ -1146,6 +1150,17 @@ const REVIEW_PUSH_ROUTES = 'finishedReview runs pre-ready-check.sh and pushes it
 const reviewPushRoutes = (state: string) => (state === 'reviewing' ? REVIEW_PUSH_ROUTES : `the review starts once each issue on the PR has called finishedDevelopment, and then ${REVIEW_PUSH_ROUTES}`)
 
 async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
+  for (let tries = 1; ; tries += 1) {
+    try {
+      return await checkpointOnce($, c)
+    } catch (error) {
+      if (!isStaleWrite(error)) throw error
+      if (tries >= CHECKPOINT_TRIES) throw new Error(`${(error as Error).message} checkpoint read the record again ${tries} times, and each time another writer saved it first. A commit that a try made carries its Ndev-Op trailer, so a new call of checkpoint does not commit it twice. Repair: call status, then checkpoint again with the same files.`)
+    }
+  }
+}
+
+async function checkpointOnce($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const wf = await current($, c)
   const files = list(args, 'files')

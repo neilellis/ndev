@@ -1,6 +1,6 @@
 // Workflow tests: requestSecret, the check scripts and their env, finishedReview and the push hook. The shared harness is in tests/workflow-harness.ts.
 import { expect, test } from 'claude-code/testing'
-import { ROOT, CONFIG, engine, start, tool, command, finishing, QUALITY, hookCall, OLD_BASE, NEW_BASE, noChecks } from './workflow-harness'
+import { ROOT, CONFIG, engine, settle, start, tool, command, finishing, QUALITY, hookCall, OLD_BASE, NEW_BASE, noChecks } from './workflow-harness'
 
 // ---- requestSecret and addMigration ----
 test('requestSecret gives the first file in order and the line, never the value', async ($, on) => {
@@ -39,66 +39,6 @@ test('a commit that ends a merge of the base gives the checks the new merge base
   expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(NEW_BASE)
 })
 
-test('a commit with no merge gives the checks the merge base of HEAD', async ($, on) => {
-  const w = engine(on)
-  await start($, w)
-  w.s.dirty = [' M a.ts']
-  await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
-  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
-})
-
-test('a failed check during a merge says that HEAD is the commit before the merge, and names NDEV_MERGE_BASE', async ($, on) => {
-  const w = engine(on)
-  await start($, w)
-  w.s.dirty = ['M  a.ts']
-  w.s.merging = NEW_BASE
-  w.s.failCheck = 'pre-commit-check'
-  const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['a.ts'] })
-  expect(r.isError).toBe(true)
-  expect(r.text).toContain('A merge is in progress')
-  expect(r.text).toContain(`NDEV_MERGE_BASE=${NEW_BASE}`)
-})
-
-test('a merge that changes no file is still committed as the merge, and pushed', async ($, on) => {
-  const w = engine(on)
-  await start($, w)
-  w.s.merging = NEW_BASE
-  w.s.unchanged = ['a.ts']
-  const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['a.ts'] })
-  expect(r.isError).toBe(false)
-  expect(w.commits).toHaveLength(1)
-  expect(w.commits[0]).toContain('Merge origin/main')
-  expect(w.pushes).toHaveLength(1)
-})
-
-test('a failed fast check stops the commit and the slower checks, and names the script', async ($, on) => {
-  const w = engine(on)
-  await start($, w)
-  w.s.dirty = [' M a.ts']
-  w.s.failCheck = 'fast-checks.sh'
-  const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
-  expect(r.isError).toBe(true)
-  expect(r.text).toContain('scripts/ndev/workflow/fast-checks.sh exited 3')
-  expect(w.commits).toEqual([])
-  expect(w.steps.some(x => x.includes('pre-commit-check'))).toBe(false)
-})
-
-test('started asks for fast-checks.sh, and says it holds the fast tools only', async ($, on) => {
-  const w = engine(on, { wf: null, scripts: false })
-  await start($, w)
-  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
-  expect(r.text).toContain('scripts/ndev/workflow/fast-checks.sh')
-  expect(r.text).toContain('ruff')
-})
-
-test('started initialises the submodules of the worktree it claims', async ($, on) => {
-  const w = engine(on, { wf: null, main: true, config: QUALITY })
-  await start($, w)
-  expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
-  expect(w.steps).toContain('init-worktree-submodules.sh')
-  expect(w.submodules).toEqual([{ command: 'git worktree add /claimed/issue-7', paths: '.claude/agents' }])
-})
-
 test('a commit that ends a merge of the base runs fast-checks.sh only on the files that differ from the base, and says so', async ($, on) => {
   const w = engine(on, { names: ['mine.ts', 'PublishView.tsx', 'TrackedClaims.tsx'] })
   await start($, w)
@@ -108,6 +48,14 @@ test('a commit that ends a merge of the base runs fast-checks.sh only on the fil
   const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['mine.ts', 'PublishView.tsx', 'TrackedClaims.tsx'] })
   expect(w.steps).toContain('fast-checks.sh mine.ts')
   expect(r.text).toContain('2 staged files came from the base unchanged')
+})
+
+test('a commit with no merge gives the checks the merge base of HEAD', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
 })
 
 test('the checks get the keys of the worktree .neil-dev.env that checkEnv in .neil-dev.json names, and no other', async ($, on) => {
@@ -167,6 +115,57 @@ test('a .neil-dev.env line that is not KEY=VALUE stops the check and names the f
   expect(w.steps).not.toContain('pre-commit-check.sh')
 })
 
+test('a failed check during a merge says that HEAD is the commit before the merge, and names NDEV_MERGE_BASE', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = ['M  a.ts']
+  w.s.merging = NEW_BASE
+  w.s.failCheck = 'pre-commit-check'
+  const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('A merge is in progress')
+  expect(r.text).toContain(`NDEV_MERGE_BASE=${NEW_BASE}`)
+})
+
+test('a merge that changes no file is still committed as the merge, and pushed', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.merging = NEW_BASE
+  w.s.unchanged = ['a.ts']
+  const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['a.ts'] })
+  expect(r.isError).toBe(false)
+  expect(w.commits).toHaveLength(1)
+  expect(w.commits[0]).toContain('Merge origin/main')
+  expect(w.pushes).toHaveLength(1)
+})
+
+test('a failed fast check stops the commit and the slower checks, and names the script', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.failCheck = 'fast-checks.sh'
+  const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('scripts/ndev/workflow/fast-checks.sh exited 3')
+  expect(w.commits).toEqual([])
+  expect(w.steps.some(x => x.includes('pre-commit-check'))).toBe(false)
+})
+
+test('started asks for fast-checks.sh, and says it holds the fast tools only', async ($, on) => {
+  const w = engine(on, { wf: null, scripts: false })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.text).toContain('scripts/ndev/workflow/fast-checks.sh')
+  expect(r.text).toContain('ruff')
+})
+
+test('started initialises the submodules of the worktree it claims', async ($, on) => {
+  const w = engine(on, { wf: null, main: true, config: QUALITY })
+  await start($, w)
+  expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
+  expect(w.steps).toContain('init-worktree-submodules.sh')
+  expect(w.submodules).toEqual([{ command: 'git worktree add /claimed/issue-7', paths: '.claude/agents' }])
+})
 
 test('started claims no submodules with no setting for them', async ($, on) => {
   const w = engine(on, { wf: null, main: true })
@@ -366,6 +365,40 @@ test('an empty checkpoint with nothing to push is still refused', async ($, on) 
   const r = await tool($, 'checkpoint', { message: 'm', files: [] })
   expect(r.isError).toBe(true)
   expect(r.text).toContain('files')
+})
+
+test('checkpoint commits once and saves when another writer saves the record while its checks run', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const call = tool($, 'checkpoint', { issue: 7, message: 'm', files: ['a.ts'] })
+  await settle()
+  // Another session or hook saves the record during the checks, as set-workflow does: one revision more.
+  const at = `${ROOT}/.neil-dev.issue-7.json`
+  const file = JSON.parse(w.files.get(at)!) as { workflow: Record<string, unknown> }
+  w.files.set(at, JSON.stringify({ ...file, workflow: { ...file.workflow, rev: Number(file.workflow.rev ?? 0) + 1, otherWriter: 'kept' } }))
+  release()
+  const r = await call
+  expect(r.text).not.toContain('exited 5')
+  expect(r.isError).toBe(false)
+  expect(w.commits).toHaveLength(1)
+  expect(w.pushes).toHaveLength(1)
+  expect(w.state()?.otherWriter).toBe('kept')
+  expect(w.state()?.op).toBeUndefined()
+})
+
+test('checkpoint names its retries when another writer changes the record each time', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.staleSaves = 99
+  const r = await tool($, 'checkpoint', { issue: 7, message: 'm', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('exited 5')
+  expect(r.text).toContain('read the record again 3 times')
+  expect(r.text).toContain('Ndev-Op')
 })
 
 test('done refuses with no remember result and changes nothing', async ($, on) => {

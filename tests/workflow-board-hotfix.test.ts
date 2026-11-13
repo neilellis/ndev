@@ -1,7 +1,7 @@
 // Workflow tests: The board, the base check, the dead-code sweep and hotfixes. The shared harness is in tests/workflow-harness.ts.
 import { expect, test } from 'claude-code/testing'
 import { boardColumn } from '../hooks/workflow/machine'
-import { ROOT, CONFIG, REPO, SHA, pull, CHECKS, engine, start, tool, command, finishing, RUNNING, CLAIMED, noChecks, toReview, BOARD, moves, finished, DONE } from './workflow-harness'
+import { ROOT, RECORD, CONFIG, REPO, SHA, pull, CHECKS, engine, settle, start, tool, command, finishing, RUNNING, CLAIMED, noChecks, toReview, BOARD, moves, finished, DONE } from './workflow-harness'
 
 test('a change of column moves the card, and a change inside a column does not', async ($, on) => {
   const w = engine(on, { ...BOARD, wf: { state: 'developing', board: 'progress' } })
@@ -124,6 +124,30 @@ test('finishedInterview is valid only in development', async ($, on) => {
   expect(r.isError).toBe(true)
   expect(r.text).toContain('planning')
   expect(w.steps).toEqual([])
+})
+
+test('finishedInterview keeps its base check when another writer saves the record while the check runs', async ($, on) => {
+  const w = engine(on, { wf: { baseCheck: undefined } })
+  await start($, w)
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const call = tool($, 'finishedInterview', { issue: 7 })
+  await settle()
+  // Another session or hook saves the record during the check, as set-workflow does: one revision more.
+  const at = `${ROOT}/.neil-dev.issue-7.json`
+  const file = JSON.parse(w.files.get(at) ?? 'null') as { workflow: Record<string, unknown> } | null
+  if (file) w.files.set(at, JSON.stringify({ ...file, workflow: { ...file.workflow, rev: Number(file.workflow.rev ?? 0) + 1, otherWriter: 'kept' } }))
+  else {
+    const old = JSON.parse(w.files.get(RECORD)!) as { workflows: Record<string, Record<string, unknown>> }
+    old.workflows[7] = { ...old.workflows[7], rev: Number(old.workflows[7]!.rev ?? 0) + 1, otherWriter: 'kept' }
+    w.files.set(RECORD, JSON.stringify(old))
+  }
+  release()
+  const r = await call
+  expect(r.text).not.toContain('exited 5')
+  expect(r.isError).toBe(false)
+  expect(w.state()?.baseCheck).toMatchObject({ script: 'pre-commit-check.sh', exitCode: 0 })
+  expect(w.state()?.otherWriter).toBe('kept')
 })
 
 test('heavy runs pre-push-check.sh in finishedPlan, before the sign-off reaches the human', async ($, on) => {

@@ -123,6 +123,20 @@ test('/unblock when nothing is blocked says so and changes nothing', async ($, o
 })
 
 // ---- the wait tools ----
+test('a wait with a long period answers before its own time runs out between two checks', { timeoutMs: 60_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.sleepAdvances = true
+  // Each pause costs the hook some of its own time, as a busy host does between two $ calls.
+  w.s.sleepSpinMs = 150
+  w.s.probe = () => ({ exitCode: 1 })
+  const r = await tool($, 'waitFor', { shell_command: 'false', period: 300 })
+  expect(r.text).not.toContain('no tool.call hook')
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain("the host's time budget for one hook is nearly spent")
+  expect(w.state()?.state).toBe('developing')
+})
+
 // On a loaded computer each slice of a pause costs the hook some of its own ten seconds. Past them the host
 // drops the hook, and the agent reads "no tool.call hook answered this call". The test kit counts that time
 // and does not drop the hook, so the proof is that the wait ends inside the pause, before the time is spent.
