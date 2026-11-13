@@ -184,6 +184,8 @@ export type TriageView = {
   isBugsOnly?: boolean
   // /dev triage start --mine: only the issues that the gh login opened.
   isMine?: boolean
+  // /dev triage start --remote: the saved Orca server that holds each workspace and runs each worker.
+  remote?: { id: string; name: string }
   // --bugs-only: each [issue, label] that the mod wrote in this triage.
   labelled?: [number, string][]
   // --bugs-only with --dry-run: each [issue, label] that /dev triage launch writes.

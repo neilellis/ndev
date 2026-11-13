@@ -374,9 +374,10 @@ export async function orca(run: Run, args: string[], noAnswer = START_ORCA): Pro
 }
 
 // Every Orca worktree, of every repository, since one can sit inside another's folder. A list cut short is refused:
-// the worktree missing from it could hold the pull request. `retry` ends the repair.
-export async function orcaWorktrees(run: Run, retry = ''): Promise<OrcaWorktree[]> {
-  const listed = (await orca(run, ['worktree', 'list', '--limit', '1000'])) as { worktrees: OrcaWorktree[]; totalCount?: number; truncated?: boolean }
+// the worktree missing from it could hold the pull request. `retry` ends the repair. With `environment`, the worktrees
+// of that saved Orca server, which the list of this machine leaves out.
+export async function orcaWorktrees(run: Run, retry = '', environment?: string): Promise<OrcaWorktree[]> {
+  const listed = (await orca(run, ['worktree', 'list', '--limit', '1000', ...(environment ? ['--environment', environment] : [])])) as { worktrees: OrcaWorktree[]; totalCount?: number; truncated?: boolean }
   if (listed.truncated) {
     throw new Error(`orca worktree list answered ${listed.worktrees.length} of ${listed.totalCount ?? 'more'} worktrees, so one that holds the pull request could be missing.\nRepair: archive the Orca workspaces you no longer need${retry}.`)
   }

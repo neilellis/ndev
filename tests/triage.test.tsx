@@ -44,8 +44,10 @@ const message = (id: string, type: string, from: string, body: string, payload?:
 
 // A fake GitHub and Orca. Orca keeps its Tasks and workspaces: a Task with deps is pending until every dep's worker
 // reported success, and a workspace keeps the links and board status set on it.
-type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[] }
-function world(on: On, opts: { repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean } = {}) {
+// environment: the saved Orca server that holds the workspace (--remote); none for this machine.
+type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[]; environment?: string }
+// environments: the saved Orca servers, as `orca environment list` answers them.
+function world(on: On, opts: { environments?: { id: string; name: string }[]; repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean } = {}) {
   // Each open pull request's merge state and checks, as GitHub answers pr-read and commit-checks; the test changes them.
   const prs: Record<number, Pr> = {}
   // Each period of `$.clock.every`, by its length, waits here until the test fires it.
@@ -121,12 +123,18 @@ function world(on: On, opts: { repo?: string; board?: { owner: string; number: n
     if (args.includes('gh.sh pr-search')) return ok('')
     if (a[0] === 'git') return ok('')
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
-    if (args.startsWith('orca worktree list')) return reply({ worktrees, totalCount: worktrees.length, truncated: false })
+    if (args.startsWith('orca environment list')) return reply({ environments: opts.environments ?? [{ id: 'env-1', name: 'build-server' }] })
+    // A paired server's workspaces are listed only with its --environment, and this machine's only without one.
+    const environment = a.includes('--environment') ? a[a.indexOf('--environment') + 1] : undefined
+    if (args.startsWith('orca worktree list')) {
+      const here = worktrees.filter(w => w.environment === environment)
+      return reply({ worktrees: here, totalCount: here.length, truncated: false })
+    }
     if (args.startsWith('orca worktree create')) {
       const name = a[a.indexOf('--name') + 1]!
       const refs = a.flatMap((x, i) => (x === '--reference' ? [a[i + 1]!] : []))
-      const wt: Worktree = { id: `repo-1::/w/${name}`, projectId: 'github:acme/widgets', path: `/w/${name}`, isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
-        linkedItems: refs.map(url => ({ type: 'issue', number: Number(url.split('/').pop()), url })) }
+      const wt: Worktree = { id: `repo-${environment ?? 1}::/w/${name}`, projectId: 'github:acme/widgets', path: `/w/${name}`, isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
+        linkedItems: refs.map(url => ({ type: 'issue', number: Number(url.split('/').pop()), url })), environment }
       worktrees.push(wt)
       return reply({ worktree: wt })
     }
@@ -737,6 +745,62 @@ test('/dev triage start --codex sizes the groups for Codex and starts Codex work
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /Codex/ }))?.text).toBeDefined()
   await ui.unmount()
+})
+
+// --remote makes each workspace and runs each worker on a saved Orca server, and reads them back from there.
+test('/dev triage start --remote makes each workspace and starts each worker on the one saved Orca server, and reads them back from it', async ($, on) => {
+  const linked: Worktree = { id: 'repo-env-1::/w/issue-4', projectId: 'github:acme/widgets', path: '/w/issue-4', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
+    linkedItems: [{ type: 'issue', number: 4, url: issue(4).url }], environment: 'env-1' }
+  const w = world(on, { issues: [issue(3), issue(4)], worktrees: [linked] })
+  await started($)
+  expect((await $.command.run(command('start --remote'))).text).toMatch(/Triage started/)
+  await until(() => w.prompts.length > 0, () => w.toasts)
+  // A workspace on the server already holds #4, so it is someone's work.
+  expect(w.prompts[0]).toMatch(/#3\b/)
+  expect(w.prompts[0]).not.toMatch(/#4\b/)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+
+  expect(w.orcaRan('worktree create')[0]).toEqual(expect.arrayContaining(['--environment', 'env-1', '--project', 'github:acme/widgets', '--name', 'issue-3']))
+  expect(w.orcaRan('orchestration worker-start')[0]).toEqual(expect.arrayContaining(['--on', 'env-1', '--worktree', 'id:repo-env-1::/w/issue-3']))
+
+  // The pane names the server, and reads the pull request from the server's workspace.
+  w.linkPr('/w/issue-3', 41)
+  await $.command.run(command('refresh'))
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await ui.find({ type: 'Text', text: /PR #41/ })) !== undefined)
+  expect((await ui.find({ type: 'Text', text: /build-server/ }))?.text).toBeDefined()
+  await ui.unmount()
+})
+
+test('/dev triage start --remote names the server when several are saved, and refuses one it does not know', async ($, on) => {
+  const w = world(on, { issues: [issue(3)], environments: [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'vm-b' }] })
+  await started($)
+  await $.command.run(command('start --remote'))
+  await until(() => w.toasts.some(t => /vm-a/.test(t)), () => w.toasts)
+  expect(w.toasts.at(-1)).toMatch(/--remote <server>/)
+  expect(w.toasts.at(-1)).toMatch(/vm-b/)
+  expect(w.prompts).toHaveLength(0)
+
+  await $.command.run(command('start --remote vm-c'))
+  await until(() => w.toasts.some(t => /no saved server .*vm-c/.test(t)), () => w.toasts)
+  expect(w.prompts).toHaveLength(0)
+
+  // A server by its name, or by the start of its id.
+  await $.command.run(command('start --remote bb22'))
+  await until(() => w.prompts.length > 0, () => w.toasts)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+  expect(w.orcaRan('worktree create')[0]).toEqual(expect.arrayContaining(['--environment', 'bb22-y']))
+  expect(w.orcaRan('orchestration worker-start')[0]).toEqual(expect.arrayContaining(['--on', 'bb22-y']))
+})
+
+test('--remote is an option of start, and not with --codex, whose Task names this machine\'s plugin files', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  expect((await $.command.run(command('clean --remote'))).text).toMatch(/does not know "--remote"/)
+  expect((await $.command.run(command('start --remote --codex'))).text).toMatch(/--remote does not work with --codex/)
+  expect(w.ran.filter(a => a[0] === 'orca')).toHaveLength(0)
 })
 
 test('--codex is an option of start only', async ($, on) => {

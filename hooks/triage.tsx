@@ -49,7 +49,9 @@ const AGENT_NAME: Record<TriageAgent, string> = { claude: 'Claude', codex: 'Code
 // since: only the issues with a number above it (--since <n>), 0 for all. isReverse: the newest issues first (--reverse).
 // isMine: only the issues that the gh login opened (--mine).
 // isBugsOnly: group only the bugs, and label each issue by its kind (--bugs-only).
-type Options = { isDryRun: boolean; agent: TriageAgent; isOpen: boolean; batch: number; hint: string; since: number; isReverse: boolean; isBugsOnly: boolean; isMine: boolean }
+// remote: the saved Orca server that holds the workspaces and runs the workers (--remote), by id, id prefix or name;
+// '' for the one saved server, undefined for this machine.
+type Options = { isDryRun: boolean; agent: TriageAgent; isOpen: boolean; batch: number; hint: string; since: number; isReverse: boolean; isBugsOnly: boolean; isMine: boolean; remote?: string }
 // With --bugs-only, each issue that is not a bug is screened out with one of these kinds, and gets its label when it has one.
 const SCREEN_KINDS: Record<string, { when: string; label?: string }> = {
   enhancement: { when: 'a feature or improvement to add now', label: 'enhancement' },
@@ -126,8 +128,9 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
   if (project?.config.workflow === false) throw new Error(`each triage worker needs the ndev workflow, and ${project.path} sets "workflow": false.\nRepair: remove that setting, or work the issues without /dev triage.`)
   const repo = g.repo
   if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /dev triage refresh reads it again.`
-  await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined, isMine: o.isMine || undefined }))
-  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '-linked:pr', `/dev triage start again${g.board ? ' without --open' : ''}`, o.since, o.isMine)
+  const remote = o.remote === undefined ? undefined : await remoteServer($, o.remote)
+  await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined, isMine: o.isMine || undefined, remote }))
+  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '-linked:pr', `/dev triage start again${g.board ? ' without --open' : ''}`, o.since, o.isMine, remote?.id)
   const { issues, skipped } = got
   const left = ordered(got.left, o.isReverse)
   if (issues.length > LIMIT) {
@@ -456,7 +459,7 @@ async function cleanVerdicts(input: { verdicts?: unknown; closed?: unknown; fail
 // issues that match query, oldest first. With since above 0, only the issues with a higher number. With isMine, only
 // the issues that the gh login opened. An issue an Orca
 // workspace already links is someone's work, so it is left out of left.
-async function openIssues($: EngineInterface, repo: string, board: { owner: string; number: number } | undefined, query: string, again: string, since = 0, isMine = false) {
+async function openIssues($: EngineInterface, repo: string, board: { owner: string; number: number } | undefined, query: string, again: string, since = 0, isMine = false, environment?: string) {
   const run = runner($, 120_000)
   let issues: TriageIssue[]
   if (board) {
@@ -480,10 +483,30 @@ async function openIssues($: EngineInterface, repo: string, board: { owner: stri
     issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${isMine ? ' author:@me' : ''}${from}`, '--limit', String(LIMIT + (since ? 2 : 1))])
   }
   if (since) issues = issues.filter(i => i.number > since)
-  const worktrees = ofRepo(await orcaWorktrees(run, `, then run ${again}`), repo).filter(w => !w.isArchived)
+  // With --remote, a workspace on this machine and one on the server are each someone's work.
+  const retry = `, then run ${again}`
+  const all = environment ? (await Promise.all([orcaWorktrees(run, retry), orcaWorktrees(run, retry, environment)])).flat() : await orcaWorktrees(run, retry)
+  const worktrees = ofRepo(all, repo).filter(w => !w.isArchived)
   const linked = new Set(worktrees.flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number!))
   const left = issues.filter(i => !linked.has(i.number)).sort((a, b) => a.number - b.number)
   return { issues, left, skipped: issues.length - left.length, linked, worktrees }
+}
+
+// The saved Orca server for --remote: the one named by its id, the start of its id, or its name; the only one saved
+// when none is named. A name that matches none, or no name when several or none are saved, is refused with the list.
+async function remoteServer($: EngineInterface, wanted: string): Promise<{ id: string; name: string }> {
+  const listed = (await orca(runner($, 60_000), ['environment', 'list'])) as { environments?: { id: string; name: string }[] }
+  const servers = listed.environments ?? []
+  const each = servers.map(s => `${s.name} (${s.id})`).join(', ')
+  if (!servers.length) throw new Error(`--remote: Orca has no saved server.\nRepair: pair a server in Orca (Settings → Remote servers), then run /dev triage start --remote again.`)
+  if (!wanted) {
+    if (servers.length === 1) return servers[0]!
+    throw new Error(`--remote: Orca has ${servers.length} saved servers: ${each}.\nRepair: name one, as in /dev triage start --remote <server>.`)
+  }
+  const found = servers.filter(s => s.id === wanted || s.name === wanted)
+  const byPrefix = found.length ? found : servers.filter(s => s.id.startsWith(wanted))
+  if (byPrefix.length === 1) return byPrefix[0]!
+  throw new Error(`--remote: ${byPrefix.length ? `"${wanted}" names more than one saved server` : `Orca has no saved server "${wanted}"`}. The saved servers: ${each}.\nRepair: run /dev triage start --remote <server> with one of them, by name or id.`)
 }
 
 // The login that gh is signed in as, for --mine on a board, whose cards carry their author's login.
@@ -790,14 +813,15 @@ async function settle($: EngineInterface): Promise<void> {
 async function makeWorkspace($: EngineInterface, repo: string, g: TriageGroup, issues: TriageIssue[]): Promise<string> {
   const refs = g.issues.flatMap(n => ['--reference', issues.find(i => i.number === n)?.url ?? `https://github.com/${repo}/issues/${n}`])
   const base = await baseOf($, repo, g)
+  const remote = (await read($, view)).remote
   const made = (await orca(runner($, 600_000), [
-    'worktree', 'create', '--project', orcaProject(repo), '--name', `issue-${g.lead}`, '--no-parent', '--setup', 'run', '--comment', g.title, ...refs,
+    'worktree', 'create', ...(remote ? ['--environment', remote.id] : []), '--project', orcaProject(repo), '--name', `issue-${g.lead}`, '--no-parent', '--setup', 'run', '--comment', g.title, ...refs,
     ...(base ? ['--base-branch', `origin/${base}`] : []),
   ])) as { worktree?: { id?: string } }
   const id = made.worktree?.id
   if (!id) throw new Error(`orca worktree create for #${g.lead} answered no worktree id: ${JSON.stringify(made).slice(0, 300)}${START_ORCA}`)
   await setGroup($, g.lead, { worktree: id, base })
-  await note($, `#${g.lead}: Orca made workspace issue-${g.lead}`)
+  await note($, `#${g.lead}: Orca made workspace issue-${g.lead}${remote ? ` on ${remote.name}` : ''}`)
   return id
 }
 
@@ -806,8 +830,8 @@ async function makeWorkspace($: EngineInterface, repo: string, g: TriageGroup, i
 // has its change on the default branch, and its branch may be gone.
 async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise<string | undefined> {
   if (!g.after.length) return undefined
-  const groups = (await read($, view)).groups
-  const worktrees = await orcaWorktrees(runner($, 60_000))
+  const { groups, remote } = await read($, view)
+  const worktrees = await orcaWorktrees(runner($, 60_000), '', remote?.id)
   for (const a of g.after) {
     const before = groups.find(x => x.lead === a)
     const pr = worktrees.find(w => w.id === before?.worktree)?.linkedPR ?? before?.pr
@@ -832,7 +856,9 @@ type StartReceipt = {
 // worker-start prints its receipt with `ok: true` even when the start failed and it exits 1, so the receipt's
 // state decides, not the exit code.
 async function startWorker($: EngineInterface, runId: string, g: TriageGroup, worktree: string, agent: TriageAgent): Promise<void> {
-  const args = ['orchestration', 'worker-start', '--task', g.taskId!, '--run', runId, '--worktree', `id:${worktree}`,
+  // With --remote the worker runs on the saved server; the Run, its mail and its Tasks stay on this machine's Orca.
+  const remote = (await read($, view)).remote
+  const args = ['orchestration', 'worker-start', '--task', g.taskId!, '--run', runId, ...(remote ? ['--on', remote.id] : []), '--worktree', `id:${worktree}`,
     '--agent', agent, '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000', '--full', '--json']
   const out = await $.process.run(['orca', ...args], { timeoutMs: 180_000 })
   let reply: { ok?: boolean; result?: StartReceipt; error?: { code?: string; message?: string } } | undefined
@@ -1019,7 +1045,7 @@ async function refresh($: EngineInterface): Promise<void> {
   const [tasks, workers, worktrees] = await Promise.all([
     orca(run, ['orchestration', 'task-list', '--run', v.runId]) as Promise<{ tasks: { id: string; status: string }[] }>,
     orca(run, ['orchestration', 'worker-list', '--run', v.runId]) as Promise<{ workers: Worker[] }>,
-    orcaWorktrees(run),
+    orcaWorktrees(run, '', v.remote?.id),
   ])
   await adoptRestarts($, workers.workers)
   const now = await $.clock.now()
@@ -1225,7 +1251,7 @@ export async function startTriage($: EngineInterface) {
 }
 
 // /dev triage <args> (register.ts dispatches it). Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
-const START_OPTIONS = ['--dry-run', '--codex', '--open', '--batch', '--sequential', '--since', '--reverse', '--bugs-only', '--mine', '--hint'] as const
+const START_OPTIONS = ['--dry-run', '--codex', '--open', '--batch', '--sequential', '--since', '--reverse', '--bugs-only', '--mine', '--remote', '--hint'] as const
 const CLEAN_OPTIONS = ['--since', '--reverse', '--mine', '--hint'] as const
 // Workers at once when start names no size: enough to make progress, few enough for one machine.
 const DEFAULT_BATCH = 5
@@ -1241,6 +1267,7 @@ const OPTIONS: Record<(typeof START_OPTIONS)[number], { value?: string; text: st
   '--reverse': { text: 'works the newest issues first' },
   '--bugs-only': { text: 'groups only the bugs and labels each issue by its kind' },
   '--mine': { text: 'takes only the issues you opened' },
+  '--remote': { value: '[<server>]', text: 'makes each workspace and runs each worker on a saved Orca server (the one saved, when you name none)' },
   '--hint': { value: '"<text>"', text: 'gives the model your own steer' },
 }
 const named = (o: keyof typeof OPTIONS) => (OPTIONS[o].value ? `${o} ${OPTIONS[o].value}` : o)
@@ -1257,8 +1284,8 @@ export const TRIAGE_HELP = [
   `    ${OPTION_TEXT}`,
   '  /dev triage [launch|refresh|reset]  launch a dry run, read the triage back from Orca, or clear it; with no word, show its state',
 ]
-// The options that take the next word as their value.
-const VALUED = ['--batch', '--since']
+// The options that take the next word as their value; --remote takes it only when it is not an option.
+const VALUED = ['--batch', '--since', '--remote']
 const SINCE_USAGE = '--since <n> takes an issue number above 0: only the issues with a higher number, as in --since 120.'
 
 // The value of --since <n>; 0 when it is not given. A bad number returns the refusal.
@@ -1321,7 +1348,12 @@ export async function triageCommand($: EngineInterface, args: string, project: (
   if (verb === 'start') {
     const batch = batchOption(words)
     if (typeof batch === 'string') return { text: batch }
-    detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch, hint, since, isReverse, isBugsOnly: words.includes('--bugs-only'), isMine })
+    const at = words.indexOf('--remote')
+    const remote = at < 0 ? undefined : words[at + 1] && !words[at + 1]!.startsWith('--') ? words[at + 1]! : ''
+    if (remote !== undefined && words.includes('--codex')) {
+      return { text: `/dev triage start --remote does not work with --codex: a Codex worker's Task names the workflow file in this machine's copy of the plugin, which the server does not have. Use --remote with Claude workers, or --codex without --remote.` }
+    }
+    detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch, hint, since, isReverse, isBugsOnly: words.includes('--bugs-only'), isMine, remote })
       .then(text => $.ui.toast(text), fail($, 'start')))
     return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
   }
@@ -1461,7 +1493,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
             : g.task === 'failed' ? { word: 'failed', color: 'error' }
               : g.dispatchId ? { word: 'working', color: 'claude' }
                 : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
-    const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.isOpen ? ' · every open issue' : ''}${v.since ? ` · above #${v.since}` : ''}${v.isReverse ? ' · newest first' : ''}${v.isBugsOnly ? ' · bugs only' : ''}${v.isMine ? ' · opened by me' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
+    const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.remote ? ` on ${v.remote.name}` : ''}${v.isOpen ? ' · every open issue' : ''}${v.since ? ` · above #${v.since}` : ''}${v.isReverse ? ' · newest first' : ''}${v.isBugsOnly ? ' · bugs only' : ''}${v.isMine ? ' · opened by me' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
     const phase = v.phase === 'grouping' ? `the model is grouping ${v.issues.length} issues`
       : v.phase === 'planned' ? `${v.groups.length} groups planned, nothing started${v.isDryRun ? ' (dry run)' : ''}`
         : v.phase === 'running' ? `Orca Run ${v.runId ?? 'not made yet'}` : v.phase === 'done' ? (v.runId ? `done · Orca Run ${v.runId}` : 'stopped: no Orca Run was made') : 'not started'
@@ -1482,7 +1514,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         </Box>
         <Box gap={2}>
           {v.phase !== 'running' && v.phase !== 'grouping' &&
-            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly, isMine: !!v.isMine }).then(t => $.ui.toast(t), fail($, 'start'))) }} />}
+            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly, isMine: !!v.isMine, remote: v.remote?.id }).then(t => $.ui.toast(t), fail($, 'start'))) }} />}
           {v.phase === 'planned' && <Button key="launch" label="Launch" hotkey="l" plain onPress={() => { detach(launch($).catch(fail($, 'launch'))) }} />}
           {v.runId && <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => { detach(tick($).catch(fail($, 'refresh'))) }} />}
         </Box>
