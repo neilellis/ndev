@@ -33,14 +33,14 @@ const SAFE = /^[A-Za-z0-9._-]+$/
 type Type = ServerType & { deprecated?: boolean; deprecation?: unknown }
 type Box = { id: number; name: string; status: string; primary_disk_size?: number; server_type: Type; location?: { name: string }; datacenter?: { location?: { name: string } } }
 type Ssh = { target: string; port: string }
-type Live = { dispatchId: string; runId: string; worktree: string; key: string; agent: string; model?: string; effort?: string; spec: string; title: string }
+type Live = { dispatchId: string; runId: string; taskId: string; worktree: string; key: string; agent: string; model?: string; effort?: string; spec: string; title: string }
 
 // ---- Step 1: the box ----
 
 // The SSH host of the Orca server: --ssh, else the ssh connection that Orca recorded for the server's runtime.
 async function sshOf($: EngineInterface, env: Server, wanted: string | undefined): Promise<Ssh> {
   if (wanted !== undefined) {
-    if (!/^[^\s@]+@[^\s@:]+$/.test(wanted)) throw new Error(`--ssh needs <user>@<host>, such as orca@203.0.113.7; got "${wanted}". Nothing changed.`)
+    if (!/^[^\s@-][^\s@]*@[^\s@:-][^\s@:]*$/.test(wanted)) throw new Error(`--ssh needs <user>@<host>, such as orca@203.0.113.7; got "${wanted}". Nothing changed.`)
     return { target: wanted, port: '22' }
   }
   const data = (await $.env.get('ORCA_USER_DATA_PATH')) || `${await $.env.get('HOME')}/Library/Application Support/orca`
@@ -54,15 +54,19 @@ async function sshOf($: EngineInterface, env: Server, wanted: string | undefined
   } catch (error) {
     throw new Error(`${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}. Nothing changed.\nRepair: name the box with --ssh <user@host>.`)
   }
+  // Only a running runtime is the box now: an older record can name an address that another server has since.
   const ours = runtimes.filter(r => r.runtimeEnvironmentId === env.id && r.recipeResult?.connection?.type === 'ssh' && r.recipeResult.connection.target?.host)
-  const r = ours.find(x => x.status === 'running') ?? ours.at(-1)
-  if (!r) throw new Error(none)
+  const r = ours.find(x => x.status === 'running')
+  if (!r) throw new Error(ours.length ? `${path} has no running runtime for the Orca server ${env.name} (${env.id}), only ${ours.map(x => `"${x.status ?? 'no status'}"`).join(', ')}, so its SSH host is not known for certain. Nothing changed.\nRepair: name the box with --ssh <user@host>, as in /dev remote resize <type> --ssh orca@<address>.` : none)
   const t = r.recipeResult!.connection!.target!
-  return { target: `${t.username ?? 'orca'}@${t.host}`, port: String(t.port ?? 22) }
+  const target = `${t.username ?? 'orca'}@${t.host}`
+  if (target.includes(' ') || t.host!.startsWith('-')) throw new Error(`${path} gives the SSH host "${target}" for ${env.name}, which is not a host. Nothing changed.\nRepair: name the box with --ssh <user@host>.`)
+  return { target, port: String(t.port ?? 22) }
 }
 
 // The host key must already be known: BatchMode and StrictHostKeyChecking stop any prompt and any trust on first use.
-const sshArgv = (s: Ssh, command: string) => ['ssh', '-p', s.port, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', s.target, command]
+// "--" ends the options, so a target can never be read as one.
+const sshArgv = (s: Ssh, command: string) => ['ssh', '-p', s.port, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', '--', s.target, command]
 const sshShown = (s: Ssh, command: string) => `ssh -p ${s.port} ${s.target} ${command}`
 async function sshRun($: EngineInterface, s: Ssh, command: string, timeoutMs = 60_000): Promise<Out> {
   return exec($, sshArgv(s, command), { timeoutMs })
@@ -143,41 +147,77 @@ async function allWorkers<T>(run: ReturnType<typeof makeRun>, args: string[]): P
   throw new Error(`orca ${args.join(' ')} has more than 20 pages of workers; the list was not read to its end. Nothing changed.`)
 }
 
-// The workers that run now on the Orca server, with what each needs to start again. Every worker is checked before
-// anything changes: one that cannot start again stops the command here.
+// Every Run of a run-list, page by page. A list that does not end is refused, so no Run is missed.
+async function allRuns(run: ReturnType<typeof makeRun>, where: string[]): Promise<string[]> {
+  const ids: string[] = []
+  let cursor: string | undefined
+  for (let n = 0; n < 20; n++) {
+    const r = (await orca(run, ['orchestration', 'run-list', ...where, '--limit', '100', ...(cursor ? ['--cursor', cursor] : [])])) as { runs?: { id: string }[]; page?: { hasMore?: boolean; nextCursor?: string } }
+    const runs = r.runs ?? []
+    ids.push(...runs.map(x => x.id))
+    cursor = r.page?.hasMore ? r.page.nextCursor : undefined
+    if (!cursor) {
+      if (!r.page && runs.length >= 100) break // a full page with no cursor: the end is not proven
+      return ids
+    }
+  }
+  throw new Error(`orca orchestration run-list ${where.join(' ')} did not show its end (a full page with no cursor, or more than 20 pages of 100), so a Run with a worker on the box could be missed. Nothing changed.`)
+}
+
+type ServerRecord = { dispatchId: string; taskId?: string; runId?: string; dispatchStatus?: string; resource?: { worktreeId?: string }; projection?: { liveness?: { verdict?: string }; workspace?: { id?: string } } }
+type Owner = { dispatchId: string; runId?: string; taskId: string; server?: { environmentId?: string } }
+
+// The workers that run now on the box, with what each needs to start again. Every worker is checked before anything
+// changes: one that cannot start again stops the command here.
+// Two lists, because neither is whole alone. A worker-list with no --run shows only the Run that this terminal is
+// bound to, so each Run is listed by name:
+// - the box: the Orca server's own records of each Run it holds. They show every worker that runs there.
+// - the owner: the Runs of this machine. The messages and the restart go through the Run that dispatched the worker.
 async function liveWorkers($: EngineInterface, env: Server, agentGiven: string | undefined): Promise<Live[]> {
   const run = makeRun($, 120_000)
-  type Local = { dispatchId: string; runId: string; taskId: string; dispatchStatus?: string; server?: { environmentId?: string } }
-  type Remote = { dispatchId: string; resource?: { worktreeId?: string }; projection?: { liveness?: { verdict?: string }; workspace?: { id?: string } } }
   type Requested = { agent?: string; model?: string; effort?: string }
   type Shown = { worker?: { startOptions?: { agent?: string; launch?: { requested?: Requested } } } }
   type Task = { id: string; task_title?: string; display_name?: string; spec?: string }
 
-  const here = (await allWorkers<Local>(run, ['orchestration', 'worker-list', '--include-remote'])).filter(w => w.server?.environmentId === env.id && w.dispatchStatus === 'dispatched')
+  const onBox: ServerRecord[] = []
+  for (const serverRun of await allRuns(run, ['--environment', env.id])) {
+    const records = await allWorkers<ServerRecord>(run, ['orchestration', 'worker-list', '--environment', env.id, '--run', serverRun])
+    onBox.push(...records.filter(w => (w.dispatchStatus === 'dispatched' || w.dispatchStatus === 'pending') && w.projection?.liveness?.verdict !== 'exited'))
+  }
+  if (!onBox.length) return []
+
+  // The Run on this machine that dispatched each one. The search stops when every worker on the box has its Run.
+  const owners = new Map<string, Owner & { runId: string }>()
+  for (const runId of await allRuns(run, [])) {
+    for (const w of await allWorkers<Owner>(run, ['orchestration', 'worker-list', '--run', runId, '--include-remote'])) {
+      if (w.server?.environmentId === env.id) owners.set(w.dispatchId, { ...w, runId })
+    }
+    if (onBox.every(w => owners.has(w.dispatchId))) break
+  }
+
   const live: Live[] = []
   const problems: string[] = []
-  for (const runId of [...new Set(here.map(w => w.runId))]) {
-    const there = await allWorkers<Remote>(run, ['orchestration', 'worker-list', '--on', env.id, '--run', runId])
-    const tasks = ((await orca(run, ['orchestration', 'task-list', '--run', runId])) as { tasks?: Task[] }).tasks ?? []
-    for (const w of here.filter(x => x.runId === runId)) {
-      const remote = there.find(x => x.dispatchId === w.dispatchId)
-      if (!remote || remote.projection?.liveness?.verdict === 'exited') continue
-      const worktree = remote.resource?.worktreeId ?? remote.projection?.workspace?.id
-      const shownW = (await orca(run, ['orchestration', 'worker-show', '--dispatch', w.dispatchId, '--environment', env.id])) as Shown
-      const so = shownW.worker?.startOptions
-      const requested = so?.launch?.requested ?? {}
-      const agent = requested.agent ?? so?.agent ?? agentGiven
-      const task = tasks.find(t => t.id === w.taskId)
-      const folder = (worktree ?? '').split('::').at(-1)!.split('/').at(-1) ?? ''
-      const key = /^(\d+)/.exec(folder)?.[1] ?? w.dispatchId
-      if (!SAFE.test(w.dispatchId)) problems.push(`${w.dispatchId}: the dispatch id has characters that a shell command on the box cannot carry safely`)
-      else if (!worktree) problems.push(`${w.dispatchId} (run ${runId}): Orca names no worktree for it, so it cannot start again in the same place`)
-      else if (!agent) problems.push(`${w.dispatchId} (run ${runId}): Orca does not record its agent. Repair: name it with --agent <agent>, such as --agent claude`)
-      else if (!task?.spec) problems.push(`${w.dispatchId} (run ${runId}): its task ${w.taskId} has no spec in orca orchestration task-list --run ${runId}, so its brief cannot be given again`)
-      else live.push({ dispatchId: w.dispatchId, runId, worktree, key, agent, ...(requested.model ? { model: requested.model } : {}), ...(requested.effort ? { effort: requested.effort } : {}), spec: task.spec, title: task.task_title ?? task.display_name ?? key })
-    }
+  const tasksOf = new Map<string, Task[]>()
+  for (const b of onBox) {
+    const w = owners.get(b.dispatchId)
+    if (!SAFE.test(b.dispatchId)) { problems.push(`${b.dispatchId}: the dispatch id has characters that a shell command on the box cannot carry safely`); continue }
+    if (b.dispatchStatus === 'pending') { problems.push(`${b.dispatchId}: it is still starting (pending), so it cannot take the request to pause. Repair: wait until it runs, then run the command again`); continue }
+    if (!w) { problems.push(`${b.dispatchId} (task ${b.taskId ?? 'unknown'}): it runs on the box, but no Run of this machine dispatched it, so this machine cannot pause it or start it again. Repair: resize from the machine that started it, or end that worker first`); continue }
+    if (!tasksOf.has(w.runId)) tasksOf.set(w.runId, ((await orca(run, ['orchestration', 'task-list', '--run', w.runId])) as { tasks?: Task[] }).tasks ?? [])
+    const worktree = b.resource?.worktreeId ?? b.projection?.workspace?.id
+    const shownW = (await orca(run, ['orchestration', 'worker-show', '--dispatch', b.dispatchId, '--environment', env.id])) as Shown
+    const so = shownW.worker?.startOptions
+    const requested = so?.launch?.requested ?? {}
+    const agent = requested.agent ?? so?.agent ?? agentGiven
+    const task = tasksOf.get(w.runId)!.find(t => t.id === w.taskId)
+    const folder = (worktree ?? '').split('::').at(-1)!.split('/').at(-1) ?? ''
+    const key = /^(\d+)/.exec(folder)?.[1] ?? b.dispatchId
+    if (!worktree) problems.push(`${b.dispatchId} (run ${w.runId}): Orca names no worktree for it, so it cannot start again in the same place`)
+    else if (!agent) problems.push(`${b.dispatchId} (run ${w.runId}): Orca does not record its agent. Repair: name it with --agent <agent>, such as --agent claude`)
+    else if (!task?.spec) problems.push(`${b.dispatchId} (run ${w.runId}): its task ${w.taskId} has no spec in orca orchestration task-list --run ${w.runId}, so its brief cannot be given again`)
+    else live.push({ dispatchId: b.dispatchId, runId: w.runId, taskId: w.taskId, worktree, key, agent, ...(requested.model ? { model: requested.model } : {}), ...(requested.effort ? { effort: requested.effort } : {}), spec: task.spec, title: task.task_title ?? task.display_name ?? key })
   }
-  if (problems.length) throw new Error(`these workers on ${env.name} could not start again after the resize:\n- ${problems.join('\n- ')}\nNothing changed and no worker was paused.`)
+  if (problems.length) throw new Error(`these workers on ${env.name} cannot be paused and started again:\n- ${problems.join('\n- ')}\nNothing changed and no worker was paused.`)
   // Two workers in one issue folder get their dispatch id as the handoff name, so no handoff overwrites another.
   const counts = new Map<string, number>()
   for (const w of live) counts.set(w.key, (counts.get(w.key) ?? 0) + 1)
@@ -204,6 +244,27 @@ const resumeSpec = (w: Live) => `${w.spec}\n\nResume from ${handoff(w)}. The ser
 const startArgs = (w: Live, env: Server) => ['orchestration', 'worker-start', '--spec', resumeSpec(w), '--task-title', `${w.title} (resumed after the resize)`, '--run', w.runId, '--on', env.id,
   '--worktree', `id:${w.worktree}`, '--agent', w.agent, ...(w.model ? ['--model', w.model] : []), ...(w.effort ? ['--effort', w.effort] : []), '--timeout-ms', '120000']
 const startByHand = (w: Live, env: Server) => `orca orchestration worker-start --spec "<the task of ${w.dispatchId}>, then: Resume from ${handoff(w)}" --run ${w.runId} --on ${env.id} --worktree id:${w.worktree} --agent ${w.agent}${w.model ? ` --model ${w.model}` : ''}${w.effort ? ` --effort ${w.effort}` : ''} --json`
+
+// The restart is a new Task with the old brief and the handoff, and not --task <old> --retry-of <old dispatch>:
+// Orca takes --retry-of only for a failed or stopped attempt, and the old Dispatch is neither. Its worker stopped its
+// own turn, and Orca only sees the box go away. The old Task stays as it was; the result names it and the new one.
+// worker-start can print its receipt and exit 1 when the start failed, so the receipt decides, as in /dev triage.
+async function startAgain($: EngineInterface, w: Live, env: Server): Promise<{ dispatchId: string; taskId?: string }> {
+  const o = await exec($, ['orca', ...startArgs(w, env), '--full', '--json'], { timeoutMs: 180_000 })
+  type Receipt = { dispatchId?: string; taskId?: string; state?: string; failedStage?: string; lastError?: string; recovery?: string }
+  let reply: { ok?: boolean; result?: Receipt; error?: { code?: string; message?: string } } | undefined
+  try {
+    reply = JSON.parse(o.stdout) as typeof reply
+  } catch {
+    throw new Error(`orca orchestration worker-start exited ${o.exitCode} and printed no JSON: ${said(o)}`)
+  }
+  if (!reply?.ok || !reply.result) throw new Error(`orca orchestration worker-start refused it (exit ${o.exitCode}): ${reply?.error?.code ?? 'no code'}: ${reply?.error?.message ?? JSON.stringify(reply).slice(0, 300)}`)
+  const r = reply.result
+  if (r.state !== 'ready' || !r.dispatchId) {
+    throw new Error(`orca orchestration worker-start exited ${o.exitCode}: the worker did not start: ${r.lastError ?? r.state ?? 'no state'} at ${r.failedStage ?? 'an unknown stage'}${r.dispatchId ? ` (dispatch ${r.dispatchId})` : ''}. ${r.recovery ?? 'Orca gave no recovery.'}`)
+  }
+  return { dispatchId: r.dispatchId, ...(r.taskId ? { taskId: r.taskId } : {}) }
+}
 
 // ---- The command ----
 
@@ -259,8 +320,17 @@ export async function resizeHost($: EngineInterface, project: LoadedConfig | und
     if (live.length) {
       await at('3 (pause the workers)', async () => {
         const run = makeRun($, 60_000)
-        for (const w of live) await orca(run, ['orchestration', 'send', '--to', `dispatch:${w.dispatchId}`, '--run', w.runId, '--subject', 'Pause for a server resize', '--body', pauseBody(w, box)])
-        did(`asked ${live.length} workers to pause`)
+        const asked: Live[] = []
+        for (const w of live) {
+          await orca(run, ['orchestration', 'send', '--to', `dispatch:${w.dispatchId}`, '--run', w.runId, '--subject', 'Pause for a server resize', '--body', pauseBody(w, box)]).catch((e: unknown) => {
+            const back = asked.length
+              ? `\nThese workers were asked to pause already and can stop: ${asked.map(x => x.dispatchId).join(', ')}.\nRepair: to give up the resize, send each "Continue your task" (${asked.map(x => `orca orchestration send --to dispatch:${x.dispatchId} --run ${x.runId} --subject Continue --body "Continue your task"`).join('; ')}). Or fix the send, then run /dev remote resize ${to.name} again.`
+              : `\nNo worker was asked to pause.\nRepair: fix the send, then run /dev remote resize ${to.name} again.`
+            throw new Error(`the request to pause ${w.dispatchId} (${w.title}, run ${w.runId}) was not sent: ${e instanceof Error ? e.message : String(e)}\nThe server was not touched.${back}`)
+          })
+          asked.push(w)
+          did(`asked ${w.dispatchId} to pause`)
+        }
       })
       const paused = new Set<string>()
       for (let n = 0; n < PAUSE_TRIES && paused.size < live.length; n++) {
@@ -303,8 +373,10 @@ export async function resizeHost($: EngineInterface, project: LoadedConfig | und
       if (now.status !== 'off') throw new Error(`${box.name} (${id}) is "${now.status}" and not off after ${warning ? 'the poweroff' : 'the shutdown'}.\nRepair: switch it off with hcloud --context ${ctx} server poweroff ${id}, then run /dev remote resize ${to.name} --yes.${byHand}`)
     })
     await at('4 (change the type)', async () => {
-      await hc($, ctx, ['server', 'change-type', '--keep-disk', id, to.name], { timeoutMs: CHANGE_MS }).catch((e: unknown) => {
-        throw new Error(`${e instanceof Error ? e.message : String(e)}\n${box.name} is off and still ${p.now.name}.\nRepair: run hcloud --context ${ctx} server change-type --keep-disk ${id} ${to.name}, then hcloud --context ${ctx} server poweron ${id}; or start it as it was with the poweron alone.${byHand}`)
+      await hc($, ctx, ['server', 'change-type', '--keep-disk', id, to.name], { timeoutMs: CHANGE_MS }).catch(async (e: unknown) => {
+        // A change that outran its time can still go on at Hetzner, so the box is read again before anything is said of it.
+        const now = await describeBox($, ctx, id).then(b => `Hetzner gives ${box.name} the status "${b.status}" and the type ${b.server_type.name} now.`, (d: unknown) => `Its state now is not known: ${d instanceof Error ? d.message : String(d)}.`)
+        throw new Error(`${e instanceof Error ? e.message : String(e)}\n${now}\nRepair: when the status is "off" and the type is ${p.now.name}, run hcloud --context ${ctx} server change-type --keep-disk ${id} ${to.name}, then hcloud --context ${ctx} server poweron ${id}; or start it as it was with the poweron alone. When Hetzner still shows an action on it, wait for that to end first (hcloud --context ${ctx} server describe ${id}).${byHand}`)
       })
       did(`changed ${box.name} to ${to.name}`)
     })
@@ -342,12 +414,10 @@ export async function resizeHost($: EngineInterface, project: LoadedConfig | und
     // Step 5: restart.
     const startedLines: string[] = []
     const failures: string[] = []
-    const run = makeRun($, 180_000)
     for (const w of live) {
       try {
-        const r = (await orca(run, startArgs(w, env))) as { state?: string; dispatchId?: string; lastError?: string; failedStage?: string; recovery?: string }
-        if (r.state !== 'ready' || !r.dispatchId) throw new Error(`the worker did not start: ${r.lastError ?? r.state ?? 'no state'} at ${r.failedStage ?? 'an unknown stage'}. ${r.recovery ?? 'Orca gave no recovery.'}`)
-        startedLines.push(`  ${w.dispatchId} -> ${r.dispatchId} (${w.title}, ${w.agent}), resumes from ${handoff(w)}`)
+        const r = await startAgain($, w, env)
+        startedLines.push(`  ${w.dispatchId} -> ${r.dispatchId} (${w.title}, ${w.agent}), resumes from ${handoff(w)}; task ${w.taskId} -> ${r.taskId ?? 'a new task'} in run ${w.runId}`)
         did(`started ${w.dispatchId} again as ${r.dispatchId}`)
       } catch (error) {
         failures.push(`  ${w.dispatchId} (${w.title}): ${error instanceof Error ? error.message : String(error)}\n    Repair: ${startByHand(w, env)}`)
@@ -357,7 +427,7 @@ export async function resizeHost($: EngineInterface, project: LoadedConfig | und
     return [
       ...(warning ? [warning] : []),
       `${box.name} (${id}) is now ${p.full(to)}, in the hcloud context ${ctx}. It was ${p.now.name}. The disk stays at ${p.disk} GB.`,
-      live.length ? `Workers started again in their worktrees:\n${startedLines.join('\n')}` : 'No worker ran on it, so none was started.',
+      live.length ? `Workers started again in their worktrees, each as a new task:\n${startedLines.join('\n')}\nThe old tasks stay as they were. A coordinator that follows task ids, such as /dev triage, does not see the new ones.` : 'No worker ran on it, so none was started.',
     ].join('\n')
   })
 }
