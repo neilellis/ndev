@@ -8,7 +8,7 @@ import type { LoadedConfig } from '../config'
 import { comment, git, head, markReady, readPr, withdrawAlert } from './effects'
 import { afterSkip } from './machine'
 import type { State } from './machine'
-import { boundRoot, endAsking, factsFor, inTurn, isStaleWrite, isWaitRunning, labelOf, loadWorkflow, readHeld, waitHolder, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
+import { boundRoot, endAsking, factsFor, inTurn, isStaleWrite, isWaitRunning, labelOf, loadWorkflow, readEffective, readHeld, waitHolder, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
 import type { Workflow } from './tools'
 import { EPIC_HELP, epicCommand } from './epic'
 import { watcherNote } from './watchdog'
@@ -139,7 +139,10 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
   if (!['skip', 'goto', 'unblock', 'off', 'on'].includes(verb)) return `/flow does not know "${verb}".\n\n${HELP}`
   if (!wf && verb === 'off') {
     await setDeclined($, true)
-    return 'The workflow is off for this session: started refuses and no reminder comes. /flow on turns it back on.'
+    // No record is this agent's, but the worktree can hold the records of other issues: name them, so the human sees what the off covers.
+    const records = root ? await readEffective($, root) : []
+    const held = records.length ? ` The records in ${root} stay as they are, and their tools refuse in this session: ${records.map(r => `${labelOf(r)} in the state "${r.state}"`).join(', ')}.` : ''
+    return `The workflow is off for this session: the tools that move a state refuse, and no reminder comes.${held} /flow on turns it back on.`
   }
   if (!wf) return `No workflow in ${root ?? 'this session'}, so there is nothing to change. /flow off project turns the workflow off for the whole project.`
   const now = await $.clock.now()

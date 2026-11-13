@@ -655,6 +655,9 @@ const addTypes = (wf: Workflow, types: readonly ChangeType[]) => {
 
 const OFF_PROJECT = (path: string) => `Refused: the workflow is off for this project (${path} sets "workflow": false). Do the work without these tools, or ask the human to run /flow on project.`
 const OFF_HERE = (wf: Workflow) => `Refused: the human turned this workflow off (${wf.off?.reason}). Do the work without these tools, or ask the human to run /flow on.`
+const OFF_SESSION = 'Refused: the human turned the workflow off for this session. Nothing changed. Do the work without these tools, or ask the human to type /flow on.'
+// While the workflow is off for the session, these still work: they record a fact and do not move a state.
+const KEEP_STATE_TOOLS = ['addMigration', 'finishedInterview']
 
 // From the merge point on, these act on the PR and not on one issue.
 const PR_TOOLS = ['finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'done']
@@ -675,6 +678,8 @@ async function continuedInto($: EngineInterface, root: string, owner: string, se
 
 async function current($: EngineInterface, { project, args, tool }: Ctx): Promise<Workflow> {
   if (project?.config.workflow === false) throw new Refuse(OFF_PROJECT(project.path))
+  // A session-wide /flow off stops the tools that move a state, also on a record that the call names.
+  if (!KEEP_STATE_TOOLS.includes(tool ?? '') && (await read($, workflowDeclined))) throw new Refuse(OFF_SESSION)
   const root = (await read($, workflowRoot)) ?? project?.root
   // The pr of waitForPR is what it waits on, and not who is calling.
   const pr = args.pr !== undefined && tool !== 'waitForPR' ? Number(args.pr) : undefined

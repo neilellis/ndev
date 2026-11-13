@@ -578,7 +578,7 @@ The name is `/flow`, not `/ndev:workflow` or `/workflow`. The engine refuses a c
 | `/flow goto <state> [reason]`      | Goes to a named state. The PR records the reason.                                                                         |
 | `/unblock <message>`                        | Gives the agent your answer and ends `blocked` or `wait`. The message is compulsory. It runs at once, also during a turn. |
 | `/flow unblock [message]`          | Ends `blocked`, for when the agent does not. The message is optional. It runs after the turn.                             |
-| `/flow off [reason]` / `on`        | Turns the tools and the reminders off or on for one record: the issue or PR that this agent is on. The record stays. When this agent has no record, `off` turns `started` and the reminders off for the session, also for a record that the session holds later. |
+| `/flow off [reason]` / `on`        | Turns the tools and the reminders off or on for one record: the issue or PR that this agent is on. The record stays. When this agent has no record, `off` turns the workflow off for the session: the tools that move a state refuse, also on a record that the call names, and no reminder comes. `addMigration`, `finishedInterview` and `status` still work. The answer names the records in the worktree. |
 | `/flow off project` / `on project` | Does the same for the whole project, in `.neil-dev.json`.                                                                 |
 
 

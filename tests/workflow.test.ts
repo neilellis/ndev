@@ -3729,6 +3729,33 @@ test('/flow off for the session stops the reminders, also for a record that this
   expect(w.prompts).toEqual([])
 })
 
+test('/flow off for the session names the records in the worktree, and their tools that move the state refuse', async ($, on) => {
+  const w = engine(on, { wf: null, files: { [RECORD]: held(flow({ owner: undefined }), flow({ issue: 8, branch: 'issue-8', prs: [13], owner: undefined })) } })
+  await start($, w)
+  const said = await command($, 'off')
+  expect(said).toContain('off for this session')
+  expect(said).toContain('issue #7 in the state "developing"')
+  expect(said).toContain('issue #8 in the state "developing"')
+  const refused = await tool($, 'blocked', { issue: 7, message: 'stuck' })
+  expect(refused.isError).toBe(true)
+  expect(refused.text).toContain('turned the workflow off for this session')
+  expect(refused.text).toContain('/flow on')
+  expect(w.state()?.state).toBe('developing')
+  expect(w.state()?.owner).toBeUndefined()
+  const read = await tool($, 'status', { issue: 7 })
+  expect(read.isError).toBe(false)
+  expect(read.text).toContain('developing')
+})
+
+test('/flow off for the session leaves the tools that keep the state, such as addMigration', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  await command($, 'off')
+  w.files.set(RECORD, held(flow()))
+  const r = await tool($, 'addMigration', { issue: 7, name: 'add_table' })
+  expect(r.text).not.toContain('turned the workflow off for this session')
+})
+
 test('/flow off project writes .neil-dev.json and stops the reminders', async ($, on) => {
   const w = engine(on)
   await start($, w)
