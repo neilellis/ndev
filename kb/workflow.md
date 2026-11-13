@@ -497,7 +497,7 @@ The plugin pauses with a short `sleep` process and not with `$.clock.sleep`. A h
 
 In an Orca workspace, each save of the state updates the workspace. Tools, the heartbeat and `/flow` all go through that one step.
 
-- **Name:** the workspace is `<issue>-<shortName>`, such as `7-add-sub`. The agent chooses `shortName` from the issue when it calls `started`, and the record keeps it. A project that commits to its base branch keeps the name of its main checkout.
+- **Name:** the workspace is `<issue>-<shortName>`, such as `7-add-sub`, and `<PR>-<shortName>`, such as `12-add-sub`, once a PR is added. Issues and PRs share one number sequence, so the number names one of them only. The agent chooses `shortName` from the issue when it calls `started`, and the record keeps it. A project that commits to its base branch keeps the name of its main checkout.
 - **Status:** see the table below. A block keeps the status that the work had.
 - **Comment:** the state and what happens in it, the block message, what a wait is for, or the message of `done`. This replaces any earlier comment. For example, `/dev triage` sets the title of the issue there.
 - **Links:** the issue and the first PR.

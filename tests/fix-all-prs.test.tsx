@@ -288,6 +288,16 @@ test('the loop finds the agent of a workspace named <issue>-<short name>, and no
   expect(w.sent[0]!.to).toBe('176-add-sub')
 })
 
+test('the loop finds the agent of a workspace renamed <pr>-<short name> once its PR was added', async ($, on) => {
+  const prs = [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176')]
+  const w = world(on, prs, [{ name: '1182-other-work', status: 'idle' }, { name: '182-add-sub', status: 'waiting' }])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+
+  await until(() => w.sent.length === 1)
+  expect(w.sent[0]!.to).toBe('182-add-sub')
+})
+
 test('the loop asks the owning agent, merges once the checks pass and thanks the agent', async ($, on) => {
   const prs = [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176')]
   const w = world(on, prs, [{ name: 'issue-176', status: 'waiting' }, { name: 'someone-else', status: 'idle' }])

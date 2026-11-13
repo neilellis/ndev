@@ -249,11 +249,13 @@ async function listAgents($: EngineInterface): Promise<Agent[]> {
 
 const RANK: Record<string, number> = { busy: 0, waiting: 1, idle: 2 }
 
-// The agent that owns a pull request by its name: pr-<n>, or issue-<k> when the branch ends in issue-<k>.
+// The agent that owns a pull request by its name: pr-<n>, <n>-<short name> (the workflow renames its workspace
+// to the PR's number once the PR is added), or issue-<k> or <k>-<short name> when the branch ends in issue-<k>.
+// Issues and pull requests share one number sequence, so <n>- names one of them only.
 function matchOwner(row: PrRow, agents: Agent[]): Agent | undefined {
   const issue = /issue-(\d+)$/.exec(row.branch)?.[1]
   const fits = (name: string) =>
-    name === `pr-${row.number}` || name.startsWith(`pr-${row.number}-`) ||
+    name === `pr-${row.number}` || name.startsWith(`pr-${row.number}-`) || name.startsWith(`${row.number}-`) ||
     (issue !== undefined && (name === `issue-${issue}` || name.startsWith(`issue-${issue}-`) || name.startsWith(`${issue}-`)))
   return agents
     .filter(a => fits(a.name))

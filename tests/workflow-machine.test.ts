@@ -328,6 +328,13 @@ test('the flow shows a wait at the state it holds; Orca shows what it waits for 
   expect(view.status).toBe('in-progress')
 })
 
+test('the Orca workspace takes the issue number until a PR is added, then the PR number', () => {
+  expect(orcaView({ issue: 7, shortName: 'add-sub', prs: [], state: 'developing' }).name).toBe('7-add-sub')
+  expect(orcaView({ issue: 7, shortName: 'add-sub', prs: [12], state: 'developing' }).name).toBe('12-add-sub')
+  expect(orcaView({ issue: 7, prs: [12], state: 'developing' }).name).toBeUndefined()
+  expect(orcaView({ issue: 7, shortName: 'add-sub', direct: true, prs: [12], state: 'developing' }).name).toBeUndefined()
+})
+
 test('the notice sets the Orca flag while the wait is past half', async () => {
   const view = orcaView({ issue: 7, prs: [], state: 'wait', waiting: { what: 'PR #44 to be merged', alert: { group: 'g' } } })
   expect(view.attention).toBe(true)

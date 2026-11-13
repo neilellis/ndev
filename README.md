@@ -469,7 +469,7 @@ Each issue can have its own mode and steering. The agent chooses heavy or light 
 
 `checkpoint` and `finishedDevelopment` take an optional `changeTypes` list (`web`, `backend`, `database`, `docs`, `tests`, `config`). The review instructions change with the types that accumulate. `screenshot(url)` takes images of a page in the Orca browser for a web change. See [Change types](kb/workflow.md#change-types).
 
-In an Orca workspace, the workflow also sets the workspace name to `<issue>-<shortName>`, the board status, a comment with the state, and the unread dot when a human must act.
+In an Orca workspace, the workflow also sets the workspace name to `<issue>-<shortName>` (`<PR>-<shortName>` once a PR is added), the board status, a comment with the state, and the unread dot when a human must act.
 
 While a workflow runs, it does the work of the edited-file guards, the precheck reminder, the component check and the ingest after a push, so those hooks stand aside. A project keeps its checks in `scripts/ndev/workflow/`: `fast-checks.sh`, `pre-commit-check.sh`, `pre-push-check.sh` and `pre-ready-check.sh`. `/ndev:merge` merges a PR and runs its Supabase migrations.
 

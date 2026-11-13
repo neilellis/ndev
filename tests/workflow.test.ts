@@ -1455,7 +1455,8 @@ test('a failed Orca call does not stop the tool, shows a toast with its output, 
   w.s.orcaFails = ''
   w.orcaCalls.length = 0
   await tool($, 'started', { issue: 7 })
-  expect(w.orcaCalls.flat().join(' ')).toContain('--display-name 7-add-sub')
+  // The workflow has PR #12 now, so the workspace takes the PR's number.
+  expect(w.orcaCalls.flat().join(' ')).toContain('--display-name 12-add-sub')
 })
 
 test('a project that commits to its base branch keeps the name of its main checkout', async ($, on) => {

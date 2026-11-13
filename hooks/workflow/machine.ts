@@ -189,8 +189,9 @@ export type OrcaView = { name?: string; status: string; comment: string; attenti
 export function orcaView(w: { issue: number; shortName?: string; direct?: boolean; prs: number[]; state: State; previous?: State; merged?: boolean; doneMessage?: string; blocked?: { message: string }; waiting?: { what: string; alert?: unknown }; asking?: unknown; off?: unknown }): OrcaView {
   const finished = w.state === 'done' || (w.state === 'blocked' && w.previous === 'done')
   return {
+    // The issue's number names the workspace until a PR is added, then the PR's number does.
     // The main checkout of a project that commits to its base branch is not this issue's workspace.
-    name: w.shortName && !w.direct ? `${w.issue}-${w.shortName}` : undefined,
+    name: w.shortName && !w.direct ? `${w.prs[0] ?? w.issue}-${w.shortName}` : undefined,
     status: w.merged ? 'completed' : finished ? 'in-review' : 'in-progress',
     comment: (w.off ? 'The workflow is off'
       : w.state === 'blocked' ? `Blocked: ${w.blocked?.message ?? ''}`
