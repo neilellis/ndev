@@ -1084,7 +1084,8 @@ function unready(r: PrRow): string[] {
 
 // Every PR_CHECK_MS while the triage runs (its inbox wait hears the answers only then): reads the open pull request of
 // each group, and prods the worker of one that is not mergeable and green. A send to a worker that has ended opens a
-// follow-up turn for it in Orca, so a finished worker hears it too.
+// follow-up turn for it in Orca, so a finished worker hears it too; but a paired server refuses mail to a finished
+// worker (dispatch_inactive), so with --remote a new worker starts in the group's workspace with the prod.
 async function watchPrs($: EngineInterface): Promise<void> {
   if (isWatchingPrs) return
   isWatchingPrs = true
@@ -1124,12 +1125,38 @@ async function watchPrs($: EngineInterface): Promise<void> {
         'Fix it now: merge the base branch and resolve the conflicts, fix the cause of each failing check (never weaken or skip a check), and push the fix through the workflow (mcp__ndev__checkpoint, or by hand when you have no ndev tools). Then wait for the checks.',
         'If you cannot fix it, send an escalation that says why and what you need.',
       ].join('\n')
-      await orca(runner($, 60_000), ['orchestration', 'send', '--to', `dispatch:${g.dispatchId}`, '--run', v.runId, '--subject', `PR #${g.pr} is not mergeable and green`, '--body', body])
-        .then(() => note($, `#${g.lead}: PR #${g.pr} cannot merge (${problems.join('; ')}); prodded its worker`))
-        .catch((err: unknown) => note($, `#${g.lead}: PR #${g.pr} cannot merge, and the prod to its worker failed: ${message(err)}`))
+      const sent = await orca(runner($, 60_000), ['orchestration', 'send', '--to', `dispatch:${g.dispatchId}`, '--run', v.runId, '--subject', `PR #${g.pr} is not mergeable and green`, '--body', body])
+        .then(() => note($, `#${g.lead}: PR #${g.pr} cannot merge (${problems.join('; ')}); prodded its worker`).then(() => true))
+        .catch(async (err: unknown) => {
+          if (v.remote && g.worktree && /dispatch_inactive/.test(message(err))) return false
+          await note($, `#${g.lead}: PR #${g.pr} cannot merge, and the prod to its worker failed: ${message(err)}`)
+          return true
+        })
+      if (!sent) await reprod($, v, g, body)
     }
   } finally {
     isWatchingPrs = false
+  }
+}
+
+// A finished worker on a paired server takes no mail, and its completed Task cannot start again: a new worker, with a
+// new Task that holds the group's brief and the prod, starts in the group's workspace on that server, and the group
+// follows it.
+async function reprod($: EngineInterface, v: TriageView, g: TriageGroup & { pr: number }, body: string): Promise<void> {
+  const remote = v.remote!
+  const brief = `${spec(v.repo!, g, v.issues, agentOf(v), $.plugin.root)}\n\n## Why you start now\n\nThe worker before you finished this Task. ${body}`
+  const args = ['orchestration', 'worker-start', '--spec', brief, '--task-title', `${g.title}: PR #${g.pr}`, '--run', v.runId!, '--on', remote.id,
+    '--worktree', `id:${g.worktree}`, '--agent', agentOf(v), '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000']
+  try {
+    const r = (await orca(runner($, 180_000), args)) as StartReceipt & { taskId?: string }
+    if (r.state !== 'ready' || !r.dispatchId || !r.taskId) throw new Error(`the new worker did not start: ${r.lastError ?? r.state} at ${r.failedStage ?? 'an unknown stage'}\n${r.recovery ?? 'Orca gave no recovery.'}`)
+    const terminal = r.effects?.find(x => x.kind === 'terminal' && x.role === 'agent')?.id
+    await setGroup($, g.lead, { taskId: r.taskId, task: 'dispatched', dispatchId: r.dispatchId, terminal })
+    await note($, `#${g.lead}: its worker ${g.dispatchId} had finished on ${remote.name}, so worker ${r.dispatchId} started there to fix PR #${g.pr}`)
+  } catch (err) {
+    await note($, `#${g.lead}: PR #${g.pr} cannot merge, its worker ${g.dispatchId} had finished on ${remote.name}, and a new worker did not start: ${message(err)}`)
+    askToDecide($, `the stuck PR of #${g.lead}`, `Triage: PR #${g.pr} (${pullUrl(v.repo!, g.pr)}) of #${g.lead} (${g.title}) cannot merge. Its worker finished on ${remote.name}, which takes no mail for it, and a new worker did not start:`,
+      `${message(err)}\nRepair: \`orca orchestration worker-start --spec "<the fix>" --run ${v.runId} --on ${remote.id} --worktree id:${g.worktree} --agent ${agentOf(v)} --json\``, g, v.runId)
   }
 }
 
@@ -1157,7 +1184,9 @@ async function jump($: EngineInterface, g: TriageGroup): Promise<void> {
     { worker?: { agentTerminalHandle?: string | null }; terminal?: { handle?: string | null } }
   const handle = shown.worker?.agentTerminalHandle ?? shown.terminal?.handle ?? g.terminal
   if (!handle) { $.ui.toast(`#${g.lead}: the worker ${g.dispatchId} has no terminal (a chat worker); open its workspace for #${g.lead} in Orca.`); return }
-  await orca(runner($, 60_000), ['terminal', 'switch', '--terminal', handle])
+  // A terminal handle belongs to the server that issued it: a remote worker's is stale without its server.
+  const remote = (await read($, view)).remote
+  await orca(runner($, 60_000), ['terminal', 'switch', '--terminal', handle, ...(remote ? ['--environment', remote.id] : [])])
 }
 
 // A function declaration, not an arrow: /dev triage reaches triageCommand from register.ts, and the engine follows $

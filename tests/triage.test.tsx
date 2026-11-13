@@ -64,6 +64,8 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
   const inbox: { deliveryId: string; messages: unknown[] }[] = []
   // The Run's workers as worker-list answers them, newest first, as Orca lists them.
   const workers: { dispatchId: string; taskId: string; workerState: string; agentTerminalHandle: string }[] = []
+  // The Dispatches that have finished on a paired server; a send to one is refused.
+  const finished = new Set<string>()
   let wake: (() => void) | undefined
   const deliver = (d: { deliveryId: string; messages: unknown[] }) => { inbox.push(d); wake?.() }
   // Each command the mod registers, with its argument hint.
@@ -157,7 +159,9 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
       return reply({ runId: 'run_1', tasks: ready.map(t => ({ id: t.id, status: t.status, deps: JSON.stringify(t.deps) })), count: ready.length })
     }
     if (args.startsWith('orca orchestration worker-start')) {
-      const task = a[a.indexOf('--task') + 1]!
+      // --spec makes a new Task for the worker, as Orca does.
+      if (a.includes('--spec')) tasks.push({ id: `task_${tasks.length + 1}`, deps: [], status: 'ready', title: a[a.indexOf('--task-title') + 1] ?? 'spec' })
+      const task = a.includes('--spec') ? tasks[tasks.length - 1]!.id : a[a.indexOf('--task') + 1]!
       const n = task.slice('task_'.length)
       const launch = { agent: 'claude', model: a[a.indexOf('--model') + 1]!, effort: a[a.indexOf('--effort') + 1]! }
       workers.unshift({ dispatchId: `ctx_${n}`, taskId: task, workerState: opts.startFails ? 'failed' : 'ready', agentTerminalHandle: `term_${n}` })
@@ -195,6 +199,14 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
       return reply({ worker: { dispatchId: d, agentTerminalHandle: `term_${d.slice('ctx_'.length)}` }, observation: { status: 'live', agentWait: null } })
     }
     if (args.startsWith('orca orchestration worker-list')) return reply({ workers, page: { hasMore: false, nextCursor: null } })
+    // A finished worker on a paired server takes no mail, as Orca 1.4 answers.
+    if (args.startsWith('orca orchestration send')) {
+      const to = a[a.indexOf('--to') + 1]!.replace(/^dispatch:/, '')
+      if (finished.has(to)) {
+        return result(1, JSON.stringify({ id: 'x', ok: false, error: { code: 'dispatch_inactive', message: `Dispatch ${to} finished on build-server, which cannot take follow-ups for finished workers yet.`,
+          data: { nextSteps: ['Start a new worker there with `orca orchestration worker-start --on env-1`.'] } } }))
+      }
+    }
     return reply({})
   })
   const orcaRan = (verb: string) => ran.filter(a => a[0] === 'orca' && a.slice(1, 3).join(' ') === verb)
@@ -206,7 +218,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
     workers.unshift({ dispatchId, taskId: task, workerState: 'ready', agentTerminalHandle: `term_${dispatchId.slice('ctx_'.length)}` })
     tasks.find(t => t.id === task)!.status = 'dispatched'
   }
-  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart, registered }
+  return { ran, prompts, toasts, tasks, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart, registered, finished }
 }
 
 // A pull request as the fake GitHub answers it: REST's mergeable and mergeable_state, and its check runs as [name, status, conclusion].
@@ -771,6 +783,46 @@ test('/dev triage start --remote makes each workspace and starts each worker on 
   await until(async () => (await ui.find({ type: 'Text', text: /PR #41/ })) !== undefined)
   expect((await ui.find({ type: 'Text', text: /build-server/ }))?.text).toBeDefined()
   await ui.unmount()
+})
+
+test('with --remote, Jump switches to the worker\'s terminal on the server, and a prod to a finished worker there starts a new worker in its workspace', async ($, on) => {
+  // #4's worker keeps the triage running after #3's is done.
+  const w = world(on, { issues: [issue(3), issue(4)] })
+  await started($)
+  await $.command.run(command('start --remote'))
+  await until(() => w.prompts.length > 0, () => w.toasts)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([4], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 2, () => w.ran)
+
+  // A terminal handle belongs to the server that issued it.
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await until(async () => (await ui.find({ type: 'Text', text: /Fix #3/ })) !== undefined)
+  await ui.press({ key: 'jump-3' })
+  await until(() => w.orcaRan('terminal switch').length > 0, () => w.ran)
+  expect(w.orcaRan('terminal switch')[0]).toEqual(expect.arrayContaining(['--terminal', 'term_1', '--environment', 'env-1']))
+  await ui.unmount()
+
+  // The worker opens #41 and finishes; Orca then refuses mail to it.
+  w.linkPr('/w/issue-3', 41)
+  w.deliver({ deliveryId: 'delivery_1', messages: [message('msg_1', 'worker_done', 'term_1', 'Done.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.ran.some(a => a.includes('--ack') && a.includes('delivery_1')), () => w.ran)
+  w.finished.add('ctx_1')
+  w.prs[41] = { mergeable: false, state: 'dirty', checks: [] }
+  expect(w.fire(10 * 60_000)).toBe(1)
+  await until(() => w.orcaRan('orchestration worker-start').length === 3, () => w.ran)
+  const restart = w.orcaRan('orchestration worker-start')[2]!
+  expect(restart).toEqual(expect.arrayContaining(['--on', 'env-1', '--worktree', 'id:repo-env-1::/w/issue-3', '--run', 'run_1']))
+  expect(restart).not.toContain('--task')
+  // The new worker gets the group's Task and the prod.
+  const brief = restart[restart.indexOf('--spec') + 1]!
+  expect(brief).toMatch(/#3\b/)
+  expect(brief).toMatch(/PR #41/)
+  expect(brief).toMatch(/conflicts/)
+
+  // The next prod goes to the new worker.
+  w.prs[41] = { mergeable: true, state: 'behind', checks: [] }
+  expect(w.fire(10 * 60_000)).toBe(1)
+  await until(() => w.orcaRan('orchestration send').some(a => a.includes('dispatch:ctx_3')), () => w.ran)
 })
 
 test('/dev triage start --remote names the server when several are saved, and refuses one it does not know', async ($, on) => {
