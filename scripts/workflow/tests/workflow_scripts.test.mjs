@@ -79,13 +79,21 @@ const BODY = 'Plan\n<!-- ndev:migrations -->\n- `supabase/migrations/1_a.sql`: f
 const OPEN_PR = { state: 'open', draft: false, merged: false, base: { ref: 'main' }, body: BODY }
 // The fake gh answers a read in the words of gh pr view, runs mergeBody for the merge, and logs each call.
 const ghPr = pr => ({ number: 12, title: 'T', url: 'u', author: { login: 'neil' }, createdAt: 'c', headRefOid: 'h', headRefName: 'b', baseRefName: pr.base?.ref ?? 'main', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: !!pr.draft, body: pr.body ?? null, state: pr.merged ? 'MERGED' : String(pr.state).toUpperCase(), mergeCommit: pr.merge_commit_sha ? { oid: pr.merge_commit_sha } : null })
+// The files of the PR, in the shape of GET /pulls/{n}/files. 1_a and 2_b are the listed migrations.
+const LISTED_FILES = [
+  { filename: 'supabase/migrations/1_a.sql', status: 'added' },
+  { filename: 'supabase/migrations/2_b.sql', status: 'added' },
+  { filename: 'src/a.ts', status: 'modified' },
+]
 const merge = (pr, mergeBody = 'true', ...args) => {
   const dir = folder()
+  writeFileSync(join(dir, 'files.json'), JSON.stringify(pr.files ?? LISTED_FILES))
   writeFileSync(join(dir, 'pr.json'), JSON.stringify(ghPr(pr)))
   writeFileSync(join(dir, 'merged.json'), JSON.stringify(ghPr({ ...pr, merged: true, merge_commit_sha: 'abc' })))
   writeFileSync(join(dir, 'rest.json'), JSON.stringify({ number: 12, state: 'open', head: { sha: 'h1', ref: 'b' }, base: { ref: 'main' }, stack: pr.stack ?? null }))
   program(dir, 'gh', `echo "$*" >> "${dir}/gh.log"
 if [[ "$*" == "api repos/o/r/pulls/12" ]]; then cat "${dir}/rest.json"; exit 0; fi
+if [[ "$*" == "api --paginate repos/o/r/pulls/12/files?per_page=100" ]]; then ${pr.filesBody ?? `cat "${dir}/files.json"`}; exit $?; fi
 if [[ "$*" == "pr merge"* || "$*" == *"-X PUT"* ]]; then ${mergeBody}; exit $?; fi
 if grep -q "pr merge" "${dir}/gh.log"; then cat "${dir}/merged.json"; else cat "${dir}/pr.json"; fi`)
   const r = spawnSync('bash', [MERGE, '12', '--repo', 'o/r', ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } })
@@ -97,12 +105,47 @@ test('merge reads, merges through gh, reads the sha and lists the migrations in 
   assert.equal(r.status, 0, r.stderr)
   assert.deepEqual(JSON.parse(r.stdout), {
     pr: 12, merged: true, alreadyMerged: false, sha: 'abc', base: 'main',
-    migrations: ['supabase/migrations/1_a.sql', 'supabase/migrations/2_b.sql'],
+    migrations: ['supabase/migrations/1_a.sql', 'supabase/migrations/2_b.sql'], unlisted: [],
   })
-  assert.equal(r.calls.length, 3)
+  assert.doesNotMatch(r.stderr, /not listed/)
+  assert.equal(r.calls.length, 4)
   assert.ok(r.calls[0].startsWith('pr view 12 --repo o/r'), r.calls[0])
-  assert.equal(r.calls[1], 'pr merge 12 --repo o/r --merge')
-  assert.ok(r.calls[2].startsWith('pr view 12 --repo o/r'), r.calls[2])
+  assert.equal(r.calls[1], 'api --paginate repos/o/r/pulls/12/files?per_page=100')
+  assert.equal(r.calls[2], 'pr merge 12 --repo o/r --merge')
+  assert.ok(r.calls[3].startsWith('pr view 12 --repo o/r'), r.calls[3])
+})
+
+test('a migration file the PR adds but does not list is named in unlisted and in a warning with the repair', () => {
+  const files = [
+    ...LISTED_FILES,
+    { filename: 'supabase/migrations/20261113135004_gate_reply_wording.sql', status: 'added' },
+    { filename: 'apps/db/supabase/migrations/3_c.sql', status: 'added' },
+    { filename: 'supabase/migrations/0_old.sql', status: 'modified' },
+    { filename: 'supabase/migrations/README.md', status: 'added' },
+  ]
+  const added = ['supabase/migrations/20261113135004_gate_reply_wording.sql', 'apps/db/supabase/migrations/3_c.sql']
+  const cases = [
+    [{ ...OPEN_PR, files }, added],
+    [{ ...OPEN_PR, files, merged: true, state: 'closed', merge_commit_sha: 'def' }, added],
+    [{ ...OPEN_PR, files, body: 'Plan' }, ['supabase/migrations/1_a.sql', 'supabase/migrations/2_b.sql', ...added]],
+  ]
+  for (const [pr, unlisted] of cases) {
+    const r = merge(pr)
+    assert.equal(r.status, 0, r.stderr)
+    assert.deepEqual(JSON.parse(r.stdout).unlisted, unlisted)
+    for (const f of unlisted) assert.match(r.stderr, new RegExp(`- ${f.replaceAll('.', '\\.')}\\n`))
+    assert.match(r.stderr, new RegExp(`PR #12 of o/r adds ${unlisted.length} migration file\\(s\\) that its body does not list`))
+    assert.match(r.stderr, /addMigration/)
+    assert.match(r.stderr, /supabase db push/)
+  }
+})
+
+test('a failed read of the PR files exits 2 before the merge and gives the exit code', () => {
+  const r = merge({ ...OPEN_PR, filesBody: 'echo "HTTP 502: Bad gateway" >&2; exit 1' })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /could not read the files of PR #12 of o\/r \(exit 1\)/)
+  assert.match(r.stderr, /Bad gateway/)
+  assert.ok(!r.calls.some(c => c.startsWith('pr merge')), r.calls.join('\n'))
 })
 
 test('a PR already merged is not merged again, and still names its migrations', () => {
@@ -112,7 +155,7 @@ test('a PR already merged is not merged again, and still names its migrations', 
   assert.equal(out.alreadyMerged, true)
   assert.equal(out.sha, 'def')
   assert.equal(out.migrations.length, 2)
-  assert.equal(r.calls.length, 1)
+  assert.equal(r.calls.length, 2)
 })
 
 test('a PR with no migrations section gives an empty list', () => {
@@ -127,7 +170,7 @@ test('a draft and a closed PR are refused with no merge call', () => {
   const closed = merge({ ...OPEN_PR, state: 'closed' })
   assert.equal(closed.status, 1)
   assert.match(closed.stderr, /closed and not merged/)
-  assert.equal(draft.calls.length + closed.calls.length, 2)
+  assert.ok(![...draft.calls, ...closed.calls].some(c => c.startsWith('pr merge')))
 })
 
 test('a merge GitHub refuses exits 1 and prints its reason', () => {

@@ -26,11 +26,15 @@ The `addMigration` workflow tool lists each migration in a marked section of the
    ${CLAUDE_PLUGIN_ROOT}/scripts/workflow/merge.sh <pr> --repo <owner/name>
    ```
 
-   It prints JSON with `sha`, `base` and `migrations`. If it exits non-zero, report its message and stop. Nothing has merged.
+   It prints JSON with `sha`, `base`, `migrations` and `unlisted`. If it exits non-zero, report its message and stop. Nothing has merged.
+
+   `unlisted` names each `.sql` file that the PR adds under a `supabase/migrations/` folder and that `migrations` does not list, because nobody registered it with `mcp__ndev__addMigration`. merge.sh warns about these on stderr. Nothing runs them unless you do.
 
    A stacked PR merges through GitHub's merge-async endpoint, which also merges each open PR below it in the stack. So merge.sh refuses a PR above the bottom of its stack. Ask the human whether to merge the PRs below it too; only on a yes, run it again with `--stack`.
 
-3. If `migrations` is empty, report the merge and stop.
+3. If `unlisted` is not empty, name each file to the human and ask whether to apply it with this merge. On a yes, treat it as listed in steps 4 to 7. On a no, report it as not run.
+
+   If `migrations` and `unlisted` are both empty, report the merge and stop.
 
 4. Run each migration from the merged code, not from the branch. In the main checkout, stop if the tree is not clean. Then `git switch <base>` and `git pull --ff-only`. Check that each listed file exists.
 
