@@ -1421,13 +1421,19 @@ test('with a --hint, the groups report may list skipped issues, which stay open,
   await ui.unmount()
 })
 
-test('skipped is refused without --hint, so the model never leaves an issue out on its own', async ($, on) => {
+test('without --hint, skipped takes the issues the human asked in the conversation to leave out; the prompt forbids a skip the human did not ask for', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(4)] })
   await started($)
   await $.command.run(command('start --dry-run'))
   await until(() => w.prompts.length > 0)
-  expect(w.prompts[0]).not.toMatch(/skipped/)
-  const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], skipped: [{ issue: 4, reason: 'x' }] } as never) as { result: string; isError?: boolean }
-  expect(r.isError).toBe(true)
-  expect(r.result).toMatch(/skipped needs \/dev triage start --hint/)
+  expect(w.prompts[0]).toMatch(/list them in skipped as \{ issue, reason \}/)
+  expect(w.prompts[0]).toMatch(/Never skip an issue that the human did not ask you to leave out/)
+  const none = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never) as { result: string; isError?: boolean }
+  expect(none.result).toMatch(/#4 is in no group; put it in a group, or in skipped as \{ issue, reason \} when the human asked you to leave it out/)
+  const r = await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')], skipped: [{ issue: 4, reason: 'the human said to stay off the KG epic' }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBeUndefined()
+  expect(r.result).toMatch(/skipped 1 issues as the human asked: #4; they stay open with no worker/)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /skipped #4 as the human asked: the human said to stay off the KG epic/ }))?.text).toBeDefined()
+  await ui.unmount()
 })
