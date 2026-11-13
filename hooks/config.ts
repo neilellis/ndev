@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Mode, Steering } from '../types'
+import { SECRET_NAME } from './workflow/secrets'
 
 // All per-project settings of the plugin live in one checked-in file at the project root.
 export const CONFIG_FILE = '.neil-dev.json'
@@ -15,7 +16,12 @@ export type NeilDevConfig = {
   services?: Services
   projectLevel?: ProjectLevel
   workflow?: boolean
+  checkEnv?: string[]
 }
+
+// checkEnv: the names of the .neil-dev.env keys that the check scripts get, such as the URL of a local test
+// database. Absent: they get none. The file also holds credentials for hosted services, and a test that finds
+// such a key, as fcc-proto's do with FALKORDB_URL, runs against the hosted service and not a local one.
 
 // How much risk the workflow tools take. straw_man: the agent may commit to main and merge PRs.
 // poc: the agent may merge PRs. small_project and formal_project: a human merges, and
@@ -51,7 +57,7 @@ export type LoadedConfig = {
   error?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const MODES: readonly string[] = ['light', 'heavy']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
@@ -71,6 +77,7 @@ const validate = (raw: unknown): string | undefined => {
   if (value.steering !== undefined && !STEERINGS.includes(value.steering as string)) return `"steering" is ${JSON.stringify(value.steering)}; use "interactive" or "auto"`
   if (value.projectLevel !== undefined && !(PROJECT_LEVELS as readonly unknown[]).includes(value.projectLevel)) return `"projectLevel" is ${JSON.stringify(value.projectLevel)}; use ${PROJECT_LEVELS.map(l => `"${l}"`).join(', ')}`
   if (value.workflow !== undefined && typeof value.workflow !== 'boolean') return `"workflow" is ${JSON.stringify(value.workflow)}; use true or false`
+  if (value.checkEnv !== undefined && (!Array.isArray(value.checkEnv) || value.checkEnv.some(k => typeof k !== 'string' || !SECRET_NAME.test(k)))) return `"checkEnv" is ${JSON.stringify(value.checkEnv)}; use a list of key names, such as ["TEST_DATABASE_URL"]`
   if (value.quality !== undefined && (typeof value.quality !== 'object' || value.quality === null || Array.isArray(value.quality))) return '"quality" must be an object'
   if (value.branding !== undefined) {
     const b = value.branding as Record<string, unknown>

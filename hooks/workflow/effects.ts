@@ -2,6 +2,7 @@
 import type { EngineInterface } from 'claude-code'
 import { checkLog, outputCut } from './check-log'
 import { withStep } from './progress'
+import { loadConfigAt } from '../config'
 import { parseEnvFile } from './secrets'
 
 export const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh'] as const
@@ -128,15 +129,21 @@ async function runLong($: EngineInterface, root: string, dir: string, script: st
   return { exitCode, stdout: out.stdout, stderr, isStdoutTruncated: out.isStdoutTruncated, isStderrTruncated: err.isStdoutTruncated, ...(stoppedAfterMs === undefined ? {} : { stoppedAfterMs }) }
 }
 
-// The project's keys in the worktree's .neil-dev.env, such as a database URL that the tests need, as CI sets them.
-async function projectEnv($: EngineInterface, root: string, path: string): Promise<Record<string, string>> {
+// The keys of the worktree's .neil-dev.env that checkEnv in .neil-dev.json names, such as the URL of a local
+// test database, as CI sets them. The other keys stay out, as they can be credentials for hosted services
+// (fcc-proto's FALKORDB_URL for kb:publish made its tests write to the hosted graph server); withheld names them.
+async function projectEnv($: EngineInterface, root: string, path: string): Promise<{ env: Record<string, string>; withheld: string[] }> {
   const file = `${root}/.neil-dev.env`
-  if (!(await $.fs.exists(file))) return {}
+  const named = (await loadConfigAt($, root)).config.checkEnv ?? []
+  let values: Record<string, string> = {}
   try {
-    return parseEnvFile(await $.fs.read(file), file)
+    if (await $.fs.exists(file)) values = parseEnvFile(await $.fs.read(file), file)
   } catch (e) {
     throw new Refuse(`${path} did not run: ${e instanceof Error ? e.message : String(e)} Nothing was pushed. Then call the tool again.`)
   }
+  const missing = named.filter(k => !(k in values))
+  if (missing.length) throw new Refuse(`${path} did not run: checkEnv in ${root}/.neil-dev.json names ${missing.join(', ')}, which ${file} does not set. Nothing was pushed. Repair: node ${$.plugin.root}/scripts/env/neil-dev-env.mjs init ${missing.map(k => `--key ${k}`).join(' ')}, or take the name out of checkEnv. Then call the tool again.`)
+  return { env: Object.fromEntries(named.map(k => [k, values[k] as string])), withheld: Object.keys(values).filter(k => !named.includes(k)) }
 }
 
 // Runs a check script. The engine runs git with the repository's hooks off, so these are the hooks.
@@ -160,7 +167,8 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   }
   const merging = (await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0
   const mergeBase = merging ? await git(root, $, 'merge-base', `origin/${base}`, 'HEAD', 'MERGE_HEAD') : await git(root, $, 'merge-base', `origin/${base}`, 'HEAD')
-  const env: Record<string, string> = { ...(await projectEnv($, root, path)), ...(mergeBase.exitCode === 0 && mergeBase.stdout.trim() ? { NDEV_MERGE_BASE: mergeBase.stdout.trim() } : {}) }
+  const project = await projectEnv($, root, path)
+  const env: Record<string, string> = { ...project.env, ...(mergeBase.exitCode === 0 && mergeBase.stdout.trim() ? { NDEV_MERGE_BASE: mergeBase.stdout.trim() } : {}) }
   const before = (await porcelain($, root)).join('\n')
   const r = await withStep($, check, CHECK_MAX_MS, () => runLong($, root, `${gitDir}/ndev-${check}.run`, script, args, env))
   const log = `${gitDir}/ndev-${check}.log`
@@ -173,7 +181,8 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
     const cut = outputCut(r, path)
     const output = `${cut ? `${cut}\n` : ''}${tail}`
     const merge = merging ? ` A merge is in progress, so HEAD is the commit before the merge: a check that compares with \`git merge-base HEAD origin/${base}\` reads the old base. Repair: read the base from NDEV_MERGE_BASE=${env.NDEV_MERGE_BASE ?? '(git merge-base failed)'}, as ${base} merged in here.` : ''
-    throw new CheckFailed(`${path} exited ${r.exitCode}. Nothing was pushed.${merge} Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
+    const withheld = project.withheld.length ? ` The check did not get ${project.withheld.join(', ')} from ${root}/.neil-dev.env: the checks get only the keys that checkEnv in .neil-dev.json names. If a test needs one, such as the URL of a local test database, name it there; never a key of a hosted service.` : ''
+    throw new CheckFailed(`${path} exited ${r.exitCode}. Nothing was pushed.${merge}${withheld} Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
   }
   const after = (await porcelain($, root)).join('\n')
   if (after !== before) throw new CheckFailed(`${path} passed but changed the working tree. Name the changed files in the tool call and call it again:\n${after}`, { path, exitCode: 0, log, output: after })

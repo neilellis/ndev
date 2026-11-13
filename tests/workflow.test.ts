@@ -1812,6 +1812,11 @@ test('started asks for fast-checks.sh, and says it holds the fast tools only', a
 test('started initialises the submodules of the worktree it claims', async ($, on) => {
   const w = engine(on, { wf: null, main: true, config: QUALITY })
   await start($, w)
+  expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
+  expect(w.steps).toContain('init-worktree-submodules.sh')
+  expect(w.submodules).toEqual([{ command: 'git worktree add /claimed/issue-7', paths: '.claude/agents' }])
+})
+
 test('a commit that ends a merge of the base runs fast-checks.sh only on the files that differ from the base, and says so', async ($, on) => {
   const w = engine(on, { names: ['mine.ts', 'PublishView.tsx', 'TrackedClaims.tsx'] })
   await start($, w)
@@ -1823,16 +1828,50 @@ test('a commit that ends a merge of the base runs fast-checks.sh only on the fil
   expect(r.text).toContain('2 staged files came from the base unchanged')
 })
 
-  expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
-  expect(w.steps).toContain('init-worktree-submodules.sh')
-test('the checks get the keys of the worktree .neil-dev.env, as the project tests need them', async ($, on) => {
-  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: '# graph\nFALKORDB_URL=redis://localhost:6379\nexport QUOTED="a b"\n' } })
+test('the checks get the keys of the worktree .neil-dev.env that checkEnv in .neil-dev.json names, and no other', async ($, on) => {
+  const w = engine(on, { files: { [CONFIG]: JSON.stringify({ checkEnv: ['TEST_DB_URL', 'QUOTED'] }), [`${ROOT}/.neil-dev.env`]: '# graph\nFALKORDB_URL=rediss://graph.example.com:6380\nTEST_DB_URL=redis://localhost:6379\nexport QUOTED="a b"\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']
   await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
-  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_URL).toBe('redis://localhost:6379')
+  expect(w.s.checkEnv['pre-commit-check.sh']?.TEST_DB_URL).toBe('redis://localhost:6379')
   expect(w.s.checkEnv['pre-commit-check.sh']?.QUOTED).toBe('a b')
+  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_URL).toBeUndefined()
   expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
+})
+
+// fcc-proto PR #828: .neil-dev.env held FALKORDB_URL and FALKORDB_CA of the hosted graph server, for kb:publish. The
+// test scripts start a local server only when FALKORDB_URL is unset, so with that key the tests wrote to the hosted one.
+test('with no checkEnv in .neil-dev.json the checks get no key of .neil-dev.env, so the tests do not reach hosted services', async ($, on) => {
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=rediss://graph.example.com:6380\nFALKORDB_CA=/keys/ca.pem\n' } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_URL).toBeUndefined()
+  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_CA).toBeUndefined()
+  expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
+})
+
+test('a check that fails names the .neil-dev.env keys it did not get and how to give one', async ($, on) => {
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=rediss://graph.example.com:6380\nFALKORDB_CA=/keys/ca.pem\n' } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.failCheck = 'pre-commit-check'
+  const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('did not get FALKORDB_URL, FALKORDB_CA')
+  expect(r.text).toContain('checkEnv')
+  expect(r.text).not.toContain('graph.example.com')
+})
+
+test('a key that checkEnv names but .neil-dev.env does not set stops the check and names the key and the repair', async ($, on) => {
+  const w = engine(on, { files: { [CONFIG]: JSON.stringify({ checkEnv: ['TEST_DB_URL'] }), [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=rediss://graph.example.com:6380\n' } })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('TEST_DB_URL')
+  expect(r.text).toContain('neil-dev-env.mjs init --key TEST_DB_URL')
+  expect(w.steps).not.toContain('pre-commit-check.sh')
 })
 
 test('a .neil-dev.env line that is not KEY=VALUE stops the check and names the file and the line, not the value', async ($, on) => {
@@ -1846,8 +1885,6 @@ test('a .neil-dev.env line that is not KEY=VALUE stops the check and names the f
   expect(w.steps).not.toContain('pre-commit-check.sh')
 })
 
-  expect(w.submodules).toEqual([{ command: 'git worktree add /claimed/issue-7', paths: '.claude/agents' }])
-})
 
 test('started claims no submodules with no setting for them', async ($, on) => {
   const w = engine(on, { wf: null, main: true })

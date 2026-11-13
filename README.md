@@ -215,6 +215,8 @@ The private keys for ndev skills go in `.neil-dev.env` at the project root. The 
 
 The file belongs to the main checkout. In a worktree, the first look for the file copies it from the main checkout, but only when git ignores the name there. `init` in a worktree first moves keys added to the copy into the main checkout file. It refuses when a key has a different value in the two files. A project that does not ignore `.neil-dev.env` gets no file: add the name to `.gitignore`, or to `info/exclude` in the git common folder.
 
+The workflow check scripts (`scripts/ndev/workflow/*.sh`) get only the keys that `checkEnv` in `.neil-dev.json` names, such as `"checkEnv": ["TEST_DATABASE_URL"]`. With no `checkEnv` they get none. Name only keys for local test services, never the credentials of a hosted service: a test that finds such a key runs against the hosted service. A named key that the file does not set stops the check, and a failed check lists the keys it did not get.
+
 At session start the plugin looks for the file and tells the agent where it is and which key names it sets. If the project has no file, the plugin asks once whether to create it from `~/.zshrc`. The agent never prints, reads or searches for a key.
 
 ## The pull request loop: /fix-prs
