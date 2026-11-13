@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EPIC_STATES, addedMigrations, epicLineOf, epicStep, frontier, implementerBrief, nextEpicState, reviewerBrief, shellQuote, sliceProblems, unlistedMigrations, workerStartCommand } from '../hooks/workflow/epic'
+import { EPIC_STATES, addedMigrations, epicLineOf, epicStep, frontier, implementerBrief, nextEpicState, reviewerBrief, shellQuote, sliceProblems, stackPlan, unlistedMigrations, workerStartCommand } from '../hooks/workflow/epic'
 import type { Epic, SubIssue } from '../hooks/workflow/epic'
 
 type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
@@ -175,7 +175,7 @@ const engine = (on: On, opts: Opts = {}) => {
         const answer = s.issues[n] ?? { state: 'open', title: `Issue ${n}` }
         return typeof answer === 'string' ? ok('', 1, answer) : ok(JSON.stringify({ number: n, body: '', url: '', ...answer }))
       }
-      if (a[2] === 'pr-read') return ok(JSON.stringify({ number: n, state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean', body: 'Closes #5', created_at: '2026-11-01T00:00:00Z', head: { sha: SHA, ref: 'issue-5' }, ...s.prs[n] }))
+      if (a[2] === 'pr-read') return ok(JSON.stringify({ number: n, state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean', body: 'Closes #5', created_at: '2026-11-01T00:00:00Z', head: { sha: SHA, ref: 'issue-5' }, base: { ref: 'main' }, ...s.prs[n] }))
       if (a[2] === 'commit-checks') return ok(JSON.stringify(s.checks))
       if (a[2] === 'pr-diff') return s.diff === '__fail__' ? ok('', 1, 'HTTP 502: Bad Gateway') : ok(s.diff)
       if (a[2] === 'default-branch') return ok('{"default_branch":"main"}')
@@ -685,4 +685,209 @@ test('a relative workspace is refused, and the workspace can be set later with n
   expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', workspace: '/w/41' })).isError).toBe(false)
   expect(w.epic()?.issues['41']).toMatchObject({ state: 'implementing', implementer: 'd1', workspace: '/w/41' })
   expect((await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'reviewer', pr: 12 })).isError).toBe(false)
+})
+
+// ---- stacked pull requests ----
+
+const head = (ref: string) => ({ head: { sha: SHA, ref } })
+// Puts sub-issues in the record as they are after some moves, so a test starts at the state it is about.
+const setIssues = (w: W, ...subs: SubIssue[]) => w.files.set(EPIC_FILE(40), JSON.stringify({ ...w.epic(), state: 'coordinating', issues: withIssues(...subs) }))
+const commandOf = (text: string) => text.split('\n').find(l => l.startsWith('orca orchestration worker-start')) ?? ''
+
+test('a waiting issue can stack on one unmerged blocker whose PR is pushed, and on several only when one branch holds the others', () => {
+  const issues = () => withIssues(sub(1, { state: 'reviewing', pr: 11 }), sub(2, { blockedBy: [1] }), sub(3, { state: 'fixing', pr: 13 }), sub(4, { blockedBy: [1, 3] }), sub(5, { state: 'implementing' }), sub(6, { blockedBy: [5] }), sub(7, { state: 'merged' }), sub(8, { blockedBy: [7] }))
+  const epic = epicOf({ state: 'coordinating', parallel: 9, issues: issues() })
+  expect(stackPlan(epic, epic.issues['8']!)).toBeUndefined()
+  expect(stackPlan(epic, epic.issues['2']!)).toMatchObject({ on: { issue: 1 } })
+  const split = stackPlan(epic, epic.issues['4']!)
+  expect(split && 'why' in split && split.why).toMatch(/#1, #3[\s\S]*different branches/)
+  const early = stackPlan(epic, epic.issues['6']!)
+  expect(early && 'why' in early && early.why).toMatch(/#5[\s\S]*implementing/)
+  const f = frontier(epic)
+  expect(f.ready.map(s => s.issue)).toEqual([8])
+  expect(f.stacked.map(s => [s.sub.issue, s.on.issue])).toEqual([[2, 1]])
+  expect(f.waitingOn).toEqual([{ issue: 4, open: [1, 3] }, { issue: 6, open: [5] }])
+  expect(f.notStackable.map(n => n.issue)).toEqual([4])
+  // Once the branch of #3 holds the branch of #1, #4 stacks on #3.
+  epic.issues['3']!.stackedOn = 1
+  expect(stackPlan(epic, epic.issues['4']!)).toMatchObject({ on: { issue: 3 } })
+  expect(frontier(epic).notStackable).toEqual([])
+  // The stacked issues come after the ready ones, and the two together are cut to the free places: 3 are in flight.
+  const tight = frontier({ ...epic, parallel: 4 })
+  expect(tight.ready.map(s => s.issue)).toEqual([8])
+  expect(tight.stacked).toEqual([])
+  expect(tight.stackedHeld.map(s => s.issue)).toEqual([2, 4])
+})
+
+test('the stacked implementer brief names the blocker, its PR and its branch, and a plain brief does not', () => {
+  const epic = epicOf({ state: 'coordinating', issues: withIssues(sub(5, { state: 'reviewing', pr: 12 }), sub(6, { blockedBy: [5] })) })
+  const text = implementerBrief(epic, epic.issues['6']!, [], { on: epic.issues['5']!, branch: 'issue-5', base: 'main' })
+  for (const part of ['Stacked on #5', 'PR #12', 'origin/issue-5', '--base issue-5', 'mcp__ndev__unblocked', 'git merge origin/main', '--base main', 'Do not merge']) expect(text).toContain(part)
+  expect(implementerBrief(epic, epic.issues['5']!, [])).not.toContain('Stacked')
+})
+
+test('epicNext lists an issue as able to start stacked only once its blocker has a pushed PR, and within the parallel limit', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1' })
+  const early = await tool($, 'epicNext', { issue: 40 })
+  expect(early.text).not.toContain('Can start stacked')
+  expect(early.text).toMatch(/#42 waits for #41/)
+  await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'reviewing', pr: 12, worker: 'r1' })
+  const before = w.files.get(EPIC_FILE(40))
+  const r = await tool($, 'epicNext', { issue: 40 })
+  expect(r.isError).toBe(false)
+  expect(r.text).toMatch(/Ready to start[^\n]*#43/)
+  expect(r.text).toMatch(/Can start stacked[^\n]*#42 "API" on #41 \(PR #12\)/)
+  expect(r.text).not.toMatch(/#42 waits/)
+  expect(w.files.get(EPIC_FILE(40))).toBe(before)
+  await tool($, 'epicStarted', { issue: 40, parallel: 1 })
+  const full = await tool($, 'epicNext', { issue: 40 })
+  expect(full.text).not.toContain('Can start stacked')
+  expect(full.text).toMatch(/no place is free[^\n]*#42/)
+})
+
+test('an issue with two unmerged blockers on different branches is not stackable, and says why; it is once one branch holds the other', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  const subs = (over: Partial<SubIssue> = {}) => [sub(41, { state: 'reviewing', pr: 12 }), sub(43, { state: 'reviewing', pr: 14, ...over }), sub(44, { key: 'ui', title: 'UI', blockedBy: [41, 43] })]
+  setIssues(w, ...subs())
+  w.s.prs[14] = head('issue-43')
+  const next = await tool($, 'epicNext', { issue: 40 })
+  expect(next.text).not.toContain('Can start stacked')
+  expect(next.text).toMatch(/#44 waits for #41, #43/)
+  expect(next.text).toMatch(/Not stackable: #44[^\n]*different branches/)
+  const brief = await tool($, 'epicBrief', { issue: 40, sub: 44, role: 'implementer' })
+  expect(brief.isError).toBe(true)
+  expect(brief.text).toContain('different branches')
+  expect(brief.text).toContain('Nothing was written')
+  const move = await tool($, 'epicIssue', { issue: 40, sub: 44, state: 'implementing', worker: 'd4' })
+  expect(move.isError).toBe(true)
+  expect(move.text).toContain('different branches')
+  expect(w.epic()?.issues['44']).toMatchObject({ state: 'waiting' })
+  expect(w.epic()?.issues['44']?.stackedOn).toBeUndefined()
+  setIssues(w, ...subs({ stackedOn: 41 }))
+  expect((await tool($, 'epicNext', { issue: 40 })).text).toMatch(/Can start stacked[^\n]*#44 "UI" on #43 \(PR #14\)/)
+  const stacked = await tool($, 'epicBrief', { issue: 40, sub: 44, role: 'implementer' })
+  expect(stacked.isError).toBe(false)
+  expect(commandOf(stacked.text)).toContain('--base-branch origin/issue-43')
+  expect(w.epic()?.issues['44']?.stackedOn).toBe(43)
+})
+
+test('epicBrief for a stackable issue branches from the head of the blocker PR and records stackedOn, and only then can it start', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  // Before the blocker has a PR: no brief and no start.
+  const tooEarly = await tool($, 'epicBrief', { issue: 40, sub: 42, role: 'implementer' })
+  expect(tooEarly.isError).toBe(true)
+  expect(tooEarly.text).toMatch(/#41[\s\S]*waiting/)
+  await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1' })
+  await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'reviewing', pr: 12, worker: 'r1' })
+  w.s.prs[12] = head('issue-41')
+  // A start with no stacked brief is refused and names the brief.
+  const noBrief = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'implementing', worker: 'd2' })
+  expect(noBrief.isError).toBe(true)
+  expect(noBrief.text).toContain('#41')
+  expect(noBrief.text).toContain('mcp__ndev__epicBrief')
+  expect(w.epic()?.issues['42']?.state).toBe('waiting')
+  const r = await tool($, 'epicBrief', { issue: 40, sub: 42, role: 'implementer' })
+  expect(r.isError).toBe(false)
+  expect(w.gh).toContain('pr-read 12')
+  expect(commandOf(r.text)).toContain('--name 42-api --base-branch origin/issue-41 ')
+  expect(r.text).toMatch(/stacked on #41[^\n]*PR #12/i)
+  const brief = w.files.get(`${ROOT}/.git/worktrees/x/ndev-epic/epic-40-42-implementer.md`)!
+  for (const part of ['Stacked on #41', 'PR #12', 'origin/issue-41', '--base issue-41']) expect(brief).toContain(part)
+  expect(w.epic()?.issues['42']?.stackedOn).toBe(41)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'implementing', worker: 'd2', workspace: '/w/42-api' })).isError).toBe(false)
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'implementing', stackedOn: 41 })
+  expect((await tool($, 'epicStatus', {})).text).toMatch(/#42[^\n]*stacked on #41/)
+  // An issue with no unmerged blocker keeps the default branch and no stack.
+  const plain = await tool($, 'epicBrief', { issue: 40, sub: 43, role: 'implementer' })
+  expect(commandOf(plain.text)).toContain('--base-branch origin/main ')
+  expect(w.epic()?.issues['43']?.stackedOn).toBeUndefined()
+  expect(w.files.get(`${ROOT}/.git/worktrees/x/ndev-epic/epic-40-43-implementer.md`)).not.toContain('Stacked')
+})
+
+test('epicBrief refuses to stack on a PR that GitHub says is merged or closed, and names the repair', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'verified', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41] }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41') }
+  const merged = await tool($, 'epicBrief', { issue: 40, sub: 42, role: 'implementer' })
+  expect(merged.isError).toBe(true)
+  expect(merged.text).toMatch(/PR #12[\s\S]*merged[\s\S]*state "merged"/)
+  expect(merged.text).toContain('Nothing was written')
+  expect(w.epic()?.issues['42']?.stackedOn).toBeUndefined()
+  w.s.prs[12] = { state: 'closed', merged: false, ...head('issue-41') }
+  const closed = await tool($, 'epicBrief', { issue: 40, sub: 42, role: 'implementer' })
+  expect(closed.isError).toBe(true)
+  expect(closed.text).toMatch(/PR #12[\s\S]*closed/)
+  w.s.prs[12] = head('issue-41')
+  expect((await tool($, 'epicBrief', { issue: 40, sub: 42, role: 'implementer' })).isError).toBe(false)
+})
+
+test('the merge of a blocker names each issue stacked on it and the instruction for its worker, and keeps stackedOn', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'verified', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, implementer: 'd2', stackedOn: 41 }), sub(43, { state: 'verified', pr: 14 }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41') }
+  w.s.prs[14] = { state: 'closed', merged: true }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(r.isError).toBe(false)
+  expect(r.text).toMatch(/Stacked on #41: #42/)
+  for (const part of ['orca orchestration send --to dispatch:d2', 'git fetch origin', 'git merge origin/main', 'mcp__ndev__checkpoint', 'gh pr edit 13 --repo acme/w --base main', 'origin/issue-41']) expect(r.text).toContain(part)
+  expect(w.epic()?.issues['42']?.stackedOn).toBe(41)
+  // A merge with nothing stacked on it says nothing of a stack.
+  const plain = await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'merged' })
+  expect(plain.isError).toBe(false)
+  expect(plain.text).not.toContain('Stacked on')
+})
+
+test('verified refuses a PR whose base is not the default branch, and a pass clears stackedOn', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'merged', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, implementer: 'd2', stackedOn: 41 }), sub(43, { state: 'reviewing', pr: 14 }))
+  w.s.prs[13] = { base: { ref: 'issue-41' } }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'verified', verdict: 'approve' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toMatch(/Failed:[^\n]*base[^\n]*"issue-41"[^\n]*"main"/)
+  expect(r.text).toContain('gh pr edit 13 --repo acme/w --base main')
+  expect(r.text).toContain('git merge origin/main')
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'reviewing', stackedOn: 41 })
+  w.s.prs[13] = { base: { ref: 'main' } }
+  const passed = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'verified', verdict: 'approve' })
+  expect(passed.isError).toBe(false)
+  expect(passed.text).toMatch(/Passed:[^\n]*base is main/)
+  expect(w.epic()?.issues['42']?.state).toBe('verified')
+  expect(w.epic()?.issues['42']?.stackedOn).toBeUndefined()
+  // The rule holds for a PR that was never stacked, and a base that GitHub did not give is not a pass.
+  w.s.prs[14] = { base: { ref: 'release' } }
+  const other = await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'verified', verdict: 'approve' })
+  expect(other.isError).toBe(true)
+  expect(other.text).toMatch(/Failed:[^\n]*"release"/)
+  w.s.prs[14] = { base: undefined }
+  const unread = await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'verified', verdict: 'approve' })
+  expect(unread.isError).toBe(true)
+  expect(unread.text).toMatch(/Not run:[^\n]*base/)
+})
+
+test('verified refuses a stacked PR while its blocker is not merged in the record, also when its base is the default branch', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  const subs = (state: SubIssue['state']) => [sub(41, { state, pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, stackedOn: 41 })]
+  setIssues(w, ...subs('verified'))
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'verified', verdict: 'approve' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toMatch(/Failed:[^\n]*stacked on #41[^\n]*"verified"/)
+  expect(r.text).toContain('state "merged"')
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'reviewing', stackedOn: 41 })
+  setIssues(w, ...subs('merged'))
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'verified', verdict: 'approve' })).isError).toBe(false)
 })

@@ -619,18 +619,27 @@ An epic is one issue that is planned once and built as many sub-issues. One sess
 | `coordinating` | Every sub-issue is merged | |
 | `closing` | The epic is checked end to end | `evidence` |
 
-A sub-issue goes `waiting → implementing → reviewing → verified → merged`, with `reviewing ⇄ fixing` for each round of findings and `blocked` from any state. After three rounds the answer says to narrow the issue, split it or ask the human.
+A sub-issue goes `waiting → implementing → reviewing → verified → merged`, with `reviewing ⇄ fixing` for each round of findings and `blocked` from any state. After three rounds the answer says to narrow the issue, split it or ask the human. A sub-issue starts when each blocker is merged, or **stacked**: on the PR branch of a blocker that is not merged yet (below).
 
 | Tool | What it does |
 |---|---|
 | `epicStarted` | Starts or resumes the epic, binds the session and turns the usual workflow off for it. It keeps the Orca `run` and `repoId`, the roles (default: a Claude implementer, a Codex reviewer) and `parallel` (default 4). It refuses while a usual workflow of the session is open. |
 | `epicPhase` | Ends the current phase after its check. `slicing` refuses an empty list, a duplicate, an unknown blocker, a cycle and an issue that is not open. `closing` turns the usual workflow back on. |
-| `epicNext` | Read-only. The frontier: the waiting sub-issues whose blockers are all merged, in number order, cut to the free places. Code computes the order, never the model. |
-| `epicBrief` | Writes the implementer or reviewer brief to a file outside the worktree and answers with the filled `orca orchestration worker-start` command. The reviewer command works in the implementer's workspace and is refused while the record has none. The tool starts no worker: the coordinator runs the command. |
-| `epicIssue` | Records one move of a sub-issue. A start must be on the frontier. `reviewing → verified` runs the verify checks. `verified → merged` needs GitHub to say the PR is merged, and answers with the new frontier. |
+| `epicNext` | Read-only. The frontier, in number order: the waiting sub-issues whose blockers are all merged, then those that can start stacked, the two together cut to the free places. It names each issue that cannot stack and why. Code computes the order, never the model. |
+| `epicBrief` | Writes the implementer or reviewer brief to a file outside the worktree and answers with the filled `orca orchestration worker-start` command. The reviewer command works in the implementer's workspace and is refused while the record has none. For an implementer that starts stacked, it reads the blocker's PR from GitHub, gives `--base-branch origin/<head branch of that PR>`, adds the stack rules to the brief and records `stackedOn`. It refuses an implementer brief for a waiting sub-issue that can start neither way. The tool starts no worker: the coordinator runs the command. |
+| `epicIssue` | Records one move of a sub-issue. A start must be on the frontier, and a stacked start needs the stacked brief first. `reviewing → verified` runs the verify checks. `verified → merged` needs GitHub to say the PR is merged, and answers with the new frontier and with each sub-issue stacked on the merged one. |
 | `epicStatus` | Read-only. The state, the next step and the sub-issues by state. |
 
-The verify checks refuse unless the PR is open and not a draft, every check on its head commit has passed, it is mergeable, and each file that the diff adds under `supabase/migrations/` is in the section of the PR body that `addMigration` writes. The answer gives passed, failed and not run apart; a check that could not be read is not a pass.
+The verify checks refuse unless the PR is open and not a draft, its base is the default branch, every check on its head commit has passed, it is mergeable, the sub-issue it was stacked on is merged in the record, and each file that the diff adds under `supabase/migrations/` is in the section of the PR body that `addMigration` writes. The answer gives passed, failed and not run apart; a check that could not be read is not a pass.
+
+**Stacked sub-issues.** A chain P1 → P2 → P3 would run one at a time if each waited for a merge. So a waiting sub-issue can start while a blocker is in `reviewing`, `fixing` or `verified` with its PR recorded: the blocker's branch is pushed by then. Its worktree starts from that branch, and its PR takes that branch as its base, so the PR shows only its own change.
+
+- One unmerged blocker: the sub-issue stacks on it. Several: it stacks only when one of their branches holds the others, which the record shows as a chain of `stackedOn`. Otherwise `epicNext` answers "Not stackable" with the reason, and the sub-issue waits until all but one are merged.
+- `epicBrief` sets `stackedOn` on the sub-issue. It refuses when GitHub says the blocker's PR is merged (record the merge first) or closed.
+- When the blocker moves to `merged`, the answer names each sub-issue stacked on it and the instruction for its worker: `git fetch origin`, `git merge origin/<default branch>`, push with `checkpoint`, then `gh pr edit <PR> --repo <repo> --base <default branch>`. The tool sends nothing: the coordinator sends it. The worker merges and does not rebase, because the workflow's push is a plain push.
+- `stackedOn` stays until the verify checks pass. They refuse a PR whose base is not the default branch, and a stacked PR whose blocker is not `merged` in the record, each with its repair. So a stack merges from the bottom.
+
+Limits: as for a stacked triage group, the worker's `started` takes the default branch as the base and the worker changes only the base of the PR on GitHub. `started` can block on the open blocker, and the review, the sweep and `done` can count a file of the blocker, such as a migration, as the worker's; the brief names both repairs. A fix to a blocker's PR does not reach its stack by itself: the coordinator tells the stacked worker to merge the blocker's branch in. The head branch must be in `origin`; a PR from a fork cannot carry a stack.
 
 The record is `.neil-dev.epic-<issue>.json` in the worktree root, git-ignored. While the session is bound to an epic that is not done, the system text carries one line with the epic, its state and the next step, so a compaction does not lose it. Only the main agent may call the tools.
 
