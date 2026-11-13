@@ -77,7 +77,7 @@ const engine = (on: On, opts: Opts = {}) => {
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
-    merging: undefined as string | undefined, removed: [] as string[], renamedFrom: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
+    merging: undefined as string | undefined, unchanged: [] as string[], removed: [] as string[], renamedFrom: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
@@ -222,6 +222,8 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'check-ignore') return ok('x\n')
       if (a[1] === 'cat-file') return s.blobSize ? ok(`${s.blobSize}\n`) : ok('', 1)
       if (a[1] === 'worktree') return s.worktreeListFails ? ok('', 128, s.worktreeListFails) : ok([ROOT, ...s.otherWorktrees].map(path => `worktree ${path}\n`).join(''))
+      // As real git does: git add of a file that equals its HEAD version stages nothing.
+      if (a[1] === 'add' && a.slice(a.indexOf('--') + 1).every(f => s.unchanged.includes(f))) return ok()
       // As real git does: a path whose deletion is already staged is in neither the tree nor the index, so no pathspec matches it.
       if (a[1] === 'add') { const gone = a.slice(a.indexOf('--') + 1).find(f => s.removed.includes(f) || s.renamedFrom.includes(f)); if (gone) return ok('', 128, `fatal: pathspec '${gone}' did not match any files`); s.staged = true; return ok() }
       if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
@@ -1789,6 +1791,18 @@ test('a failed check during a merge says that HEAD is the commit before the merg
   expect(r.isError).toBe(true)
   expect(r.text).toContain('A merge is in progress')
   expect(r.text).toContain(`NDEV_MERGE_BASE=${NEW_BASE}`)
+})
+
+test('a merge that changes no file is still committed as the merge, and pushed', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.merging = NEW_BASE
+  w.s.unchanged = ['a.ts']
+  const r = await tool($, 'checkpoint', { message: 'Merge origin/main', files: ['a.ts'] })
+  expect(r.isError).toBe(false)
+  expect(w.commits).toHaveLength(1)
+  expect(w.commits[0]).toContain('Merge origin/main')
+  expect(w.pushes).toHaveLength(1)
 })
 
 test('a failed fast check stops the commit and the slower checks, and names the script', async ($, on) => {

@@ -450,13 +450,15 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   }
   if (toAdd.length) await must($, ['git', 'add', '--', ...toAdd], { cwd: root })
   const staged = (await git(root, $, 'diff', '--cached', '--quiet')).exitCode !== 0
-  if (staged) {
+  // A merge that changes no file still has a commit to make: the merge, with its second parent.
+  const merging = (await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0
+  if (staged || merging) {
     try {
       // The fast tools first: they name the line in seconds, before the slower script starts.
       let stagedFiles = (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=d')).split('\n').filter(Boolean)
       // A merge stages all that the base brought in. A file whose staged version is the base's version
       // is not this branch's change: its faults are the base's, so the fast checks leave it out.
-      if ((await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0) {
+      if (merging) {
         const differs = new Set((await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=d', 'MERGE_HEAD')).split('\n').filter(Boolean))
         const fromBase = stagedFiles.filter(f => !differs.has(f))
         stagedFiles = stagedFiles.filter(f => differs.has(f))
