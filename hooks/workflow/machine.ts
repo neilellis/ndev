@@ -32,6 +32,8 @@ export type Facts = {
   baseChecked?: boolean
   // Only for done before the review: the issue is closed, the branch holds no change and no PR is open.
   noChange?: boolean
+  // Only for done after the review: the tool read the PR, and a human merged it.
+  prMerged?: boolean
 }
 export type Position = { state: State; previous?: State }
 export type Move = Position | { refused: string }
@@ -51,6 +53,8 @@ const wrong = (position: Position, tool: string): Move => ({
 })
 
 const PAST_DEVELOPMENT: State[] = ['reviewing', 'ci', 'smoke', 'finishing']
+// A human can merge the PR before the workflow reaches finishing. done then ends it from any of these states.
+export const MERGEABLE_BEFORE_DONE: State[] = ['reviewing', 'ci', 'smoke', 'revising']
 // done can end an issue that was closed with no change before its review, such as one that another change fixed.
 export const BEFORE_REVIEW: State[] = ['interviewing', 'planning', 'developing']
 
@@ -131,6 +135,7 @@ export function afterTool(position: Position, tool: Tool, facts: Facts): Move {
   if (tool === 'finishedSmoke' && state === 'smoke') return { state: 'finishing' }
   if (tool === 'finishedRevision' && state === 'revising') return { state: 'ci' }
   if (tool === 'done' && facts.noChange && BEFORE_REVIEW.includes(state)) return { state: 'done' }
+  if (tool === 'done' && facts.prMerged && MERGEABLE_BEFORE_DONE.includes(state)) return { state: 'done' }
   if (tool === 'done' && state === 'finishing') return { state: facts.feedback ? 'revising' : 'done' }
   return wrong(position, tool)
 }

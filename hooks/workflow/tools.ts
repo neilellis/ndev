@@ -19,7 +19,7 @@ import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
 import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
-import { ATTEMPT_LIMIT, BEFORE_REVIEW, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
+import { ATTEMPT_LIMIT, BEFORE_REVIEW, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
 import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseRound, resultOf, startingAnswers } from './interview-model'
 import type { InterviewFile, InterviewRound } from './interview-model'
@@ -1074,6 +1074,17 @@ function havePr(wf: Workflow) {
   if (!wf.direct && !wf.prs.length) throw new Refuse(`Refused: the workflow of #${wf.issue} has no PR. Nothing changed. Call started with issue ${wf.issue}: it opens the draft PR.`)
 }
 
+// A human can merge the PR while the workflow is still in review, ci, smoke or revising. Its branch then takes no
+// commit that the PR would carry, and only done is left: it ends the record as after a merge in finishing.
+async function mergedBeforeDone($: EngineInterface, wf: Workflow): Promise<Pr | undefined> {
+  const n = wf.prs[0]
+  if (wf.direct || !n || !MERGEABLE_BEFORE_DONE.includes(wf.state)) return undefined
+  const pr = await readPr($, wf.root, wf.repo, n)
+  return pr.merged ? pr : undefined
+}
+const mergedRefusal = (pr: Pr, tool: string, sha: string) =>
+  `Refused: PR #${pr.number} is merged, at ${pr.head.sha.slice(0, 8)}${pr.head.sha === sha ? '' : `, and HEAD is ${sha.slice(0, 8)}`}, so ${tool === 'checkpoint' ? 'its branch takes no commit that the PR would carry' : 'there are no checks left for it'}. Nothing changed. Repair: call done with a message and remembered: it ends the workflow of a merged PR. File other work with followUp and the mode issue_only.`
+
 // A finished PR can still take a commit, such as a conflict fix, until it merges or closes.
 async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolean> {
   const n = wf.prs[0]
@@ -1098,6 +1109,8 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   const declared = declaredTypes(args)
   const facts = await factsFor($, wf.root, project, wf)
   const prOpen = await isOpenAfterDone($, wf)
+  const mergedPr = await mergedBeforeDone($, wf)
+  if (mergedPr) throw new Refuse(mergedRefusal(mergedPr, 'checkpoint', await head(wf.root, $)))
   legal(wf, 'checkpoint', { ...facts, prOpen })
   refuseBeforeBaseCheck(wf, 'checkpoint')
   havePr(wf)
@@ -1589,6 +1602,7 @@ async function finishedChecks($: EngineInterface, c: Ctx): Promise<string> {
   const sha = await head(wf.root, $)
   if (wf.prs[0]) {
     const pr = await readPr($, wf.root, wf.repo, wf.prs[0])
+    if (pr.merged) throw new Refuse(mergedRefusal(pr, 'finishedChecks', sha))
     if (pr.head.sha !== sha) throw new Refuse(`Refused: PR #${pr.number} is at ${pr.head.sha.slice(0, 8)}, and HEAD is ${sha.slice(0, 8)}. Push it: call checkpoint with no files, which pushes a held commit.`)
   }
   const checks = await readChecks($, wf.root, wf.repo, sha, wf.prs[0])
@@ -1690,7 +1704,8 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, project, wf)
   const noChange = BEFORE_REVIEW.includes(wf.state)
-  if (!noChange) legal(wf, 'done', facts)
+  const mergedEarly = noChange ? undefined : await mergedBeforeDone($, wf)
+  if (!noChange) legal(wf, 'done', { ...facts, prMerged: !!mergedEarly })
   await noAgentsRunning($)
   const message = text(args, 'message')
   if (!message) throw new Refuse('Refused: done needs a message that says what was finished.')
@@ -1712,7 +1727,7 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   }
   const sha = await head(wf.root, $)
   havePr(wf)
-  const pr = !wf.direct && wf.prs[0] ? await readPr($, wf.root, wf.repo, wf.prs[0]) : undefined
+  const pr = mergedEarly ?? (!wf.direct && wf.prs[0] ? await readPr($, wf.root, wf.repo, wf.prs[0]) : undefined)
   const { problems, feedback } = pr?.merged ? { problems: [], feedback: [] } : await doneProblems($, wf, sha, pr)
   if (feedback.length) {
     await move($, c, wf, 'done', { ...facts, feedback: true })
@@ -1752,7 +1767,7 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   if (followUps.length) notes.push(`Follow-ups elsewhere: ${followUps.map(f => `${(f.issues ?? [f.issue]).map(i => `#${i}`).join(', ')} (${f.mode})`).join(', ')}.`)
   wf.doneMessage = message
   wf.hooks = { ...wf.hooks, remember: { firedAt: wf.hooks?.remember?.firedAt ?? (await $.clock.now()), result: remembered.slice(0, 2000) } }
-  await move($, c, wf, 'done', facts)
+  await move($, c, wf, 'done', { ...facts, prMerged: !!mergedEarly })
   await saveWorkflow($, wf)
   if (wf.state === 'done') notes.push(...(await stopResources($, wf, project)))
   return answer($, wf, facts, notes)
