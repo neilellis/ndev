@@ -116,13 +116,14 @@ const STALE_REPAIR = 'Repair: run /dev remote <server> to save another, or /dev 
 
 // The server for /dev triage start --remote: the one named, else the one /dev remote saved, else the only one Orca
 // has. A saved server that Orca no longer has is refused; it never falls back to another.
-export async function triageRemote($: EngineInterface, project: LoadedConfig | undefined, wanted: string): Promise<Server> {
-  if (wanted) return remoteServer($, wanted, '--remote', '/dev triage start --remote', project?.root)
+// The epic takes the same server for its workers (epicStarted with remote); `what` and `again` then name that call.
+export async function triageRemote($: EngineInterface, project: LoadedConfig | undefined, wanted: string, what = '--remote', again = '/dev triage start --remote'): Promise<Server> {
+  if (wanted) return remoteServer($, wanted, what, again, project?.root)
   const saved = await savedRemote($, project)
-  if (!saved) return remoteServer($, '')
+  if (!saved) return remoteServer($, '', what, again)
   const servers = await orcaServers($)
   const now = servers.find(s => s.id === saved.id)
-  if (!now) throw new Error(`--remote: ${stale(projectKey(project), saved, servers)}\n${STALE_REPAIR} Or name one, as in /dev triage start --remote <server>.`)
+  if (!now) throw new Error(`${what}: ${stale(projectKey(project), saved, servers)}\n${STALE_REPAIR} Or name one, as in ${again} <server>.`)
   return now
 }
 

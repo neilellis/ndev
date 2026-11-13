@@ -34,6 +34,8 @@ Load the `orchestration` skill once for the Orca commands. Then, for each wake:
 5. **Verify:** `epicIssue(state: "verified")`. It refuses unless the PR is open, out of draft, green, mergeable and its migrations are registered. Then read the diff yourself for scope: the completion checklist of the issue, and anything the issue did not ask for.
 6. **Merge** with the `ndev:merge` skill, which applies the registered migrations. Then `epicIssue(state: "merged")` and start the new frontier.
 
+**Workers on the saved server.** Only when the human asks for it: `mcp__ndev__epicStarted(issue, remote: true)` starts the workers of new sub-issues on the Orca server that `/dev remote` saved for the project (a string names another saved server; `remote: false` goes back to this machine). It also needs `remoteRepo`, the selector of the repository on that server, from `orca repo list --environment <server> --json`. The commands from `epicBrief` then carry `--on <server>`; run them as given. Record the implementer's `workspace` as the worktree id on the server (`<repoId>::<path>`, the `id` that `orca worktree list --environment <server> --json` lists), not a path. A sub-issue in flight stays where its workspace is. Address a remote worker by its dispatch id only, and push the spec files first: the server has only what is on GitHub. A refusal names the missing value and its repair; never fall back to this machine by yourself.
+
 When every sub-issue is merged, `epicPhase(finished: "coordinating")`. In `closing`, check the epic end to end against the aim (the acceptance in the spec, run for real where the human allows it), list what remains, and report.
 
 ## Rulings
