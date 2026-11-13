@@ -132,8 +132,9 @@ test('create, remove, off and list are subcommands, never server names', async (
   const w = engine(on, [{ id: 'cc33-z', name: 'create' }, { id: 'dd44-w', name: 'list' }])
   await start($)
 
-  for (const word of ['create', 'remove', 'create orca-dev-2', 'remove orca-dev-2']) {
-    expect(await remote($, word)).toMatch(/not built yet/)
+  // create and remove make and delete a Hetzner server (tests/dev-remote-host.test.ts); neither is taken as a server's name.
+  for (const word of ['create', 'remove']) {
+    expect(await remote($, word)).toMatch(new RegExp(`needs the name of the remote, as in /dev remote ${word} <name>`))
   }
   expect(w.saved()).toBeUndefined()
   // A server with a reserved name is saved by its id.

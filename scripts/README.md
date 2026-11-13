@@ -90,3 +90,10 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `notify.sh` | Shows the macOS notification of a blocked workflow with `osascript`, and leaves no process running. `withdraw` stops watchers that the older `alerter` version left. Tests: `tests/workflow_scripts.test.mjs`. | `hooks/workflow/` |
 | `merge.sh` | Merges a PR through REST and prints its base and migrations as JSON. A stacked PR goes through merge-async, and one above the bottom of its stack needs `--stack`. It is safe to run twice. Tests: `tests/workflow_scripts.test.mjs`. | `merge` skill, `done` |
 | `fast-checks-template.sh` | The template for a project's `fast-checks.sh`: ruff, ty, oxlint and ast-grep on the named files. Tests: `tests/workflow_scripts.test.mjs`. | Copied to `scripts/ndev/workflow/` |
+
+## remote/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `root-setup.sh` | The first build of a server that `/dev remote create` made from the base image: packages, Docker, key-only SSH, host keys that a snapshot restore keeps, and the workspace user. It runs on the server as root (`u=<user> bash -s` over SSH), never on a desktop, and prints the server's new host key. | `hooks/remote-host.ts` |
+| `floating-ip.sh` | Puts a floating IPv4 on `eth0` of the server (`ip addr add <floating ip> dev eth0`) and writes Hetzner's netplan file so it survives a restart. It checks first, so a second run changes nothing. It runs on the server as root (`floating=<ip> bash -s` over SSH). | `hooks/remote-host.ts` |

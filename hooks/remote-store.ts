@@ -4,25 +4,15 @@ import type { LoadedConfig } from './config'
 import { makeRun, orca } from './fix-all-prs'
 
 // The /dev remote record of this machine, ~/.config/ndev/remote.json. A saved Orca server is an entry in this
-// machine's Orca, and the host keys of a server ndev made are what this machine trusts, so both live here, never in a
+// machine's Orca, and the host key of a server ndev made is what this machine trusts, so both live here, never in a
 // commit. `projects`: the Orca server each project uses as its remote machine, keyed by its GitHub repository (the
-// project folder when it has none). `hosts`: each Hetzner server /dev remote create made, by name, with the host keys
-// kept when /dev remote remove snapshotted it, so a restore trusts only those keys.
+// project folder when it has none). `hosts`: each Hetzner server /dev remote create made, by name: the hcloud context
+// (the Hetzner project that pays), the SSH key it was made with, its floating IP (the id, and the address, which is
+// the remote's address), and the host key the first
+// build recorded. The snapshot carries that host key, so a restore trusts only it.
 export type Server = { id: string; name: string }
 export type Saved = Server & { savedAt?: string }
-export type HostRecord = {
-  context: string
-  project: string
-  username: string
-  serverId?: number
-  ip?: string
-  firewall?: string
-  orcaId?: string
-  prepared?: boolean
-  hostKeys?: string[]
-  snapshotId?: number
-  snapshotCreated?: string
-}
+export type HostRecord = { context: string; sshKey?: string; floatingIp?: number; ip?: string; hostKey?: string }
 export type Store = { projects: Record<string, Saved>; hosts: Record<string, HostRecord> }
 
 export async function storePath($: EngineInterface): Promise<string> {
