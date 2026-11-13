@@ -16,7 +16,7 @@
 #   gh.sh pr-read <n>                                  # {number,state,merged,draft,mergeable,mergeable_state,...}
 #   gh.sh pr-list [--head <branch>] [--state open|closed|all] [--limit <n>]     # one line per PR
 #   gh.sh pr-rows [--limit <n>]     # your open PRs with merge state and checks, in one call; gh's shape; no REST route
-#   gh.sh commit-checks <sha> [--pr <n>]               # {check_runs,statuses}. --pr makes it one gh call
+#   gh.sh commit-checks <sha> [--pr <n>]               # {check_runs,statuses}. --pr: one gh call, only the runs of the PR's branch
 #   gh.sh feedback <issue> <pr>                        # one line per comment, review and inline comment
 #   gh.sh comment <n> --body <t>                       # issue or PR
 #   gh.sh pr-review <n> --commit <sha> --body <t>      # a comment review
@@ -288,6 +288,25 @@ graph_checks() {
 }
 checks_of_commit() { rest_first "read the checks of $sha in $REPO" rest_checks graph_checks; }
 
+# The checks of a PR. Two PRs from two branches can have the same head commit, and GitHub lists
+# checks by commit, so the rollup of one PR holds the runs of the other. A run counts for this PR
+# only when its check suite is on the PR's head branch, or on no branch.
+PR_CHECKS_QUERY='query($owner: String!, $name: String!, $sha: GitObjectID!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { headRefName } object(oid: $sha) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name status conclusion startedAt checkSuite { branch { name } } } ... on StatusContext { context state } } } } } } } }'
+PR_CHECKS_FROM_GRAPH='.data.repository as $r | $r.pullRequest.headRefName as $b
+  | [$r.object.statusCheckRollup.contexts.nodes[]? | select(.__typename != "CheckRun" or (.checkSuite.branch.name // $b) == $b)] | '"$ROLLUP_TO_CHECKS"
+rest_pr_checks() {
+  local pull branch runs suites statuses
+  pull="$(GH api "repos/$REPO/pulls/$pr")" || return $?
+  branch="$(jq -r '.head.ref' <<<"$pull")" || return $?
+  runs="$(GH api "repos/$REPO/commits/$sha/check-runs?per_page=100&filter=latest")" || return $?
+  suites="$(GH api "repos/$REPO/commits/$sha/check-suites?per_page=100")" || return $?
+  statuses="$(GH api "repos/$REPO/commits/$sha/status?per_page=100")" || return $?
+  jq -cn --arg b "$branch" --argjson runs "$runs" --argjson suites "$suites" --argjson statuses "$statuses" \
+    '($suites.check_suites | map({key: (.id | tostring), value: .head_branch}) | from_entries) as $on
+    | {check_runs: [$runs.check_runs[] | select(($on[.check_suite.id | tostring] // $b) == $b) | {name, started_at, status, conclusion}],
+       statuses: [$statuses.statuses[] | {context, state}]}'
+}
+
 FEEDBACK_QUERY='query($owner: String!, $name: String!, $issue: Int!, $pr: Int!) { repository(owner: $owner, name: $name) {
   issue(number: $issue) { comments(first: 100) { nodes { databaseId body createdAt author { __typename login } } } }
   pullRequest(number: $pr) {
@@ -388,13 +407,8 @@ case "$cmd" in
       # gh has no command for the checks of a commit.
       checks_of_commit
     else
-      # The rollup belongs to the PR head. A PR that moved says nothing about this commit, so REST reads it.
-      rollup="$(gh_first "read the checks of PR #$pr of $REPO" '.' rest_checks pr view "$pr" --repo "$REPO" --json headRefOid,statusCheckRollup)"
-      case "$(jq -r 'if has("check_runs") then "rest" elif .headRefOid == $sha then "same" else "moved" end' --arg sha "$sha" <<<"$rollup")" in
-        rest) printf '%s\n' "$rollup" ;;
-        moved) checks_of_commit ;;
-        same) jq -c '.statusCheckRollup | '"$ROLLUP_TO_CHECKS" <<<"$rollup" ;;
-      esac
+      # gh pr view gives no branch for a check, so one GraphQL call reads the commit and the PR branch.
+      gh_first "read the checks of $sha for PR #$pr of $REPO" "$PR_CHECKS_FROM_GRAPH" rest_pr_checks api graphql -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F sha="$sha" -F pr="$pr" -f query="$PR_CHECKS_QUERY"
     fi
     ;;
 

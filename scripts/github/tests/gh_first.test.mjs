@@ -105,21 +105,20 @@ test('pr-list with no pull requests prints nothing and passes', () => {
 const ROLLUP = { headRefOid: 'abc', statusCheckRollup: [{ __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: 't1' }, { __typename: 'CheckRun', name: 'e2e', status: 'IN_PROGRESS', conclusion: '' }, { __typename: 'StatusContext', context: 'vercel', state: 'PENDING' }] }
 const CHECKS = { check_runs: [{ name: 'unit', started_at: 't1', status: 'completed', conclusion: 'success' }, { name: 'e2e', started_at: null, status: 'in_progress', conclusion: null }], statuses: [{ context: 'vercel', state: 'pending' }] }
 
-test('commit-checks reads the PR rollup in one gh call, in the shape of REST', () => {
-  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'pr view 12', out: JSON.stringify(ROLLUP) }])
+test('commit-checks --pr reads the commit and the PR branch in one gh call, in the shape of REST', () => {
+  const graph = { data: { repository: { pullRequest: { headRefName: 'feat' }, object: { statusCheckRollup: { contexts: { nodes: ROLLUP.statusCheckRollup } } } } } }
+  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'api graphql', out: JSON.stringify(graph) }])
   assert.equal(r.code, 0, r.err)
   assert.equal(r.calls.length, 1)
   assert.deepEqual(json(r), CHECKS)
 })
 
-test('commit-checks reads the commit through REST when the PR head is another commit, or gh fails', () => {
-  const rules = [{ match: 'pr view', out: JSON.stringify({ ...ROLLUP, headRefOid: 'other' }) }, { match: 'commits/abc/check-runs', out: JSON.stringify({ check_runs: CHECKS.check_runs, total_count: 2 }) }, { match: 'commits/abc/status', out: JSON.stringify({ statuses: CHECKS.statuses, state: 'pending' }) }]
-  const moved = ghsh(['commit-checks', 'abc', '--pr', '12'], rules)
-  assert.equal(moved.code, 0, moved.err)
-  assert.deepEqual(json(moved), CHECKS)
-  const failed = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'pr view', err: LIMITED, exit: 1 }, ...rules.slice(1)])
+test('commit-checks reads the commit through REST when gh fails, or with no PR', () => {
+  const rules = [{ match: 'commits/abc/check-runs', out: JSON.stringify({ check_runs: CHECKS.check_runs, total_count: 2 }) }, { match: 'commits/abc/status', out: JSON.stringify({ statuses: CHECKS.statuses, state: 'pending' }) }]
+  const failed = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'api graphql', err: LIMITED, exit: 1 }, { match: 'api repos/o/r/pulls/12', out: JSON.stringify(REST_PR) }, { match: 'commits/abc/check-suites', out: '{"total_count":0,"check_suites":[]}' }, ...rules])
+  assert.equal(failed.code, 0, failed.err)
   assert.deepEqual(json(failed), CHECKS)
-  const noPr = ghsh(['commit-checks', 'abc'], rules.slice(1))
+  const noPr = ghsh(['commit-checks', 'abc'], rules)
   assert.equal(noPr.calls.filter(c => c.startsWith('pr ')).length, 0)
   assert.deepEqual(json(noPr), CHECKS)
 })
@@ -128,6 +127,44 @@ test('commit-checks with no PR and no REST quota reads the commit through GraphQ
   const r = ghsh(['commit-checks', 'abc'], [{ match: 'commits/abc', err: LIMITED, exit: 1 }, { match: 'api graphql', out: JSON.stringify({ data: { repository: { object: { statusCheckRollup: { contexts: { nodes: ROLLUP.statusCheckRollup } } } } } }) }])
   assert.equal(r.code, 0, r.err)
   assert.deepEqual(json(r), CHECKS)
+})
+
+// Two PRs from two branches can share a head commit. GitHub lists the checks by commit, so the
+// rollup of one PR holds the runs of the other. Only the runs of this PR's branch are its checks.
+const MINE = { headRefOid: 'abc', headRefName: 'feat', statusCheckRollup: [
+  { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: 't1', checkSuite: { branch: { name: 'feat' } } },
+  { __typename: 'CheckRun', name: 'postgres', status: 'QUEUED', conclusion: '', startedAt: 't3', checkSuite: { branch: { name: 'feat' } } },
+  { __typename: 'CheckRun', name: 'postgres', status: 'COMPLETED', conclusion: 'CANCELLED', startedAt: 't2', checkSuite: { branch: { name: 'other' } } },
+  { __typename: 'CheckRun', name: 'sql-tests', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: 't4', checkSuite: { branch: { name: 'other' } } },
+  { __typename: 'CheckRun', name: 'app', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: 't1', checkSuite: { branch: null } },
+  { __typename: 'StatusContext', context: 'vercel', state: 'PENDING' }] }
+const OWN = { check_runs: [{ name: 'unit', started_at: 't1', status: 'completed', conclusion: 'success' }, { name: 'postgres', started_at: 't3', status: 'queued', conclusion: null }, { name: 'app', started_at: 't1', status: 'completed', conclusion: 'success' }], statuses: [{ context: 'vercel', state: 'pending' }] }
+const GRAPH_MINE = { data: { repository: { pullRequest: { headRefName: 'feat' }, object: { statusCheckRollup: { contexts: { nodes: MINE.statusCheckRollup } } } } } }
+
+test('commit-checks --pr leaves out the runs of another PR that has the same head commit', () => {
+  const rollup = { headRefOid: 'abc', statusCheckRollup: MINE.statusCheckRollup.map(({ checkSuite, ...c }) => c) }
+  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'pr view 12', out: JSON.stringify(rollup) }, { match: 'api graphql', out: JSON.stringify(GRAPH_MINE) }])
+  assert.equal(r.code, 0, r.err)
+  assert.equal(r.calls.length, 1)
+  assert.deepEqual(json(r), OWN)
+})
+
+test('commit-checks --pr through REST also leaves out the runs of another branch', () => {
+  const runs = { total_count: 5, check_runs: [
+    { name: 'unit', started_at: 't1', status: 'completed', conclusion: 'success', check_suite: { id: 1 } },
+    { name: 'postgres', started_at: 't3', status: 'queued', conclusion: null, check_suite: { id: 1 } },
+    { name: 'postgres', started_at: 't2', status: 'completed', conclusion: 'cancelled', check_suite: { id: 2 } },
+    { name: 'sql-tests', started_at: 't4', status: 'completed', conclusion: 'failure', check_suite: { id: 2 } },
+    { name: 'app', started_at: 't1', status: 'completed', conclusion: 'success', check_suite: { id: 3 } }] }
+  const suites = { total_count: 3, check_suites: [{ id: 1, head_branch: 'feat' }, { id: 2, head_branch: 'other' }, { id: 3, head_branch: null }] }
+  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [
+    { match: 'pr view', err: LIMITED, exit: 1 }, { match: 'api graphql', err: LIMITED, exit: 1 },
+    { match: 'api repos/o/r/pulls/12', out: JSON.stringify(REST_PR) },
+    { match: 'commits/abc/check-runs', out: JSON.stringify(runs) }, { match: 'commits/abc/check-suites', out: JSON.stringify(suites) },
+    { match: 'commits/abc/status', out: JSON.stringify({ statuses: OWN.statuses, state: 'pending' }) }])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.err, /Trying REST/)
+  assert.deepEqual(json(r), OWN)
 })
 
 test('a command that says why on stdout still has its words in the failure', () => {
