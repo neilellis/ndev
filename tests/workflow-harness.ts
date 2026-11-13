@@ -312,6 +312,7 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (a[2] === 'default-branch') return s.defaultBranchFails ? ok('', 1, s.defaultBranchFails) : ok(JSON.stringify({ default_branch: s.githubBase }))
       if (a[2] === 'pr-list' && line.includes('--state all')) return ok(s.branchPrs.map(p => JSON.stringify(p)).join('\n'))
       if (a[2] === 'pr-list') return ok(s.noOpenPr ? '' : '{"number":12}\n')
+      if (a[2] === 'pr-new') return ok(`https://github.com/${REPO}/pull/13\n`)
       if (a[2] === 'pr-edit') return ok('')
       if (a[2] === 'subissues') return s.linkFails ? ok('', 1, s.linkFails) : ok('')
       if (a[2] === 'commit-checks') return ok(JSON.stringify({ statuses: [], ...(s.checks as object) }))

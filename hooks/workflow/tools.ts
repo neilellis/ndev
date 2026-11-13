@@ -803,6 +803,24 @@ async function refuseMergedBranch($: EngineInterface, root: string, repo: string
   throw new Refuse(`Refused: the branch ${branch} of ${root} has merged in PR #${merged.number} and has no open PR, so issue #${issue} cannot start on it. Nothing changed. Repair: git -C ${root} fetch origin ${base} && git -C ${root} switch -c issue-${issue} origin/${base}, then call started again. Or start #${issue} from the main checkout, which claims a new worktree.`)
 }
 
+// GitHub marks a PR merged when another PR lands its head commit, and a human can close one, while the issue
+// goes on. A record before the merge point that names such a PR would send each later tool to a dead PR.
+// A merged PR cannot open again, so the record drops it and setUpPr opens a new draft PR. A closed one can.
+const BEFORE_PR = ['setup', 'interviewing', 'planning', 'developing', 'hardening']
+async function replaceDeadPr($: EngineInterface, wf: Workflow, issueState: string): Promise<string | undefined> {
+  const n = wf.prs[0]
+  const stage = wf.state === 'blocked' || wf.state === 'wait' ? wf.previous : wf.state
+  if (wf.direct || wf.merged || n === undefined || !BEFORE_PR.includes(stage ?? '') || issueState !== 'open') return undefined
+  const pr = await readPr($, wf.root, wf.repo, n)
+  if (pr.state === 'open') return undefined
+  if (!pr.merged) throw new Refuse(`Refused: PR #${n} is closed with no merge, and issue #${wf.issue} is open in the state "${wf.state}", so its work has no PR. Nothing changed. Repair: gh pr reopen ${n} --repo ${wf.repo}, then call started again. If the PR was closed on purpose, ask the human.`)
+  // A stale origin base counts commits that the merge put on the base, and the new PR needs one of its own.
+  await must($, ['git', 'fetch', 'origin', wf.base], { cwd: wf.root, timeoutMs: 120_000 })
+  wf.prs = []
+  wf.prsClosed = undefined
+  return `PR #${n} is merged (head ${pr.head.sha.slice(0, 8)}), but issue #${wf.issue} is open in the state "${wf.state}". The record no longer names #${n}: this call opens a new draft PR for the branch ${wf.branch}.`
+}
+
 async function started($: EngineInterface, c: Ctx): Promise<string> {
   if (await read($, workflowDeclined)) throw new Refuse('Refused: the human chose to work without the workflow in this session. Do the work without these tools, or ask the human to type /flow on.')
   const { args, project } = c
@@ -904,6 +922,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   const facts = await factsFor($, root, project, chosen ? { ...wf, mode: chosen as IssueSettings['mode'] } : wf)
   if (facts.mode === 'hack' && facts.steering === 'auto') throw new Refuse(HACK_AUTO(`issue #${issue}`, issue))
   if (!wf) mayOpen()
+  const deadPr = wf ? await replaceDeadPr($, wf, issueInfo.state) : undefined
   const blockers = (await ghLines<{ number: number; state: string }>($, root, repo, ['blocked-by', 'list', String(issue)])).filter(b => b.state === 'open')
   const missing = await missingChecks($, root)
   const branch = wf?.branch ?? joined?.branch ?? (await gitOut(root, $, 'rev-parse', '--abbrev-ref', 'HEAD'))
@@ -933,7 +952,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     if (pr.state === 'open') feedback = await newFeedback($, root, repo, issue, pr, record.feedbackAt ?? 0)
   }
   const to = afterStarted(isNew ? undefined : { state: record.state, previous: record.previous }, { mode: facts.mode, steering: facts.steering, scriptsMissing: missing.length > 0, blockerOpen: blockers.length > 0, feedback: feedback.length > 0 })
-  const notes: string[] = [...(claimFromMain ? [claimFromMain] : []), ...(claimNote ? [claimNote] : []), ...claimNotes]
+  const notes: string[] = [...(claimFromMain ? [claimFromMain] : []), ...(claimNote ? [claimNote] : []), ...(deadPr ? [deadPr] : []), ...claimNotes]
   notes.push(`Mode: ${facts.mode}, steering: ${facts.steering}, for issue #${issue}.`)
   notes.push('If this issue has the label "incomprehensible", a human could not understand it: rewrite it for clarity before any other work (work-heavy F0c).')
   if (active && !sameRecord(active, record)) {

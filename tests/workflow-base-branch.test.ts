@@ -61,6 +61,32 @@ test('a failed PR step in started keeps the record, so a retry resumes and does 
   expect(w.state()?.prs).toEqual([12])
 })
 
+// GitHub marks a PR merged when another PR lands its head commit. The issue can still be open, and its work goes on.
+test('started on a record whose PR GitHub merged opens a new draft PR, and says why', async ($, on) => {
+  const w = engine(on, { pr: { state: 'closed', merged: true, mergeable: null } })
+  await start($, w)
+  w.s.noOpenPr = true
+  w.s.ahead = '0'
+  const r = await tool($, 'started', { issue: 7 })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+  expect(w.state()?.prs).toEqual([13])
+  expect(r.text).toContain('PR #12 is merged')
+  expect(w.gh.some(c => c.includes('pr-new'))).toBe(true)
+  expect(w.pushes.length).toBe(1)
+})
+
+test('started on a record whose PR was closed with no merge refuses and names the reopen', async ($, on) => {
+  const w = engine(on, { pr: { state: 'closed', merged: false, mergeable: null } })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('PR #12 is closed with no merge')
+  expect(r.text).toContain('gh pr reopen 12 --repo acme/w')
+  expect(w.state()?.prs).toEqual([12])
+  expect(w.pushes).toEqual([])
+})
+
 test('a docs commit after green keeps the evidence, also on a retry after a failed push', async ($, on) => {
   const smoked = finishing()
   const w = engine(on, { wf: { ...smoked, evidence: { ...smoked.evidence, smoke: { sha: SHA, text: 'smoked' } } }, names: ['README.md'] })
