@@ -2491,6 +2491,10 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
 // inTurn queue, or /unblock could not get in. A hook's budget of ten seconds runs on through
 // $.clock.sleep and not through a $ call in flight, so the pause is a short process.
 const WAIT_SLICE_S = 2
+// On a busy computer each wake of the loop costs the hook far more of its own time (fcc-proto, load 150 on 10
+// cores: 100-230 ms a slice, so a 1200 s wait stopped after 1-4 checks). The pauses then grow, and the checks
+// space out, so that the time left lasts to the end of the wait. At most this long, so the owner stays live.
+const WAIT_PAUSE_MAX_S = 240
 
 // One pause of a waiting loop. The host aborts a pause that outran its limit, as when the computer
 // slept through it. Its time has passed, so it did its work, and the loop reads the clock again.
@@ -2852,22 +2856,42 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
   try {
     let tries = 0
     let last = ''
-    const gaveUp = async () => new Refuse(`${name} gave up on ${spec.what} within its timeout of ${timeoutS} s, after ${tries} attempts. ${tries ? `The last check: ${last}` : 'No check ran, because starting the wait used up the time'}. Repair: call it again, for at most ${WAIT_MAX_S} s more, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
+    const gaveUp = async () => new Refuse(`${name} gave up on ${spec.what} within its timeout of ${timeoutS} s, after ${tries} attempts. ${tries ? `The last check: ${last}` : 'No check ran, because starting the wait used up the time'}.${paceNote()} Repair: call it again, for at most ${WAIT_MAX_S} s more, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
     const pastHalf = async () => name !== 'waitForSeconds' && (tries * 2 > most || ((await $.clock.now()) - startedAt) * 2 > timeoutS * 1000)
+    // The hook's own time that one wake of the loop costs, from the first pause on, sets how far apart the wakes
+    // must be for the time left to last until the deadline. On a calm computer that is less than WAIT_SLICE_S.
+    let wakes = 0
+    let budgetAtFirstPause: number | undefined
+    let longestPauseS = 0
+    let widestGapS = 0
+    const pacedMs = async () => {
+      const left = limits.budget.remainingMs
+      if (!Number.isFinite(left)) return 0
+      budgetAtFirstPause ??= left
+      const perWake = wakes ? (budgetAtFirstPause - left) / wakes : 0
+      if (perWake <= 0) return 0
+      // One wake more is kept back for the answer.
+      const wakesLeft = Math.max(1, (left - WAIT_BUDGET_LOW_MS) / perWake - 1)
+      return Math.min(WAIT_PAUSE_MAX_S * 1000, (deadline - (await $.clock.now())) / wakesLeft)
+    }
+    const paceNote = () => (longestPauseS > WAIT_SLICE_S
+      ? `\nThe computer was busy, so each wake cost the hook more of its own ${HOOK_BUDGET_S} s time budget. To make it last, the wait paused for up to ${Math.round(longestPauseS)} s at a time${widestGapS > spec.period ? ` and checked every ${Math.round(widestGapS)} s, not every ${spec.period} s` : ''}, so /unblock could take that long to end it.`
+      : '')
     for (;;) {
       if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name, deadline))
       if (limits.signal.aborted) throw new Refuse(`Refused: ${name} for ${spec.what} was interrupted.\n${await waitEnds($, c, root, who, id, 'waitInterrupted', deadline)}`)
-      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts and ${Math.round(((await $.clock.now()) - startedAt) / 1000)} s, because the host's time budget for one hook is nearly spent: ${Math.round(limits.budget.remainingMs)} ms are left of ${limits.budget.ms} ms. That budget is the hook's own running time, and a busy computer spends it sooner. Repair: call ${name} again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
+      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts and ${Math.round(((await $.clock.now()) - startedAt) / 1000)} s, because the host's time budget for one hook is nearly spent: ${Math.round(limits.budget.remainingMs)} ms are left of ${limits.budget.ms} ms. That budget is the hook's own running time, and a busy computer spends it sooner.${paceNote()} Repair: call ${name} again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
       // The time includes the checks, so none starts or runs past checksEndAt. waitForSeconds runs no process: its last check reads the clock.
       if (name !== 'waitForSeconds' && (await $.clock.now()) >= checksEndAt) throw await gaveUp()
       const check = await waitCheck($, name, c.args, root, startedAt, checksEndAt)
       tries += 1
       last = check.detail
       const checkedAt = await $.clock.now()
-      await writeLive($, root, live, l => ({ ...l, wait: { id, tries, checkedAt, nextAt: Math.min(lastCheckAt, checkedAt + spec.period * 1000), detail: shownValue('detail', check.detail), seen: check.seen } }))
+      const gapMs = Math.max(spec.period * 1000, await pacedMs())
+      await writeLive($, root, live, l => ({ ...l, wait: { id, tries, checkedAt, nextAt: Math.min(lastCheckAt, checkedAt + gapMs), detail: shownValue('detail', check.detail), seen: check.seen } }))
       // A human can come during a check, which can last a minute. The answer goes first.
       if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name, deadline))
-      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}\n${await waitEnds($, c, root, who, id, 'waitEnded', deadline)}`)
+      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}${paceNote()}\n${await waitEnds($, c, root, who, id, 'waitEnded', deadline)}`)
       if (tries < attempts && (await $.clock.now()) >= lastCheckAt) throw await gaveUp()
       if (tries < attempts && !alert && (await pastHalf())) {
         const raised = await waitAlert($, root, who, id, name, spec.what, tries, most, check.detail, checksEndAt)
@@ -2875,10 +2899,13 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
         problem = raised.problem
       }
       if (tries >= attempts) throw new Refuse(`${name} gave up on ${spec.what} after ${tries} attempts. The last check: ${check.detail}. Repair: call it again with more attempts, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
-      const nextAt = Math.min(lastCheckAt, (await $.clock.now()) + spec.period * 1000)
+      const nextAt = Math.min(lastCheckAt, (await $.clock.now()) + gapMs)
+      widestGapS = Math.max(widestGapS, gapMs / 1000)
       for (let now = await $.clock.now(); now < nextAt; now = await $.clock.now()) {
-        const secs = Math.min(WAIT_SLICE_S, (nextAt - now) / 1000)
+        const secs = Math.min(Math.max(WAIT_SLICE_S * 1000, await pacedMs()), nextAt - now) / 1000
+        longestPauseS = Math.max(longestPauseS, secs)
         await pause($, root, secs)
+        wakes += 1
         // Each slice costs the hook some of its own time, and more on a busy computer. Past its budget the host
         // drops the hook, and the agent reads only "no tool.call hook answered this call". So the pause ends here,
         // and the top of the loop gives the answer.

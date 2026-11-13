@@ -2965,7 +2965,8 @@ test('/unblock when nothing is blocked says so and changes nothing', async ($, o
 // On a loaded computer each slice of a pause costs the hook some of its own ten seconds. Past them the host
 // drops the hook, and the agent reads "no tool.call hook answered this call". The test kit counts that time
 // and does not drop the hook, so the proof is that the wait ends inside the pause, before the time is spent.
-// A large record makes each read of it slow, and that time is the hook's own.
+// A large record makes each read of it slow, and that time is the hook's own. The pauses grow to make the time
+// last, so how many checks run first depends on how busy the computer is.
 test('a wait whose own time runs low during a long pause stops inside the pause, and names the cause and the repair', { timeoutMs: 180_000 }, async ($, on) => {
   const w = engine(on, { wf: { ballast: Array.from({ length: 3_000_000 }, (_, i) => ({ n: i, at: 0 })) } })
   await start($, w)
@@ -2973,12 +2974,10 @@ test('a wait whose own time runs low during a long pause stops inside the pause,
   w.s.probe = () => ({ exitCode: 1 })
   const r = await tool($, 'waitFor', { shell_command: 'false', period: 1100 })
   expect(r.isError).toBe(true)
-  expect(r.text).toContain('waitFor stopped its wait for `false` to exit 0 after 1 attempts')
+  expect(r.text).toMatch(/waitFor stopped its wait for `false` to exit 0 after \d+ attempts/)
   expect(r.text).toContain("the host's time budget for one hook is nearly spent")
   expect(r.text).toContain('ms are left of 10000 ms')
   expect(r.text).toContain('Repair: call waitFor again')
-  // The next check is 1100 s after the first: the wait did not hold on for it.
-  expect(w.s.now).toBeLessThan(1_000_000)
   expect(w.state()?.state).toBe('developing')
 })
 
@@ -3240,6 +3239,28 @@ test('waitForProcessEnd ends when ps no longer lists the pid, or lists a zombie'
   answers = [{ exitCode: 0, stdout: 'Z+' }]
   expect((await tool($, 'waitForProcessEnd', { pid: 4242 })).isError).toBe(false)
   expect(w.s.probes.length).toBe(1)
+})
+
+// fcc-proto, load 120-190 on 10 cores: each 2 s slice of a pause cost the hook about 100-230 ms of its own ten
+// seconds, so a wait with a timeout of 1200 s stopped after 1-4 checks. A large record makes each read of it slow,
+// and that time is the hook's own, as in the test above. How slow depends on the computer and its load, so the
+// test sizes the record for about 60 ms a read. The wait spaces its pauses so that its own time lasts.
+test('waitForProcessEnd on a busy host holds until the process ends', { timeoutMs: 180_000 }, async ($, on) => {
+  const sample = JSON.stringify(Array.from({ length: 10_000 }, (_, i) => ({ n: i, at: 0 })))
+  const from = Date.now()
+  for (let i = 0; i < 20; i++) JSON.parse(sample)
+  const length = Math.min(2_000_000, Math.round((10_000 * 60) / Math.max((Date.now() - from) / 20, 0.05)))
+  const w = engine(on, { wf: { ballast: Array.from({ length }, (_, i) => ({ n: i, at: 0 })) } })
+  await start($, w)
+  w.s.sleepAdvances = true
+  const endsAt = w.s.now + 1_000_000
+  w.s.probe = () => (w.s.now >= endsAt ? { exitCode: 1 } : { exitCode: 0, stdout: 'S' })
+  const r = await tool($, 'waitForProcessEnd', { pid: 95794, period: 60, timeout: 1200 })
+  expect(r.text).not.toContain("the host's time budget for one hook is nearly spent")
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('The wait for process 95794 ended')
+  expect(w.s.now).toBeGreaterThanOrEqual(endsAt)
+  expect(w.state()?.state).toBe('developing')
 })
 
 test('waitForSubAgent waits while the agent is listed as busy', async ($, on) => {
