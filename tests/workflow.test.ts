@@ -227,9 +227,9 @@ const engine = (on: On, opts: Opts = {}) => {
       if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
       // As real git does: rename detection lists the old path of a staged rename as R, and only --no-renames lists it as D.
       if (a[1] === 'diff' && line.includes('--cached --name-only') && line.includes('--diff-filter=D')) return ok([...s.removed, ...(a.includes('--no-renames') ? s.renamedFrom : [])].map(f => `${f}\n`).join(''))
-      if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
       // As real git does: the staged files that differ from MERGE_HEAD, so not those that the base brought in unchanged.
       if (a[1] === 'diff' && line.includes('--cached --name-only --diff-filter=d MERGE_HEAD')) return ok(s.names.filter(f => !s.fromBase.includes(f)).map(f => `${f}\n`).join(''))
+      if (a[1] === 'diff' && line.includes('--name-only')) return s.diffFails && line.includes('...') ? ok('', 128, s.diffFails) : ok(`${s.names.join('\n')}\n`)
       if (a[1] === 'diff' && a[2] === 'HEAD' && s.duringDiff) { const hold = s.duringDiff; s.duringDiff = undefined; return hold().then(() => ok(s.diffText)) as never }
       if (a[1] === 'diff' && a[2] === 'HEAD') return ok(s.diffText)
       if (a[1] === 'diff') return ok('', s.staged ? 1 : 0)
