@@ -11,7 +11,7 @@ import { type HostRecord, namedFor, orcaServers, projectKey, readStore, type Ser
 // host key stay. Everything it makes carries the labels managed-by=ndev and ndev-name=<name>, and it touches nothing
 // without them; /dev remote import (remote-import.ts) gives them to a server made by hand. Every hcloud call names its context and runs with no HCLOUD_TOKEN or HCLOUD_CONTEXT.
 
-export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; isForget: boolean; isYes: boolean }
+export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; server?: string; ssh?: string; agent?: string; isForget: boolean; isYes: boolean }
 
 export const REMOTE_HOST_HELP = [
   '  /dev remote create <name> [options] make a Hetzner Cloud server for Orca: from the snapshot remove kept, else from the base image',
@@ -21,6 +21,10 @@ export const REMOTE_HOST_HELP = [
   '        options: --context <hcloud context>  --floating-ip <name or id>  --forget (also delete the snapshot, the floating IP and the firewall)  --yes',
   '  /dev remote import <hetzner-id> --context <hcloud context> [options] hand a server made by hand to /dev remote: label it, its firewalls and its floating IPv4, and record its host key',
   '        options: --floating-ip <name or id> (when the server has several)  --name <the server\'s Hetzner name>  --yes (only for a host key already in known_hosts)',
+  '  /dev remote resize [<type>] [options] change the Hetzner server type of the box under the Orca server: with no type, list the types and recommend one',
+  '        it pauses the workers on the box (a WIP commit and ~/handoff/<issue>.md), shuts it down, changes the type with the disk kept, starts it and starts the workers again',
+  '        the hcloud context: remote.hcloudContext in .neil-dev.json, or --context <hcloud context>',
+  '        options: --context <hcloud context>  --server <Orca server>  --ssh <user@host>  --agent <agent> (for a worker whose agent Orca does not record)  --yes',
 ]
 
 const DEFAULT_TYPE = 'cx33'
@@ -31,13 +35,13 @@ export const SSH_PORT = '22'
 const PACKAGES_TIMEOUT_MS = 600_000
 
 export type Labels = Record<string, string>
-type Price = { location: string; price_monthly: { gross: string } }
+export type Price = { location: string; price_monthly: { gross: string } }
 export type Srv = { id: number; name: string; status: string; labels: Labels; server_type: { name: string; disk: number; prices?: Price[] }; location?: { name: string }; public_net: { ipv4?: { ip: string } | null; firewalls?: { id: number }[] } }
 export type Img = { id: number; description: string; created: string; status: string; disk_size: number; image_size: number | null; labels: Labels; architecture?: string }
 export type Fip = { id: number; name: string; ip: string; labels: Labels; server: number | null; home_location: { name: string; network_zone?: string } }
 export type Applied = { type: string; server?: { id: number }; label_selector?: { selector: string }; applied_to_resources?: { server?: { id: number } }[] }
 export type Fw = { id: number; name: string; labels: Labels; rules?: { direction: string; protocol: string; port?: string | null }[]; applied_to?: Applied[] }
-type ServerType = { name: string; disk: number; cores: number; memory: number; architecture?: string; prices: Price[] }
+export type ServerType = { name: string; disk: number; cores: number; memory: number; architecture?: string; prices: Price[] }
 export type Out = { exitCode: number; stdout: string; stderr: string }
 
 // ---- The one runner: hcloud, ssh and the small local commands all go through $.process.run ----
@@ -71,7 +75,7 @@ export async function hcJson<T>($: EngineInterface, ctx: string, args: string[])
   }
 }
 
-async function pause($: EngineInterface, secs: number): Promise<void> {
+export async function pause($: EngineInterface, secs: number): Promise<void> {
   await exec($, ['sleep', String(secs)], { timeoutMs: (secs + 10) * 1000 })
 }
 
