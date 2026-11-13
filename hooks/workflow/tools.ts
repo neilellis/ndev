@@ -19,7 +19,7 @@ import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
 import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
-import { ATTEMPT_LIMIT, BEFORE_REVIEW, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
+import { ATTEMPT_LIMIT, BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
 import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseRound, resultOf, startingAnswers } from './interview-model'
 import type { InterviewFile, InterviewRound } from './interview-model'
@@ -1308,7 +1308,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   if (prBody !== undefined) await editBody($, wf, old => withBodySection(old, wf.issue, prBody))
   addTypes(wf, declared)
   for (const o of finishing.filter(x => x.state !== 'developed')) {
-    if ((await factsFor($, wf.root, project, o)).mode === 'heavy') {
+    if (MACHINES[(await factsFor($, wf.root, project, o)).mode].gates) {
       const gates = await run($, ['bash', `${$.plugin.root}/scripts/work/gates.sh`, String(o.issue), 'HEAD', String(n)], { cwd: wf.root, env: { GH_REPO: wf.repo } })
       if (gates.exitCode !== 0) {
         await saveWorkflow($, wf)
@@ -1424,13 +1424,13 @@ async function startCodeReview($: EngineInterface, wf: Workflow, facts: Facts, u
     issuesOf(wf).length > 1
       ? `Review the diff origin/${wf.base}...HEAD in ${wf.root}. It is the work on the issues ${issuesOf(wf).map(n => `#${n}`).join(', ')} of ${wf.repo}, on one PR. Read each issue with ${$.plugin.root}/scripts/github/gh.sh issue-read and its number. The base branch is ${wf.base}: do not look it up.`
       : `Review the diff origin/${wf.base}...HEAD in ${wf.root}. It is the work on issue #${wf.issue} of ${wf.repo}. Read the issue with ${$.plugin.root}/scripts/github/gh.sh issue-read ${wf.issue}. The base branch is ${wf.base}: do not look it up.`,
-    facts.mode === 'heavy' ? 'The change follows the work-heavy skill, so check what a finished change of that skill must include.' : '',
+    MACHINES[facts.mode].reviewBrief ?? '',
     ui ?? '',
     ...reviewerBrief(reviewTypes(wf)),
     'Report only. Do not edit, commit or push. Give each finding with its file and line, Critical and Important first.',
   ].filter(Boolean).join('\n')
   // A heavy change gets two reviewers, because one who holds both questions lets each hide the other (work-heavy F3c).
-  const twoAxes = facts.mode === 'heavy' && !isDocsOnly(reviewTypes(wf))
+  const twoAxes = MACHINES[facts.mode].twoAxisReview && !isDocsOnly(reviewTypes(wf))
   wf.reviewSpec = undefined
   try {
     const first = await $.agent.spawn({ subagentType: 'ndev:diff-reviewer', description: `Review ${wf.pr ? `PR #${wf.pr}` : `#${wf.issue}`}${twoAxes ? ': standards' : ''}`, prompt: twoAxes ? `${prompt}\n${AXIS_STANDARDS}` : prompt, cwd: wf.root })

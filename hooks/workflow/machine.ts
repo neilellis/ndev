@@ -94,8 +94,80 @@ export function flowPicture(position: Position, visited: readonly State[]): Flow
 export const hooksFiredBy = (from: State, to: State): StageHook[] =>
   from === to || from === 'blocked' || from === 'wait' ? [] : STAGE_HOOKS.filter(h => h.on === to).map(h => h.name)
 
-// After the interview, or in its place: the plan when heavy, the code when light.
-const afterInterview = (mode: Mode): State => (mode === 'heavy' ? 'planning' : 'developing')
+// Each mode has its own machine for the work before the review: its states, its moves and its texts.
+// The review, ci, smoke, finishing, done, revising, blocked and wait are one tail that all modes share.
+type FrontMove = (facts: Facts) => Position
+type ModeMachine = {
+  // The states of this mode between setup and the review, in order.
+  front: State[]
+  // An interactive start asks the human first.
+  interviews: boolean
+  // Where the work goes after the interview, or in its place.
+  afterInterview: State
+  // The moves of the tools in the states before the review. A tool with no move here is refused there.
+  moves: Partial<Record<State, Partial<Record<Tool, FrontMove>>>>
+  // Where /flow skip goes from each state before the review.
+  skip: Partial<Record<State, State>>
+  // The check on the base, before any code.
+  baseCheck: 'pre-commit-check.sh' | 'pre-push-check.sh'
+  // What the interview asks.
+  interview: string
+  // Two reviewers, one for the standards and one for the specification, in place of one.
+  twoAxisReview: boolean
+  // What the reviewer checks besides the diff, when the mode has a skill with its own finish.
+  reviewBrief?: string
+  // finishedDevelopment runs gates.sh for each issue of this mode.
+  gates: boolean
+  // A preview check on the PR makes a smoke test due.
+  smokeOnPreview: boolean
+}
+
+const goTo = (state: State): FrontMove => () => ({ state })
+// The plan needs a human's sign-off before the code, unless the project lets the agent merge.
+const leavePlan: FrontMove = facts => (needsPlanSignOff(facts.steering, facts.level) ? { state: 'blocked', previous: 'developing' } : { state: 'developing' })
+
+const LIGHT: ModeMachine = {
+  front: ['interviewing', 'developing'],
+  interviews: true,
+  afterInterview: 'developing',
+  moves: {
+    interviewing: { interview: goTo('developing') },
+    // A heavy issue that a human set to light during its plan still leaves the plan by finishedPlan.
+    planning: { finishedPlan: leavePlan },
+    developing: { finishedDevelopment: goTo('reviewing') },
+  },
+  skip: { planning: 'developing', developing: 'reviewing' },
+  baseCheck: 'pre-commit-check.sh',
+  interview: 'Ask at most 5 pertinent questions and 5 follow-ups, or none if none is pertinent.',
+  twoAxisReview: false,
+  gates: false,
+  smokeOnPreview: false,
+}
+
+const HEAVY: ModeMachine = {
+  front: ['interviewing', 'planning', 'developing'],
+  interviews: true,
+  afterInterview: 'planning',
+  moves: {
+    interviewing: { interview: goTo('planning') },
+    planning: { finishedPlan: leavePlan },
+    developing: { finishedDevelopment: goTo('reviewing') },
+  },
+  skip: { planning: 'developing', developing: 'reviewing' },
+  baseCheck: 'pre-push-check.sh',
+  interview: 'Go through the whole design tree, round by round, and let the last round confirm the shared understanding.',
+  twoAxisReview: true,
+  reviewBrief: 'The change follows the work-heavy skill, so check what a finished change of that skill must include.',
+  gates: true,
+  smokeOnPreview: true,
+}
+
+export const MACHINES: Record<Mode, ModeMachine> = { light: LIGHT, heavy: HEAVY }
+
+// After the interview, or in its place.
+const afterInterview = (mode: Mode): State => MACHINES[mode].afterInterview
+// Where a new workflow goes first: the interview when a human steers and the mode asks, else past it.
+const firstState = (mode: Mode, steering: Steering): State => (steering === 'interactive' && MACHINES[mode].interviews ? 'interviewing' : afterInterview(mode))
 
 export function afterTool(position: Position, tool: Tool, facts: Facts): Move {
   const { state } = position
@@ -125,11 +197,8 @@ export function afterTool(position: Position, tool: Tool, facts: Facts): Move {
     if (state === 'done' && facts.prOpen) return { state: 'ci' }
     return wrong(position, tool)
   }
-  if (tool === 'interview' && state === 'interviewing') return { state: afterInterview(facts.mode) }
-  if (tool === 'finishedPlan' && state === 'planning') {
-    return needsPlanSignOff(facts.steering, facts.level) ? { state: 'blocked', previous: 'developing' } : { state: 'developing' }
-  }
-  if (tool === 'finishedDevelopment' && state === 'developing') return { state: 'reviewing' }
+  const front = MACHINES[facts.mode].moves[state]?.[tool]
+  if (front) return front(facts)
   if (tool === 'finishedReview' && state === 'reviewing') return { state: 'ci' }
   if (tool === 'finishedChecks' && state === 'ci') return { state: facts.smoke ? 'smoke' : 'finishing' }
   if (tool === 'finishedSmoke' && state === 'smoke') return { state: 'finishing' }
@@ -141,14 +210,12 @@ export function afterTool(position: Position, tool: Tool, facts: Facts): Move {
 }
 
 // /flow skip: the human moves on from a phase. `done` has no skip, because it holds the
-// final checks, and a block ends with unblock.
-const SKIP_TO: Partial<Record<State, State>> = {
-  planning: 'developing', developing: 'reviewing', reviewing: 'ci', ci: 'finishing', smoke: 'finishing', revising: 'ci',
-}
+// final checks, and a block ends with unblock. The states before the review skip by the mode's machine.
+const TAIL_SKIP: Partial<Record<State, State>> = { reviewing: 'ci', ci: 'finishing', smoke: 'finishing', revising: 'ci' }
 export function afterSkip(position: Position, mode: Mode, steering: Steering): Move {
-  if (position.state === 'setup') return { state: steering === 'interactive' ? 'interviewing' : afterInterview(mode) }
+  if (position.state === 'setup') return { state: firstState(mode, steering) }
   if (position.state === 'interviewing') return { state: afterInterview(mode) }
-  const to = SKIP_TO[position.state]
+  const to = MACHINES[mode].skip[position.state] ?? TAIL_SKIP[position.state]
   if (to) return { state: to }
   const how = position.state === 'developed' ? 'This issue waits for the other issues on its PR.' : position.state === 'blocked' ? 'Use /unblock <message> or /flow unblock.' : position.state === 'wait' ? 'Use /unblock <message>.' : position.state === 'finishing' ? 'The agent calls done, or use /flow goto done.' : 'The workflow is finished.'
   return { refused: `There is no phase to skip in the state "${position.state}". ${how}` }
@@ -158,7 +225,7 @@ export function afterStarted(
   position: Position | undefined,
   facts: { mode: Mode; steering: Steering; scriptsMissing?: boolean; blockerOpen?: boolean; feedback?: boolean },
 ): Position {
-  const first: State = facts.steering === 'interactive' ? 'interviewing' : afterInterview(facts.mode)
+  const first = firstState(facts.mode, facts.steering)
   if (!position || position.state === 'setup') {
     if (facts.scriptsMissing) return { state: 'setup' }
     return facts.blockerOpen ? { state: 'blocked', previous: first } : { state: first }
@@ -173,7 +240,7 @@ const PREVIEW_CHECK = /preview|vercel|netlify/i
 
 export function needsSmoke(mode: Mode, paths: readonly string[], checkNames: readonly string[], types: readonly ChangeType[] = []): boolean {
   if (requiredSmokeTypes(types).length || paths.some(path => isWebPath(path) || isDocsPath(path))) return true
-  return mode === 'heavy' && checkNames.some(n => PREVIEW_CHECK.test(n))
+  return MACHINES[mode].smokeOnPreview && checkNames.some(n => PREVIEW_CHECK.test(n))
 }
 
 // What the Orca workspace shows. Status ids are Orca's default board columns: `in-review` means that
@@ -222,7 +289,7 @@ export function boardColumn(w: { state: State; merged?: boolean; direct?: boolea
   return 'progress'
 }
 
-export const baseCheckScript = (mode: Mode) => (mode === 'heavy' ? 'pre-push-check.sh' : 'pre-commit-check.sh')
+export const baseCheckScript = (mode: Mode) => MACHINES[mode].baseCheck
 
 // What the accumulated change types add to the next step of the review and the smoke test.
 function reviewStep(full: string, facts: Pick<Facts, 'changeTypes' | 'webFiles'>): string {
@@ -237,7 +304,7 @@ function stepText(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level'
       return 'Create each missing check script that the reply names, with the commands from the project\'s CLAUDE.md, and make it executable. Then call started again.'
     case 'interviewing':
       if (facts.steering === 'auto') return 'Steering is auto, so no human answers an interview. Call interview with no arguments to go on.'
-      return `Load the ndev:interview skill and follow it. Read each .neil-dev.issue-*.json file in this worktree first, and do not ask again what they answer. Ask with interview(interviewJson). ${facts.mode === 'heavy' ? 'Go through the whole design tree, round by round, and let the last round confirm the shared understanding.' : 'Ask at most 5 pertinent questions and 5 follow-ups, or none if none is pertinent.'} Then call interview with no arguments: only that call goes on.`
+      return `Load the ndev:interview skill and follow it. Read each .neil-dev.issue-*.json file in this worktree first, and do not ask again what they answer. Ask with interview(interviewJson). ${MACHINES[facts.mode].interview} Then call interview with no arguments: only that call goes on.`
     case 'planning':
       return 'Read the interview answers in the .neil-dev.issue-*.json files of this worktree. Write the plan (work-heavy F2) in a markdown file with a "Test entry point:" line. Then call finishedPlan with the file name.'
     case 'developing':
@@ -245,7 +312,7 @@ function stepText(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level'
     case 'developed':
       return 'This issue has finished development, and another issue on its PR has not. The last issue to finish calls finishedDevelopment, which starts the review of the PR. If this agent takes that issue, call started with its number. Else end your turn. For more work on this issue, commit with checkpoint.'
     case 'reviewing':
-      return reviewStep(`Review: your last commit is not pushed yet, because the code is reviewed first. ${facts.mode === 'heavy' ? 'The plugin started the two-axis review: two ndev:diff-reviewer agents on the diff against the base branch, one for standards and one for the specification. Keep the two reports apart. Do not start another,' : 'The plugin started one independent review: the ndev:diff-reviewer agent on the diff against the base branch. Do not start another,'} and do not wait with a helper, because its answer comes to you. The plugin ran the dead-code sweep on this change, and this answer holds its result: triage each finding, and give the triage as deadcode. Meanwhile, do the remember hook: load the ndev:remember skill and record what this work taught in the project wiki, update each document that this change made wrong (the ndev:docs-sync skill helps when the project has a docs map), and run the dev-wiki ingest with the ndev:dev-wiki skill. When the answer comes, fix what they found with checkpoint, which holds those commits too. Then call finishedReview with each result, with remembered as what you recorded or "nothing: <reason>": it runs pre-ready-check.sh, pushes and marks the PR ready.`, facts)
+      return reviewStep(`Review: your last commit is not pushed yet, because the code is reviewed first. ${MACHINES[facts.mode].twoAxisReview ? 'The plugin started the two-axis review: two ndev:diff-reviewer agents on the diff against the base branch, one for standards and one for the specification. Keep the two reports apart. Do not start another,' : 'The plugin started one independent review: the ndev:diff-reviewer agent on the diff against the base branch. Do not start another,'} and do not wait with a helper, because its answer comes to you. The plugin ran the dead-code sweep on this change, and this answer holds its result: triage each finding, and give the triage as deadcode. Meanwhile, do the remember hook: load the ndev:remember skill and record what this work taught in the project wiki, update each document that this change made wrong (the ndev:docs-sync skill helps when the project has a docs map), and run the dev-wiki ingest with the ndev:dev-wiki skill. When the answer comes, fix what they found with checkpoint, which holds those commits too. Then call finishedReview with each result, with remembered as what you recorded or "nothing: <reason>": it runs pre-ready-check.sh, pushes and marks the PR ready.`, facts)
     case 'ci':
       return 'Do not run a wait helper: the workflow watches the checks and merge conflicts of this PR, and prompts you when they end or when one fails. If nothing else is open, end your turn. When it prompts you, fix a failed check or a conflict with checkpoint, or call finishedChecks: it reads them for HEAD itself.'
     case 'smoke':
