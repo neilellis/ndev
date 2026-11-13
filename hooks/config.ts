@@ -59,7 +59,7 @@ export type LoadedConfig = {
 
 const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
-const MODES: readonly string[] = ['light', 'heavy']
+const MODES: readonly string[] = ['light', 'heavy', 'hack']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
 
 // The project root is the git top level of the session's folder; outside a repository, the folder itself.
@@ -73,8 +73,11 @@ const validate = (raw: unknown): string | undefined => {
   const value = raw as Record<string, unknown>
   const unknown = Object.keys(value).filter(k => !(KEYS as readonly string[]).includes(k))
   if (unknown.length > 0) return `unknown key ${unknown.map(k => `"${k}"`).join(', ')}; the keys are ${KEYS.join(', ')}`
-  if (value.mode !== undefined && !MODES.includes(value.mode as string)) return `"mode" is ${JSON.stringify(value.mode)}; use "light" or "heavy"`
+  if (value.mode !== undefined && !MODES.includes(value.mode as string)) return `"mode" is ${JSON.stringify(value.mode)}; use "light", "heavy" or "hack"`
   if (value.steering !== undefined && !STEERINGS.includes(value.steering as string)) return `"steering" is ${JSON.stringify(value.steering)}; use "interactive" or "auto"`
+  // A human steers each step of a hack, so hack mode is interactive only.
+  if (value.mode === 'hack' && value.steering === 'auto') return '"mode" is "hack" and "steering" is "auto", but hack mode is interactive only; set "steering" to "interactive" or "mode" to "light"'
+
   if (value.projectLevel !== undefined && !(PROJECT_LEVELS as readonly unknown[]).includes(value.projectLevel)) return `"projectLevel" is ${JSON.stringify(value.projectLevel)}; use ${PROJECT_LEVELS.map(l => `"${l}"`).join(', ')}`
   if (value.workflow !== undefined && typeof value.workflow !== 'boolean') return `"workflow" is ${JSON.stringify(value.workflow)}; use true or false`
   if (value.checkEnv !== undefined && (!Array.isArray(value.checkEnv) || value.checkEnv.some(k => typeof k !== 'string' || !SECRET_NAME.test(k)))) return `"checkEnv" is ${JSON.stringify(value.checkEnv)}; use a list of key names, such as ["TEST_DATABASE_URL"]`

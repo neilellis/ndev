@@ -20,7 +20,7 @@ const HELP = [
   '/flow goto <state> [reason]: go to any state.',
   '/flow unblock [message]: end a block and withdraw its notification.',
   '/unblock <message>: give the agent your answer and end a block or a wait. It runs at once, also during a turn.',
-  '/flow mode [light|heavy] [issue]: show or set the mode of one issue. It wins over the worktree and the project.',
+  '/flow mode [light|heavy|hack] [issue]: show or set the mode of one issue. It wins over the worktree and the project. hack is interactive only.',
   '/flow steering [interactive|auto] [issue]: the same for the steering.',
   '/flow off [reason]: stop the tools and the reminders for the issue or PR that this agent is on. The record stays.',
   '/flow on: turn them back on.',
@@ -28,7 +28,7 @@ const HELP = [
   ...EPIC_HELP,
 ].join('\n')
 
-const GOTO: State[] = ['setup', 'interviewing', 'planning', 'developing', 'reviewing', 'ci', 'smoke', 'finishing', 'revising', 'done']
+const GOTO: State[] = ['setup', 'interviewing', 'planning', 'developing', 'hardening', 'reviewing', 'ci', 'smoke', 'finishing', 'revising', 'done']
 
 type Project = LoadedConfig | undefined
 
@@ -123,15 +123,19 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
     return `${off}${wf.off ? `Off for this issue: ${wf.off.reason}. ` : ''}${labelOf(wf)} in ${wf.root} is in the state "${wf.state}"${wf.previous ? ` (before the block: ${wf.previous})` : ''}.${wf.blocked ? ` Blocked: ${wf.blocked.message}` : ''}${holder ? `\n${holder.detail}` : ''}\nNext: ${holder?.next ?? stepOf(wf, facts)}\nLast moves: ${last || 'none'}${watched}`
   }
   if (verb === 'mode' || verb === 'steering') {
-    const allowed = verb === 'mode' ? ['light', 'heavy'] : ['interactive', 'auto']
+    const allowed = verb === 'mode' ? ['light', 'heavy', 'hack'] : ['interactive', 'auto']
     const value = rest[0]
     if (value && !allowed.includes(value)) return `/flow ${verb}: ${JSON.stringify(value)} is not a ${verb}. Use ${allowed.join(' or ')}.`
     const named = rest[1] === undefined ? undefined : Number(rest[1])
     if (named !== undefined && (!Number.isInteger(named) || named <= 0)) return `/flow ${verb}: ${JSON.stringify(rest[1])} is not an issue number.`
     const target = named === undefined ? wf : root ? await loadWorkflow($, root, named) : undefined
     if (!target) return `No workflow${named ? ` for issue #${named}` : ''} in ${root ?? 'this session'}, so there is nothing to set. The agent starts one with mcp__ndev__started.`
-    const now = (await factsFor($, target.root, project, target))[verb]
+    const facts = await factsFor($, target.root, project, target)
+    const now = facts[verb]
     if (!value) return `${labelOf(target)} is ${now}${target[verb] ? ', set for this issue' : ', from the worktree or the project'}. /flow ${verb} ${allowed.join('|')} [issue] changes it.`
+    // A human steers each step of a hack, so hack mode and auto steering never meet.
+    if (verb === 'mode' && value === 'hack' && facts.steering === 'auto') return `/flow mode: ${labelOf(target)} has auto steering, and hack mode is interactive only, because a human steers each step of the hack. Nothing changed. Run /flow steering interactive${named ? ` ${named}` : ''} first.`
+    if (verb === 'steering' && value === 'auto' && facts.mode === 'hack') return `/flow steering: ${labelOf(target)} is in hack mode, which is interactive only, because a human steers each step of the hack. Nothing changed. Run /flow mode light${named ? ` ${named}` : ''} (or heavy) first.`
     Object.assign(target, { [verb]: value })
     await saveWorkflow($, target)
     return `${labelOf(target)} is now ${value}. Other issues keep their settings. The steps that are complete stay complete, and the steps that remain follow this setting.`

@@ -8,7 +8,7 @@ import { iNeedA, NEED_KINDS } from './i-need-a'
 
 import { loadConfigAt } from '../config'
 import type { LoadedConfig, ProjectLevel } from '../config'
-import type { WorkflowLive } from '../../types'
+import type { Mode, WorkflowLive } from '../../types'
 import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
@@ -33,7 +33,7 @@ async function checked($: EngineInterface, wf: Workflow, check: Check, args: str
 }
 
 export type Evidence = { sha: string; text: string }
-export type IssueSettings = { mode?: 'light' | 'heavy'; steering?: 'interactive' | 'auto' }
+export type IssueSettings = { mode?: Mode; steering?: 'interactive' | 'auto' }
 
 export type Workflow = {
   // The interview tool call holds, and its notification. Gone when the human has answered.
@@ -94,7 +94,7 @@ export type Workflow = {
   feedbackAt?: number
   blocked?: { message: string; at: number; group: string; pid?: number }
   // This issue only. With no value, it follows the worktree and then the project.
-  mode?: 'light' | 'heavy'
+  mode?: Mode
   steering?: 'interactive' | 'auto'
   waiting?: { id: string; tool: string; what: string; at: number; period?: number; most?: number; timeoutS?: number; args?: Record<string, string>; alert?: { group: string; pid?: number } }
   waitAnswer?: { id: string; message: string }
@@ -349,9 +349,10 @@ export async function saveWorkflow($: EngineInterface, wf: Workflow): Promise<vo
 
 // A PR that carries several issues follows the strictest of them.
 export const strictest = (records: IssueSettings[]): IssueSettings => {
-  const pick = <T extends string>(values: (T | undefined)[], strict: T) => (values.includes(strict) ? strict : values.find(Boolean))
-  const mode = pick(records.map(r => r.mode), 'heavy')
-  const steering = pick(records.map(r => r.steering), 'interactive')
+  // From the strictest down: the first that an issue holds wins.
+  const pick = <T extends string>(values: (T | undefined)[], strict: T[]) => strict.find(v => values.includes(v)) ?? values.find(Boolean)
+  const mode = pick(records.map(r => r.mode), ['heavy', 'hack'])
+  const steering = pick(records.map(r => r.steering), ['interactive'])
   return { ...(mode ? { mode } : {}), ...(steering ? { steering } : {}) }
 }
 
@@ -393,13 +394,13 @@ export function moved(wf: Workflow, tool: string, to: Position, at: number) {
   if (to.state !== 'wait') wf.waiting = undefined
 }
 
-// An agent that followUp started has no interview: it goes on from its brief.
-const isBaseChecked = (wf: Workflow) => !!wf.baseCheck || !!wf.followUpOf || !!wf.noInterview
+// An agent that followUp started has no interview: it goes on from its brief. A mode with no base check (hack) starts on the code at once.
+const isBaseChecked = (wf: Workflow, mode: Mode) => !MACHINES[mode].baseCheck || !!wf.baseCheck || !!wf.followUpOf || !!wf.noInterview
 
 // A declaration of docs proves nothing when the diff could not be read.
 const reviewTypes = (wf: Workflow): ChangeType[] => (wf.changeTypes ?? []).filter(type => !wf.typesUnread || type !== 'docs')
 
-export const stepOf = (wf: Workflow, facts: Facts) => nextStep(wf.state, { ...facts, merged: wf.merged, remembered: !!wf.hooks?.remember?.result, changeTypes: reviewTypes(wf), webFiles: wf.webFiles, baseChecked: isBaseChecked(wf) })
+export const stepOf = (wf: Workflow, facts: Facts) => nextStep(wf.state, { ...facts, merged: wf.merged, remembered: !!wf.hooks?.remember?.result, changeTypes: reviewTypes(wf), webFiles: wf.webFiles, baseChecked: isBaseChecked(wf, facts.mode) })
 
 async function answer($: EngineInterface, wf: Workflow, facts: Facts, detail: string[] = [], next?: string): Promise<string> {
   const lines = [`State: ${wf.state}. ${whoOf(wf)}. Worktree: ${wf.root}.`, ...detail.filter(Boolean)]
@@ -428,7 +429,8 @@ export async function blockWorkflow($: EngineInterface, wf: Workflow, message: s
   await saveWorkflow($, wf)
 }
 
-async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, message: string, files: string[], push = true, declared: readonly ChangeType[] = []): Promise<string[]> {
+// advisory: the hack's commits, where fast-checks.sh only advises and pre-commit-check.sh waits for hardening.
+async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, message: string, files: string[], push = true, declared: readonly ChangeType[] = [], advisory = false): Promise<string[]> {
   const { root, base, branch } = wf
   const current = await gitOut(root, $, 'rev-parse', '--abbrev-ref', 'HEAD')
   if (current !== wf.branch) throw new Refuse(`The worktree ${root} is on ${current}, and this workflow is on ${branch}. Nothing was committed. Repair: git switch ${branch}.`)
@@ -466,9 +468,19 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
         stagedFiles = stagedFiles.filter(f => differs.has(f))
         if (fromBase.length) notes.push(`A merge is in progress: ${fromBase.length} staged files came from the base unchanged, so fast-checks.sh did not check them, and a fault in them is the base's (baseline), not this branch's: ${fromBase.slice(0, 10).join(', ')}${fromBase.length > 10 ? ', …' : ''}.`)
       }
-      const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles, declared) : undefined
-      for (const note of [fast, await checked($, wf, 'pre-commit-check.sh', [], declared)]) {
-        if (note) notes.push(note)
+      if (advisory) {
+        try {
+          const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles, declared) : undefined
+          if (fast) notes.push(fast)
+        } catch (error) {
+          if (!(error instanceof CheckFailed)) throw error
+          notes.push(`Advice only, because this is the hack: the commit was made. ${error.message.replace(' Nothing was pushed.', '')} Hardening runs the full checks, and there a failure stops the commit.`)
+        }
+      } else {
+        const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles, declared) : undefined
+        for (const note of [fast, await checked($, wf, 'pre-commit-check.sh', [], declared)]) {
+          if (note) notes.push(note)
+        }
       }
     } catch (error) {
       // A refused commit leaves nothing staged, or a later commit of other files would carry these.
@@ -765,7 +777,7 @@ export async function setDeclined($: EngineInterface, value: boolean): Promise<v
 // dispatch other agents, and an agent on one issue does not, so steering does not change the choice.
 // A skill that cannot be read does not stop the work: the workflow has already moved, and the note names the repair.
 async function workSkill($: EngineInterface, mode: Facts['mode']): Promise<string> {
-  const name = mode === 'heavy' ? 'work-heavy' : 'work-light'
+  const name = mode === 'heavy' ? 'work-heavy' : mode === 'hack' ? 'work-hack' : 'work-light'
   if ((await read($, workSkillsLoaded)).includes(name)) return ''
   const folder = `${$.plugin.root}/skills/${name}`
   const path = `${folder}/SKILL.md`
@@ -799,7 +811,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   const shortName = text(args, 'shortName') || undefined
   if (shortName) refuseShortName(shortName, issue)
   const chosen = text(args, 'mode') || undefined
-  if (chosen && chosen !== 'light' && chosen !== 'heavy') throw new Refuse(`Refused: mode is ${JSON.stringify(chosen)}. Use "light" or "heavy".`)
+  if (chosen && chosen !== 'light' && chosen !== 'heavy' && chosen !== 'hack') throw new Refuse(`Refused: mode is ${JSON.stringify(chosen)}. Use "light", "heavy" or "hack".`)
   if (!project) throw new Refuse('Refused: the project settings were not read. Start a new session in the project.')
   if (project.config.workflow === false) throw new Refuse(OFF_PROJECT(project.path))
   const level = project.config.projectLevel
@@ -890,6 +902,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     throw new Refuse(`Refused: the mode of issue #${issue} is set when its workflow starts, and it is in the state "${wf.state}". The human can change it with /flow mode ${chosen} ${issue}.`)
   }
   const facts = await factsFor($, root, project, chosen ? { ...wf, mode: chosen as IssueSettings['mode'] } : wf)
+  if (facts.mode === 'hack' && facts.steering === 'auto') throw new Refuse(HACK_AUTO(`issue #${issue}`, issue))
   if (!wf) mayOpen()
   const blockers = (await ghLines<{ number: number; state: string }>($, root, repo, ['blocked-by', 'list', String(issue)])).filter(b => b.state === 'open')
   const missing = await missingChecks($, root)
@@ -962,7 +975,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     const carrier = joined?.pr === record.prs[0] ? joined : await loadPrRecord($, root, record.prs[0])
     if (carrier && !carrier.issues?.includes(issue)) {
       Object.assign(carrier, await settingsOfAll($, root, project, [carrier, record]))
-      notes.push(await backToDevelopers($, carrier, issue, 'started'))
+      notes.push(await backToDevelopers($, project, carrier, issue, 'started'))
     }
   }
   if (root !== home) notes.push(`The work is in ${root}, not this session's folder. Change to it before you edit.`)
@@ -1036,6 +1049,7 @@ async function finishedPlan($: EngineInterface, c: Ctx): Promise<string> {
 // attention later. A failure is recorded and does not stop the tool: the agent decides what to do with it.
 async function runBaseCheck($: EngineInterface, wf: Workflow, facts: Facts): Promise<{ notes: string[]; failed?: string }> {
   const script = baseCheckScript(facts.mode)
+  if (!script) return { notes: [`${facts.mode} mode has no base check, so none ran.`] }
   const sha = await head(wf.root, $)
   const at = await $.clock.now()
   // A record from before this check, or a second call, can already hold commits.
@@ -1068,8 +1082,8 @@ async function finishedInterview($: EngineInterface, c: Ctx): Promise<string> {
 }
 
 // Development starts with the base check. The refusal comes before any commit.
-function refuseBeforeBaseCheck(wf: Workflow, tool: string) {
-  if (wf.state === 'developing' && !isBaseChecked(wf)) throw new Refuse(`Refused: the interview of ${labelOf(wf)} has not ended, so ${tool} did nothing. Repair: after the last question, call finishedInterview. It runs the base check, and then ${tool} works.`)
+function refuseBeforeBaseCheck(wf: Workflow, tool: string, mode: Mode) {
+  if (wf.state === 'developing' && !isBaseChecked(wf, mode)) throw new Refuse(`Refused: the interview of ${labelOf(wf)} has not ended, so ${tool} did nothing. Repair: after the last question, call finishedInterview. It runs the base check, and then ${tool} works.`)
 }
 
 // False when the range cannot be read, such as after a rebase: then the evidence is stale.
@@ -1105,6 +1119,9 @@ async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolea
 
 // In these states the last commit waits for the review, so only finishedReview, or a human's skip of the review, pushes it.
 const holdsForReview = (state: string) => state === 'reviewing' || state === 'developed'
+// A hack keeps its commits on this computer until the review: in the hack, and in hardening.
+const holdsLocally = (state: State, mode: Mode) => state === 'hardening' || !!MACHINES[mode].localOnly?.includes(state)
+const LOCAL_PUSH_ROUTES = (state: State) => `${state === 'hardening' ? '' : 'call finishedHacking, harden the change, then '}call finishedDevelopment with the hardening evidence. finishedReview makes the first push.`
 const REVIEW_PUSH_ROUTES = 'finishedReview runs pre-ready-check.sh and pushes it. When that cannot pass, a human skips the review with /flow skip <reason>, and then checkpoint with no files pushes the held commit.'
 // "developed" has no phase to skip: the review starts when each issue on the PR has called finishedDevelopment.
 const reviewPushRoutes = (state: string) => (state === 'reviewing' ? REVIEW_PUSH_ROUTES : `the review starts once each issue on the PR has called finishedDevelopment, and then ${REVIEW_PUSH_ROUTES}`)
@@ -1121,21 +1138,26 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   const mergedPr = await mergedBeforeDone($, wf)
   if (mergedPr) throw new Refuse(mergedRefusal(mergedPr, 'checkpoint', await head(wf.root, $)))
   legal(wf, 'checkpoint', { ...facts, prOpen })
-  refuseBeforeBaseCheck(wf, 'checkpoint')
+  refuseBeforeBaseCheck(wf, 'checkpoint', facts.mode)
   havePr(wf)
   const before = await head(wf.root, $)
   // An issue that finished development holds its commit for the review of the PR, so this one must not push it.
-  const holders = wf.pr ? [] : (await prSiblings($, wf)).filter(o => !o.pr && o.state === 'developed')
-  const hold = holdsForReview(wf.state) || holders.length > 0
+  const holders: Workflow[] = []
+  if (!wf.pr) for (const o of await prSiblings($, wf)) if (!o.pr && (o.state === 'developed' || holdsLocally(o.state, (await factsFor($, o.root, project, o)).mode))) holders.push(o)
+  const local = holdsLocally(wf.state, facts.mode)
+  const hold = holdsForReview(wf.state) || local || holders.length > 0
   // With no files, a checkpoint only pushes a held commit, such as after a human skips the review.
   const held = (await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)).stdout.trim() !== before
   if (!files.length && !held) throw new Refuse('Refused: checkpoint needs the files to commit, each by name.')
+  if (!files.length && local) throw new Refuse(`Refused: ${labelOf(wf)} is ${wf.state === 'hardening' ? 'in hardening' : 'in the hack'}, so its commits stay on this computer until the review, and checkpoint with no files does not push commit ${before.slice(0, 8)}. Nothing was pushed. Repair: ${LOCAL_PUSH_ROUTES(wf.state)}`)
   if (!files.length && hold) {
     const why = holdsForReview(wf.state) ? `issue #${wf.issue} is in the state "${wf.state}"` : `${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review`
     throw new Refuse(`Refused: ${why}, so commit ${before.slice(0, 8)} is held for the review, and checkpoint with no files does not push it. Nothing was pushed. Repair: ${reviewPushRoutes(holdsForReview(wf.state) ? wf.state : 'developed')}`)
   }
-  const notes = await commitAndPush($, wf, 'checkpoint', message, files, !hold, declared)
-  if (holders.length) notes.push(`This commit is held and not pushed, because ${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review.`)
+  const advisory = !!MACHINES[facts.mode].localOnly?.includes(wf.state)
+  const notes = await commitAndPush($, wf, 'checkpoint', message, files, !hold, declared, advisory)
+  if (local) notes.push(`Committed ${(await head(wf.root, $)).slice(0, 8)} on this computer only: ${wf.state === 'hardening' ? 'hardening' : 'the hack'} pushes nothing, and no CI runs.`)
+  if (holders.length) notes.push(`This commit is held and not pushed, because ${holders.map(o => `#${o.issue}`).join(', ')} on this PR ${holders.some(o => o.state !== 'developed') ? 'holds its commits for the review' : 'finished development and holds a commit for the review'}.`)
   addTypes(wf, declared)
   const unread = await readChangeTypes($, wf)
   if (unread) notes.push(unread)
@@ -1144,7 +1166,7 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   // this, not the names in the call, and it also holds on a retry, when HEAD did not move this time.
   for (const e of [wf.evidence.review, wf.evidence.checks, wf.evidence.smoke]) if (e && e.sha !== sha && (await onlyDocsBetween($, wf, e.sha, sha))) e.sha = sha
   // A human who skipped the checks or the smoke test has decided: a commit of documents does not undo that.
-  const smokeDue = requiredSmokeTypes(wf.changeTypes ?? []).length > 0 && !wf.evidence.smoke && !wf.evidence.checks?.byHuman
+  const smokeDue = (requiredSmokeTypes(wf.changeTypes ?? []).length > 0 || !!MACHINES[facts.mode].alwaysSmoke) && !wf.evidence.smoke && !wf.evidence.checks?.byHuman
   await move($, c, wf, 'checkpoint', { ...facts, prOpen, docsOnly: wf.evidence.checks?.sha === sha, smoke: smokeDue })
   await flagForHuman($, wf, notes)
   await saveWorkflow($, wf)
@@ -1190,7 +1212,8 @@ async function followUpCheckpoint($: EngineInterface, { args, project }: Ctx): P
 }
 
 // An issue that is still before the merge point, also when a block or a wait holds it.
-const isBeforeMerge = (o: Workflow) => ['setup', 'interviewing', 'planning', 'developing'].includes(o.state) || (['blocked', 'wait'].includes(o.state) && ['setup', 'interviewing', 'planning', 'developing'].includes(o.previous ?? ''))
+const BEFORE_MERGE: State[] = ['setup', 'interviewing', 'planning', 'developing', 'hardening']
+const isBeforeMerge = (o: Workflow) => BEFORE_MERGE.includes(o.state) || (['blocked', 'wait'].includes(o.state) && BEFORE_MERGE.includes(o.previous ?? 'done'))
 
 // The record goes into review: the code review starts at once, and the stage hooks fire.
 const sweepText = (deadcode: NonNullable<Workflow['deadcode']>) => (deadcode.results.length
@@ -1248,6 +1271,23 @@ async function intoReview($: EngineInterface, c: Ctx, wf: Workflow, facts: Facts
   return answer($, wf, facts, notes)
 }
 
+// Hack mode: the human agrees that the hack works, and hardening starts. Nothing is pushed.
+async function finishedHacking($: EngineInterface, c: Ctx): Promise<string> {
+  const wf = await current($, c)
+  const facts = await factsFor($, wf.root, c.project, wf)
+  await move($, c, wf, 'finishedHacking', facts)
+  const ahead = await git(wf.root, $, 'rev-list', '--count', `origin/${wf.base}..HEAD`)
+  const notes = [ahead.exitCode === 0 ? `The hack holds ${ahead.stdout.trim()} commits on ${wf.branch} that are not on ${wf.base}, all on this computer.` : `git rev-list of origin/${wf.base}..HEAD exited ${ahead.exitCode}: ${said(ahead)}`]
+  await saveWorkflow($, wf)
+  return answer($, wf, facts, notes)
+}
+
+// Hardening ends with the checks that a push would run, so the first push in the review finds nothing new.
+async function prePushForHardening($: EngineInterface, wf: Workflow, declared: readonly ChangeType[]): Promise<string[]> {
+  const note = await checked($, wf, 'pre-push-check.sh', [], declared)
+  return [note ?? `pre-push-check.sh passed on ${(await head(wf.root, $)).slice(0, 8)}.`]
+}
+
 // The merge point. Each named issue finishes here. When no issue on the PR is still in development, the
 // PR record takes over: from here on the PR, and not one issue, goes through review, the checks and done.
 async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> {
@@ -1261,7 +1301,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   // A retry after a crash finds this issue finished, and goes on from there.
   if (wf.state !== 'developed') {
     legal(wf, 'finishedDevelopment', facts)
-    refuseBeforeBaseCheck(wf, 'finishedDevelopment')
+    refuseBeforeBaseCheck(wf, 'finishedDevelopment', facts.mode)
   }
   await noAgentsRunning($)
   // Before any commit, so that a wrong name leaves the commit undone.
@@ -1274,10 +1314,15 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   const unnamed = changedPaths(await porcelain($, wf.root)).filter(p => !files.some(f => p === f || p.startsWith(`${f.replace(/\/$/, '')}/`)))
   if (unnamed.length) throw new Refuse(`Refused: these changed files are not named: ${unnamed.join(', ')}. Name each one, or remove it. Nothing was committed.`)
   const message = text(args, 'message') || `Finish work on ${named.map(n => `#${n}`).join(', ')}`
+  // A hack proves in hardening what test first would have proved, and the evidence goes on the PR.
+  const hardening = text(args, 'hardening')
+  const hardenRefusal = (who: string) => `Refused: ${who} is a hack, so finishedDevelopment needs hardening: each test that pins the change, the command and the failing line on the base, and its pass on HEAD. Nothing was committed. Repair: follow "Harden" in the ndev:work-hack skill, then call finishedDevelopment again with hardening.`
+  if (wf.state !== 'developed' && MACHINES[facts.mode].hardens && !hardening) throw new Refuse(hardenRefusal(labelOf(wf)))
 
   if (wf.direct) {
     if (named.length > 1) throw new Refuse(`Refused: a project that commits directly to the base branch has one issue at a time, and this call names ${named.map(n => `#${n}`).join(', ')}. Nothing was committed.`)
     const notes = await commitAndPush($, wf, 'finishedDevelopment', message, files, false, declared)
+    if (hardening) notes.push(...(await prePushForHardening($, wf, declared)), `Hardening: ${hardening}`)
     if (prBody !== undefined) notes.push(`This project commits directly to the base branch, so it has no PR and ${bodyPath} was not used.`)
     addTypes(wf, declared)
     return intoReview($, c, wf, facts, notes)
@@ -1294,12 +1339,17 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   const now = await $.clock.now()
   const held = await readHeld($, wf.root)
   const listed = named.map(i => (i === wf.issue ? wf : held.issues.find(o => o.issue === i)))
+  const modes: Mode[] = []
+  for (const o of listed) modes.push(o ? (await factsFor($, wf.root, project, o)).mode : facts.mode)
   const problems = named.flatMap((i, at) => {
     const o = listed[at]
+    const mode = modes[at]!
     if (!o) return [`#${i} has no workflow in ${wf.root}. Repair: call started with issue ${i}.`]
     if (o.prs[0] !== n) return [`#${i} is not on PR #${n}${o.prs[0] ? `: it is on PR #${o.prs[0]}` : ''}.`]
-    if (o.state !== 'developing' && o.state !== 'developed') return [`#${i} is in the state "${o.state}".`]
-    if (o.state === 'developing' && !isBaseChecked(o)) return [`#${i} has no base check. Repair: call finishedInterview with issue ${i}.`]
+    if (o.state !== 'developing' && o.state !== 'hardening' && o.state !== 'developed') return [`#${i} is in the state "${o.state}".`]
+    if (o.state !== 'developed' && 'refused' in afterTool({ state: o.state }, 'finishedDevelopment', { ...facts, mode })) return [`#${i} is still in the hack. Repair: call finishedHacking with issue ${i}, and harden it.`]
+    if (o.state === 'developing' && !isBaseChecked(o, mode)) return [`#${i} has no base check. Repair: call finishedInterview with issue ${i}.`]
+    if (o.state !== 'developed' && MACHINES[mode].hardens && !hardening) return [hardenRefusal(`#${i}`).replace('Refused: ', '').replace(' Nothing was committed.', '')]
     if (o.owner && o.owner.session !== session && now - o.owner.at < OWNER_LIVE_MS) return [`The session ${o.owner.session} owns #${i}. Leave it to that session.`]
     return []
   })
@@ -1307,6 +1357,12 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   const finishing = listed as Workflow[]
 
   const notes = finishing.every(o => o.state === 'developed') && !files.length ? [] : await commitAndPush($, wf, 'finishedDevelopment', message, files, false, declared)
+  const hardened = finishing.filter((o, at) => o.state !== 'developed' && MACHINES[modes[at]!].hardens)
+  if (hardened.length) {
+    notes.push(...(await prePushForHardening($, wf, declared)))
+    await comment($, wf.root, wf.repo, n, `${MARKER}\n**Hardening** of ${hardened.map(o => `#${o.issue}`).join(', ')} at ${await head(wf.root, $)}\n\n${hardening}`)
+    notes.push(`The hardening evidence is on PR #${n}.`)
+  }
   if (prBody !== undefined) await editBody($, wf, old => withBodySection(old, wf.issue, prBody))
   addTypes(wf, declared)
   for (const o of finishing.filter(x => x.state !== 'developed')) {
@@ -1338,16 +1394,18 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
     return [...seen.values()]
   }
   const issues = [...new Set([...(prior?.issues ?? []), ...all.map(o => o.issue)])].sort((a, b) => a - b)
+  const settings = await settingsOfAll($, wf.root, project, [...(prior ? [prior] : []), ...all])
   const changeTypes = union(o => o.changeTypes)
   const webFiles = union(o => o.webFiles)
   const record: Workflow = {
     ...(prior ?? { ...wf, rev: undefined, op: undefined, previous: undefined, waiting: undefined, blocked: undefined }),
-    ...(await settingsOfAll($, wf.root, project, [...(prior ? [prior] : []), ...all])),
+    ...settings,
     pr: n,
     prs: [n],
     issue: issues[0]!,
     issues,
-    state: 'developing',
+    // The PR record enters the review by its mode's last step before it: a hack PR by hardening.
+    state: MACHINES[(await factsFor($, wf.root, project, settings)).mode].reopen,
     previous: undefined,
     owner: { session, at: now },
     evidence: {},
@@ -1367,12 +1425,14 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
 
 // An issue joins a PR, which goes back to its developers, because what was reviewed and tested is no
 // longer the whole change. Issues can join until the PR merges.
-async function backToDevelopers($: EngineInterface, carrier: Workflow, issue: number, tool: string): Promise<string> {
+async function backToDevelopers($: EngineInterface, project: LoadedConfig | undefined, carrier: Workflow, issue: number, tool: string): Promise<string> {
   carrier.issues = [...new Set([...issuesOf(carrier), issue])].sort((a, b) => a - b)
   carrier.issue = carrier.issues[0]!
-  const wasBack = carrier.state === 'developing'
-  if (carrier.state === 'blocked' || carrier.state === 'wait') carrier.previous = 'developing'
-  else if (!wasBack) moved(carrier, tool, { state: 'developing' }, await $.clock.now())
+  // A hack PR goes back to hardening: the new work must be pinned like the rest before it is pushed.
+  const reopen = MACHINES[(await factsFor($, carrier.root, project, carrier)).mode].reopen
+  const wasBack = carrier.state === reopen
+  if (carrier.state === 'blocked' || carrier.state === 'wait') carrier.previous = reopen
+  else if (!wasBack) moved(carrier, tool, { state: reopen }, await $.clock.now())
   carrier.evidence = {}
   carrier.hooks = carrier.hooks ? { ...carrier.hooks, review: undefined } : undefined
   carrier.reviewSpec = undefined
@@ -1647,6 +1707,7 @@ async function finishedSmoke($: EngineInterface, c: Ctx): Promise<string> {
   if (!report && !skipped) throw new Refuse('Refused: finishedSmoke needs a report, or skipped with the reason.')
   const required = requiredSmokeTypes(wf.changeTypes ?? [])
   if (skipped && required.length) throw new Refuse(`Refused: the change types of #${wf.issue} hold ${required.join(', ')}, so finishedSmoke does not take skipped ("${skipped}"). Repair: smoke test HEAD (${sha.slice(0, 7)}) and give the report. Only a human can skip it, with /flow skip <reason>.`)
+  if (skipped && MACHINES[facts.mode].alwaysSmoke) throw new Refuse(`Refused: ${labelOf(wf)} is a hack, and hack mode requires a smoke test of each change, so finishedSmoke does not take skipped ("${skipped}"). Repair: smoke test HEAD (${sha.slice(0, 7)}) and give the report. Only a human can skip it, with /flow skip <reason>.`)
   if (skipped && !maySkipReview(facts.level)) throw new Refuse('Refused: a formal_project does not skip the smoke test. Run it and give the report.')
   if (report) {
     if (!report.includes(sha.slice(0, 7))) throw new Refuse(`Refused: the report does not name HEAD (${sha.slice(0, 7)}). Smoke test HEAD and name its sha.`)
@@ -1828,11 +1889,14 @@ function refuseShortName(shortName: string, issue?: number): void {
 
 const hashOf = (s: string) => [...s].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7).toString(16)
 
+// A human steers each step of a hack, so hack mode is interactive only.
+const HACK_AUTO = (who: string, issue?: number) => `Refused: hack mode is interactive only, because a human steers each step of the hack, and the steering of ${who} is auto. Nothing changed. Repair: the human sets the steering to interactive (/flow steering interactive${issue ? ` ${issue}` : ''} for one issue, or /dev steering interactive), or start in light or heavy mode.`
+
 // A new issue, and its workflow. Once the issue exists, each failure names it, so that a retry does not file it twice.
 async function create($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const shortName = text(args, 'shortName')
-  if (args.mode !== undefined && args.mode !== 'light' && args.mode !== 'heavy') throw new Refuse(`Refused: mode is ${JSON.stringify(args.mode)}. Use "light" or "heavy".`)
+  if (args.mode !== undefined && args.mode !== 'light' && args.mode !== 'heavy' && args.mode !== 'hack') throw new Refuse(`Refused: mode is ${JSON.stringify(args.mode)}. Use "light", "heavy" or "hack".`)
   const [title, ...rest] = text(args, 'description').split('\n')
   if (!shortName) throw new Refuse('Refused: create needs a shortName. Nothing was filed.')
   refuseShortName(shortName)
@@ -1842,6 +1906,7 @@ async function create($: EngineInterface, c: Ctx): Promise<string> {
   const root = (await read($, workflowRoot)) ?? project.root
   const active = await loadWorkflow($, root)
   if (active?.off) throw new Refuse(OFF_HERE(active))
+  if (args.mode === 'hack' && (await factsFor($, root, project, { mode: 'hack' })).steering === 'auto') throw new Refuse(`${HACK_AUTO('this worktree')} Nothing was filed.`)
   const repo = project.config.github?.repo ?? (await repoFromOrigin($, project.root))
   const { gitDir } = await paths($, root)
   const bodyFile = `${gitDir}/ndev-new-issue.md`
@@ -2064,7 +2129,7 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
       await saveWorkflow($, child)
     }
     const carrier = wf.pr ? wf : await loadPrRecord($, wf.root, pr)
-    if (carrier && !carrier.issues?.includes(n)) notes.push(await backToDevelopers($, carrier, n, 'followUp:this_agent'))
+    if (carrier && !carrier.issues?.includes(n)) notes.push(await backToDevelopers($, project, carrier, n, 'followUp:this_agent'))
     if (wf.pr) {
       // The PR is back with its developers, and this agent goes on the new issue.
       await bind($, wf.root, n)
@@ -2236,16 +2301,17 @@ const WAIT_LIMITS = { attempts: { type: 'integer', description: 'The most checks
 const ISSUE_ARG = { type: 'number', description: 'The issue this call is for: the one that this agent is on. A worktree can hold several issues.' }
 const PR_ARG = { type: 'number', description: 'The PR this call is for. From finishedDevelopment on, the PR goes through the review, the checks and done. Give issue or pr.' }
 const SPEC_LIST: Spec[] = [
-  { name: 'create', description: 'File a new issue and start its workflow, as started does. The answer gives the issue number.', properties: { mode: { type: 'string', enum: ['light', 'heavy'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, description: { ...STR, description: 'The first line is the issue title, and the rest is its body' } }, required: ['shortName', 'description'] },
+  { name: 'create', description: 'File a new issue and start its workflow, as started does. The answer gives the issue number.', properties: { mode: { type: 'string', enum: ['light', 'heavy', 'hack'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, hack when the human wants to find the solution by trial and error first (interactive only), and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, description: { ...STR, description: 'The first line is the issue title, and the rest is its body' } }, required: ['shortName', 'description'] },
   { name: 'comment', description: 'Add a comment to an issue or a PR. Give issue or pr, not both. It works with or without a workflow.', properties: { issue: { type: 'number' }, pr: { type: 'number' }, message: STR }, required: ['message'] },
-  { name: 'started', description: 'Start or resume the workflow of an issue. Call it first in each work session. It records the state, claims the worktree, opens the draft PR and answers with the next step.', properties: { mode: { type: 'string', enum: ['light', 'heavy'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens, chosen from the issue. A new workflow needs it. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, issue: { type: 'number' }, takeOver: { type: 'boolean', description: 'Only when the session that owns the workflow is dead' } }, required: ['issue'] },
+  { name: 'started', description: 'Start or resume the workflow of an issue. Call it first in each work session. It records the state, claims the worktree, opens the draft PR and answers with the next step.', properties: { mode: { type: 'string', enum: ['light', 'heavy', 'hack'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, hack when the human wants to find the solution by trial and error first (interactive only), and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens, chosen from the issue. A new workflow needs it. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, issue: { type: 'number' }, takeOver: { type: 'boolean', description: 'Only when the session that owns the workflow is dead' } }, required: ['issue'] },
   { name: 'interview', description: 'With interviewJson: show one round of questions to the human in the interview pane, hold until the human answers, and return the answers and notes. With no arguments: the interview is over, so go on to the next state. Only that call leaves the state "interviewing". Load the ndev:interview skill for the method.', properties: { interviewJson: { description: 'One round: { title, intro?, questions: [{ id, header, question, context?, multiSelect?, followUpTo?, options?: [{ label, description?, preview?, recommended? }], suggested? }] }. Markdown works in question, context, description and preview. Each question needs a recommendation: an option with recommended true, or suggested when it has no options. Ids are unique across all rounds of the issue. followUpTo names the earlier question that this one follows.' } }, required: [] },
   { name: 'setSteering', description: 'No human can answer in this session, such as with -p or an unattended prompt: set this issue to auto. Only a human can set it back. In the state "interviewing" this goes on to the next state. The reason goes on the issue and the PR. A preference is not a reason.', properties: { steering: { type: 'string', enum: ['auto'] }, reason: { ...STR, description: 'Why no human can answer' } }, required: ['steering', 'reason'] },
   { name: 'finishedPlan', description: 'The plan is written: put it in the PR body and go on to development.', properties: { markdown_file: { ...STR, description: 'The plan file' } }, required: ['markdown_file'] },
   { name: 'checkpoint', description: 'Commit the named files and push, after the check scripts. Use this and not git commit or git push.', properties: { message: STR, files: FILES, changeTypes: CHANGE_TYPES_ARG, worktree: { ...STR, description: 'Only for an agent that followUp started: its own worktree' } }, required: ['message', 'files'] },
-  { name: 'finishedInterview', description: 'The interview with the human has ended, and development can start. This runs the base check: pre-commit-check.sh in light mode and pre-push-check.sh in heavy mode. Call it after the last question and before any code. It answers with a failure and does not block, and it can run again.', properties: {}, required: [] },
+  { name: 'finishedInterview', description: 'The interview with the human has ended, and development can start. This runs the base check: pre-commit-check.sh in light mode and pre-push-check.sh in heavy mode. Hack mode has none. Call it after the last question and before any code. It answers with a failure and does not block, and it can run again.', properties: {}, required: [] },
   { name: 'hotfix', description: 'An urgent fix that must not wait for the workflow. This files an issue, and gives it its own worktree and draft PR with the workflow off there. The answer gives the hotfix instructions. This session stays on its own issue. Use it only for an urgent fix.', properties: { issue: { type: 'number', description: 'Only for a retry after a failed set-up: the issue that the earlier call filed. Nothing new is filed.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens, such as fix-login-redirect.' }, description: { ...STR, description: 'Optional. The first line is the issue title, and the rest is its body. With no value, the title comes from shortName.' } }, required: ['shortName'] },
-  { name: 'finishedDevelopment', description: 'Development is complete: commit the named files and go on to review. This runs the dead-code sweep, starts the code review and fires the remember hook. This commit is not pushed until finishedReview.', properties: { issues: { type: 'array', items: { type: 'number' }, description: 'Each issue that this call finishes. An issue on the same PR that is still in development makes the PR wait for it, and the last one to finish starts the review.' }, prs: { type: 'array', items: { type: 'number' } }, message: STR, files: FILES, changeTypes: CHANGE_TYPES_ARG, body_file: { ...STR, description: 'Optional. A markdown file for the PR body: the problem, the result, the test evidence and the limits. The tool adds the closing reference. Keep it outside the worktree, or name it in files.' } }, required: ['issues', 'prs'] },
+  { name: 'finishedHacking', description: 'Hack mode: the human agrees that the hack works. Go on to hardening, where the change is pinned with tests and checked before anything is pushed.', properties: {}, required: [] },
+  { name: 'finishedDevelopment', description: 'Development is complete: commit the named files and go on to review. This runs the dead-code sweep, starts the code review and fires the remember hook. This commit is not pushed until finishedReview.', properties: { issues: { type: 'array', items: { type: 'number' }, description: 'Each issue that this call finishes. An issue on the same PR that is still in development makes the PR wait for it, and the last one to finish starts the review.' }, prs: { type: 'array', items: { type: 'number' } }, message: STR, files: FILES, changeTypes: CHANGE_TYPES_ARG, body_file: { ...STR, description: 'Optional. A markdown file for the PR body: the problem, the result, the test evidence and the limits. The tool adds the closing reference. Keep it outside the worktree, or name it in files.' }, hardening: { ...STR, description: 'Needed for a hack issue: each test that pins the change, the command and the failing line on the base, and its pass on HEAD. It goes on the PR.' } }, required: ['issues', 'prs'] },
   { name: 'finishedReview', description: 'Reviews are complete: run pre-ready-check.sh, push, mark the PR ready and go on to the checks. Each field is the result or "skipped: <reason>". remembered is what the remember hook recorded in the docs and the wiki, or "nothing: <reason>".', properties: { review: STR, deadcode: STR, remembered: STR }, required: ['review', 'deadcode', 'remembered'] },
   { name: 'finishedChecks', description: 'The checks have ended: the tool reads them for HEAD and goes on, or refuses and names them.', properties: {}, required: [] },
   { name: 'finishedSmoke', description: 'The smoke test is complete: post the report, which names the HEAD sha. Or give skipped with the reason.', properties: { report: STR, skipped: STR }, required: [] },
@@ -2271,7 +2337,7 @@ const SPEC_LIST: Spec[] = [
 ]
 
 // Each of these acts on one workflow, so each names its issue.
-const STATE_TOOLS = new Set(['interview', 'setSteering', 'finishedPlan', 'finishedInterview', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', ...SPEC_LIST.filter(s => s.name.startsWith('wait')).map(s => s.name)])
+const STATE_TOOLS = new Set(['interview', 'setSteering', 'finishedPlan', 'finishedInterview', 'finishedHacking', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', ...SPEC_LIST.filter(s => s.name.startsWith('wait')).map(s => s.name)])
 // These name an issue only. finishedDevelopment names its issues, and each other state tool takes issue or pr.
 const ISSUE_ONLY = new Set(['finishedPlan', 'waitForPR'])
 const SPECS: Spec[] = SPEC_LIST.map(s => {
@@ -2329,7 +2395,7 @@ export async function workflowListsComponents($: EngineInterface, project: Loade
   if (!(await workflowOwnsChecks($, project))) return false
   const root = (await read($, workflowRoot)) ?? project?.root
   const wf = root ? await loadWorkflow($, root) : undefined
-  return wf?.state === 'planning' || wf?.state === 'developing'
+  return wf?.state === 'planning' || wf?.state === 'developing' || wf?.state === 'hardening'
 }
 
 // A worktree of several records, in a session that owns none: the guards still count, by the first open record.
@@ -2465,6 +2531,7 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
     case 'create': return create($, c)
     case 'hotfix': return hotfix($, c)
     case 'finishedInterview': return finishedInterview($, c)
+    case 'finishedHacking': return finishedHacking($, c)
     case 'comment': return addComment($, c)
     case 'interview': return leaveInterview($, c)
     case 'setSteering': return setSteering($, c)
@@ -2585,8 +2652,8 @@ function waitSpec(name: string, a: Args): WaitSpec {
 
 const isState = (value: string): value is State => (STATES as readonly string[]).includes(value)
 
-// Where a state stands on the main line. developed comes between FLOW's developing and reviewing, and a side state has no place.
-const LINE: State[] = FLOW.flatMap(state => (state === 'developing' ? [state, 'developed' as const] : [state]))
+// Where a state stands on the main line. developed comes between FLOW's hardening and reviewing, and a side state has no place.
+const LINE: State[] = FLOW.flatMap(state => (state === 'hardening' ? [state, 'developed' as const] : [state]))
 
 // A wait can sleep through a state, and an issue can be past it before the wait starts, so the current state alone would hold a wait that can never end.
 function reachedState(wf: Workflow, wanted: State, startedAt: number): string | undefined {
@@ -3109,7 +3176,7 @@ async function leaveInterview($: EngineInterface, c: Ctx): Promise<string> {
   const asked = !!file.closed?.asked
   await move($, c, wf, 'interview', facts, asked ? 'interview' : 'interview: no questions asked')
   // Light goes straight to development, so the base check runs here. Heavy runs it in finishedPlan.
-  if (wf.state === 'developing' && !isBaseChecked(wf)) notes.push(...(await runBaseCheck($, wf, facts)).notes)
+  if (wf.state === 'developing' && !isBaseChecked(wf, facts.mode)) notes.push(...(await runBaseCheck($, wf, facts)).notes)
   await saveWorkflow($, wf)
   return answer($, wf, facts, [asked ? `The answers are in ${interviewPath(wf.root, wf.issue)}.` : 'No questions asked.', ...notes])
 }
@@ -3117,6 +3184,7 @@ async function leaveInterview($: EngineInterface, c: Ctx): Promise<string> {
 async function setSteering($: EngineInterface, c: Ctx): Promise<string> {
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, c.project, wf)
+  if (facts.mode === 'hack') throw new Refuse(`Refused: ${labelOf(wf)} is in hack mode, which is interactive only, because a human steers each step of the hack. The steering stays interactive. Nothing changed. Repair: if no human can answer, call blocked; the human can set /flow mode light ${wf.issue} and then steering can go to auto.`)
   if (text(c.args, 'steering') !== 'auto') throw new Refuse(`Refused: an agent can only set steering to auto, and it got ${JSON.stringify(c.args.steering)}. Only a human sets it back, with /flow steering interactive. Nothing changed.`)
   const reason = text(c.args, 'reason')
   if (!reason) throw new Refuse('Refused: setSteering needs a reason: why no human can answer in this session. A preference is not a reason. Nothing changed.')

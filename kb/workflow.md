@@ -16,7 +16,8 @@ The colours are the same in both diagrams: grey is the start, blue is the work, 
 stateDiagram-v2
     %%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui, sans-serif","fontSize":"14px","primaryColor":"#334155","primaryTextColor":"#ffffff","primaryBorderColor":"#94a3b8","lineColor":"#8b95a5","edgeLabelBackground":"#1e293b","tertiaryTextColor":"#e2e8f0","textColor":"#e2e8f0"},"state":{"nodeSpacing":60,"rankSpacing":70}}}%%
     [*] --> setup: started, a check script is missing
-    [*] --> interviewing: started, interactive steering
+    [*] --> interviewing: started, interactive steering, light or heavy mode
+    [*] --> developing: started, hack mode
     [*] --> planning: started, auto steering, heavy mode
     [*] --> developing: started, auto steering, light mode
     [*] --> blocked: started, a blocker is open
@@ -32,6 +33,8 @@ stateDiagram-v2
     developing --> developed: finishedDevelopment, another issue of the PR is not complete
     developed --> reviewing: finishedDevelopment of the last issue
     developed --> developing: checkpoint
+    developing --> hardening: finishedHacking, hack mode
+    hardening --> reviewing: finishedDevelopment with the hardening evidence
     reviewing --> ci: finishedReview
     ci --> smoke: finishedChecks, a web change, a docs change, or a preview in heavy mode
     ci --> finishing: finishedChecks, nothing to smoke
@@ -65,7 +68,7 @@ stateDiagram-v2
     classDef hold fill:#6d28d9,stroke:#c4b5fd,color:#ffffff
     classDef any fill:#1e293b,stroke:#94a3b8,color:#ffffff,stroke-dasharray:5 4
     class setup start
-    class interviewing,planning,developing,developed build
+    class interviewing,planning,developing,hardening,developed build
     class reviewing,ci,smoke,finishing verify
     class revising revise
     class done finished
@@ -96,10 +99,13 @@ flowchart TD
     interviewing -->|"interview(), light"| developing
     checks -->|"auto, heavy"| planning[planning<br/>plan in the PR body]
     checks -->|"auto, light"| developing
+    checks -->|"interactive, hack:<br/>no interview, no plan"| developing
 
     planning -->|"finishedPlan(file)<br/>auto, or straw_man or poc"| developing[developing<br/>test first]
     planning -->|"finishedPlan(file)<br/>interactive: wait for sign-off"| blocked
 
+    developing -->|"finishedHacking(), hack<br/>local commits only, no push"| hardening[hardening<br/>each test fails on the base, full checks, no push]
+    hardening -->|"finishedDevelopment(..., hardening)<br/>pre-push, gates, evidence on the PR. No push."| reviewing
     developing -->|"finishedDevelopment(issues, prs, message, files, body_file)<br/>fast, pre-commit, commit. No push."| reviewing[reviewing<br/>the plugin starts the review, runs the dead-code sweep,<br/>REMEMBER HOOK fires]
     reviewing -->|"finishedReview(review, deadcode, remembered)<br/>pre-ready, pre-push, push, mark PR ready"| ci[ci<br/>the plugin watches the checks]
     ci -->|"finishedChecks()<br/>green, web change, docs change, or preview in heavy mode"| smoke[smoke<br/>browser smoke test]
@@ -114,6 +120,7 @@ flowchart TD
 
     smoke & finishing -->|"checkpoint: a new commit<br/>makes the evidence stale.<br/>Documents only: stays in finishing,<br/>or goes to smoke when a docs smoke test is due"| ci
     reviewing & ci & smoke & finishing -->|"followUp('this_agent')"| developing
+    reviewing & ci & smoke & finishing -->|"followUp('this_agent'), hack"| hardening
 
     active["any active state"] -->|"blocked(message)<br/>or 3 failed attempts<br/>or stalled with no progress"| blocked[[blocked<br/>keeps the previous state]]
     blocked -->|"unblocked(message) or /unblock message<br/>goes back to the previous state"| active
@@ -129,7 +136,7 @@ flowchart TD
     classDef hold fill:#6d28d9,stroke:#c4b5fd,color:#ffffff
     classDef any fill:#1e293b,stroke:#94a3b8,color:#ffffff,stroke-dasharray:5 4
     class session,none,setup,ask,checks start
-    class interviewing,planning,developing build
+    class interviewing,planning,developing,hardening build
     class reviewing,ci,smoke,finishing verify
     class revising revise
     class done finished
@@ -155,6 +162,7 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `finishedPlan(issue, markdown_file)`                                 | Moves the plan into the PR body, with `Closes #n`.                                                                                                                            | The plan has no `Test entry point:` line.                                                                                                        |
 | `hotfix(shortName, description, issue)` | Files an issue for an urgent fix, and gives it its own worktree and draft PR, with the workflow off there. The answer gives the hotfix instructions. See [hotfix](#hotfix). |
 | `finishedInterview(issue)` | For an issue that did not leave an interview, such as under auto steering. Runs the base check and records the result. Valid only in `developing`. It can run again. `checkpoint` and `finishedDevelopment` refuse until it has run. See [Checks](#checks). |
+| `finishedHacking(issue)` | Hack mode: the human agrees that the hack works. Moves to `hardening` and names the commits held on this computer. | The issue is not a hack, or it is not in `developing`. |
 | `checkpoint(issue or pr, message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit, but not in `reviewing` or `developed`: there the commit waits for `finishedReview`, and the refusal names that route and `/flow skip`. In `done` on an open PR, it commits and goes back to `ci`. In `reviewing`, `ci`, `smoke` or `revising` on a merged PR it commits nothing and names `done`. `changeTypes` is optional. See [Change types](#change-types). | A check script fails. In `done`, the PR is merged or closed, or there is no PR.                                                                                                                            |
 | `finishedDevelopment(issues, prs, message, files, body_file)`                    | Commits the named files for the listed issues. An optional `body_file` goes in its own section of the PR body, so the plan and its sign-off stay. A missing file refuses before the commit. It does not push. When each issue of the PR is complete, it starts the code review and lists the changed UI files. Until then, the listed issues wait in `developed`.                                                             | Changed files are not named.                                                                                                                     |
 | `finishedReview(issue or pr, review, deadcode, remembered)`                | Takes the results of the review and remember hooks. Runs `pre-ready-check.sh`, pushes, marks the PR ready.                                                                    | A field is empty. A `formal_project` sends `skipped:`. A check fails, and then nothing is pushed.                                                |
@@ -329,11 +337,19 @@ Limit: `started` always takes the default branch as the base, and the worker cha
 ## Mode and steering
 
 
-| Step       | light                             | heavy                                                                                                                  |
-| ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Plan       | Skipped                           | Required, in the PR body                                                                                               |
-| Review     | One reviewer that the tool starts | Two reviewers that the tool starts: one for standards, one for the specification. A change of documents only gets one. |
-| `gates.sh` | Not run                           | Run at `finishedDevelopment`                                                                                           |
+| Step       | light                             | heavy                                                                                                                  | hack |
+| ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---- |
+| Interview  | Under interactive steering        | Under interactive steering                                                                                             | None: `started` goes to `developing`, and the agent writes the goal in one line in the PR body |
+| Plan       | Skipped                           | Required, in the PR body                                                                                               | None |
+| Base check | `pre-commit-check.sh`             | `pre-push-check.sh`                                                                                                    | None |
+| `checkpoint` in `developing` | Checks, commits and pushes | Checks, commits and pushes                                                                                  | Commits on this computer only. `fast-checks.sh` only advises, and `pre-commit-check.sh` does not run. Nothing is pushed and no CI runs |
+| Hardening  | None                              | None                                                                                                                   | `finishedHacking` goes to `hardening`. Each test must fail on the base and pass on HEAD. `checkpoint` runs the full checks and still pushes nothing. `finishedDevelopment` needs `hardening` (the evidence), runs `pre-push-check.sh` and `gates.sh`, and puts the evidence on the PR |
+| Review     | One reviewer that the tool starts | Two reviewers that the tool starts: one for standards, one for the specification. A change of documents only gets one. | The two reviewers of heavy, and the agent runs `ndev:adversarial-review` |
+| `gates.sh` | Not run                           | Run at `finishedDevelopment`                                                                                           | Run at `finishedDevelopment` |
+| Smoke test | For a web or docs change          | For a web or docs change, or a preview                                                                                 | Always. `finishedSmoke` refuses `skipped`: only a human skips, with `/flow skip <reason>` |
+| Steering   | Either                            | Either                                                                                                                 | Interactive only. `started`, `create`, `setSteering`, `/flow`, `/dev mode` and `/dev steering` refuse to put hack and auto together |
+
+More work after the review (`followUp` with `this_agent`, an issue that joins the PR, `checkpoint` in `developed`) goes back to `developing` in light and heavy, and to `hardening` in hack.
 
 
 
@@ -355,11 +371,11 @@ Each issue in a worktree can have its own mode and steering. The first value in 
 
 An issue with no value of its own stores nothing, and it follows the worktree.
 
-- **The agent chooses the mode at the start.** It gives `mode` to `started` or `create`: `heavy` for a multi-step, cross-cutting or high-risk change, and `light` for the others. Past `setup`, `started` refuses a different mode and names the command for the human. The agent cannot choose the steering.
+- **The agent chooses the mode at the start.** It gives `mode` to `started` or `create`: `heavy` for a multi-step, cross-cutting or high-risk change, `hack` when the human wants to find the solution by trial and error first, and `light` for the others. Past `setup`, `started` refuses a different mode and names the command for the human. The agent cannot choose the steering.
 - **The human can change either setting at any time.** `/flow mode heavy 7` or `/flow steering auto 7`. With no number, the command sets the active issue. With no value, it shows the setting. The steps that remain follow the new setting, and the steps that are complete stay complete.
-- **A PR follows the strictest of its issues.** Heavy wins over light, and interactive wins over auto. An issue with no setting of its own counts with what it inherits from the worktree. When no issue has its own setting, the PR record stores none and follows the worktree. The PR record takes these values when an issue comes to the PR. After that, `/flow mode` on that record sets the PR. `finishedDevelopment` runs `gates.sh` for each heavy issue that it finishes, and the review of the PR follows the strictest setting.
+- **A PR follows the strictest of its issues.** Light, then hack, then heavy: heavy wins over both, and hack wins over light. Interactive wins over auto. An issue with no setting of its own counts with what it inherits from the worktree. When no issue has its own setting, the PR record stores none and follows the worktree. The PR record takes these values when an issue comes to the PR. After that, `/flow mode` on that record sets the PR. `finishedDevelopment` runs `gates.sh` for each heavy issue that it finishes, and the review of the PR follows the strictest setting.
 
-**`started` loads the skill of the mode.** Its answer holds the text of `work-light` or `work-heavy`, so the agent has the method from the first step. A session gets each skill once, and again after a compaction. Steering does not change the choice, because `work-light-auto` and `work-heavy-auto` dispatch workers and an agent on one issue does not. If the file cannot be read, the workflow still starts, and the agent is told to call the Skill tool.
+**`started` loads the skill of the mode.** Its answer holds the text of `work-light`, `work-heavy` or `work-hack`, so the agent has the method from the first step. A session gets each skill once, and again after a compaction. Steering does not change the choice, because `work-light-auto` and `work-heavy-auto` dispatch workers and an agent on one issue does not. If the file cannot be read, the workflow still starts, and the agent is told to call the Skill tool.
 
 `/dev mode` still sets the worktree. It does not change an issue that has its own value. `started` names the mode and the steering, and each prompt names them when they apply to an issue.
 
@@ -527,7 +543,7 @@ Each change of state moves the card, through `saveWorkflow`, so the tools, the w
 
 | State | Column |
 | ----- | ------ |
-| `setup`, `planning`, `developing`, `reviewing`, `ci`, `smoke`, `finishing`, `revising` | In progress |
+| `setup`, `planning`, `developing`, `hardening`, `reviewing`, `ci`, `smoke`, `finishing`, `revising` | In progress |
 | `blocked` | Awaiting feedback |
 | `done`, not merged | In review: no more automated development is due |
 | `done`, merged or closed with no change | Done |
@@ -572,7 +588,7 @@ The name is `/flow`, not `/ndev:workflow` or `/workflow`. The engine refuses a c
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `/flow guide`                      | Shows this guide.                                                                                                         |
 | `/flow status`                     | Shows the state and the next step.                                                                                        |
-| `/flow mode [light\|heavy] [issue]` | Shows or sets the mode of one issue. See [The settings of one issue](#the-settings-of-one-issue). |
+| `/flow mode [light\|heavy\|hack] [issue]` | Shows or sets the mode of one issue. See [The settings of one issue](#the-settings-of-one-issue). |
 | `/flow steering [interactive\|auto] [issue]` | Shows or sets the steering of one issue. |
 | `/flow skip [reason]`              | Leaves the current phase and goes to the next one. The PR records the reason.                                             |
 | `/flow goto <state> [reason]`      | Goes to a named state. The PR records the reason.                                                                         |
@@ -757,7 +773,7 @@ A new issue joins the unfinished issue of the agent. It uses the same worktree, 
 
 | Record | States | Tools |
 | ------ | ------ | ----- |
-| Issue | `setup`, `interviewing`, `planning`, `developing`, `developed` | `started`, `create`, `interview`, `finishedPlan`, `finishedDevelopment` |
+| Issue | `setup`, `interviewing`, `planning`, `developing`, `hardening`, `developed` | `started`, `create`, `interview`, `finishedPlan`, `finishedHacking`, `finishedDevelopment` |
 | PR | `reviewing`, `ci`, `smoke`, `finishing`, `revising`, `done` | `finishedReview`, `finishedChecks`, `finishedSmoke`, `finishedRevision`, `done` |
 | Either | `blocked`, `wait` | `blocked`, `unblocked`, the wait tools, `status`, `comment`, `checkpoint`, `followUp`, `addMigration` |
 

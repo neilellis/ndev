@@ -42,7 +42,7 @@ let worktree: { root: string; settings: WorktreeSettings } | undefined
 // Set while an agent fills in the github key: the next prompt reads the file again.
 let reloadPending = false
 
-const MODES: readonly Mode[] = ['light', 'heavy']
+const MODES: readonly Mode[] = ['light', 'heavy', 'hack']
 const STEERINGS: readonly Steering[] = ['interactive', 'auto']
 
 // The development skill for each mode and steering. Auto steering uses the board-driven
@@ -50,6 +50,8 @@ const STEERINGS: readonly Steering[] = ['interactive', 'auto']
 const SKILL: Record<Mode, Record<Steering, string>> = {
   light: { interactive: 'work-light', auto: 'work-light-auto' },
   heavy: { interactive: 'work-heavy', auto: 'work-heavy-auto' },
+  // Hack mode is interactive only, so its auto entry is never shown: /dev refuses that pair.
+  hack: { interactive: 'work-hack', auto: 'work-light-auto' },
 }
 
 const MODE_TEXT: Record<Mode, string> = {
@@ -57,7 +59,12 @@ const MODE_TEXT: Record<Mode, string> = {
     'Development mode: LIGHT. One owner from diagnosis to PR, test first, a worktree, one PR, small helpers only for bounded tool-heavy subtasks. Do not chain planning, review and board skills automatically. If the change turns out to be multi-step, cross-cutting or high-risk, say so and suggest `/dev mode heavy`; do not switch by yourself.',
   heavy:
     'Development mode: HEAVY. A written plan, test-first implementation in stages, an independent review and staged verification before the PR leaves draft. Use it for multi-step features and cross-cutting or high-risk changes.',
+  hack:
+    'Development mode: HACK. Interactive only. First hack at a solution with the human by trial and error: no interview, no plan, no test first, and commits stay on this computer. Then harden it before anything is pushed: tests that pin each behaviour and fail on the base, a clean diff, every check, a two-axis review, an adversarial review and a smoke test.',
 }
+
+// A human steers each step of a hack, so hack mode is interactive only.
+const HACK_AUTO = 'hack mode is interactive only, because a human steers each step of the hack'
 
 const skillText = (m: Mode, s: Steering) =>
   s === 'interactive'
@@ -193,9 +200,13 @@ async function setup($: EngineInterface, all: boolean) {
 }
 
 async function switchMode($: EngineInterface, args: string) {
-  const next = choose(args, MODES, await read($, mode))
+  const auto = (await read($, steering)) === 'auto'
+  // With no value, the mode toggles between light and heavy: hack is chosen by name only.
+  const now = await read($, mode)
+  const next = args.trim() === '' ? (now === 'light' ? 'heavy' : 'light') : choose(args, MODES, now)
+  if (next === 'hack' && auto) return { text: `dev mode: ${HACK_AUTO}, and steering is auto. Nothing changed. Run /dev steering interactive first.` }
   if (next === undefined) {
-    return { text: `dev mode: "${args.trim()}" is not a mode. Use /dev mode light or /dev mode heavy.` }
+    return { text: `dev mode: "${args.trim()}" is not a mode. Use /dev mode light, /dev mode heavy or /dev mode hack.` }
   }
   await update($, mode, () => next)
   await showStatus($)
@@ -211,6 +222,7 @@ async function switchSteering($: EngineInterface, args: string) {
   if (next === undefined) {
     return { text: `dev steering: "${args.trim()}" is not a steering. Use /dev steering interactive or /dev steering auto.` }
   }
+  if (next === 'auto' && (await read($, mode)) === 'hack') return { text: `dev steering: ${HACK_AUTO}, and the mode is hack. Nothing changed. Run /dev mode light or /dev mode heavy first.` }
   await update($, steering, () => next)
   await showStatus($)
 
@@ -234,7 +246,7 @@ async function helpText($: EngineInterface) {
     '  /dev                 show this help; run the set-up first if this project is not set up',
     '  /dev help            show this help',
     `  /dev setup           answer the set-up questions (GitHub repository and board) again; saved in ${CONFIG_FILE}`,
-    '  /dev mode [light|heavy]             switch development mode (no value toggles)',
+    '  /dev mode [light|heavy|hack]        switch development mode (no value toggles light and heavy; hack is interactive only)',
     '  /dev steering [interactive|auto]    switch steering (no value toggles)',
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
     ...TRIAGE_HELP,
@@ -320,12 +332,12 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'dev',
       description: 'ndev: help, setup, mode, steering and triage (runs the set-up first if this project is not set up)',
-      argumentHint: `[help|setup|mode [light|heavy]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}]`,
+      argumentHint: `[help|setup|mode [light|heavy|hack]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}]`,
     })
     await $.command.register({
       name: 'dev-mode',
-      description: 'Switch development mode: light (work-light) or heavy (work-heavy). Same as /dev mode',
-      argumentHint: '[light|heavy]',
+      description: 'Switch development mode: light (work-light), heavy (work-heavy) or hack (work-hack, interactive only). Same as /dev mode',
+      argumentHint: '[light|heavy|hack]',
     })
     await $.command.register({
       name: 'dev-steering',

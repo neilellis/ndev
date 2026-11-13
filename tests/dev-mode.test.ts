@@ -266,7 +266,7 @@ test('the /dev help lists /dev mode and /dev steering', async ($, on) => {
   await start($)
 
   const ran = await $.command.run({ command: 'dev', args: 'help' })
-  expect(ran.text).toContain('/dev mode [light|heavy]')
+  expect(ran.text).toContain('/dev mode [light|heavy|hack]')
   expect(ran.text).toContain('/dev steering [interactive|auto]')
 })
 
@@ -332,4 +332,36 @@ test('a failed set-setting is reported with its exit code and output, and the mo
   expect(ran.text).toContain('Not saved')
   expect(ran.text).toContain('exited 2')
   expect(ran.text).toContain('lock held')
+})
+
+// Hack mode: a human steers each step of the hack, so it is interactive only.
+test('/dev mode hack loads the work-hack skill, and the toggle passes over it', async ($, on) => {
+  engine(on)
+  await start($)
+
+  const ran = await $.command.run({ command: 'dev', args: 'mode hack' })
+  expect(ran.text).toContain('Development mode is now hack.')
+  expect(await section($)).toContain('ndev:work-hack')
+  expect(await section($)).toContain('HACK')
+
+  await $.command.run({ command: 'dev-mode', args: '' })
+  expect(await section($)).toContain('LIGHT')
+})
+
+test('/dev refuses hack mode with auto steering, both ways round', async ($, on) => {
+  engine(on)
+  await start($)
+
+  await $.command.run({ command: 'dev', args: 'steering auto' })
+  const refused = await $.command.run({ command: 'dev', args: 'mode hack' })
+  expect(refused.text).toContain('interactive only')
+  expect(refused.text).toContain('/dev steering interactive')
+  expect(await section($)).toContain('LIGHT')
+
+  await $.command.run({ command: 'dev', args: 'steering interactive' })
+  await $.command.run({ command: 'dev', args: 'mode hack' })
+  const back = await $.command.run({ command: 'dev', args: 'steering auto' })
+  expect(back.text).toContain('interactive only')
+  expect(back.text).toContain('/dev mode light')
+  expect(await section($)).toContain('INTERACTIVE')
 })

@@ -1,4 +1,4 @@
-export type Mode = 'light' | 'heavy'
+export type Mode = 'light' | 'heavy' | 'hack'
 export type Steering = 'interactive' | 'auto'
 
 // The fix-all-prs loop's state.

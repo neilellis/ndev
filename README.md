@@ -93,6 +93,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 | `video-workflow` | Make any change to a narrated video built with the video kit, from the request to an approved pull request: classify the change, branch, edit, rebuild only… |
 | `what-do-you-need` | State exactly what input or approval you need from the user as clear, numbered questions with brief background. |
 | `wiki-lint` | Verify wiki structure, source citations and behavioural claims against the current repository, then repair documented drift. |
+| `work-hack` | The hack mode skill: free trial and error with local commits, then hardening, a heavy review and a smoke test before anything is pushed. Interactive only. |
 | `work-heavy` | The interactive heavyweight development skill (heavy mode). |
 | `work-heavy-auto` | The non-interactive heavyweight development skill (heavy mode, auto steering). |
 | `work-interactive` | Design an underspecified feature with the user, resolve assumptions and test entry points, then implement it or publish vertical-slice issues. |
@@ -103,7 +104,7 @@ Each skill is `ndev:<name>`. The table shows the first sentence of each skill's 
 
 Shared scripts that the skills call are in `scripts/` (see `scripts/README.md`).
 
-## Modes: light or heavy, interactive or auto
+## Modes: light, heavy or hack, interactive or auto
 
 The plugin's hooks module adds two switches to each session. The status line shows them, for
 example `dev: light · interactive`. The plugin adds a short section to the system prompt, so
@@ -111,10 +112,10 @@ Claude follows the selected workflow.
 
 | Command | Values | Default | Effect |
 |---|---|---|---|
-| `/dev mode` | `light`, `heavy` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. |
+| `/dev mode` | `light`, `heavy`, `hack` | `light` | `light` uses the `work-light` skill for everyday coding: one owner, test first, a worktree, one PR. `heavy` uses the `work-heavy` skill for multi-step, cross-cutting or high-risk changes: a plan, staged verification and an independent review. `hack` uses the `work-hack` skill: the human and the agent find the solution by trial and error with local commits, then hardening (tests that fail on the base, the full checks), a heavy and adversarial review, and a smoke test come before the first push. `hack` is interactive only. |
 | `/dev steering` | `interactive`, `auto` | `interactive` | `interactive`: a human steers. Claude confirms scope, asks about decisions that are the human's, and reports at checkpoints. `auto`: nobody steers. Claude chooses sensible defaults, records its assumptions in the PR, and stops only at a hard blocker. |
 
-A command with no value toggles the switch. The older names `/dev-mode`, `/dev-steering` and
+A command with no value toggles the switch (`/dev mode` toggles light and heavy; name `hack` to choose it). The older names `/dev-mode`, `/dev-steering` and
 `/dev-setup` still work.
 
 `/dev` lists the plugin's commands and shows the project's current settings. In a project that
@@ -187,6 +188,7 @@ The two switches pick the development skill:
 |---|---|---|
 | **light** | `work-light` | `work-light-auto` |
 | **heavy** | `work-heavy` | `work-heavy-auto` |
+| **hack** | `work-hack` | refused: hack is interactive only |
 
 The `-auto` skills deliver issues from the GitHub board's Ready column (or one issue with
 `--issue <n>`) through isolated PRs, and never merge. In auto steering, a task given straight in
@@ -465,7 +467,7 @@ The guide, with the flow chart, is [kb/workflow.md](kb/workflow.md). To show it 
 
 A session that starts with no issue asks for the issue, a new issue, or no workflow. `iNeedA(kind, description)` gives guidance on a `react-component`, `library`, `brand-style` or `animation`. `reportWorkflowBug(title, details)` starts an Orca agent that fixes a fault of the plugin on its `main`. Each skill and agent names the tools that it needs.
 
-Each issue can have its own mode and steering. The agent chooses heavy or light in `started` or `create`, and `/flow mode` and `/flow steering` set one issue. A PR follows the strictest of its issues. `/view` shows the state, and what each tool waits for.
+Each issue can have its own mode and steering. The agent chooses light, heavy or hack in `started` or `create`, and `/flow mode` and `/flow steering` set one issue. A PR follows the strictest of its issues. `/view` shows the state, and what each tool waits for.
 
 `checkpoint` and `finishedDevelopment` take an optional `changeTypes` list (`web`, `backend`, `database`, `docs`, `tests`, `config`). The review instructions change with the types that accumulate. `screenshot(url)` takes images of a page in the Orca browser for a web change. See [Change types](kb/workflow.md#change-types).
 

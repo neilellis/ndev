@@ -56,7 +56,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const VERSION = /^[0-9][0-9A-Za-z.+-]*$/
 const TAIL_LINES = 40
 const VERSION_NOW = 2
-const SETTINGS = { mode: ['light', 'heavy'], steering: ['interactive', 'auto'] }
+const SETTINGS = { mode: ['light', 'heavy', 'hack'], steering: ['interactive', 'auto'] }
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
 const STOP_TIMEOUT_S = Number(process.env.NDEV_STACK_STOP_TIMEOUT_S ?? 180)
 const SERVER_STOP_TIMEOUT_S = Number(process.env.NDEV_DEV_SERVER_STOP_TIMEOUT_S ?? 10)
@@ -190,6 +190,7 @@ function settingsProblem(settings) {
   for (const [key, choices] of Object.entries(SETTINGS)) {
     if (settings[key] !== undefined && !choices.includes(settings[key])) return `has settings.${key} ${JSON.stringify(settings[key])}; the choices are ${choices.join(', ')}`
   }
+  if (settings.mode === 'hack' && settings.steering === 'auto') return 'has settings.mode "hack" with settings.steering "auto", but hack mode is interactive only'
   return undefined
 }
 
@@ -516,7 +517,10 @@ function setSetting(values) {
   refuseNotIgnored(root, common)
   withLock(root, () => {
     const record = readRecord(root)
-    writeResources(root, record, { ...record.settings, [key]: value }, record.resources)
+    const settings = { ...record.settings, [key]: value }
+    // A human steers each step of a hack, so hack mode is interactive only.
+    if (settings.mode === 'hack' && settings.steering === 'auto') throw new Fail(2, `worktree-env: ${key} ${value} would make ${join(root, FILE)} hack mode with auto steering, but hack mode is interactive only. Nothing changed. Set the ${key === 'mode' ? 'steering to interactive' : 'mode to light'} first.`)
+    writeResources(root, record, settings, record.resources)
   })
   console.log(`worktree-env: saved ${key} ${value} in ${join(root, FILE)}.`)
 }
