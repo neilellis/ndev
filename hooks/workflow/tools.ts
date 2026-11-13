@@ -77,6 +77,8 @@ export type Workflow = {
   noChecks?: boolean
   // The heartbeat saw every PR merged or closed, so it reads GitHub no more.
   prsClosed?: boolean
+  // done ended the issue before its review: it was closed with no change, so nothing waits for a human.
+  closedNoChange?: boolean
   attempts: number
   nudges: { count: number; fingerprint?: string }
   // issues and dispatchId belong to the mode worktree: the existing issues its worker carries, lead first,
@@ -1726,6 +1728,7 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
     wf.hooks = { ...wf.hooks, remember: { firedAt: wf.hooks?.remember?.firedAt ?? (await $.clock.now()), result: remembered.slice(0, 2000) } }
     // The PR is closed, so the watchdog has nothing to watch.
     if (wf.prs.length) wf.prsClosed = true
+    if (!merged) wf.closedNoChange = true
     // A PR merged outside the workflow, such as by gh pr merge, ends the work as a merge by done would.
     const ended = merged ? await afterHumanMerge($, wf, merged, await head(wf.root, $)) : [`Issue ${issuesOf(wf).map(n => `#${n}`).join(', ')} was closed with no change, so the workflow ended with no review and no merge.`]
     await move($, c, wf, 'done', { ...facts, noChange: true })

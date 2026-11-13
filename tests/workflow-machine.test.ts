@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep } from '../hooks/workflow/machine'
+import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, boardColumn, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep } from '../hooks/workflow/machine'
 import type { Facts, State, Tool } from '../hooks/workflow/machine'
 import { inferChangeTypes, isDocsOnly, pagesOf, reviewerBrief } from '../hooks/workflow/change-types'
 
@@ -333,6 +333,18 @@ test('the Orca workspace takes the issue number until a PR is added, then the PR
   expect(orcaView({ issue: 7, shortName: 'add-sub', prs: [12], state: 'developing' }).name).toBe('12-add-sub')
   expect(orcaView({ issue: 7, prs: [12], state: 'developing' }).name).toBeUndefined()
   expect(orcaView({ issue: 7, shortName: 'add-sub', direct: true, prs: [12], state: 'developing' }).name).toBeUndefined()
+})
+
+test('an issue closed with no change is complete: Orca asks no human, and its card goes to done', () => {
+  const ended = { issue: 7, prs: [12], state: 'done' as const, closedNoChange: true, doneMessage: 'already fixed on main' }
+  const view = orcaView(ended)
+  expect(view.status).toBe('completed')
+  expect(view.attention).toBe(false)
+  expect(view.comment).toBe('Closed with no change: already fixed on main')
+  expect(boardColumn(ended)).toBe('done')
+  // A done that waits for a merge still asks the human.
+  expect(orcaView({ issue: 7, prs: [12], state: 'done' }).attention).toBe(true)
+  expect(boardColumn({ state: 'done' })).toBe('review')
 })
 
 test('the notice sets the Orca flag while the wait is past half', async () => {

@@ -258,21 +258,24 @@ const ORCA_DOING: Record<Exclude<State, 'blocked' | 'wait' | 'done'>, string> = 
   revising: 'revising: answering the feedback',
 }
 export type OrcaView = { name?: string; status: string; comment: string; attention: boolean; issue: number; pr?: number }
-export function orcaView(w: { issue: number; shortName?: string; direct?: boolean; prs: number[]; state: State; previous?: State; merged?: boolean; doneMessage?: string; blocked?: { message: string }; waiting?: { what: string; alert?: unknown }; asking?: unknown; off?: unknown }): OrcaView {
+export function orcaView(w: { issue: number; shortName?: string; direct?: boolean; prs: number[]; state: State; previous?: State; merged?: boolean; closedNoChange?: boolean; doneMessage?: string; blocked?: { message: string }; waiting?: { what: string; alert?: unknown }; asking?: unknown; off?: unknown }): OrcaView {
   const finished = w.state === 'done' || (w.state === 'blocked' && w.previous === 'done')
+  // An issue that done closed with no change has nothing left for a human, as a merged one has not.
+  const complete = w.merged || (w.state === 'done' && w.closedNoChange)
   return {
     // The issue's number names the workspace until a PR is added, then the PR's number does.
     // The main checkout of a project that commits to its base branch is not this issue's workspace.
     name: w.shortName && !w.direct ? `${w.prs[0] ?? w.issue}-${w.shortName}` : undefined,
-    status: w.merged ? 'completed' : finished ? 'in-review' : 'in-progress',
+    status: complete ? 'completed' : finished ? 'in-review' : 'in-progress',
     comment: (w.off ? 'The workflow is off'
       : w.state === 'blocked' ? `Blocked: ${w.blocked?.message ?? ''}`
         : w.state === 'wait' ? `${w.waiting?.alert ? 'Past half its retries, waiting' : 'Waiting'} for ${w.waiting?.what ?? 'a wait tool'}`
         : w.state === 'interviewing' && w.asking ? "Interview: waiting for the human's answers"
         : w.merged ? `Merged${w.doneMessage ? `: ${w.doneMessage}` : ''}`
+        : complete ? `Closed with no change${w.doneMessage ? `: ${w.doneMessage}` : ''}`
           : w.state === 'done' ? `Done, waiting for a human${w.doneMessage ? `: ${w.doneMessage}` : ''}`
             : ORCA_DOING[w.state]).slice(0, 200),
-    attention: !w.off && (w.state === 'blocked' || (w.state === 'wait' && !!w.waiting?.alert) || (w.state === 'interviewing' && !!w.asking) || (w.state === 'done' && !w.merged)),
+    attention: !w.off && (w.state === 'blocked' || (w.state === 'wait' && !!w.waiting?.alert) || (w.state === 'interviewing' && !!w.asking) || (w.state === 'done' && !complete)),
     issue: w.issue,
     pr: w.prs[0],
   }
@@ -282,10 +285,10 @@ export function orcaView(w: { issue: number; shortName?: string; direct?: boolea
 // for a wait or for an issue that waits for the others on its PR. "In review" means that no more automated
 // development is due, so it starts at done and not when the PR goes ready.
 export type BoardColumn = 'progress' | 'awaiting' | 'review' | 'done'
-export function boardColumn(w: { state: State; merged?: boolean; direct?: boolean }): BoardColumn | undefined {
+export function boardColumn(w: { state: State; merged?: boolean; closedNoChange?: boolean; direct?: boolean }): BoardColumn | undefined {
   if (w.state === 'wait' || w.state === 'developed') return undefined
   if (w.state === 'blocked') return 'awaiting'
-  if (w.state === 'done') return w.merged || w.direct ? 'done' : 'review'
+  if (w.state === 'done') return w.merged || w.closedNoChange || w.direct ? 'done' : 'review'
   return 'progress'
 }
 

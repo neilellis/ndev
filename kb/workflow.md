@@ -505,14 +505,14 @@ In an Orca workspace, each save of the state updates the workspace. Tools, the h
 - **Status:** see the table below. A block keeps the status that the work had.
 - **Comment:** the state and what happens in it, the block message, what a wait is for, or the message of `done`. This replaces any earlier comment. For example, `/dev triage` sets the title of the issue there.
 - **Links:** the issue and the first PR.
-- **Unread dot:** set when the work is blocked or done, because a human must act. Cleared when the work goes on. A wait does not set it, because no human must act.
+- **Unread dot:** set when the work is blocked or done, because a human must act. Cleared when the work goes on. A wait does not set it, because no human must act. Nor does a `done` that closed an issue with no change, because nothing waits for a human.
 
 
 | Workflow                                      | Orca status   |
 | --------------------------------------------- | ------------- |
 | `setup` to `finishing`, `revising` and `wait` | `in-progress` |
 | `done`, not merged                            | `in-review`   |
-| Merged                                        | `completed`   |
+| Merged, or `done` closed it with no change    | `completed`   |
 
 
 - The plugin sends only what changed, and these calls go to the local Orca, not to GitHub.
@@ -530,7 +530,7 @@ Each change of state moves the card, through `saveWorkflow`, so the tools, the w
 | `setup`, `planning`, `developing`, `reviewing`, `ci`, `smoke`, `finishing`, `revising` | In progress |
 | `blocked` | Awaiting feedback |
 | `done`, not merged | In review: no more automated development is due |
-| `done`, merged | Done |
+| `done`, merged or closed with no change | Done |
 | `wait`, `developed` | No change |
 
 A `straw_man` issue goes to Done at `done`, because its commit is on the base branch. The settings come from the worktree. If that file has no board, they come from the main checkout. A file with an error shows a toast and moves no card.

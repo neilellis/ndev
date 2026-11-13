@@ -751,6 +751,8 @@ test('done in development ends the workflow of an issue that was closed with no 
   expect(r.isError).toBe(false)
   expect(w.state()?.state).toBe('done')
   expect(w.state()?.doneMessage).toBe('already fixed on main by e22097f9')
+  // Nothing waits for a human: Orca and the board show the issue as complete.
+  expect(w.state()?.closedNoChange).toBe(true)
 })
 
 test('done in development refuses while the issue is open, and says why', async ($, on) => {
