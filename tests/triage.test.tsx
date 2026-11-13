@@ -47,7 +47,7 @@ const message = (id: string, type: string, from: string, body: string, payload?:
 // environment: the saved Orca server that holds the workspace (--remote); none for this machine.
 type Worktree = { id: string; projectId: string; path: string; isArchived: boolean; isMainWorktree: boolean; workspaceStatus: string; linkedPR: number | null; linkedItems: { type: string; number: number; url: string }[]; environment?: string }
 // environments: the saved Orca servers, as `orca environment list` answers them.
-function world(on: On, opts: { environments?: { id: string; name: string }[]; repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean; files?: Record<string, string> } = {}) {
+function world(on: On, opts: { environments?: { id: string; name: string }[]; repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean; files?: Record<string, string>; env?: Record<string, string> } = {}) {
   // Each open pull request's merge state and checks, as GitHub answers pr-read and commit-checks; the test changes them.
   const prs: Record<number, Pr> = {}
   // Each period of `$.clock.every`, by its length, waits here until the test fires it.
@@ -72,7 +72,8 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
   const registered: { name: string; argumentHint?: string }[] = []
   on('command.register', (_, e) => { registered.push({ name: e.name, argumentHint: e.argumentHint }); return { value: { command: e.name } } })
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
-  on('env.get', () => ({ value: '/home/neil' }))
+  // env: what the session's environment holds besides HOME, such as the markers Orca's Chat UI sets.
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/neil' : opts.env?.[e.name] }))
   const files = opts.files ?? {}
   const inDir = (dir: string) => Object.keys(files).filter(k => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/'))
   on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' || e.path in files || inDir(e.path).length > 0 }))
@@ -547,6 +548,76 @@ test('a bad inbox message is logged, the rest of the delivery is still handled, 
   await until(async () => (await ui.find({ type: 'Text', text: /msg_0/ })) !== undefined)
   await ui.unmount()
   expect(w.ran.filter(a => a.includes('--ack') && a.includes('delivery_1'))).toHaveLength(1)
+})
+
+test('/dev triage status shows why a start failed: the error is not hidden behind "No triage yet"', async ($, on) => {
+  const w = world(on, { issues: [issue(3)], environments: [{ id: 'aa11-x', name: 'vm-a' }] })
+  await started($)
+  await $.command.run(command('start --remote vm-c'))
+  await until(() => w.toasts.some(t => /no saved server .*vm-c/.test(t)), () => w.toasts)
+  const status = (await $.command.run(command('status'))).text
+  expect(status).not.toMatch(/No triage yet/)
+  expect(status).toMatch(/start failed/)
+  expect(status).toMatch(/no saved server .*vm-c/)
+})
+
+test('/dev triage status prints a Markdown table of every group: lead, issues, state, pull request and worker, and the latest activity', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([4, 3], 'simple'), group([9], 'complex', { after: [3] })] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  await $.command.run(command('refresh'))
+  const status = await (async () => {
+    let text = ''
+    await until(async () => /\[#41\]/.test(text = (await $.command.run(command(''))).text), () => text)
+    return text
+  })()
+  expect(status).toMatch(/^Triage of acme\/widgets: running/)
+  expect(status).toMatch(/\| Group \| Issues \| State \| PR \| Worker \|/)
+  expect(status).toMatch(/\| \[#3\]\(https:\/\/github\.com\/acme\/widgets\/issues\/3\) Fix #4 #3 \| #3 #4 \| working \| \[#41\]\(https:\/\/github\.com\/acme\/widgets\/pull\/41\) \| ctx_1 \|/)
+  expect(status).toMatch(/\| \[#9\]\(.*\) Fix #9 \| #9 \| waiting \| \| \|/)
+  expect(status).toMatch(/Latest activity/)
+  expect(status).toMatch(/#3: worker ctx_1 started/)
+})
+
+test('in an Orca chat, the start and clean results and failures, and the progress lines, reach the chat and not only the toast and the pane', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4)], environments: [{ id: 'aa11-x', name: 'vm-a' }], env: { ORCA_STRUCTURED_SESSION: '1', ORCA_CHAT_SCRATCH_DIR: '/chat-scratch/abc' } })
+  await started($)
+  // A failed start: the toast alone is not seen in Orca's Chat UI.
+  await $.command.run(command('start --remote vm-c'))
+  await until(() => w.prompts.some(p => /no saved server .*vm-c/.test(p)), () => [w.toasts, w.prompts])
+  expect(w.prompts.at(-1)).toMatch(/\/dev triage start failed/)
+  expect(w.prompts.at(-1)).toMatch(/Show this to the user/)
+  // A good start: its result reaches the chat too, after the brief.
+  const before = w.prompts.length
+  await $.command.run(command('start'))
+  await until(() => w.prompts.some(p => /2 issues sent to the model to group/.test(p)), () => w.prompts)
+  expect(w.prompts.slice(before).filter(p => /mcp__ndev__triage_groups/.test(p))).toHaveLength(1)
+  // The progress of the launch comes as one message with the groups' table, not one message per line.
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([4], 'simple')] } as never)
+  await until(() => w.prompts.some(p => /worker ctx_2 started/.test(p)), () => w.prompts)
+  const progress = w.prompts.filter(p => /Triage progress/.test(p))
+  expect(progress).toHaveLength(1)
+  expect(progress[0]).toMatch(/Orca Run run_1 created/)
+  expect(progress[0]).toMatch(/#3: worker ctx_1 started/)
+  expect(progress[0]).toMatch(/\| Group \| Issues \| State \| PR \| Worker \|/)
+  expect(progress[0]).toMatch(/It asks nothing of you/)
+})
+
+test('in a terminal session, the triage sends no chat notices: the toast and the pane show them', async ($, on) => {
+  const w = world(on, { issues: [issue(3)], environments: [{ id: 'aa11-x', name: 'vm-a' }] })
+  await started($)
+  await $.command.run(command('start --remote vm-c'))
+  await until(() => w.toasts.some(t => /no saved server .*vm-c/.test(t)), () => w.toasts)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0, () => w.toasts)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length > 0, () => w.ran)
+  await until(() => w.toasts.some(t => /sent to the model to group/.test(t)), () => w.toasts)
+  expect(w.prompts.filter(p => /Show this to the user|Triage progress/.test(p))).toEqual([])
 })
 
 test('a launch that fails part way names /dev triage reset, which clears the triage', async ($, on) => {

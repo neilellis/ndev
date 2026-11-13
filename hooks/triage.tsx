@@ -107,6 +107,77 @@ function runner($: EngineInterface, timeoutMs: number, env?: Record<string, stri
 async function note($: EngineInterface, text: string): Promise<void> {
   const at = await $.clock.now()
   await update($, view, v => ({ ...v, log: [...v.log, { at, text }].slice(-50) }))
+  unsent.push(text)
+}
+
+// Orca's Chat UI draws no pane and no toast, so there the triage writes into the chat as well. Orca marks such a
+// session with ORCA_STRUCTURED_SESSION ("a structured session has no pane"), and gives it ORCA_CHAT_SCRATCH_DIR.
+async function isOrcaChat($: EngineInterface): Promise<boolean> {
+  const [marker, scratch] = await Promise.all([$.env.get('ORCA_STRUCTURED_SESSION'), $.env.get('ORCA_CHAT_SCRATCH_DIR')])
+  return !!marker || !!scratch
+}
+// The progress lines that have not reached the chat yet. A reload loses them; the pane and /dev triage status keep the log.
+let unsent: string[] = []
+const FOR_THE_USER = 'Show this to the user as it is, in Markdown. It asks nothing of you: go on with what you were doing.'
+
+// A result or failure for the human: a toast, and in Orca's Chat UI a chat message too.
+async function tell($: EngineInterface, text: string): Promise<void> {
+  $.ui.toast(text)
+  unsent = []
+  if (!(await isOrcaChat($))) return
+  // A text that begins with / would run as a command, and prompt.submit refuses it: the label comes first.
+  ask($, 'a notice for the user', `Triage notice:\n\n${text}\n\n${FOR_THE_USER}`)
+}
+
+// In Orca's Chat UI: the progress lines since the last flush, as one message with the groups' table. Called at the end
+// of each piece of work (a launch, an inbox delivery, a tick, a pull request check), so a batch of lines is one message.
+async function flush($: EngineInterface): Promise<void> {
+  if (!unsent.length) return
+  if (!(await isOrcaChat($))) { unsent = []; return }
+  const lines = unsent
+  unsent = []
+  const table = groupTable(await read($, view))
+  ask($, 'the triage progress', `Triage progress:\n${lines.map(l => `- ${l}`).join('\n')}${table ? `\n\n${table}` : ''}\n\n${FOR_THE_USER}`)
+}
+
+// What the pane calls each group's state.
+function stateOf(g: TriageGroup): { word: string; color: string } {
+  return g.error ? { word: 'failed', color: 'error' }
+    : g.blockedBy !== undefined ? { word: 'blocked', color: 'warning' }
+      : g.question ? { word: 'question', color: 'warning' }
+        : g.task === 'completed' ? { word: 'done', color: 'success' }
+          : g.task === 'failed' ? { word: 'failed', color: 'error' }
+            : g.dispatchId ? { word: 'working', color: 'claude' }
+              : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
+}
+const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim()
+
+// The groups as a GitHub-flavoured Markdown table, for /dev triage status and the chat; empty with no group.
+function groupTable(v: TriageView): string {
+  if (!v.groups.length) return ''
+  const issueUrl = (n: number) => v.issues.find(i => i.number === n)?.url ?? `https://github.com/${v.repo}/issues/${n}`
+  const row = (cells: string[]) => `|${cells.map(c => (c ? ` ${c} ` : ' ')).join('|')}|`
+  return [
+    row(['Group', 'Issues', 'State', 'PR', 'Worker']),
+    row(['---', '---', '---', '---', '---']),
+    ...v.groups.map(g => row([
+      `[#${g.lead}](${issueUrl(g.lead)}) ${cell(g.title)}`,
+      g.issues.map(n => `#${n}`).join(' '),
+      stateOf(g).word,
+      g.pr && v.repo ? `[#${g.pr}](${pullUrl(v.repo, g.pr)})` : g.pr ? `#${g.pr}` : '',
+      g.dispatchId ?? '',
+    ])),
+  ].join('\n')
+}
+
+// /dev triage status: the phase, the error, every group and the latest activity, in Markdown.
+function statusText(v: TriageView): string {
+  const head = v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups, ${AGENT_NAME[agentOf(v)]} workers${v.runId ? `, Orca Run ${v.runId}` : ''}.`
+    : v.error ? 'The last /dev triage did not start a triage.' : 'No triage yet. /dev triage start reads the issues.'
+  const error = v.error ? `**Error:** ${v.error}` : ''
+  const table = groupTable(v)
+  const log = v.log.length ? `Latest activity:\n${v.log.slice(-8).map(e => `- ${e.text}`).join('\n')}` : ''
+  return [head, error, table, log].filter(Boolean).join('\n\n')
 }
 
 // Sends a prompt to this session's model; a prompt the engine drops is shown, never lost.
@@ -737,6 +808,7 @@ async function launch($: EngineInterface): Promise<void> {
     throw new Error(`the launch stopped part way: ${message(err)}\n${runId ? `Orca Run ${runId} keeps the Tasks it made. ` : ''}Repair: /dev triage reset clears this triage, then /dev triage start begins again.`)
   }
   await startReady($)
+  await flush($)
   waitLater($)
 }
 
@@ -955,6 +1027,7 @@ async function waitLoop($: EngineInterface): Promise<void> {
     if (got.deliveryId) await orca(runner($, 60_000), ['orchestration', 'check', '--run', v.runId, '--ack', got.deliveryId])
     // A wait that ended with no message changed nothing, so the timer's refresh is enough.
     if (got.messages?.length) await refresh($)
+    await flush($)
   }
 }
 
@@ -1206,6 +1279,7 @@ async function reprod($: EngineInterface, v: TriageView, g: TriageGroup & { pr: 
 
 async function prTick($: EngineInterface): Promise<void> {
   await watchPrs($).catch((err: unknown) => note($, `the pull request check stopped: ${message(err)}`))
+  await flush($)
 }
 
 async function tick($: EngineInterface): Promise<void> {
@@ -1214,6 +1288,7 @@ async function tick($: EngineInterface): Promise<void> {
   if (v.phase !== 'running' && !(v.phase === 'done' && v.runId)) return
   await refresh($).catch((err: unknown) => update($, view, v => ({ ...v, error: `Orca not read: ${message(err)}` })))
   await startReady($)
+  await flush($)
   waitLater($)
 }
 
@@ -1236,9 +1311,9 @@ async function jump($: EngineInterface, g: TriageGroup): Promise<void> {
 // A function declaration, not an arrow: /dev triage reaches triageCommand from register.ts, and the engine follows $
 // across an import only into a function declaration.
 function fail($: EngineInterface, what: string) {
-  return (err: unknown) => {
-    $.ui.toast(`/dev triage ${what} failed: ${message(err)}`)
-    return update($, view, v => ({ ...v, error: message(err) }))
+  return async (err: unknown) => {
+    await update($, view, v => ({ ...v, error: `/dev triage ${what} failed: ${message(err)}` }))
+    await tell($, `/dev triage ${what} failed: ${message(err)}`)
   }
 }
 
@@ -1414,7 +1489,7 @@ export async function triageCommand($: EngineInterface, args: string, project: (
   const isReverse = words.includes('--reverse')
   const isMine = words.includes('--mine')
   if (verb === 'clean') {
-    detach(clean($, project(), { hint, since, isReverse, isMine }).then(text => $.ui.toast(text), fail($, 'clean')))
+    detach(clean($, project(), { hint, since, isReverse, isMine }).then(text => tell($, text), fail($, 'clean')))
     return { text: 'Clean started: reading the open issues. The model checks each one and asks you before it closes any.' }
   }
   detach(openPane($))
@@ -1427,8 +1502,8 @@ export async function triageCommand($: EngineInterface, args: string, project: (
       return { text: `/dev triage start --remote does not work with --codex: a Codex worker's Task names the workflow file in this machine's copy of the plugin, which the server does not have. Use --remote with Claude workers, or --codex without --remote.` }
     }
     detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch, hint, since, isReverse, isBugsOnly: words.includes('--bugs-only'), isMine, remote })
-      .then(text => $.ui.toast(text), fail($, 'start')))
-    return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
+      .then(text => tell($, text), fail($, 'start')))
+    return { text: `Triage started: reading the issues. ${(await isOrcaChat($)) ? 'Progress comes here in the chat, and /dev triage status shows every group.' : 'The Triage pane shows progress.'}` }
   }
   if (verb === 'launch') { detach(launch($).catch(fail($, 'launch'))); return { text: 'Launching the planned groups in Orca.' } }
   if (verb === 'refresh') { detach(tick($).catch(fail($, 'refresh'))); return { text: 'Reading the triage back from Orca.' } }
@@ -1438,8 +1513,7 @@ export async function triageCommand($: EngineInterface, args: string, project: (
     return { text: v.runId ? `Triage cleared. Orca Run ${v.runId} and its workspaces stay in Orca.` : 'Triage cleared.' }
   }
   if (verb !== 'status') return { text: `/dev triage does not know "${verb}". Use /dev triage ${VERBS}.` }
-  const v = await read($, view)
-  return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups, ${AGENT_NAME[agentOf(v)]} workers.` : 'No triage yet. /dev triage start reads the issues.' }
+  return { text: statusText(await read($, view)) }
 }
 
 export const triage = (on: On, project: () => LoadedConfig | undefined) => {
@@ -1557,14 +1631,6 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     const pad = '             '
     const under = Math.max(20, columns - 4 - pad.length - 1)
     const done = v.groups.filter(g => g.task === 'completed').length
-    const word = (g: TriageGroup): { word: string; color: string } =>
-      g.error ? { word: 'failed', color: 'error' }
-        : g.blockedBy !== undefined ? { word: 'blocked', color: 'warning' }
-        : g.question ? { word: 'question', color: 'warning' }
-          : g.task === 'completed' ? { word: 'done', color: 'success' }
-            : g.task === 'failed' ? { word: 'failed', color: 'error' }
-              : g.dispatchId ? { word: 'working', color: 'claude' }
-                : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
     const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.remote ? ` on ${v.remote.name}` : ''}${v.isOpen ? ' · every open issue' : ''}${v.since ? ` · above #${v.since}` : ''}${v.isReverse ? ' · newest first' : ''}${v.isBugsOnly ? ' · bugs only' : ''}${v.isMine ? ' · opened by me' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
     const phase = v.phase === 'grouping' ? `the model is grouping ${v.issues.length} issues`
       : v.phase === 'planned' ? `${v.groups.length} groups planned, nothing started${v.isDryRun ? ' (dry run)' : ''}`
@@ -1586,7 +1652,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         </Box>
         <Box gap={2}>
           {v.phase !== 'running' && v.phase !== 'grouping' &&
-            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly, isMine: !!v.isMine, remote: v.remote?.id }).then(t => $.ui.toast(t), fail($, 'start'))) }} />}
+            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly, isMine: !!v.isMine, remote: v.remote?.id }).then(t => tell($, t), fail($, 'start'))) }} />}
           {v.phase === 'planned' && <Button key="launch" label="Launch" hotkey="l" plain onPress={() => { detach(launch($).catch(fail($, 'launch'))) }} />}
           {v.runId && <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => { detach(tick($).catch(fail($, 'refresh'))) }} />}
         </Box>
@@ -1594,7 +1660,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         {v.phase === 'idle' && !v.error && <Text color="subtle">Start reads the open issues, has this session group them, and works each group in its own Orca workspace.</Text>}
         <Box flexDirection="column">
           {v.groups.map(g => {
-            const m = word(g)
+            const m = stateOf(g)
             const facts = [g.effective ?? `${g.model} · ${g.effort}`, g.workspaceStatus].filter(Boolean).join(' · ')
             const after = g.liveness ? ` · ${g.liveness}` : ''
             return (
