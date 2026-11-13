@@ -762,7 +762,7 @@ test('create and remove need one valid name, and refuse an option that is not th
   expect(await dev($, 'remove box-1 --type cx33')).toMatch(/--type is not an option of \/dev remote remove/)
   expect(await dev($, 'create box-1 --context')).toMatch(/--context needs a value/)
   expect(await dev($, 'create box-1 --nope')).toMatch(/"--nope" is not an option of \/dev remote/)
-  expect(await dev($, 'list --yes')).toMatch(/--yes is an option of \/dev remote create, remove and import only/)
+  expect(await dev($, 'list --yes')).toMatch(/--yes is an option of \/dev remote create, remove, import and resize only/)
   expect(w.hcloudRuns()).toEqual([])
 })
 

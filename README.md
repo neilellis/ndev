@@ -145,6 +145,16 @@ lists each option. The guide is [kb/workflow.md](kb/workflow.md).
 - **Confirmation.** Each command shows the server type, the monthly prices, the location, the hcloud context and what it deletes, and asks. With no one to answer (a `-p` run), it refuses. `--yes` confirms on the command line; for `import` only when this machine already holds the host key.
 - **Orca.** Orca's CLI cannot save an SSH host as a server (`orca environment add` takes only the pairing code of a running Orca server). `create` therefore prints the manual step (an `environmentRecipes` entry, then New workspace → Run on in the Orca app) and leaves the `/dev remote` setting as it is. When Orca has a saved server named `<name>` or `<name> VM <id>`, `create` saves it as this project's `/dev remote`.
 
+`/dev remote resize [<type>]` changes the Hetzner server type of the box under this project's Orca server (`hooks/remote-resize.ts`). With no type, it lists the types that the box can change to and recommends the next size up of the same family, and changes nothing. With a type, it does these steps:
+
+1. **Find the box.** The SSH host comes from Orca's record of the server (`orca-ephemeral-vm-runtimes.json`), or from `--ssh <user@host>`. Over SSH it reads the Hetzner instance id from the metadata service, and finds that id in `hcloud --context <context> server list`. The hcloud context is `--context <context>`, else `remote.hcloudContext` in `.neil-dev.json`. With neither, the command stops and names the key. It never uses the active context.
+2. **Show and confirm.** It shows the current type and the new type (vCPU, memory, disk and the monthly price), and the workers it pauses. A person must confirm, or `--yes` on the command line. It refuses a type of another architecture, a type with a smaller disk, a deprecated type, and a type that is not sold in the box's location.
+3. **Pause the workers.** It sends each live Orca worker on the server a message: commit the work in progress, write a handoff of 15 lines or fewer to `~/handoff/<issue>.md` on the box, end the file with `paused <dispatch id>`, reply and stop. It reads the handoff files over SSH, not the mailbox, because the mail of a remote worker can arrive on either Orca. After 15 minutes it stops, names each worker that did not pause, and changes nothing on Hetzner.
+4. **Resize.** `server shutdown --wait`; if that fails, `server poweroff`, with a `WARNING` in the result. Then `server change-type --keep-disk`, `server poweron`, and a wait for SSH and for Orca to answer for the server.
+5. **Start the workers again.** Each starts with `orca orchestration worker-start --on <server> --worktree id:<worktree id>`, with the same agent, model and effort, and its first brief plus "Resume from ~/handoff/<issue>.md". The selector is `id:`, not `path:`: Orca gives each remote worker's worktree as `<repo id>::<path on the box>`, and `id:` takes that value as it is. A `path:` selector is read against the folders of this machine.
+
+Each failure names the step, the command, its exit code and output, the repair, and what the earlier steps did. When the box is off or paused, the failure also gives the `worker-start` command for each worker. Options: `--context`, `--server <Orca server>` (else the project's `/dev remote`), `--ssh`, `--agent <agent>` (for a worker whose agent Orca does not record) and `--yes`.
+
 ## Per-project settings: `.neil-dev.json`
 
 All the plugin's settings for a project live in one file at the project root, checked in with
@@ -159,6 +169,7 @@ the project. Every key is optional:
   "quality": { },
   "projectLevel": "small_project",
   "worktreeStacks": { "onSessionEnd": "stop-and-delete" },
+  "remote": { "hcloudContext": "orca-dev" },
   "services": { "supabase": { "url": "https://supabase.com/dashboard/project/<ref>" }, "vercel": { "url": "https://vercel.com/<team>/<project>" } }
 }
 ```
@@ -181,6 +192,7 @@ the project. Every key is optional:
 - `quality` turns on the quality-control hooks one by one (see [`kb/hooks/README.md`](kb/hooks/README.md)).
   A hook that is not listed does not run.
 - `services` names the project's web consoles, each as `{ "url": "https://..." }` (http or https only). `/view` shows them as clickable links. Take the values from the CLIs: the Supabase ref from `supabase projects list`, the Vercel team slug and project name from `vercel teams ls` and `.vercel/project.json`.
+- `remote.hcloudContext` names the hcloud context (`hcloud context list`) of the Hetzner project that holds the box under the project's Orca server. `/dev remote resize` uses it. The plugin never uses the active context.
 - `worktreeStacks.onSessionEnd` sets what happens to the docker stacks that a worktree lists in
   `.neil-dev.worktree.json` (`resources.docker`) when a session in that worktree ends (see
   "Worktree resources" below):

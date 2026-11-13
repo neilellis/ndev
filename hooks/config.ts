@@ -17,7 +17,12 @@ export type NeilDevConfig = {
   projectLevel?: ProjectLevel
   workflow?: boolean
   checkEnv?: string[]
+  remote?: Remote
 }
+
+// remote.hcloudContext: the hcloud context (the Hetzner project) of the box that /dev remote resize changes. It is
+// named here or with --context; the active context is never used.
+export type Remote = { hcloudContext?: string }
 
 // checkEnv: the names of the .neil-dev.env keys that the check scripts get, such as the URL of a local test
 // database. Absent: they get none. The file also holds credentials for hosted services, and a test that finds
@@ -57,7 +62,7 @@ export type LoadedConfig = {
   error?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv', 'remote'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const MODES: readonly string[] = ['light', 'heavy']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
@@ -117,6 +122,13 @@ const validate = (raw: unknown): string | undefined => {
       if (typeof e !== 'object' || e === null || Array.isArray(e) || Object.keys(e).some(k => k !== 'url')) return `"services.${name}" must be { "url": "https://..." }; the only key is url`
       if (typeof e.url !== 'string' || !/^https?:\/\/\S+$/.test(e.url)) return `"services.${name}.url" is ${JSON.stringify(e.url)}; use an http or https URL`
     }
+  }
+  if (value.remote !== undefined) {
+    const r = value.remote as Record<string, unknown>
+    if (typeof r !== 'object' || r === null || Array.isArray(r)) return '"remote" must be an object such as { "hcloudContext": "<hcloud context>" }'
+    const extra = Object.keys(r).filter(k => k !== 'hcloudContext')
+    if (extra.length > 0) return `unknown "remote" key ${extra.map(k => `"${k}"`).join(', ')}; the key is hcloudContext`
+    if (r.hcloudContext !== undefined && (typeof r.hcloudContext !== 'string' || r.hcloudContext.trim() === '')) return `"remote.hcloudContext" must be a non-empty string (the name of an hcloud context, as hcloud context list shows it); got ${JSON.stringify(r.hcloudContext)}`
   }
   return undefined
 }
