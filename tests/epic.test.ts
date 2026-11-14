@@ -534,6 +534,39 @@ test('merged needs GitHub to say so, and answers with the new frontier', { timeo
   expect(r.text).toMatch(/Ready[^\n]*#42/)
 })
 
+test('a PR that a human merged in reviewing or fixing is recorded as merged, with its merge commit and the new frontier', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await reviewing($, w)
+  // Not merged on GitHub: the short cut is refused, and the refusal names the usual route.
+  const early = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(early.isError).toBe(true)
+  expect(early.text).toContain('PR #12 is not merged')
+  expect(early.text).toContain('"verified"')
+  expect(w.epic()?.issues['41']?.state).toBe('reviewing')
+  // The human merged it with red checks: verify cannot pass, and its refusal names the repair.
+  w.s.prs[12] = { state: 'closed', merged: true, merge_commit_sha: 'bbbbbbbb22222222' }
+  w.s.checks = { check_runs: [{ name: 'smoke', status: 'completed', conclusion: 'failure' }], statuses: [] }
+  const verify = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'verified', verdict: 'approve' })
+  expect(verify.isError).toBe(true)
+  expect(verify.text).toContain('already merged')
+  expect(verify.text).toContain('state "merged"')
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('bbbbbbbb22222222')
+  expect(r.text).toContain('verify checks did not run')
+  expect(r.text).toMatch(/Ready[^\n]*#42/)
+  expect(w.epic()?.issues['41']).toMatchObject({ state: 'merged', mergeSha: 'bbbbbbbb22222222', mergedUnverified: true })
+  // The same from fixing.
+  await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'implementing', worker: 'd3' })
+  await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'reviewing', pr: 13, worker: 'r3' })
+  await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'fixing', verdict: 'changes', note: 'fix the test' })
+  w.s.prs[13] = { state: 'closed', merged: true, merge_commit_sha: 'cccccccc33333333' }
+  const fixed = await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'merged' })
+  expect(fixed.isError).toBe(false)
+  expect(w.epic()?.issues['43']).toMatchObject({ state: 'merged', mergeSha: 'cccccccc33333333', mergedUnverified: true })
+})
+
 test('coordinating refuses to close with an issue not merged, and closing turns the usual workflow back on', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)

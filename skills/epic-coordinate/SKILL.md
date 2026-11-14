@@ -17,7 +17,7 @@ This session is under the epic workflow, not the usual one. Code holds the state
 |---|---|
 | `mcp__ndev__epicNext(issue)` | The **frontier**: the sub-issues whose blockers are merged, cut to the parallel limit. Start only what it lists. |
 | `mcp__ndev__epicBrief(issue, sub, role)` | Writes the implementer or reviewer brief to a file and answers with the command that starts that worker. |
-| `mcp__ndev__epicIssue(issue, sub, state, …)` | Records each move of a sub-issue. `reviewing→verified` runs the verify checks; `verified→merged` reads the merge from GitHub and answers with the new frontier. |
+| `mcp__ndev__epicIssue(issue, sub, state, …)` | Records each move of a sub-issue. `reviewing→verified` runs the verify checks; `verified→merged` reads the merge from GitHub and answers with the new frontier. If the human merged the PR while the sub-issue was in `reviewing` or `fixing`, call `state: "merged"` from there: it records the merge commit and that verify did not run. |
 | `mcp__ndev__epicStatus(issue)` | The table of sub-issues by state. Read it after a compaction. |
 | `mcp__ndev__epicPhase(issue, finished, evidence)` | Ends `coordinating` (every sub-issue merged) and `closing`. |
 

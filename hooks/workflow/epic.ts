@@ -26,6 +26,10 @@ export type SubIssue = {
   verdict?: 'approve' | 'changes'
   rounds: number
   note?: string
+  // The merge commit that GitHub named when the issue went to "merged".
+  mergeSha?: string
+  // True when a human merged the PR before "verified", so the verify checks did not run.
+  mergedUnverified?: boolean
   // The state that a block interrupted, and the only state the issue goes back to.
   previous?: IssueState
 }
@@ -534,11 +538,12 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   return `Brief for the ${role} of #${sub.issue}: ${path}\nRun this command:\n${built.command}${missing}\nNext: run the command, then record the dispatch id with ${record}.`
 }
 
+// "merged" from "reviewing" or "fixing" is only for a PR that a human already merged: GitHub must say so.
 const MOVES: Record<IssueState, IssueState[]> = {
   waiting: ['implementing'],
   implementing: ['reviewing'],
-  reviewing: ['fixing', 'verified'],
-  fixing: ['reviewing'],
+  reviewing: ['fixing', 'verified', 'merged'],
+  fixing: ['reviewing', 'merged'],
   verified: ['merged'],
   merged: [],
   blocked: [],
@@ -614,9 +619,17 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         extra = `\n${report}\nNext: merge PR #${sub.pr}, then call epicIssue with state "merged".`
         break
       }
+      case 'reviewing>merged':
+      case 'fixing>merged':
       case 'verified>merged': {
         const pr = await readPr($, epic.root, epic.repo, sub.pr!)
-        if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: merge it, then call epicIssue again.`)
+        const early = from !== 'verified'
+        if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: ${early ? `from "${from}", "merged" records only a PR that a human already merged. Move #${sub.issue} to "verified" first, then merge it` : 'merge it'}, then call epicIssue again.`)
+        if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
+        if (early) {
+          sub.mergedUnverified = true
+          extra = `\nA human merged PR #${sub.pr}${sub.mergeSha ? ` (merge commit ${sub.mergeSha})` : ''} while #${sub.issue} was in "${from}", so the verify checks did not run and the record says so. If the PR added migrations, ndev:merge did not run them: check them with the human.`
+        }
         break
       }
     }
@@ -635,9 +648,12 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
   const n = sub.pr!
   const error = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300)
   let body = ''
+  // A merged PR has its own refusal: its old checks say nothing, and the repair is another move.
+  let merged: Refuse | undefined
   try {
     const pr = await readPr($, epic.root, epic.repo, n)
     body = pr.body ?? ''
+    if (pr.merged) merged = new Refuse(`Refused: PR #${n} for #${sub.issue} is already merged${pr.merge_commit_sha ? ` (merge commit ${pr.merge_commit_sha})` : ''}, so the verify checks cannot run on it. Nothing changed. Repair: call epicIssue with state "merged", which records a PR that a human merged.`)
     if (pr.state !== 'open') failed.push(`the PR is ${pr.state}`)
     else if (pr.draft) failed.push('the PR is a draft')
     else passed.push('open and not a draft')
@@ -655,6 +671,7 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
   } catch (e) {
     notRun.push(`the PR, its checks and mergeability: ${error(e)}`)
   }
+  if (merged) throw merged
   let missingMigrations: string[] = []
   try {
     const files = await gh($, epic.root, epic.repo, PR_FILES(epic.repo, n))
@@ -740,7 +757,7 @@ const SPECS: Spec[] = [
   },
   {
     name: 'epicIssue',
-    description: 'Record a move of one sub-issue: waiting→implementing, implementing→reviewing, reviewing→fixing, fixing→reviewing, reviewing→verified (runs the verify checks), verified→merged, any→blocked and back. The same state with workspace records the workspace only.',
+    description: 'Record a move of one sub-issue: waiting→implementing, implementing→reviewing, reviewing→fixing, fixing→reviewing, reviewing→verified (runs the verify checks), verified→merged, reviewing or fixing→merged (only when a human already merged the PR), any→blocked and back. The same state with workspace records the workspace only.',
     properties: {
       issue: num('The epic issue'),
       sub: num('The sub-issue'),
