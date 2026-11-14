@@ -73,18 +73,17 @@ test('the system line names the epic, its root, its state, the role and the next
   expect(epicLineOf(epicOf({ state: 'slicing' }))).toBe(`Epic: #40 "Big change" in ${ROOT} is in the state "slicing". You are the coordinator: you plan, decide, verify and merge; workers implement and review. Next: ${epicStep(epicOf({ state: 'slicing' }))}`)
 })
 
-const DIFF = (path: string) => `diff --git a/${path} b/${path}\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+create table t ();\n`
-const CHANGED = 'diff --git a/supabase/migrations/1_old.sql b/supabase/migrations/1_old.sql\nindex 1..2 100644\n--- a/supabase/migrations/1_old.sql\n+++ b/supabase/migrations/1_old.sql\n@@ -1 +1 @@\n-a\n+b\n'
 const SECTIONED = (path: string) => `Closes #5\n\n<!-- ndev:migrations -->\n## Migrations to run after merge\n\n- \`${path}\`\n<!-- /ndev:migrations -->\n`
 
 test('the migration check names each added migration that the PR body does not list, and passes a listed one', () => {
   const path = 'supabase/migrations/20261112000000_add_t.sql'
-  expect(addedMigrations(DIFF(path) + DIFF('src/a.ts') + CHANGED)).toEqual([path])
-  expect(unlistedMigrations(DIFF(path), 'Closes #5')).toEqual([path])
+  const added = `added\t${path}\n`
+  expect(addedMigrations(`${added}added\tsrc/a.ts\nmodified\tsupabase/migrations/1_old.sql\nremoved\tsupabase/migrations/2_gone.sql\n`)).toEqual([path])
+  expect(unlistedMigrations(added, 'Closes #5')).toEqual([path])
   // A path named outside the section does not count.
-  expect(unlistedMigrations(DIFF(path), `Closes #5\n\n- \`${path}\``)).toEqual([path])
-  expect(unlistedMigrations(DIFF(path), SECTIONED(path))).toEqual([])
-  expect(unlistedMigrations(DIFF('src/a.ts'), '')).toEqual([])
+  expect(unlistedMigrations(added, `Closes #5\n\n- \`${path}\``)).toEqual([path])
+  expect(unlistedMigrations(added, SECTIONED(path))).toEqual([])
+  expect(unlistedMigrations('added\tsrc/a.ts\n', '')).toEqual([])
 })
 
 test('the implementer brief carries the epic, the sub-issue, the spec and the rules', () => {
@@ -118,7 +117,7 @@ const engine = (on: On, opts: Opts = {}) => {
   const s = {
     now: 1_000, issues: {} as Record<number, { state: string; title: string } | string>,
     prs: {} as Record<number, Record<string, unknown>>, checks: { check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }], statuses: [] } as unknown,
-    diff: '', ignored: true, exclude: [] as string[],
+    files: [] as { status: string; filename: string }[] | '__fail__', ignored: true, exclude: [] as string[],
   }
   const gh: string[] = []
   const prompts: string[] = []
@@ -177,7 +176,11 @@ const engine = (on: On, opts: Opts = {}) => {
       }
       if (a[2] === 'pr-read') return ok(JSON.stringify({ number: n, state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean', body: 'Closes #5', created_at: '2026-11-01T00:00:00Z', head: { sha: SHA, ref: 'issue-5' }, ...s.prs[n] }))
       if (a[2] === 'commit-checks') return ok(JSON.stringify(s.checks))
-      if (a[2] === 'pr-diff') return s.diff === '__fail__' ? ok('', 1, 'HTTP 502: Bad Gateway') : ok(s.diff)
+      // GitHub refuses the diff of a PR over 300 files (HTTP 406), and lists up to 3000 files a page at a time.
+      if (a[2] === 'pr-diff') return ok('', 1, 'could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of files (300).')
+      if (a[2] === 'api' && line.includes(`repos/${REPO}/pulls/`) && line.includes('/files')) {
+        return s.files === '__fail__' ? ok('', 1, 'HTTP 502: Bad Gateway') : ok(s.files.map(f => `${f.status}\t${f.filename}\n`).join(''))
+      }
       if (a[2] === 'default-branch') return ok('{"default_branch":"main"}')
       return ok('', 1, `gh.sh not faked: ${line}`)
     }
@@ -461,7 +464,7 @@ test('verify refuses an added migration that the PR body does not list, and pass
   await start($)
   await reviewing($, w)
   const path = 'supabase/migrations/20261112000000_add_t.sql'
-  w.s.diff = DIFF(path)
+  w.s.files = [{ status: 'added', filename: path }, { status: 'modified', filename: 'supabase/migrations/1_old.sql' }]
   const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'verified', verdict: 'approve' })
   expect(r.isError).toBe(true)
   expect(r.text).toContain(path)
@@ -489,14 +492,32 @@ test('verify refuses a draft, a pending or red check and a PR that is not mergea
   expect(unread.text).toContain('note')
 })
 
-test('verify reports a diff it cannot read as not run, and refuses', { timeoutMs: 30_000 }, async ($, on) => {
+test('verify reports changed files it cannot read as not run, and refuses', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)
   await reviewing($, w)
-  w.s.diff = '__fail__'
+  w.s.files = '__fail__'
   const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'verified', verdict: 'approve' })
   expect(r.isError).toBe(true)
   expect(r.text).toMatch(/Not run:[^\n]*migrations/)
+})
+
+test('verify reads the migrations of a PR over 300 files, whose diff GitHub refuses', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await reviewing($, w)
+  const path = 'supabase/migrations/20261112000000_add_t.sql'
+  w.s.files = [...Array.from({ length: 331 }, (_, i) => ({ status: 'modified', filename: `src/f${i}.ts` })), { status: 'added', filename: path }]
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'verified', verdict: 'approve' })
+  expect(r.text).not.toMatch(/Not run:[^\n]*migrations/)
+  expect(r.isError).toBe(true)
+  expect(r.text).toMatch(new RegExp(`Failed:[^\\n]*migrations not listed in the PR body: ${path}`))
+  expect(w.epic()?.issues['41']?.state).toBe('reviewing')
+  w.s.prs[12] = { body: SECTIONED(path) }
+  const passed = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'verified', verdict: 'approve' })
+  expect(passed.isError).toBe(false)
+  expect(passed.text).toMatch(/Passed:[^\n]*migrations \(1 added, each listed\)/)
+  expect(w.epic()?.issues['41']?.state).toBe('verified')
 })
 
 test('merged needs GitHub to say so, and answers with the new frontier', { timeoutMs: 30_000 }, async ($, on) => {

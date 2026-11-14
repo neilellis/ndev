@@ -148,21 +148,27 @@ export function epicStep(epic: Epic): string {
 
 export const epicLineOf = (epic: Epic) => `Epic: #${epic.epic} "${epic.title}" in ${epic.root} is in the state "${epic.state}". You are the coordinator: you plan, decide, verify and merge; workers implement and review. Next: ${epicStep(epic)}`
 
-// Each file that the diff adds under a supabase/migrations/ folder.
-export function addedMigrations(diff: string): string[] {
+// Each file that the PR adds under a supabase/migrations/ folder. `files` is one "status<tab>path"
+// line per changed file, as PR_FILES prints them.
+export function addedMigrations(files: string): string[] {
   const out: string[] = []
-  for (const block of diff.split(/^(?=diff --git )/m)) {
-    const path = /^\+\+\+ b\/(.+)$/m.exec(block)?.[1]?.trim()
-    if (path && /^--- \/dev\/null$/m.test(block) && /(^|\/)supabase\/migrations\/[^/]+$/.test(path)) out.push(path)
+  for (const line of files.split('\n')) {
+    const tab = line.indexOf('\t')
+    if (tab < 0) continue
+    const path = line.slice(tab + 1).trim()
+    if (line.slice(0, tab) === 'added' && /(^|\/)supabase\/migrations\/[^/]+$/.test(path)) out.push(path)
   }
   return out
 }
 // The added migrations that the section addMigration writes in the PR body does not list.
-export function unlistedMigrations(diff: string, body: string): string[] {
+export function unlistedMigrations(files: string, body: string): string[] {
   const section = SECTION.exec(body)?.[0] ?? ''
   const listed = new Set([...section.matchAll(/^- `([^`]+)`/gm)].map(m => m[1]))
-  return addedMigrations(diff).filter(p => !listed.has(p))
+  return addedMigrations(files).filter(p => !listed.has(p))
 }
+// The changed files of a PR, a page at a time. Not pr-diff: GitHub refuses the diff of a PR over
+// 300 files (HTTP 406), and lists up to 3000 files here.
+const PR_FILES = (repo: string, n: number) => ['api', '--paginate', `repos/${repo}/pulls/${n}/files?per_page=100`, '--jq', '.[] | [.status, .filename] | @tsv']
 
 const link = (epic: Epic, n: number) => `https://github.com/${epic.repo}/issues/${n}`
 const fileList = (files: string[]) => (files.length ? files.map(f => `- ${f}`).join('\n') : '- (the epic records no spec file: read the epic issue)')
@@ -651,13 +657,13 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
   }
   let missingMigrations: string[] = []
   try {
-    const diff = await gh($, epic.root, epic.repo, ['pr-diff', String(n)])
-    missingMigrations = unlistedMigrations(diff, body)
-    const added = addedMigrations(diff).length
+    const files = await gh($, epic.root, epic.repo, PR_FILES(epic.repo, n))
+    missingMigrations = unlistedMigrations(files, body)
+    const added = addedMigrations(files).length
     if (missingMigrations.length) failed.push(`migrations not listed in the PR body: ${missingMigrations.join(', ')}`)
     else passed.push(`migrations (${added ? `${added} added, each listed` : 'none added'})`)
   } catch (e) {
-    notRun.push(`migrations: the diff was not read: ${error(e)}`)
+    notRun.push(`migrations: the changed files of PR #${n} were not read: ${error(e)}`)
   }
   const report = [`Passed: ${passed.join('; ') || 'none'}.`, `Failed: ${failed.join('; ') || 'none'}.`, `Not run: ${notRun.join('; ') || 'none'}.`].join('\n')
   if (!failed.length && !notRun.length) return report
