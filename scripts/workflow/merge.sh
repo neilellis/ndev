@@ -4,7 +4,7 @@
 # Usage: merge.sh <pr> [--repo owner/name] [--method merge|squash|rebase] [--stack]
 #
 # A stacked PR merges through GitHub's merge-async endpoint, which also merges each open PR below it.
-# So a PR above the bottom of its stack is refused unless --stack is given.
+# So a PR with an open PR below it in its stack is refused unless --stack is given.
 #
 # Safe to run twice: a merged pull request is not merged again. A migration is a path in the
 # marked section of the PR body, written by the addMigration tool. A .sql file that the PR adds under

@@ -88,7 +88,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 | Script | What it does | Used by |
 |---|---|---|
 | `notify.sh` | Shows the macOS notification of a blocked workflow with `osascript`, and leaves no process running. `withdraw` stops watchers that the older `alerter` version left. Tests: `tests/workflow_scripts.test.mjs`. | `hooks/workflow/` |
-| `merge.sh` | Merges a PR through REST and prints its base and migrations as JSON, with `unlisted` and a warning for each migration file that the PR adds but does not list. A stacked PR goes through merge-async, and one above the bottom of its stack needs `--stack`. It is safe to run twice. Tests: `tests/workflow_scripts.test.mjs`. | `merge` skill, `done` |
+| `merge.sh` | Merges a PR through REST and prints its base and migrations as JSON, with `unlisted` and a warning for each migration file that the PR adds but does not list. A stacked PR goes through merge-async, and one with an open PR below it in its stack needs `--stack`. It is safe to run twice. Tests: `tests/workflow_scripts.test.mjs`. | `merge` skill, `done` |
 | `fast-checks-template.sh` | The template for a project's `fast-checks.sh`: ruff, ty, oxlint and ast-grep on the named files. Tests: `tests/workflow_scripts.test.mjs`. | Copied to `scripts/ndev/workflow/` |
 
 ## remote/

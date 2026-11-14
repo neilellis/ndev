@@ -501,3 +501,70 @@ test('pr-merge reports a failed or queued merge-async result with GitHub words, 
   assert.notEqual(queued.code, 0)
   assert.match(queued.err, /merge queue/)
 })
+
+// What GitHub answers to the PUT: the request id is in details.uuid, and there is no top-level id.
+const ENQUEUED = '{"status":"pending","details":{"message":"Merge request enqueued.","uuid":"e9-1","merge_method":"merge","merge_action":"direct_merge","expected_head_sha":"h1"}}'
+const uuidRules = (poll, pr = {}) => [
+  { match: 'pr merge 12', err: STACKED_GH, exit: 1 },
+  { match: 'merge-async/e9-1', ...poll },
+  { match: 'pulls/12/merge-async', out: ENQUEUED },
+  { match: 'api repos/o/r/pulls/12', out: JSON.stringify({ ...JSON.parse(stackedPr(1)), ...pr }) },
+]
+
+test('pr-merge takes "pending" with details.uuid as accepted, and waits for the request to merge', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], uuidRules({ out: '{"status":"merged","details":{"sha":"m1"}}' }), { env: fast })
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.err, /no request id/)
+  assert.ok(r.calls.some(c => c.includes('pulls/12/merge-async/e9-1')), r.calls.join('\n'))
+})
+
+test('pr-merge reads the PR when the merge-async request cannot be read, and a merged PR is a merge', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], uuidRules({ err: 'gh: Not Found (HTTP 404)', exit: 1 }, { merged: true, state: 'closed' }), { env: fast })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.err, /PR #12 of o\/r reads merged/)
+})
+
+test('pr-merge that never sees the merge stops after its tries and names the last answer of the request', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], uuidRules({ err: 'gh: Not Found (HTTP 404)', exit: 1 }), { env: { ...fast, GH_MERGE_ASYNC_TRIES: '2' } })
+  assert.equal(r.code, 1, r.err)
+  assert.match(r.err, /e9-1/)
+  assert.match(r.err, /Not Found \(HTTP 404\)/)
+  assert.match(r.err, /still pending/)
+})
+
+test('pr-merge with no id in the merge-async answer names the keys it looked for', () => {
+  const rules = uuidRules({ out: '{}' })
+  rules[2] = { match: 'pulls/12/merge-async', out: '{"status":"pending","details":{"message":"x"}}' }
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], rules, { env: fast })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /details\.uuid/)
+  assert.match(r.err, /gh pr view 12/)
+})
+
+// GET /repos/{o}/{r}/stacks/{number}: the PRs of the stack from the bottom up, each with its state.
+const stackOf = (...states) => JSON.stringify({ number: 7, pull_requests: states.map((state, i) => ({ number: 10 + i, state })) })
+const aboveRules = stack => [
+  ...stackRules(3, '{"status":"merged"}').slice(0, 4),
+  { match: 'api repos/o/r/stacks/7', ...stack },
+  { match: 'api repos/o/r/pulls/12', out: JSON.stringify({ ...JSON.parse(stackedPr(3)), stack: { number: 7, position: 3, size: 3 } }) },
+]
+
+test('pr-merge merges a PR above the bottom without --stack when every PR below it is closed', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], aboveRules({ out: stackOf('closed', 'closed', 'open') }), { env: fast })
+  assert.equal(r.code, 0, r.err)
+  assert.ok(r.calls.some(c => c.includes('pulls/12/merge-async') && c.includes('-X PUT')), r.calls.join('\n'))
+})
+
+test('pr-merge refuses without --stack and names each open PR below, and says so when the stack cannot be read', () => {
+  const open = ghsh(['pr-merge', '12', '--method', 'merge'], aboveRules({ out: stackOf('closed', 'open', 'open') }), { env: fast })
+  assert.equal(open.code, 1)
+  assert.match(open.err, /3 of 3 in a stack/)
+  assert.match(open.err, /1 open PR\(s\) below it \(#11\)/)
+  assert.match(open.err, /--stack/)
+  assert.ok(!open.calls.some(c => c.includes('merge-async')), open.calls.join('\n'))
+  const unread = ghsh(['pr-merge', '12', '--method', 'merge'], aboveRules({ err: 'gh: Server Error (HTTP 500)', exit: 1 }), { env: fast })
+  assert.equal(unread.code, 1)
+  assert.match(unread.err, /Server Error \(HTTP 500\)/)
+  assert.match(unread.err, /--stack/)
+  assert.ok(!unread.calls.some(c => c.includes('merge-async')), unread.calls.join('\n'))
+})

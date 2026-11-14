@@ -30,7 +30,7 @@ The `addMigration` workflow tool lists each migration in a marked section of the
 
    `unlisted` names each `.sql` file that the PR adds under a `supabase/migrations/` folder and that `migrations` does not list, because nobody registered it with `mcp__ndev__addMigration`. merge.sh warns about these on stderr. Nothing runs them unless you do.
 
-   A stacked PR merges through GitHub's merge-async endpoint, which also merges each open PR below it in the stack. So merge.sh refuses a PR above the bottom of its stack. Ask the human whether to merge the PRs below it too; only on a yes, run it again with `--stack`.
+   A stacked PR merges through GitHub's merge-async endpoint, which also merges each open PR below it in the stack. So merge.sh refuses a PR that has an open PR below it in its stack, and names each one. Ask the human whether to merge the PRs below it too; only on a yes, run it again with `--stack`.
 
 3. If `unlisted` is not empty, name each file to the human and ask whether to apply it with this merge. On a yes, treat it as listed in steps 4 to 7. On a no, report it as not run.
 

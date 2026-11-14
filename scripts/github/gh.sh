@@ -22,7 +22,7 @@
 #   gh.sh pr-review <n> --commit <sha> --body <t>      # a comment review
 #   gh.sh pr-ready <n>                                 # leave draft. REST has no way to do this
 #   gh.sh label <n> <label>                            # issue or PR
-#   gh.sh pr-merge <n> --method merge|squash|rebase [--stack]   # a stacked PR goes through merge-async; --stack lets it merge the PRs below
+#   gh.sh pr-merge <n> --method merge|squash|rebase [--stack]   # a stacked PR goes through merge-async; --stack lets it merge the open PRs below
 #   gh.sh me                                           # {login} of the signed-in user
 #   gh.sh repo-read                                    # {full_name,default_branch,allow_merge_commit,...}
 #   gh.sh pr-commit-messages <n>                       # the commit messages of a PR
@@ -482,31 +482,49 @@ case "$cmd" in
     # Only the asynchronous endpoint merges it, and that also merges each open PR below it.
     is_stack_refusal() { grep -qiE 'part of a stack|stacked PRs|asynchronous merge' "$1"; }
     merge_stacked() {
-      local pr_json pos size sha started id status result tries
+      local pr_json pos size sha started id status result tries perr last snum serr stack_json below unread
       pr_json="$(GH api "repos/$REPO/pulls/$n")" || die "merge PR #$n of $REPO: GitHub says it is in a stack, and its REST record could not be read (exit $?). Repair: gh api repos/$REPO/pulls/$n --jq .stack" 1
       pos="$(jq -r '.stack.position // empty' <<<"$pr_json")"; size="$(jq -r '.stack.size // "?"' <<<"$pr_json")"
       sha="$(jq -r '.head.sha // empty' <<<"$pr_json")"
       [ -n "$pos" ] && [ -n "$sha" ] || die "merge PR #$n of $REPO: GitHub says it is in a stack, but its REST record has no stack.position or head.sha (stack: $(jq -c '.stack' <<<"$pr_json")). Repair: merge it in the GitHub web page" 1
       if [ "$pos" != 1 ] && [ -z "$whole_stack" ]; then
-        die "merge PR #$n of $REPO: it is $pos of $size in a stack, and a merge of it also merges the $((pos - 1)) open PR(s) below it. Repair: merge the bottom PR of the stack first, or pass --stack (merge.sh <pr> --stack) to merge them all." 1
+        # Only an open PR below it is merged with it, so read the stack: GitHub keeps the position of a merged PR.
+        snum="$(jq -r '.stack.number // empty' <<<"$pr_json")"; serr="$(mktemp)"; below="" unread=""
+        if [ -z "$snum" ]; then unread="its REST record has no stack.number"
+        elif ! stack_json="$(GH api "repos/$REPO/stacks/$snum" 2>"$serr")"; then unread="gh api repos/$REPO/stacks/$snum exited $? ($(said "$serr" "$stack_json"))"
+        elif ! below="$(jq -r --argjson n "$n" '(.pull_requests // []) as $p | ($p | map(.number) | index($n)) as $i
+          | if $i == null then error("the stack does not list PR #\($n)") else [$p[:$i][] | select(.state == "open") | "#\(.number)"] | join(", ") end' <<<"$stack_json" 2>"$serr")"; then unread="stack $snum: $(one_line "$serr")"
+        fi
+        rm -f "$serr"
+        [ -z "$unread" ] || die "merge PR #$n of $REPO: it is $pos of $size in a stack, and a merge of it also merges each open PR below it. The PRs below it could not be read: $unread. Repair: gh api repos/$REPO/stacks/${snum:-<stack number>} to see them, then merge the bottom PR of the stack first, or pass --stack (merge.sh <pr> --stack) to merge them all." 1
+        [ -z "$below" ] || die "merge PR #$n of $REPO: it is $pos of $size in a stack, and a merge of it also merges the $(awk -F', ' '{print NF}' <<<"$below") open PR(s) below it ($below). Repair: merge the bottom PR of the stack first, or pass --stack (merge.sh <pr> --stack) to merge them all." 1
+        echo "gh.sh: merge PR #$n of $REPO: no PR below it in stack $snum is open, so this merges it alone." >&2
       fi
       echo "gh.sh: merge PR #$n of $REPO: it is $pos of $size in a stack. Merging through merge-async at $sha." >&2
       started="$(GH api -X PUT "repos/$REPO/pulls/$n/merge-async" -f "sha=$sha" -f "merge_method=$method" -f merge_action=direct_merge)" \
         || die "merge PR #$n of $REPO: merge-async refused it (exit $?), see above. Repair: read the stack with gh api repos/$REPO/pulls/$n --jq .stack" 1
-      id="$(jq -r 'if type == "string" then . else (.id // .uuid // .request_id // empty) end' <<<"$started" 2>/dev/null || true)"
-      [ -n "$id" ] || die "merge PR #$n of $REPO: merge-async answered with no request id: ${started:0:300}" 1
-      result="$started"; tries="${GH_MERGE_ASYNC_TRIES:-120}"
+      # The answer is {"status":"pending","details":{"uuid":...}}: the request is accepted, not merged.
+      id="$(jq -r 'if type == "string" then . else (.details.uuid? // .uuid // .id // .request_id // empty) end' <<<"$started" 2>/dev/null || true)"
+      [ -n "$id" ] || die "merge PR #$n of $REPO: merge-async answered with no request id (looked for details.uuid, uuid, id and request_id): ${started:0:300}. GitHub can still merge it. Repair: read it with gh pr view $n --repo $REPO --json state,mergeCommit, and run the merge again only when it is still open." 1
+      result="$started"; tries="${GH_MERGE_ASYNC_TRIES:-120}"; perr="$(mktemp)"; last=""
       while :; do
         status="$(jq -r '.status? // "pending"' <<<"$result" 2>/dev/null || echo pending)"
         case "$status" in
-          merged) echo "gh.sh: merge PR #$n of $REPO: merge-async request $id merged." >&2; return 0 ;;
+          merged) rm -f "$perr"; echo "gh.sh: merge PR #$n of $REPO: merge-async request $id merged." >&2; return 0 ;;
           enqueued) die "merge PR #$n of $REPO: merge-async request $id put it in the merge queue; it is not merged yet. Repair: run the merge again after the queue merges it (it then counts as merged)." 1 ;;
           failed) die "merge PR #$n of $REPO: merge-async request $id failed: $(jq -c 'del(.status)' <<<"$result" | cut -c1-400). Repair: fix what GitHub names, then merge again." 1 ;;
         esac
         tries=$((tries - 1))
-        [ "$tries" -gt 0 ] || die "merge PR #$n of $REPO: merge-async request $id is still $status. Repair: gh api repos/$REPO/pulls/$n/merge-async/$id" 1
+        [ "$tries" -gt 0 ] || die "merge PR #$n of $REPO: merge-async request $id is still $status${last:+ (the last read of the request: $last)}, and the PR does not read merged. GitHub can still merge it. Repair: gh api repos/$REPO/pulls/$n/merge-async/$id, or gh pr view $n --repo $REPO --json state,mergeCommit" 1
         sleep "${GH_MERGE_ASYNC_PERIOD:-5}"
-        result="$(GH api "repos/$REPO/pulls/$n/merge-async/$id")" || die "merge PR #$n of $REPO: could not read merge-async request $id (exit $?). Repair: gh api repos/$REPO/pulls/$n/merge-async/$id" 1
+        if result="$(GH api "repos/$REPO/pulls/$n/merge-async/$id" 2>"$perr")"; then last=""; continue; fi
+        # The request could not be read, but the PR itself shows whether GitHub merged it.
+        last="exit $? ($(said "$perr" "$result"))"; result='{"status":"pending"}'
+        pr_json="$(GH api "repos/$REPO/pulls/$n" 2>"$perr")" || die "merge PR #$n of $REPO: neither merge-async request $id ($last) nor the PR could be read (exit $?: $(said "$perr" "$pr_json")). GitHub can still merge it. Repair: gh pr view $n --repo $REPO --json state,mergeCommit" 1
+        case "$(jq -r '"\(.merged) \(.state)"' <<<"$pr_json")" in
+          true*) rm -f "$perr"; echo "gh.sh: merge PR #$n of $REPO: merge-async request $id could not be read ($last), but PR #$n of $REPO reads merged." >&2; return 0 ;;
+          *closed) die "merge PR #$n of $REPO: after merge-async request $id, the PR is closed and not merged. Repair: gh pr view $n --repo $REPO" 1 ;;
+        esac
       done
     }
     merr="$(mktemp)"; mcode=0
