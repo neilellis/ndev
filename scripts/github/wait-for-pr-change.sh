@@ -136,14 +136,31 @@ def fetch_pr():
     except Exception as e:
         return None, str(e)
 
+def read_pages(text):
+    # gh api --paginate prints the pages as JSON documents one after the other. This reads each one.
+    # The --slurp flag would make one array of them, but gh before 2.48 does not have it.
+    decoder = json.JSONDecoder()
+    pages = []
+    pos = 0
+    while True:
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        if pos == len(text):
+            return pages
+        page, pos = decoder.raw_decode(text, pos)
+        pages.append(page)
+
 def fetch_workflows(head_sha, head_branch, pr_number):
-    cmd = ["bash", GH_SH, "api", "--paginate", "--slurp",
-           f"repos/{repo}/actions/runs?head_sha={head_sha}&per_page=100"]
+    endpoint = f"repos/{repo}/actions/runs?head_sha={head_sha}&per_page=100"
+    cmd = ["bash", GH_SH, "api", "--paginate", endpoint]
     res = subprocess.run(cmd, capture_output=True, text=True, env=gh_env())
     if res.returncode != 0:
-        return None, res.stderr.strip()
+        return None, f"'gh api --paginate {endpoint}' exited {res.returncode}: {res.stderr.strip()}"
     try:
-        pages = json.loads(res.stdout)
+        pages = read_pages(res.stdout)
+    except ValueError as e:
+        return None, f"'gh api --paginate {endpoint}' printed output that is not JSON ({e}): {res.stdout[:300]!r}"
+    try:
         runs = []
         for page in pages:
             if not isinstance(page, dict) or not isinstance(page.get("workflow_runs"), list):
