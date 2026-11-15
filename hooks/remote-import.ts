@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { confirm, contextOf, exec, type Fip, type Fw, hc, hcJson, type HostOptions, type Img, isOurs, isRemoteName, type Labels, labelsShown, NAME_RULE, said, shown, type Srv, SSH_PORT, steps, USER } from './remote-host'
+import { confirm, contextOf, exec, type Fip, fingerprint, type Fw, hc, hcJson, type HostOptions, type Img, isOurs, isRemoteName, type Labels, labelsShown, NAME_RULE, said, scanKey, shown, type Srv, SSH_PORT, steps, USER } from './remote-host'
 import { type HostRecord, projectKey, readStore, storePath, writeStore } from './remote-store'
 
 // /dev remote import <hetzner-id>: hands a server that was made by hand to /dev remote. It adds the labels
@@ -19,17 +19,9 @@ const isV4 = (f: Fip) => /^\d{1,3}(\.\d{1,3}){3}$/.test(f.ip)
 
 // The ed25519 host key that the address presents, as "ssh-ed25519 <key>". Nothing is trusted by reading it.
 async function presentedKey($: EngineInterface, address: string, repair: string): Promise<string> {
-  const o = await exec($, ['ssh-keyscan', '-T', '15', '-p', SSH_PORT, '-t', 'ed25519', address], { timeoutMs: 30_000 })
-  const line = o.stdout.split('\n').map(l => l.trim().split(/\s+/)).find(f => f[1] === 'ssh-ed25519' && f[2])
-  if (o.exitCode !== 0 || !line) throw new Error(`ssh-keyscan read no ed25519 host key from ${address} port ${SSH_PORT} (exit ${o.exitCode}): ${said(o)}\nNothing changed.\nRepair: ${repair}`)
-  return `ssh-ed25519 ${line[2]}`
-}
-
-async function fingerprint($: EngineInterface, key: string): Promise<string> {
-  const o = await exec($, ['ssh-keygen', '-lf', '-'], { stdin: `${key}\n` })
-  const print = /SHA256:\S+/.exec(o.stdout)?.[0]
-  if (o.exitCode !== 0 || !print) throw new Error(`ssh-keygen -lf - printed no SHA256 fingerprint for a host key (exit ${o.exitCode}): ${said(o)}\nNothing changed.`)
-  return print
+  const { key, out } = await scanKey($, address)
+  if (!key) throw new Error(`ssh-keyscan read no ed25519 host key from ${address} port ${SSH_PORT} (exit ${out.exitCode}): ${said(out)}\nNothing changed.\nRepair: ${repair}`)
+  return key
 }
 
 // The ed25519 keys that this machine's known_hosts holds for the address, hashed lines too.
@@ -143,7 +135,7 @@ export async function importHost($: EngineInterface, project: LoadedConfig | und
 
   const missing = (t: Thing) => [['managed-by', 'ndev'], ['ndev-name', name]].filter(([k]) => !(k! in t.labels)).map(([k, v]) => `${k}=${v}`)
   const toLabel = things.filter(t => missing(t).length)
-  const record: HostRecord = { ...kept, context: ctx, hostKey: key, ...(fip ? { floatingIp: fip.id, ip: fip.ip } : {}) }
+  const record: HostRecord = { ...kept, context: ctx, hostKey: key, ...(fip ? { floatingIp: fip.id, ip: fip.ip } : {}), imported: true }
   const isRecorded = kept !== undefined && JSON.stringify(kept) === JSON.stringify(record)
   if (!toLabel.length && isRecorded) {
     return `Nothing changed: ${serverTitle} is already the remote ${name} in the hcloud context "${ctx}". ${things.map(t => t.title).join(', ')} ${things.length === 1 ? 'carries' : 'carry'} both labels, and ${path} holds the record with the host key ${print}, which ${address} presents now.`

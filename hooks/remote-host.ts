@@ -11,14 +11,14 @@ import { type HostRecord, namedFor, orcaServers, projectKey, readStore, type Ser
 // host key stay. Everything it makes carries the labels managed-by=ndev and ndev-name=<name>, and it touches nothing
 // without them; /dev remote import (remote-import.ts) gives them to a server made by hand. Every hcloud call names its context and runs with no HCLOUD_TOKEN or HCLOUD_CONTEXT.
 
-export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; server?: string; ssh?: string; agent?: string; isForget: boolean; isYes: boolean }
+export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; server?: string; ssh?: string; agent?: string; isForget: boolean; isUnverifiedHost?: boolean; isYes: boolean }
 
 export const REMOTE_HOST_HELP = [
   '  /dev remote create <name> [options] make a Hetzner Cloud server for Orca: from the snapshot remove kept, else from the base image',
   '        options: --context <hcloud context>  --type <server type>  --location <location>  --ssh-key <key>  --floating-ip <name or id>  --yes',
   '        the address is a floating IPv4; on the server it is set by hand with: ip addr add <floating ip> dev eth0',
-  '  /dev remote remove <name> [options] shut the server down, snapshot it, and delete it only once the snapshot is available',
-  '        options: --context <hcloud context>  --floating-ip <name or id>  --forget (also delete the snapshot, the floating IP and the firewall)  --yes',
+  '  /dev remote remove <name> [options] shut the server down, snapshot it, and delete it only once the snapshot is available; an imported server must first prove over SSH (a root sign-in) that it holds its saved host key',
+  '        options: --context <hcloud context>  --floating-ip <name or id>  --forget (also delete the snapshot, the floating IP and the firewall)  --unverified-host (remove a server that this machine holds no saved host key for, with no host key check)  --yes',
   '  /dev remote import <hetzner-id> --context <hcloud context> [options] hand a server made by hand to /dev remote: label it, its firewalls and its floating IPv4, and record its host key',
   '        options: --floating-ip <name or id> (when the server has several)  --name <the server\'s Hetzner name>  --yes (only for a host key already in known_hosts)',
   '  /dev remote resize [<type>] [options] change the Hetzner server type of the box under the Orca server: with no type, list the types and recommend one',
@@ -55,6 +55,22 @@ export async function exec($: EngineInterface, argv: string[], init: { timeoutMs
   }
 }
 export const said = (o: Out) => (o.stderr.trim() || o.stdout.trim() || 'no output').slice(0, 800)
+
+// The ed25519 host key that the address presents, as "ssh-ed25519 <key>", or no key with ssh-keyscan's answer.
+// ssh-keyscan stops before the server proves it holds the private key, so any machine at the address can show any
+// public key: a key read here proves nothing until a person confirms it. A check against a saved key goes over ssh.
+export async function scanKey($: EngineInterface, address: string): Promise<{ key?: string; out: Out }> {
+  const out = await exec($, ['ssh-keyscan', '-T', '15', '-p', SSH_PORT, '-t', 'ed25519', address], { timeoutMs: 30_000 })
+  const line = out.stdout.split('\n').map(l => l.trim().split(/\s+/)).find(f => f[1] === 'ssh-ed25519' && f[2])
+  return { key: out.exitCode === 0 && line ? `ssh-ed25519 ${line[2]}` : undefined, out }
+}
+
+export async function fingerprint($: EngineInterface, key: string): Promise<string> {
+  const o = await exec($, ['ssh-keygen', '-lf', '-'], { stdin: `${key}\n` })
+  const print = /SHA256:\S+/.exec(o.stdout)?.[0]
+  if (o.exitCode !== 0 || !print) throw new Error(`ssh-keygen -lf - printed no SHA256 fingerprint for a host key (exit ${o.exitCode}): ${said(o)}\nNothing changed.`)
+  return print
+}
 
 // hcloud takes an exported token before the context's own, so both variables are removed for every call.
 const HCLOUD = ['env', '-u', 'HCLOUD_TOKEN', '-u', 'HCLOUD_CONTEXT', 'hcloud']
@@ -186,12 +202,15 @@ export async function steps($: EngineInterface, fn: (did: (what: string) => void
 
 // ---- SSH ----
 
-const sshArgs = (known?: string) => ['-p', SSH_PORT, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', ...(known ? ['-o', `UserKnownHostsFile=${known}`, '-o', 'GlobalKnownHostsFile=/dev/null'] : [])]
-function ssh($: EngineInterface, target: string, command: string, init: { known?: string; stdin?: string; timeoutMs?: number } = {}): Promise<Out> {
-  return exec($, ['ssh', ...sshArgs(init.known), target, command], { timeoutMs: init.timeoutMs ?? 60_000, ...(init.stdin === undefined ? {} : { stdin: init.stdin }) })
+// `only` names the address whose line in the known file is the one host key ssh may accept: it shuts the other ways
+// the user's ssh config can vouch for a key (a KnownHostsCommand, DNS) or look one up under another name.
+const sshArgs = (known?: string, only?: string) => ['-p', SSH_PORT, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', ...(known ? ['-o', `UserKnownHostsFile=${known}`, '-o', 'GlobalKnownHostsFile=/dev/null'] : []), ...(only ? ['-o', 'KnownHostsCommand=none', '-o', 'VerifyHostKeyDNS=no', '-o', `HostKeyAlias=${only}`, '-o', 'HostKeyAlgorithms=ssh-ed25519'] : [])]
+type SshInit = { known?: string; only?: string; stdin?: string; timeoutMs?: number }
+function ssh($: EngineInterface, target: string, command: string, init: SshInit = {}): Promise<Out> {
+  return exec($, ['ssh', ...sshArgs(init.known, init.only), target, command], { timeoutMs: init.timeoutMs ?? 60_000, ...(init.stdin === undefined ? {} : { stdin: init.stdin }) })
 }
 
-async function sshOk($: EngineInterface, target: string, command: string, init: { known?: string; stdin?: string; timeoutMs?: number } = {}): Promise<string> {
+async function sshOk($: EngineInterface, target: string, command: string, init: SshInit = {}): Promise<string> {
   const o = await ssh($, target, command, init)
   if (o.exitCode !== 0) throw new Error(`ssh ${target} ${command.slice(0, 80)} exited ${o.exitCode}: ${said(o)}`)
   return o.stdout
@@ -470,6 +489,65 @@ export async function createHost($: EngineInterface, project: LoadedConfig | und
 
 // ---- /dev remote remove ----
 
+// A server that ndev made has its host key from the first boot. An imported one has only the key a person confirmed
+// at /dev remote import, and nothing else ties the Hetzner server of that name to the machine the person saw. So
+// before remove snapshots and deletes an imported server, it connects as root over ssh with that key as the only
+// known host key. ssh checks that the server signs the key exchange with the private half of that key, so a machine
+// that only shows the public key fails. ssh-keyscan would not do: it stops before that proof.
+// A record that import wrote before the `imported` marker is known by its host key with no SSH key of create.
+// With no host key saved on this machine there is nothing to check the server against: remove refuses, and only
+// --unverified-host goes on, with the warning that this returns. The option skips no check that a saved key allows.
+async function checkHostKey($: EngineInterface, name: string, ctx: string, server: Srv, fip: Fip | undefined, rec: HostRecord | undefined, path: string, again: string, isUnverifiedHost: boolean): Promise<string | undefined> {
+  const nothing = 'No snapshot was taken and nothing was deleted. Nothing changed.'
+  // A record of the name for another hcloud context is the record of another server: its key says nothing here.
+  const isOther = rec !== undefined && rec.context !== ctx
+  if (!rec?.hostKey || isOther) {
+    if (isUnverifiedHost) return `Warning: the host key of the server ${name} (${server.id}) was NOT checked (--unverified-host): this machine holds no saved host key for it.`
+    throw new Error(`the server ${name} (${server.id}) in the hcloud context ${ctx} has no host key saved on this machine (${path} holds ${isOther ? `hosts.${name} for the hcloud context ${rec.context}, not ${ctx}` : `no hosts.${name}.hostKey`}), so remove cannot check that it is the server you mean. ${nothing}\nRepair: run ${again} on the machine that created or imported the server. Or, to remove it with no host key check: ${again} --context ${ctx} --unverified-host`)
+  }
+  // A server that create made had its host key checked by create, and its record holds the SSH key of create.
+  if (!(rec.imported || !rec.sshKey)) return undefined
+  const reimport = `delete hosts.${name} from ${path}, run /dev remote import ${server.id} --context ${ctx} and confirm the key there, then run ${again} again`
+  // The saved key goes into a known_hosts file, so it must be one key on one line.
+  const malformed = (detail: string) => new Error(`the server ${name} (${server.id}) was imported, but the host key that ${path} saved as hosts.${name}.hostKey is not a well-formed ed25519 public key (${detail}), so remove cannot check that the server is the one that was imported. ${nothing}\nRepair: ${reimport}.`)
+  if (!/^ssh-ed25519 [A-Za-z0-9+/]+=*$/.test(rec.hostKey)) throw malformed(`it reads "${rec.hostKey.slice(0, 120)}"`)
+  let saved: string
+  try {
+    saved = await fingerprint($, rec.hostKey)
+  } catch (error) {
+    throw malformed(error instanceof Error ? error.message.split('\n')[0]! : String(error))
+  }
+  // The server's own public IPv4, else the floating IP of the record, but only while it is assigned to this server.
+  const isFloatingOurs = fip !== undefined && fip.id === rec.floatingIp && fip.server === server.id && fip.ip === rec.ip
+  const address = server.public_net.ipv4?.ip ?? (isFloatingOurs ? rec.ip : undefined)
+  const start = server.status === 'running' ? '' : `the server is ${server.status}: start it with hcloud --context ${ctx} server poweron ${server.id}; `
+  if (!address) throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that it still proves it holds the host key ${saved}, the one ${path} saved for ${name}. But the server has no public IPv4 and no floating IP of ${name} that ${path} saved is assigned to it, so there is nowhere to check. ${nothing}\nRepair: give the server a public IPv4 or a floating IP that SSH answers on, then run ${again} again.`)
+  // The address goes into the known_hosts file and ssh's arguments, so it must be an IPv4 address and nothing else.
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) throw new Error(`the server ${name} (${server.id}) was imported, but its address reads "${address.slice(0, 120)}", which is not an IPv4 address, so remove cannot check its host key there. ${nothing}\nRepair: look at the server with hcloud --context ${ctx} server describe ${server.id}, then run ${again} again.`)
+  const made = await exec($, ['mktemp', '-d'])
+  const tmp = made.exitCode === 0 ? made.stdout.trim() : ''
+  if (!tmp) throw new Error(`mktemp -d made no folder for the host key check of the server ${name} (${server.id}) at ${address} (exit ${made.exitCode}): ${said(made)}. ${nothing}\nRepair: check that the temporary folder ($TMPDIR) is writable, then run ${again} again.`)
+  const target = `root@${address}`
+  try {
+    await $.fs.write(`${tmp}/known_hosts`, `${address} ${rec.hostKey}\n`)
+    await sshOk($, target, 'true', { known: `${tmp}/known_hosts`, only: address })
+  } catch (error) {
+    const detail = (error instanceof Error ? error.message : String(error)).trim().replace(/\.$/, '')
+    const isKeyRefused = /Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .* host key is known/i.test(detail)
+    // ssh checks the host key before the sign-in, but a refused sign-in is still no finished check: remove refuses.
+    const isSignInRefused = !isKeyRefused && /Permission denied/i.test(detail)
+    const byHand = `ssh -p ${SSH_PORT} ${target} (if ssh asks about a host key, its fingerprint must be ${saved}; never accept another)`
+    const repair = isKeyRefused
+      ? `read the server's own fingerprint in its Hetzner console (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub). If it is not ${saved}, the server's key changed or another machine answers at ${address}: find out which before you remove anything. If the server is the one you imported and its key changed, ${reimport}.`
+      : isSignInRefused
+        ? `the check needs a key sign-in as root: put your public SSH key in /root/.ssh/authorized_keys on the server (Hetzner console), check it with ${byHand}, then run ${again} again.`
+        : `${start}check that SSH answers there with ${byHand}, then run ${again} again. If ssh says the host key does not match, read the server's own fingerprint in its Hetzner console (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) before you remove anything.`
+    throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that the server at ${address} proves it holds the host key ${saved}, the one ${path} saved for ${name}. ${isKeyRefused ? 'It did not: it may not be the server that was imported.' : isSignInRefused ? 'The check did not finish: the server refused the sign-in as root.' : 'The check did not finish.'} ${detail}. ${nothing}\nRepair: ${repair}`)
+  } finally {
+    await exec($, ['rm', '-rf', tmp])
+  }
+}
+
 export async function removeHost($: EngineInterface, project: LoadedConfig | undefined, given: string | undefined, o: HostOptions): Promise<string> {
   const name = nameOf(given, 'remove')
   const again = `/dev remote remove ${name}`
@@ -483,6 +561,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
   if (fip && fip.server !== null && fip.server !== server?.id) throw new Error(`the floating IP ${fip.ip} (${fip.id}) of ${name} is assigned to the server ${fip.server}, which is not the server ${name}, so it is in use. Nothing changed.\nRepair: look at it with hcloud --context ${ctx} floating-ip describe ${fip.id}; unassign it with hcloud --context ${ctx} floating-ip unassign ${fip.id} if that server must lose the address.`)
   const unfinished = snapshots.find(s => s.status !== 'available')
   if (unfinished) throw new Error(`the snapshot ${unfinished.id} of ${name} has the status "${unfinished.status}", not "available". Nothing changed.\nRepair: look at it with hcloud --context ${ctx} image describe ${unfinished.id}. When it is available, run ${again} again; delete a failed one with hcloud --context ${ctx} image delete ${unfinished.id}.`)
+  const unchecked = server ? await checkHostKey($, name, ctx, server, fip, store.hosts[name], path, again, o.isUnverifiedHost === true) : undefined
   const cost = await pricing($, ctx)
 
   return steps($, async did => {
@@ -494,6 +573,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
       const monthly = cost.money(server.server_type.prices?.find(p => p.location === location)?.price_monthly.gross)
       await confirm($, o, [
         `Remove the remote ${name} from the Hetzner project of the hcloud context "${ctx}"?`,
+        ...(unchecked ? [unchecked] : []),
         `- It shuts down the server ${name} (${server.id}): ${type} in ${location}, ${monthly}.`,
         `- It takes a snapshot of it and waits until the snapshot is available. Hetzner charges for a snapshot by its size.`,
         `- Only then it DELETES the server ${server.id}${snapshots.length ? ` and the older snapshot ${snapshots.map(s => s.id).join(', ')}` : ''}.`,
@@ -547,6 +627,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
       store.hosts[name] = { ...store.hosts[name], context: ctx, ...(fip ? { ip: fip.ip, floatingIp: fip.id } : {}) }
       await writeStore($, path, store)
       said.push(
+        ...(unchecked ? [unchecked] : []),
         `The remote ${name} is removed from the hcloud context "${ctx}": the server ${server.id} is deleted, and the snapshot ${fresh.id} (${fresh.disk_size} GB disk, ${cost.snapshot(fresh.image_size)}) holds it.${fip ? ` The floating IPv4 ${fip.ip} is kept and still charged for.` : ''}`,
         `/dev remote create ${name} makes it again from the snapshot, as ${type} unless you name another type. Orca's saved server for it stays, and cannot connect until then.`,
       )
