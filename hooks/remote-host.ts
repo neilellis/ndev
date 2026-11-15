@@ -11,14 +11,14 @@ import { type HostRecord, namedFor, orcaServers, projectKey, readStore, type Ser
 // host key stay. Everything it makes carries the labels managed-by=ndev and ndev-name=<name>, and it touches nothing
 // without them; /dev remote import (remote-import.ts) gives them to a server made by hand. Every hcloud call names its context and runs with no HCLOUD_TOKEN or HCLOUD_CONTEXT.
 
-export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; server?: string; ssh?: string; agent?: string; isForget: boolean; isYes: boolean }
+export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; server?: string; ssh?: string; agent?: string; isForget: boolean; isUnverifiedHost?: boolean; isYes: boolean }
 
 export const REMOTE_HOST_HELP = [
   '  /dev remote create <name> [options] make a Hetzner Cloud server for Orca: from the snapshot remove kept, else from the base image',
   '        options: --context <hcloud context>  --type <server type>  --location <location>  --ssh-key <key>  --floating-ip <name or id>  --yes',
   '        the address is a floating IPv4; on the server it is set by hand with: ip addr add <floating ip> dev eth0',
   '  /dev remote remove <name> [options] shut the server down, snapshot it, and delete it only once the snapshot is available; an imported server must first prove over SSH (a root sign-in) that it holds its saved host key',
-  '        options: --context <hcloud context>  --floating-ip <name or id>  --forget (also delete the snapshot, the floating IP and the firewall)  --yes',
+  '        options: --context <hcloud context>  --floating-ip <name or id>  --forget (also delete the snapshot, the floating IP and the firewall)  --unverified-host (remove a server that this machine holds no saved host key for, with no host key check)  --yes',
   '  /dev remote import <hetzner-id> --context <hcloud context> [options] hand a server made by hand to /dev remote: label it, its firewalls and its floating IPv4, and record its host key',
   '        options: --floating-ip <name or id> (when the server has several)  --name <the server\'s Hetzner name>  --yes (only for a host key already in known_hosts)',
   '  /dev remote resize [<type>] [options] change the Hetzner server type of the box under the Orca server: with no type, list the types and recommend one',
@@ -495,11 +495,17 @@ export async function createHost($: EngineInterface, project: LoadedConfig | und
 // known host key. ssh checks that the server signs the key exchange with the private half of that key, so a machine
 // that only shows the public key fails. ssh-keyscan would not do: it stops before that proof.
 // A record that import wrote before the `imported` marker is known by its host key with no SSH key of create.
-async function checkImportedKey($: EngineInterface, name: string, ctx: string, server: Srv, fip: Fip | undefined, rec: HostRecord | undefined, path: string, again: string): Promise<void> {
-  if (!rec || !(rec.imported || (rec.hostKey && !rec.sshKey))) return
+// With no host key saved on this machine there is nothing to check the server against: remove refuses, and only
+// --unverified-host goes on, with the warning that this returns. The option skips no check that a saved key allows.
+async function checkHostKey($: EngineInterface, name: string, ctx: string, server: Srv, fip: Fip | undefined, rec: HostRecord | undefined, path: string, again: string, isUnverifiedHost: boolean): Promise<string | undefined> {
   const nothing = 'No snapshot was taken and nothing was deleted. Nothing changed.'
+  if (!rec?.hostKey) {
+    if (isUnverifiedHost) return `Warning: the host key of the server ${name} (${server.id}) was NOT checked (--unverified-host): this machine holds no saved host key for it.`
+    throw new Error(`the server ${name} (${server.id}) in the hcloud context ${ctx} has no host key saved on this machine (${path} holds no hosts.${name}.hostKey), so remove cannot check that it is the server you mean. ${nothing}\nRepair: run ${again} on the machine that created or imported the server. Or, to remove it with no host key check: ${again} --context ${ctx} --unverified-host`)
+  }
+  // A server that create made had its host key checked by create, and its record holds the SSH key of create.
+  if (!(rec.imported || !rec.sshKey)) return undefined
   const reimport = `delete hosts.${name} from ${path}, run /dev remote import ${server.id} --context ${ctx} and confirm the key there, then run ${again} again`
-  if (!rec.hostKey) throw new Error(`the server ${name} (${server.id}) was imported, but ${path} saved no host key for ${name}, so remove cannot check that the server is the one that was imported. ${nothing}\nRepair: ${reimport}.`)
   // The saved key goes into a known_hosts file, so it must be one key on one line.
   const malformed = (detail: string) => new Error(`the server ${name} (${server.id}) was imported, but the host key that ${path} saved as hosts.${name}.hostKey is not a well-formed ed25519 public key (${detail}), so remove cannot check that the server is the one that was imported. ${nothing}\nRepair: ${reimport}.`)
   if (!/^ssh-ed25519 [A-Za-z0-9+/]+=*$/.test(rec.hostKey)) throw malformed(`it reads "${rec.hostKey.slice(0, 120)}"`)
@@ -552,7 +558,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
   if (fip && fip.server !== null && fip.server !== server?.id) throw new Error(`the floating IP ${fip.ip} (${fip.id}) of ${name} is assigned to the server ${fip.server}, which is not the server ${name}, so it is in use. Nothing changed.\nRepair: look at it with hcloud --context ${ctx} floating-ip describe ${fip.id}; unassign it with hcloud --context ${ctx} floating-ip unassign ${fip.id} if that server must lose the address.`)
   const unfinished = snapshots.find(s => s.status !== 'available')
   if (unfinished) throw new Error(`the snapshot ${unfinished.id} of ${name} has the status "${unfinished.status}", not "available". Nothing changed.\nRepair: look at it with hcloud --context ${ctx} image describe ${unfinished.id}. When it is available, run ${again} again; delete a failed one with hcloud --context ${ctx} image delete ${unfinished.id}.`)
-  if (server) await checkImportedKey($, name, ctx, server, fip, store.hosts[name], path, again)
+  const unchecked = server ? await checkHostKey($, name, ctx, server, fip, store.hosts[name], path, again, o.isUnverifiedHost === true) : undefined
   const cost = await pricing($, ctx)
 
   return steps($, async did => {
@@ -617,6 +623,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
       store.hosts[name] = { ...store.hosts[name], context: ctx, ...(fip ? { ip: fip.ip, floatingIp: fip.id } : {}) }
       await writeStore($, path, store)
       said.push(
+        ...(unchecked ? [unchecked] : []),
         `The remote ${name} is removed from the hcloud context "${ctx}": the server ${server.id} is deleted, and the snapshot ${fresh.id} (${fresh.disk_size} GB disk, ${cost.snapshot(fresh.image_size)}) holds it.${fip ? ` The floating IPv4 ${fip.ip} is kept and still charged for.` : ''}`,
         `/dev remote create ${name} makes it again from the snapshot, as ${type} unless you name another type. Orca's saved server for it stays, and cannot connect until then.`,
       )

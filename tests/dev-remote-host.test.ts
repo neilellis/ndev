@@ -973,6 +973,50 @@ test('remove of an imported server refuses an address from Hetzner that is not a
   expect(w.changes()).toEqual([])
 })
 
+// With no host key saved on this machine, remove has nothing to check the server against. It refuses, and only the
+// plain option --unverified-host removes the server without the check, with a warning.
+const noRecord = (): Opts => ({ servers: [ours(901, 'box-1')], fips: [ourFip(60, 'box-1', 901)], firewalls: [ourFirewall(5, 'box-1')] })
+
+for (const [what, store] of [['no record', undefined], ['a record with no host key', { projects: {}, hosts: { 'box-1': { context: 'proj' } } }], ['an import record with no host key', { projects: {}, hosts: { 'box-1': { context: 'proj', imported: true } } }]] as const) {
+  test(`remove refuses a server that this machine holds no saved host key for (${what}), names the server and both repairs, and changes nothing`, async ($, on) => {
+    const w = world(on, { ...noRecord(), ...(store ? { store } : {}) })
+    await start($)
+    const text = await dev($, 'remove box-1 --context proj --yes')
+    expect(text).toMatch(/the server box-1 \(901\) in the hcloud context proj has no host key saved on this machine \(\/home\/neil\/\.config\/ndev\/remote\.json holds no hosts\.box-1\.hostKey\), so remove cannot check that it is the server you mean\. No snapshot was taken and nothing was deleted\. Nothing changed/)
+    expect(text).toContain('Repair: run /dev remote remove box-1 on the machine that created or imported the server. Or, to remove it with no host key check: /dev remote remove box-1 --context proj --unverified-host')
+    expect(w.ssh()).toEqual([])
+    expect(w.changes()).toEqual([])
+    expect(w.servers).toHaveLength(1)
+  })
+}
+
+test('remove --unverified-host removes a server with no saved host key, and warns in one line that the host key was not checked', async ($, on) => {
+  const w = world(on, noRecord())
+  await start($)
+  const text = await dev($, 'remove box-1 --context proj --unverified-host --yes')
+  expect(text).toMatch(/The remote box-1 is removed/)
+  expect(text.split('\n').filter(l => l.includes('NOT checked'))).toEqual(['Warning: the host key of the server box-1 (901) was NOT checked (--unverified-host): this machine holds no saved host key for it.'])
+  expect(w.ssh()).toEqual([])
+  expect(w.servers).toEqual([])
+})
+
+test('--unverified-host skips no check that a saved host key allows, warns of nothing then, and is an option of remove only', async ($, on) => {
+  const w = world(on, { ...noIpv4({ server: HAND }), servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })], proves: SWAPPED })
+  await start($)
+  const text = await dev($, 'remove orca-dev-2 --unverified-host --yes')
+  expect(text).toMatch(/proves it holds the host key SHA256:AAAApresented.*It did not/)
+  expect(w.changes()).toEqual([])
+  expect(await dev($, 'create box-1 --context proj --unverified-host')).toMatch(/--unverified-host is not an option of \/dev remote create/)
+})
+
+test('--unverified-host on a server that create made, with its saved host key, removes it as before and warns of nothing', async ($, on) => {
+  world(on, up())
+  await start($)
+  const removed = await dev($, 'remove box-1 --unverified-host --yes')
+  expect(removed).toMatch(/The remote box-1 is removed/)
+  expect(removed).not.toMatch(/not checked/i)
+})
+
 // With no public IPv4 on the server, the only address left is the record's floating IP, and only while that floating
 // IP is assigned to this server. An address that nothing ties to the server would check another machine.
 const noIpv4 = (fip: Partial<Fip>): Opts => ({

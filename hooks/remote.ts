@@ -143,10 +143,10 @@ const VALUES = { '--context': 'context', '--type': 'type', '--location': 'locati
 // The options that each of the four words does not take.
 const ONLY_RESIZE = ['--server', '--ssh', '--agent'] as const
 const NOT_OF = {
-  create: ['--forget', '--name', ...ONLY_RESIZE],
+  create: ['--forget', '--unverified-host', '--name', ...ONLY_RESIZE],
   remove: ['--type', '--location', '--ssh-key', '--name', ...ONLY_RESIZE],
-  import: ['--type', '--location', '--ssh-key', '--forget', ...ONLY_RESIZE],
-  resize: ['--type', '--location', '--ssh-key', '--floating-ip', '--forget', '--name'],
+  import: ['--type', '--location', '--ssh-key', '--forget', '--unverified-host', ...ONLY_RESIZE],
+  resize: ['--type', '--location', '--ssh-key', '--floating-ip', '--forget', '--unverified-host', '--name'],
 } as const
 function options(all: string[]): { words: string[]; given: string[]; host: HostOptions } {
   const words: string[] = []
@@ -154,8 +154,9 @@ function options(all: string[]): { words: string[]; given: string[]; host: HostO
   const host: HostOptions = { isForget: false, isYes: false }
   for (let i = 0; i < all.length; i++) {
     const word = all[i]!
-    if (word === '--forget' || word === '--yes') {
+    if (word === '--forget' || word === '--yes' || word === '--unverified-host') {
       if (word === '--forget') host.isForget = true
+      else if (word === '--unverified-host') host.isUnverifiedHost = true
       else host.isYes = true
       given.push(word)
     } else if (word in VALUES) {
@@ -163,7 +164,7 @@ function options(all: string[]): { words: string[]; given: string[]; host: HostO
       if (!value || value.startsWith('--')) throw new Error(`${word} needs a value, as in ${word} <value>. Nothing changed.`)
       host[VALUES[word as keyof typeof VALUES]] = value
       given.push(word)
-    } else if (word.startsWith('--')) throw new Error(`"${word}" is not an option of /dev remote. The options of create are --context, --type, --location, --ssh-key, --floating-ip and --yes; those of remove are --context, --floating-ip, --forget and --yes; those of import are --context, --floating-ip, --name and --yes; those of resize are --context, --server, --ssh, --agent and --yes. Nothing changed.`)
+    } else if (word.startsWith('--')) throw new Error(`"${word}" is not an option of /dev remote. The options of create are --context, --type, --location, --ssh-key, --floating-ip and --yes; those of remove are --context, --floating-ip, --forget, --unverified-host and --yes; those of import are --context, --floating-ip, --name and --yes; those of resize are --context, --server, --ssh, --agent and --yes. Nothing changed.`)
     else words.push(word)
   }
   return { words, given, host }
