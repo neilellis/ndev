@@ -50,6 +50,9 @@ type Opts = {
   snapshotStatus?: string[]
   // The host key lines that ssh-keyscan reads from every address; the default is PRESENTED.
   presents?: string[]
+  // The host key that the server proves it holds when ssh connects. When it is set, the fake ssh, like ssh with
+  // StrictHostKeyChecking=yes, refuses a connection whose known_hosts file holds no line "<address> <that key>".
+  proves?: string
   fail?: (argv: string[], stdin: string) => ReturnType<typeof out> | undefined
   answer?: (question: string, options: string[]) => string | undefined
 }
@@ -205,6 +208,10 @@ function world(on: On, opts: Opts = {}) {
     }
     if (a[0] === 'ssh') {
       const remote = a.at(-1)!
+      const host = a.at(-2)!.split('@').at(-1)!
+      if (opts.proves && !(files.get(knownAt) ?? '').split('\n').includes(`${host} ${opts.proves}`)) {
+        return out('', 255, `@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nHost key verification failed.\n`)
+      }
       if (remote.includes('test -f /var/run/reboot-required')) return out('', 1)
       if (remote.endsWith('bash -s') && stdin.startsWith('# root stage')) return out(`${NEW_KEY}\n`)
       return out()
@@ -648,7 +655,8 @@ test('remove confirms what is deleted and kept, then shuts down, snapshots, wait
   expect(w.firewalls).toHaveLength(1)
   expect(text).toMatch(/server 901 is deleted, and the snapshot 900 \(80 GB disk, EUR 0\.11 a month with VAT\) holds it/)
   expect(text).toMatch(/\/dev remote create box-1 makes it again from the snapshot, as cx33/)
-  // A server that create made had its host key checked by create; remove reads no key.
+  // A server that create made had its host key checked by create; remove connects to nothing.
+  expect(w.ssh()).toEqual([])
   expect(w.runs.filter(r => r.argv[0] === 'ssh-keyscan')).toEqual([])
 })
 
@@ -852,47 +860,66 @@ test('after import, remove and create accept the server with no hand labelling a
   expect(await dev($, 'remove orca-dev-2 --yes')).toMatch(/The remote orca-dev-2 is removed/)
   expect(w.servers).toEqual([])
   expect(w.fips).toEqual([expect.objectContaining({ id: 162501839, server: null })])
-  // remove read the key of the imported server before it shut it down.
+  // Before the shutdown, remove connected as root to the server's own address with the saved host key as the only
+  // known key, and removed that temporary known_hosts file after.
   const order = w.runs.map(r => r.argv.join(' '))
-  expect(order.findLastIndex(r => r.startsWith('ssh-keyscan'))).toBeLessThan(order.findIndex(r => r.includes('server shutdown')))
+  const check = order.findLastIndex(r => r.startsWith('ssh ') && r.endsWith(' root@203.0.113.7 true'))
+  expect(check).toBeGreaterThan(-1)
+  expect(check).toBeLessThan(order.findIndex(r => r.includes('server shutdown')))
+  expect(w.runs[check]!.argv).toEqual(['ssh', '-p', '22', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', '-o', `UserKnownHostsFile=${TMP}/known_hosts`, '-o', 'GlobalKnownHostsFile=/dev/null', 'root@203.0.113.7', 'true'])
+  expect(w.runs[check]!.known).toBe(`203.0.113.7 ${PRESENTED}\n`)
+  expect(order.slice(check).some(r => r === `rm -rf ${TMP}`)).toBe(true)
+  expect(w.files.has(`${TMP}/known_hosts`)).toBe(false)
+  // Only import read a key with ssh-keyscan; remove does not, because a key it reads is no proof.
+  expect(w.runs.filter(r => r.argv[0] === 'ssh-keyscan')).toHaveLength(1)
 })
 
-// An imported server's host key was seen once, at import; nothing since has connected to it. Before remove snapshots
-// and deletes it, the server must still present that key, or the box under the name may not be the one imported.
+// An imported server's host key was seen once, at import. Before remove snapshots and deletes it, the server must
+// prove over ssh that it holds that key, or the box under the name may not be the one imported. Showing the public
+// key is not enough: ssh-keyscan would read it from any machine that copied it.
 const SWAPPED = 'ssh-ed25519 AAAAswapped'
+const SAVED_AT = '/home/neil/.config/ndev/remote.json'
 
-test('remove of an imported server refuses, before the question and before any shutdown, snapshot or delete, a server that presents another host key than the one import saved', async ($, on) => {
+test('remove of an imported server refuses, before the question and before any shutdown, snapshot or delete, a server that does not prove it holds the host key import saved', async ($, on) => {
   const opts = byHand()
   const w = world(on, opts)
   await start($)
   await dev($, IMPORT)
   const asked = w.asked.length
-  opts.presents = [SWAPPED]
+  // The machine at the address still shows the saved public key to ssh-keyscan, but cannot prove it holds the key.
+  opts.proves = SWAPPED
 
   const text = await dev($, 'remove orca-dev-2')
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, and 203\.0\.113\.7 now presents the ed25519 host key SHA256:AAAAswapped, not SHA256:AAAApresented, the one \/home\/neil\/\.config\/ndev\/remote\.json saved for orca-dev-2/)
+  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented, the one \/home\/neil\/\.config\/ndev\/remote\.json saved for orca-dev-2\. It did not: it may not be the server that was imported\./)
+  expect(text).toMatch(/ssh root@203\.0\.113\.7 true exited 255: .*Host key verification failed/s)
   expect(text).toMatch(/No snapshot was taken and nothing was deleted\. Nothing changed/)
   expect(text).toMatch(/Repair: .*ssh-keygen -lf \/etc\/ssh\/ssh_host_ed25519_key\.pub/)
   expect(text).toContain('/dev remote import 176003111 --context proj')
-  expect(w.runs.filter(r => r.argv[0] === 'ssh-keyscan').at(-1)!.argv).toEqual(['ssh-keyscan', '-T', '15', '-p', '22', '-t', 'ed25519', '203.0.113.7'])
+  const check = w.ssh().at(-1)!
+  expect(check.argv.slice(-2)).toEqual(['root@203.0.113.7', 'true'])
+  expect(check.known).toBe(`203.0.113.7 ${PRESENTED}\n`)
+  // Only import read a key with ssh-keyscan.
+  expect(w.runs.filter(r => r.argv[0] === 'ssh-keyscan')).toHaveLength(1)
+  expect(w.files.has(`${TMP}/known_hosts`)).toBe(false)
   expect(w.asked).toHaveLength(asked)
   expect(w.changes()).toEqual(adds(w))
   expect(w.servers).toHaveLength(1)
   expect(w.store()?.hosts?.['orca-dev-2']?.hostKey).toBe(PRESENTED)
 })
 
-test('remove of an imported server that SSH cannot reach refuses with ssh-keyscan\'s exit code and output, the saved fingerprint and the repair, and changes nothing', async ($, on) => {
+test('remove of an imported server that SSH cannot reach refuses with ssh\'s exit code and output, the saved fingerprint and the repair, and changes nothing', async ($, on) => {
   const opts = byHand()
   const w = world(on, opts)
   await start($)
   await dev($, IMPORT)
-  opts.fail = a => (a[0] === 'ssh-keyscan' ? out('', 1, 'connect (`203.0.113.7\'): Connection timed out') : undefined)
+  opts.fail = a => (a[0] === 'ssh' ? out('', 255, 'ssh: connect to host 203.0.113.7 port 22: Operation timed out') : undefined)
 
   const text = await dev($, 'remove orca-dev-2 --yes')
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that it still presents the host key SHA256:AAAApresented/)
-  expect(text).toMatch(/ssh-keyscan -p 22 -t ed25519 203\.0\.113\.7 read no ed25519 host key \(exit 1\): connect \(`203\.0\.113\.7'\): Connection timed out/)
+  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented/)
+  expect(text).toMatch(/The check did not finish\. ssh root@203\.0\.113\.7 true exited 255: ssh: connect to host 203\.0\.113\.7 port 22: Operation timed out\./)
   expect(text).toMatch(/No snapshot was taken and nothing was deleted\. Nothing changed/)
-  expect(text).toMatch(/Repair: .*then run \/dev remote remove orca-dev-2 again/)
+  expect(text).toMatch(/Repair: check that SSH answers there with ssh -p 22 root@203\.0\.113\.7, then run \/dev remote remove orca-dev-2 again/)
+  expect(w.files.has(`${TMP}/known_hosts`)).toBe(false)
   expect(w.changes()).toEqual(adds(w))
   expect(w.servers).toHaveLength(1)
 })
@@ -904,10 +931,68 @@ test('a record that import wrote before it marked imports, with no SSH key of cr
     firewalls: [handFirewall({ labels: { role: 'orca-host', ...LABELS(name) } })],
     fips: [handFip({ labels: LABELS(name) })],
     store: { projects: {}, hosts: { [name]: { context: 'proj', floatingIp: 162501839, ip: '88.99.125.86', hostKey: PRESENTED } } },
-    presents: [SWAPPED],
+    proves: SWAPPED,
   })
   await start($)
-  expect(await dev($, `remove ${name} --yes`)).toMatch(/was imported, and 203\.0\.113\.7 now presents the ed25519 host key SHA256:AAAAswapped, not SHA256:AAAApresented/)
+  expect(await dev($, `remove ${name} --yes`)).toMatch(/was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented.*It did not/)
+  expect(w.changes()).toEqual([])
+})
+
+// With no public IPv4 on the server, the only address left is the record's floating IP, and only while that floating
+// IP is assigned to this server. An address that nothing ties to the server would check another machine.
+const noIpv4 = (fip: Partial<Fip>): Opts => ({
+  servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') }, public_net: { ipv4: null } })],
+  firewalls: [handFirewall({ labels: { role: 'orca-host', ...LABELS('orca-dev-2') } })],
+  fips: [handFip({ labels: LABELS('orca-dev-2'), ...fip })],
+  store: { projects: {}, hosts: { 'orca-dev-2': imported } },
+})
+
+test('remove of an imported server with no public IPv4 checks at the record\'s floating IP only while it is assigned to that server', async ($, on) => {
+  const w = world(on, noIpv4({ server: null }))
+  await start($)
+  const text = await dev($, 'remove orca-dev-2 --yes')
+  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that it still proves it holds the host key SHA256:AAAApresented.*But the server has no public IPv4 and no floating IP of orca-dev-2 that \/home\/neil\/\.config\/ndev\/remote\.json saved is assigned to it, so there is nowhere to check\. No snapshot was taken and nothing was deleted\. Nothing changed/s)
+  expect(text).toMatch(/Repair: give the server a public IPv4 or a floating IP that SSH answers on, then run \/dev remote remove orca-dev-2 again/)
+  expect(w.ssh()).toEqual([])
+  expect(w.changes()).toEqual([])
+  expect(w.servers).toHaveLength(1)
+})
+
+test('remove of an imported server with no public IPv4 checks the host key at its assigned floating IP', async ($, on) => {
+  const w = world(on, { ...noIpv4({ server: HAND }), proves: PRESENTED })
+  await start($)
+  expect(await dev($, 'remove orca-dev-2 --yes')).toMatch(/The remote orca-dev-2 is removed/)
+  const check = w.ssh().find(r => r.argv.at(-1) === 'true')!
+  expect(check.argv.at(-2)).toBe('root@88.99.125.86')
+  expect(check.known).toBe(`88.99.125.86 ${PRESENTED}\n`)
+})
+
+test('remove of an imported server whose saved host key is malformed names the server, the record and the import repair, and changes nothing', async ($, on) => {
+  const broken = world(on, {
+    ...noIpv4({ server: HAND }),
+    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })],
+    fail: a => (a[0] === 'ssh-keygen' && a.includes('-lf') ? out('', 255, '(stdin) is not a public key file.') : undefined),
+  })
+  await start($)
+  const text = await dev($, 'remove orca-dev-2 --yes')
+  expect(text).toMatch(new RegExp(`the server orca-dev-2 \\(176003111\\) was imported, but the host key that ${SAVED_AT.replace(/\./g, '\\.')} saved as hosts\\.orca-dev-2\\.hostKey is not a well-formed ed25519 public key \\(ssh-keygen -lf - printed no SHA256 fingerprint for a host key \\(exit 255\\): \\(stdin\\) is not a public key file\\.\\)`))
+  expect(text).toMatch(/No snapshot was taken and nothing was deleted\. Nothing changed/)
+  expect(text).toContain(`Repair: delete hosts.orca-dev-2 from ${SAVED_AT}, run /dev remote import 176003111 --context proj and confirm the key there, then run /dev remote remove orca-dev-2 again.`)
+  expect(broken.ssh()).toEqual([])
+  expect(broken.changes()).toEqual([])
+})
+
+test('remove of an imported server refuses a saved host key that is not one key on one line before it writes it to a known_hosts file', async ($, on) => {
+  const w = world(on, {
+    ...noIpv4({ server: HAND }),
+    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })],
+    store: { projects: {}, hosts: { 'orca-dev-2': { ...imported, hostKey: `${PRESENTED}\n10.0.0.1 ssh-ed25519 AAAAother` } } },
+  })
+  await start($)
+  const text = await dev($, 'remove orca-dev-2 --yes')
+  expect(text).toMatch(/saved as hosts\.orca-dev-2\.hostKey is not a well-formed ed25519 public key \(it reads "ssh-ed25519 AAAApresented\n10\.0\.0\.1/)
+  expect(text).toContain('/dev remote import 176003111 --context proj')
+  expect(w.ssh()).toEqual([])
   expect(w.changes()).toEqual([])
 })
 
