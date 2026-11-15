@@ -499,9 +499,11 @@ export async function createHost($: EngineInterface, project: LoadedConfig | und
 // --unverified-host goes on, with the warning that this returns. The option skips no check that a saved key allows.
 async function checkHostKey($: EngineInterface, name: string, ctx: string, server: Srv, fip: Fip | undefined, rec: HostRecord | undefined, path: string, again: string, isUnverifiedHost: boolean): Promise<string | undefined> {
   const nothing = 'No snapshot was taken and nothing was deleted. Nothing changed.'
-  if (!rec?.hostKey) {
+  // A record of the name for another hcloud context is the record of another server: its key says nothing here.
+  const isOther = rec !== undefined && rec.context !== ctx
+  if (!rec?.hostKey || isOther) {
     if (isUnverifiedHost) return `Warning: the host key of the server ${name} (${server.id}) was NOT checked (--unverified-host): this machine holds no saved host key for it.`
-    throw new Error(`the server ${name} (${server.id}) in the hcloud context ${ctx} has no host key saved on this machine (${path} holds no hosts.${name}.hostKey), so remove cannot check that it is the server you mean. ${nothing}\nRepair: run ${again} on the machine that created or imported the server. Or, to remove it with no host key check: ${again} --context ${ctx} --unverified-host`)
+    throw new Error(`the server ${name} (${server.id}) in the hcloud context ${ctx} has no host key saved on this machine (${path} holds ${isOther ? `hosts.${name} for the hcloud context ${rec.context}, not ${ctx}` : `no hosts.${name}.hostKey`}), so remove cannot check that it is the server you mean. ${nothing}\nRepair: run ${again} on the machine that created or imported the server. Or, to remove it with no host key check: ${again} --context ${ctx} --unverified-host`)
   }
   // A server that create made had its host key checked by create, and its record holds the SSH key of create.
   if (!(rec.imported || !rec.sshKey)) return undefined
@@ -522,8 +524,9 @@ async function checkHostKey($: EngineInterface, name: string, ctx: string, serve
   if (!address) throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that it still proves it holds the host key ${saved}, the one ${path} saved for ${name}. But the server has no public IPv4 and no floating IP of ${name} that ${path} saved is assigned to it, so there is nowhere to check. ${nothing}\nRepair: give the server a public IPv4 or a floating IP that SSH answers on, then run ${again} again.`)
   // The address goes into the known_hosts file and ssh's arguments, so it must be an IPv4 address and nothing else.
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) throw new Error(`the server ${name} (${server.id}) was imported, but its address reads "${address.slice(0, 120)}", which is not an IPv4 address, so remove cannot check its host key there. ${nothing}\nRepair: look at the server with hcloud --context ${ctx} server describe ${server.id}, then run ${again} again.`)
-  const tmp = (await exec($, ['mktemp', '-d'])).stdout.trim()
-  if (!tmp) throw new Error(`mktemp -d made no folder for the host key check of the server ${name} (${server.id}) at ${address}. ${nothing}\nRepair: check that the temporary folder ($TMPDIR) is writable, then run ${again} again.`)
+  const made = await exec($, ['mktemp', '-d'])
+  const tmp = made.exitCode === 0 ? made.stdout.trim() : ''
+  if (!tmp) throw new Error(`mktemp -d made no folder for the host key check of the server ${name} (${server.id}) at ${address} (exit ${made.exitCode}): ${said(made)}. ${nothing}\nRepair: check that the temporary folder ($TMPDIR) is writable, then run ${again} again.`)
   const target = `root@${address}`
   try {
     await $.fs.write(`${tmp}/known_hosts`, `${address} ${rec.hostKey}\n`)
@@ -570,6 +573,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
       const monthly = cost.money(server.server_type.prices?.find(p => p.location === location)?.price_monthly.gross)
       await confirm($, o, [
         `Remove the remote ${name} from the Hetzner project of the hcloud context "${ctx}"?`,
+        ...(unchecked ? [unchecked] : []),
         `- It shuts down the server ${name} (${server.id}): ${type} in ${location}, ${monthly}.`,
         `- It takes a snapshot of it and waits until the snapshot is available. Hetzner charges for a snapshot by its size.`,
         `- Only then it DELETES the server ${server.id}${snapshots.length ? ` and the older snapshot ${snapshots.map(s => s.id).join(', ')}` : ''}.`,

@@ -1000,6 +1000,24 @@ test('remove --unverified-host removes a server with no saved host key, and warn
   expect(w.servers).toEqual([])
 })
 
+test('remove --unverified-host says in the question, before anything is deleted, that the host key was not checked', async ($, on) => {
+  const w = world(on, noRecord())
+  await start($)
+  expect(await dev($, 'remove box-1 --context proj --unverified-host')).toMatch(/The remote box-1 is removed/)
+  expect(JSON.stringify(w.asked[0])).toContain('Warning: the host key of the server box-1 (901) was NOT checked (--unverified-host): this machine holds no saved host key for it.')
+})
+
+// A record of the name for another hcloud context is the record of another server: its key says nothing here.
+test('remove refuses a server in another hcloud context than the one the saved record of the name is for', async ($, on) => {
+  const w = world(on, up())
+  await start($)
+  const text = await dev($, 'remove box-1 --context other --yes')
+  expect(text).toMatch(/the server box-1 \(901\) in the hcloud context other has no host key saved on this machine \(\/home\/neil\/\.config\/ndev\/remote\.json holds hosts\.box-1 for the hcloud context proj, not other\), so remove cannot check that it is the server you mean\. No snapshot was taken and nothing was deleted\. Nothing changed/)
+  expect(text).toContain('/dev remote remove box-1 --context other --unverified-host')
+  expect(w.changes()).toEqual([])
+  expect(w.servers).toHaveLength(1)
+})
+
 test('--unverified-host skips no check that a saved host key allows, warns of nothing then, and is an option of remove only', async ($, on) => {
   const w = world(on, { ...noIpv4({ server: HAND }), servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })], proves: SWAPPED })
   await start($)
