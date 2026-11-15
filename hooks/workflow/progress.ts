@@ -28,6 +28,9 @@ async function show($: EngineInterface): Promise<void> {
   put($, `ndev ${call.tool} ${span(now - call.at)}${step}`)
 }
 
+// The tool call that has the turn now and its step, for a message about a call that waits behind it.
+export const runningNow = (): string | undefined => (running ? `${running.tool}${running.step ? `, in the step "${running.step.name}"` : ''}` : undefined)
+
 // The line for when no tool runs. If a running tool holds the line, its next tick carries the new text.
 export function showIdleStatus($: EngineInterface, text: string | undefined): void {
   idle = text

@@ -14,7 +14,7 @@ import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
 import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check, PrHealth, Ran } from './effects'
-import { withStep, withToolProgress } from './progress'
+import { runningNow, withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
@@ -3425,13 +3425,20 @@ async function liveEnd($: EngineInterface, logged: { root: string; name: string;
 // answers a workflow tool, so the agent then reads only "no tool.call hook answered this call". The guard asks
 // here first: for a workflow tool, the answer names the tool, the cause and the repair.
 const HOOK_BUDGET_S = 10
+// What each workflow tool call in flight does now, so that the answer for a lost hook can say it. An entry goes
+// when its call answers.
+const callsNow = new Map<string, 'waiting' | 'running'>()
 export function workflowToolLost(tool: string, error: { kind: 'throw' | 'timeout'; message?: string }): { result: string; isError: true } | undefined {
   const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
   if (!SPECS.some(s => s.name === name)) return undefined
   const cause = error.kind === 'timeout'
     ? `its hook ran past the host's time budget for one hook (${HOOK_BUDGET_S} s of its own running time, which a busy computer spends sooner)${error.message ? `: ${error.message}` : ''}`
     : `its hook failed outside its own error handling: ${error.message ?? 'no message'}`
-  return { result: `workflow ${name} gave no answer, because ${cause}. The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call status and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
+  const now = callsNow.get(name)
+  callsNow.delete(name)
+  const holder = runningNow()
+  const doing = now === 'waiting' ? ` It was waiting for its turn${holder ? ` behind ${holder}` : ''}: workflow tool calls run one at a time.` : now === 'running' ? ` It had its turn and was running${holder ? ` (${holder})` : ''}.` : ''
+  return { result: `workflow ${name} gave no answer, because ${cause}.${doing} The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call status and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
 }
 
 export const workflowTools = (on: Parameters<Register>[0], project: () => LoadedConfig | undefined) => {
@@ -3448,18 +3455,31 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
         if (!isNumber(args.issue) && (issueOnly || !isNumber(args.pr))) return { result: `Refused: ${s.name} needs ${issueOnly ? 'issue, the number of the issue this call is for' : 'issue or pr, the number that this call is for'}, and it got ${JSON.stringify(issueOnly ? args.issue : { issue: args.issue, pr: args.pr })}. Nothing changed.`, isError: true as const }
       }
       const logged = await liveStart($, s.name, args, project())
+      const name = s.name
+      const isHeld = WAIT_TOOLS.includes(name) || (name === 'interview' && args.interviewJson !== undefined)
+      // A hook's time runs on while it awaits the turn of another call, and a check script there can run for an
+      // hour: the host then dropped the call behind it after ten seconds (fcc-proto #876, checkpoint, twice).
+      // The pauses of whenTurnsFree are processes, which cost the hook nothing. The loop reads the count again,
+      // as another call can take the turn between the last pause and here.
+      if (!isHeld) {
+        callsNow.set(name, 'waiting')
+        while (turnsQueued) await whenTurnsFree($)
+        callsNow.set(name, 'running')
+      }
       try {
-        const name = s.name
-        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : name === 'interview' && args.interviewJson !== undefined ? await askInterview($, { args, project: project(), tool: name }, next) : await inTurn(() => withToolProgress($, name, () => dispatch($, name, { args, project: project(), tool: name })))
+        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : isHeld ? await askInterview($, { args, project: project(), tool: name }, next) : await inTurn(() => withToolProgress($, name, () => dispatch($, name, { args, project: project(), tool: name })))
         await liveEnd($, logged, s.name, 'ok', result)
+        callsNow.delete(name)
         return { result }
       } catch (error) {
         if (error instanceof Refuse) {
           await liveEnd($, logged, s.name, 'refused', error.message)
+          callsNow.delete(name)
           return { result: error.message, isError: true as const }
         }
         const message = `workflow ${s.name} failed: ${error instanceof Error ? error.message : String(error)}`
         await liveEnd($, logged, s.name, 'failed', message)
+        callsNow.delete(name)
         return { result: message + (await reportFault($, `workflow tool ${s.name}`, message, `the project ${project()?.root ?? 'unknown'}`)), isError: true as const }
       }
     })

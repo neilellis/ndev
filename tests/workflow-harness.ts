@@ -180,7 +180,9 @@ export const engine = (on: On, opts: Opts = {}) => {
     // passed, and the call rejects. A hook that throws is skipped, so the call rejects as no implementation.
     if (a[0] === 'sleep' && s.sleepAborts > 0) { s.sleepAborts -= 1; s.now += limit ?? 0; throw new Error(`ndev: $.process.run(sleep) aborted: still running after ${limit}ms`) }
     if (a[0] === 'sleep' && s.sleepFails) throw new Error(s.sleepFails)
-    if (a[0] === 'sleep') return (async () => { if (s.sleepYields) await new Promise(r => setTimeout(r, 1)); await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); if (s.sleepSpinMs) spinAfter(s.sleepSpinMs); return ok() })() as never
+    // A pause of 0.2 s is a call that waits for its turn (whenTurnsFree). A real sleep lets the call that has the
+    // turn go on, so this one yields too: a loop of pauses that resolve at once would hold the event loop.
+    if (a[0] === 'sleep') return (async () => { if (s.sleepYields || a[1] === '0.2') await new Promise(r => setTimeout(r, 1)); await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); if (s.sleepSpinMs) spinAfter(s.sleepSpinMs); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
       s.probeLimits.push(e.init?.timeoutMs)
