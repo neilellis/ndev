@@ -202,12 +202,15 @@ export async function steps($: EngineInterface, fn: (did: (what: string) => void
 
 // ---- SSH ----
 
-const sshArgs = (known?: string) => ['-p', SSH_PORT, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', ...(known ? ['-o', `UserKnownHostsFile=${known}`, '-o', 'GlobalKnownHostsFile=/dev/null'] : [])]
-function ssh($: EngineInterface, target: string, command: string, init: { known?: string; stdin?: string; timeoutMs?: number } = {}): Promise<Out> {
-  return exec($, ['ssh', ...sshArgs(init.known), target, command], { timeoutMs: init.timeoutMs ?? 60_000, ...(init.stdin === undefined ? {} : { stdin: init.stdin }) })
+// `only` names the address whose line in the known file is the one host key ssh may accept: it shuts the other ways
+// the user's ssh config can vouch for a key (a KnownHostsCommand, DNS) or look one up under another name.
+const sshArgs = (known?: string, only?: string) => ['-p', SSH_PORT, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', ...(known ? ['-o', `UserKnownHostsFile=${known}`, '-o', 'GlobalKnownHostsFile=/dev/null'] : []), ...(only ? ['-o', 'KnownHostsCommand=none', '-o', 'VerifyHostKeyDNS=no', '-o', `HostKeyAlias=${only}`, '-o', 'HostKeyAlgorithms=ssh-ed25519'] : [])]
+type SshInit = { known?: string; only?: string; stdin?: string; timeoutMs?: number }
+function ssh($: EngineInterface, target: string, command: string, init: SshInit = {}): Promise<Out> {
+  return exec($, ['ssh', ...sshArgs(init.known, init.only), target, command], { timeoutMs: init.timeoutMs ?? 60_000, ...(init.stdin === undefined ? {} : { stdin: init.stdin }) })
 }
 
-async function sshOk($: EngineInterface, target: string, command: string, init: { known?: string; stdin?: string; timeoutMs?: number } = {}): Promise<string> {
+async function sshOk($: EngineInterface, target: string, command: string, init: SshInit = {}): Promise<string> {
   const o = await ssh($, target, command, init)
   if (o.exitCode !== 0) throw new Error(`ssh ${target} ${command.slice(0, 80)} exited ${o.exitCode}: ${said(o)}`)
   return o.stdout
@@ -511,19 +514,26 @@ async function checkImportedKey($: EngineInterface, name: string, ctx: string, s
   const address = server.public_net.ipv4?.ip ?? (isFloatingOurs ? rec.ip : undefined)
   const start = server.status === 'running' ? '' : `the server is ${server.status}: start it with hcloud --context ${ctx} server poweron ${server.id}; `
   if (!address) throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that it still proves it holds the host key ${saved}, the one ${path} saved for ${name}. But the server has no public IPv4 and no floating IP of ${name} that ${path} saved is assigned to it, so there is nowhere to check. ${nothing}\nRepair: give the server a public IPv4 or a floating IP that SSH answers on, then run ${again} again.`)
+  // The address goes into the known_hosts file and ssh's arguments, so it must be an IPv4 address and nothing else.
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(address)) throw new Error(`the server ${name} (${server.id}) was imported, but its address reads "${address.slice(0, 120)}", which is not an IPv4 address, so remove cannot check its host key there. ${nothing}\nRepair: look at the server with hcloud --context ${ctx} server describe ${server.id}, then run ${again} again.`)
   const tmp = (await exec($, ['mktemp', '-d'])).stdout.trim()
   if (!tmp) throw new Error(`mktemp -d made no folder for the host key check of the server ${name} (${server.id}) at ${address}. ${nothing}\nRepair: check that the temporary folder ($TMPDIR) is writable, then run ${again} again.`)
   const target = `root@${address}`
   try {
     await $.fs.write(`${tmp}/known_hosts`, `${address} ${rec.hostKey}\n`)
-    await sshOk($, target, 'true', { known: `${tmp}/known_hosts` })
+    await sshOk($, target, 'true', { known: `${tmp}/known_hosts`, only: address })
   } catch (error) {
     const detail = (error instanceof Error ? error.message : String(error)).trim().replace(/\.$/, '')
     const isKeyRefused = /Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED|No .* host key is known/i.test(detail)
+    // ssh checks the host key before the sign-in, but a refused sign-in is still no finished check: remove refuses.
+    const isSignInRefused = !isKeyRefused && /Permission denied/i.test(detail)
+    const byHand = `ssh -p ${SSH_PORT} ${target} (if ssh asks about a host key, its fingerprint must be ${saved}; never accept another)`
     const repair = isKeyRefused
       ? `read the server's own fingerprint in its Hetzner console (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub). If it is not ${saved}, the server's key changed or another machine answers at ${address}: find out which before you remove anything. If the server is the one you imported and its key changed, ${reimport}.`
-      : `${start}check that SSH answers there with ssh -p ${SSH_PORT} ${target}, then run ${again} again. If ssh says the host key does not match, read the server's own fingerprint in its Hetzner console (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) before you remove anything.`
-    throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that the server at ${address} proves it holds the host key ${saved}, the one ${path} saved for ${name}. ${isKeyRefused ? 'It did not: it may not be the server that was imported.' : 'The check did not finish.'} ${detail}. ${nothing}\nRepair: ${repair}`)
+      : isSignInRefused
+        ? `the check needs a key sign-in as root: put your public SSH key in /root/.ssh/authorized_keys on the server (Hetzner console), check it with ${byHand}, then run ${again} again.`
+        : `${start}check that SSH answers there with ${byHand}, then run ${again} again. If ssh says the host key does not match, read the server's own fingerprint in its Hetzner console (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub) before you remove anything.`
+    throw new Error(`the server ${name} (${server.id}) was imported, so remove first checks over SSH that the server at ${address} proves it holds the host key ${saved}, the one ${path} saved for ${name}. ${isKeyRefused ? 'It did not: it may not be the server that was imported.' : isSignInRefused ? 'The check did not finish: the server refused the sign-in as root.' : 'The check did not finish.'} ${detail}. ${nothing}\nRepair: ${repair}`)
   } finally {
     await exec($, ['rm', '-rf', tmp])
   }
