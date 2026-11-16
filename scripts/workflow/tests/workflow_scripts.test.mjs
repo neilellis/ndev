@@ -306,3 +306,69 @@ test('run-check.sh stop ends the check and the processes it started', () => {
   assert.match(gone.stderr, /wrote no exit code/)
   assert.notEqual(spawnSync('pgrep', ['-f', marker]).status, 0)
 })
+
+// fcc-proto PR 905: checkpoint ran pre-push-check.sh on the default node (v26) though .nvmrc said 24, and the tests failed.
+// A fake node on PATH stands for the default; a fake nvm, fnm or Homebrew node stands for the one the project asks for.
+const fakeNode = (bin, version) => {
+  mkdirSync(bin, { recursive: true })
+  program(bin, 'node', `echo ${version}`)
+  return bin
+}
+const nodeCheck = (dir, files) => {
+  const repo = join(dir, 'repo')
+  mkdirSync(repo, { recursive: true })
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(repo, name), body)
+  return { repo, check: program(dir, 'check.sh', 'node') }
+}
+const startIn = (repo, args, env) => spawnSync('bash', [RUN_CHECK, ...args], { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } })
+const runToEnd = (repo, dir, check, env) => {
+  const started = startIn(repo, ['start', join(dir, 'run'), check], env)
+  if (started.status !== 0) return { started }
+  const ended = runCheck(['wait', join(dir, 'run'), started.stdout.trim(), '20'])
+  return { started, exit: ended.stdout.trim(), out: runCheck(['out', join(dir, 'run')]).stdout, err: runCheck(['err', join(dir, 'run')]).stdout }
+}
+
+test('run-check.sh runs the check on the nvm Node that .nvmrc names when the default node is another major', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.nvmrc': 'v24\n' })
+  const home = join(dir, 'home')
+  fakeNode(join(home, '.nvm', 'versions', 'node', 'v24.2.0', 'bin'), 'v24.2.0')
+  fakeNode(join(home, '.nvm', 'versions', 'node', 'v24.10.1', 'bin'), 'v24.10.1')
+  const def = fakeNode(join(dir, 'default'), 'v26.13.0')
+  const r = runToEnd(repo, dir, check, { HOME: home, NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: join(dir, 'brew'), PATH: `${def}:/usr/bin:/bin` })
+  assert.equal(r.started.status, 0, r.started.stderr)
+  assert.equal(r.out, 'v24.10.1\n')
+  assert.match(r.err, /\.nvmrc asks for Node 24/)
+})
+
+test('run-check.sh takes .node-version and a Homebrew node@<major>', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.node-version': '24.1.0\n' })
+  const brew = join(dir, 'brew')
+  fakeNode(join(brew, 'opt', 'node@24', 'bin'), 'v24.1.0')
+  const def = fakeNode(join(dir, 'default'), 'v26.13.0')
+  const r = runToEnd(repo, dir, check, { HOME: join(dir, 'home'), NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: brew, PATH: `${def}:/usr/bin:/bin` })
+  assert.equal(r.started.status, 0, r.started.stderr)
+  assert.equal(r.out, 'v24.1.0\n')
+})
+
+test('run-check.sh keeps the default node when its major is the one .nvmrc names', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.nvmrc': '24' })
+  const def = fakeNode(join(dir, 'default'), 'v24.5.0')
+  const r = runToEnd(repo, dir, check, { HOME: join(dir, 'home'), NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: join(dir, 'brew'), PATH: `${def}:/usr/bin:/bin` })
+  assert.equal(r.started.status, 0, r.started.stderr)
+  assert.equal(r.out, 'v24.5.0\n')
+})
+
+test('run-check.sh does not start a check when no Node of the .nvmrc major is installed, and names the mismatch and the repair', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.nvmrc': '24\n' })
+  const def = fakeNode(join(dir, 'default'), 'v26.13.0')
+  const r = startIn(repo, ['start', join(dir, 'run'), check], { HOME: join(dir, 'home'), NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: join(dir, 'brew'), PATH: `${def}:/usr/bin:/bin` })
+  assert.notEqual(r.status, 0)
+  assert.match(r.stderr, /\.nvmrc asks for Node 24/)
+  assert.match(r.stderr, /v26\.13\.0/)
+  assert.match(r.stderr, /brew install node@24/)
+  assert.match(r.stderr, /nvm install 24/)
+})
