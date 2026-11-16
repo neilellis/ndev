@@ -1135,6 +1135,18 @@ test('set-interview changes only the answers: the workflow and the PR records st
   assert.equal(issueOn(wt, 7).workflow.rev, 2)
 })
 
+test('set-interview keeps the open chat round of Orca Chat until the answers replace it', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'interviewing' }).status, 0)
+  const chatRound = { title: 'R', questions: [{ id: 'a', header: 'A', question: 'A?', suggested: 'x' }] }
+  const saved = setInterview(wt, { version: 1, issue: 7, rounds: [], chatRound })
+  assert.equal(saved.status, 0, saved.stderr)
+  assert.deepEqual(issueOn(wt, 7).chatRound, chatRound)
+  assert.equal(setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS }).status, 0)
+  assert.equal(issueOn(wt, 7).chatRound, undefined)
+  assert.equal(issueOn(wt, 7).workflow.state, 'interviewing')
+})
+
 test('set-interview refuses a stale copy of the workflow, and names what it refused', () => {
   const wt = workflowRepo()
   assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'developing' }).status, 0)

@@ -367,7 +367,7 @@ function withLockFile(root, name, fn) {
 
 // The interview tool owns these keys of an issue file, and set-interview writes them. See InterviewFile
 // in hooks/workflow/interview-model.ts, and issueFileProblem in hooks/workflow/tools.ts, which keeps the same list.
-const INTERVIEW_KEYS = ['rounds', 'draft', 'commentIds', 'posted', 'closed', 'startedByFollowUp']
+const INTERVIEW_KEYS = ['rounds', 'draft', 'chatRound', 'commentIds', 'posted', 'closed', 'startedByFollowUp']
 const interviewOf = value => Object.fromEntries(Object.entries(value).filter(([key]) => INTERVIEW_KEYS.includes(key)))
 
 // One issue file as { workflow, prs, interview }. A missing file holds none. A shape this script does not know

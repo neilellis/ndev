@@ -12,7 +12,7 @@ import type { Mode, WorkflowLive } from '../../types'
 import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
-import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
+import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, isOrcaChat, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check, PrHealth, Ran } from './effects'
 import { runningNow, withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
@@ -21,7 +21,7 @@ import { takeScreenshots } from './screenshot'
 import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
 import { ATTEMPT_LIMIT, BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
-import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseRound, resultOf, startingAnswers } from './interview-model'
+import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseChatAnswers, parseRound, resultOf, roundMarkdown, startingAnswers } from './interview-model'
 import type { InterviewFile, InterviewRound } from './interview-model'
 import { clearInterview, closeInterviewPane, interviewCall, openInterviewPane, showInterview } from './interview'
 import type { EarlierQuestion } from './interview'
@@ -2338,7 +2338,7 @@ const SPEC_LIST: Spec[] = [
   { name: 'create', description: 'File a new issue and start its workflow, as started does. The answer gives the issue number.', properties: { mode: { type: 'string', enum: ['light', 'heavy', 'hack'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, hack when the human wants to find the solution by trial and error first (interactive only), and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, description: { ...STR, description: 'The first line is the issue title, and the rest is its body' } }, required: ['shortName', 'description'] },
   { name: 'comment', description: 'Add a comment to an issue or a PR. Give issue or pr, not both. It works with or without a workflow.', properties: { issue: { type: 'number' }, pr: { type: 'number' }, message: STR }, required: ['message'] },
   { name: 'started', description: 'Start or resume the workflow of an issue. Call it first in each work session. It records the state, claims the worktree, opens the draft PR and answers with the next step.', properties: { mode: { type: 'string', enum: ['light', 'heavy', 'hack'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, hack when the human wants to find the solution by trial and error first (interactive only), and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens, chosen from the issue. A new workflow needs it. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, issue: { type: 'number' }, takeOver: { type: 'boolean', description: 'Only when the session that owns the workflow is dead' } }, required: ['issue'] },
-  { name: 'interview', description: 'With interviewJson: show one round of questions to the human in the interview pane, hold until the human answers, and return the answers and notes. With no arguments: the interview is over, so go on to the next state. Only that call leaves the state "interviewing". Load the ndev:interview skill for the method.', properties: { interviewJson: { description: 'One round: { title, intro?, questions: [{ id, header, question, context?, multiSelect?, followUpTo?, options?: [{ label, description?, preview?, recommended? }], suggested? }] }. Markdown works in question, context, description and preview. Each question needs a recommendation: an option with recommended true, or suggested when it has no options. Ids are unique across all rounds of the issue. followUpTo names the earlier question that this one follows.' } }, required: [] },
+  { name: 'interview', description: 'With interviewJson: show one round of questions to the human in the interview pane, hold until the human answers, and return the answers and notes. In Orca Chat, which has no pane, it returns the round as Markdown to post in the chat, and answersJson then records the human\'s answers. With no arguments: the interview is over, so go on to the next state. Only that call leaves the state "interviewing". Load the ndev:interview skill for the method.', properties: { interviewJson: { description: 'One round: { title, intro?, questions: [{ id, header, question, context?, multiSelect?, followUpTo?, options?: [{ label, description?, preview?, recommended? }], suggested? }] }. Markdown works in question, context, description and preview. Each question needs a recommendation: an option with recommended true, or suggested when it has no options. Ids are unique across all rounds of the issue. followUpTo names the earlier question that this one follows.' }, answersJson: { description: 'Only in Orca Chat, after interviewJson: the human\'s chat answers to that round, as { "<question id>": { selected?: [option labels], other?: "the human\'s own words", notes? } }, with an entry for each question.' } }, required: [] },
   { name: 'setSteering', description: 'No human can answer in this session, such as with -p or an unattended prompt: set this issue to auto. Only a human can set it back. In the state "interviewing" this goes on to the next state. The reason goes on the issue and the PR. A preference is not a reason.', properties: { steering: { type: 'string', enum: ['auto'] }, reason: { ...STR, description: 'Why no human can answer' } }, required: ['steering', 'reason'] },
   { name: 'finishedPlan', description: 'The plan is written: put it in the PR body and go on to development.', properties: { markdown_file: { ...STR, description: 'The plan file' } }, required: ['markdown_file'] },
   { name: 'checkpoint', description: 'Commit the named files and push, after the check scripts. Use this and not git commit or git push.', properties: { message: STR, files: FILES, changeTypes: CHANGE_TYPES_ARG, worktree: { ...STR, description: 'Only for an agent that followUp started: its own worktree' } }, required: ['message', 'files'] },
@@ -2567,7 +2567,7 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
     case 'finishedInterview': return finishedInterview($, c)
     case 'finishedHacking': return finishedHacking($, c)
     case 'comment': return addComment($, c)
-    case 'interview': return leaveInterview($, c)
+    case 'interview': return c.args.answersJson !== undefined ? recordChatAnswers($, c) : leaveInterview($, c)
     case 'setSteering': return setSteering($, c)
     case 'finishedPlan': return finishedPlan($, c)
     case 'checkpoint': return text(c.args, 'worktree') ? followUpCheckpoint($, c) : checkpoint($, c)
@@ -3199,6 +3199,7 @@ async function closeInterviewFile($: EngineInterface, wf: Workflow, file: Interv
     if (failed.length) throw new Refuse(`Refused: the interview is not on GitHub, so this issue stays in "interviewing". ${failed.join(' ')} Repair: fix the cause, then call this tool again.`)
   }
   file.draft = undefined
+  file.chatRound = undefined
   file.closed = { at: await $.clock.now(), asked: answeredRounds(file) > 0 }
   await writeInterview($, wf.root, file)
 }
@@ -3210,8 +3211,10 @@ async function leaveInterview($: EngineInterface, c: Ctx): Promise<string> {
   const file = await readInterview($, wf.root, wf.issue)
   const problem = exitProblem(file, facts)
   if (problem) throw new Refuse(`Refused: ${problem} Nothing changed.`)
+  const dropped = file.chatRound
   await closeInterviewFile($, wf, file)
   const notes = await endAsking($, wf)
+  if (dropped) notes.push(`The chat round "${dropped.title}" had no answers, and it is dropped. Tell the human that its questions are no longer open.`)
   const asked = !!file.closed?.asked
   await move($, c, wf, 'interview', facts, asked ? 'interview' : 'interview: no questions asked')
   // Light goes straight to development, so the base check runs here. Heavy runs it in finishedPlan.
@@ -3249,8 +3252,51 @@ async function setSteering($: EngineInterface, c: Ctx): Promise<string> {
   return answer($, wf, after, notes)
 }
 
+// Orca Chat shows no pane, and a human answers there in the chat. So the round goes back to the agent as Markdown
+// to post, and the file keeps it until interview(answersJson) records the human's answers.
+async function askInChat($: EngineInterface, c: Ctx): Promise<string> {
+  const wf = await current($, c)
+  const facts = await factsFor($, wf.root, c.project, wf)
+  legal(wf, 'interview', facts)
+  if (facts.steering === 'auto') throw new Refuse('Refused: this issue is on auto steering, so no human answers an interview. Nothing changed. Call interview with no arguments to go on.')
+  const file = await readInterview($, wf.root, wf.issue)
+  const parsed = parseRound(c.args.interviewJson, file, facts.mode)
+  if ('problems' in parsed) throw new Refuse(`Refused: this round cannot be asked. Nothing changed.\n${parsed.problems.map(p => `- ${p}`).join('\n')}`)
+  const replaced = file.chatRound
+  await writeInterview($, wf.root, { ...file, chatRound: parsed.round })
+  return [
+    `This session is in Orca Chat, which shows no interview pane. Post the round below to the human in the chat as it is, in Markdown, and end your turn to wait for the reply. Then call interview with answersJson: one entry for each question id, as { "<id>": { "selected": ["<option label>"], "other": "<the human's own words>", "notes": "<notes>" } }. Record only what the human said. If the human leaves a question to you, record your recommendation only when the human accepts it.${replaced ? ` The open round "${replaced.title}" had no answers, and this one replaces it.` : ''}`,
+    '',
+    roundMarkdown(parsed.round, file),
+  ].join('\n')
+}
+
+// interview(answersJson): the human's chat answers to the open chat round go into the file and both comments.
+async function recordChatAnswers($: EngineInterface, c: Ctx): Promise<string> {
+  const wf = await current($, c)
+  const facts = await factsFor($, wf.root, c.project, wf)
+  legal(wf, 'interview', facts)
+  const path = interviewPath(wf.root, wf.issue)
+  const file = await readInterview($, wf.root, wf.issue)
+  const round = file.chatRound
+  if (!round) throw new Refuse(`Refused: #${wf.issue} has no chat round open (no chatRound in ${path}), so answersJson has nothing to answer. Nothing changed. Repair: call interview with interviewJson in an Orca Chat session, post the round to the human, then call interview with answersJson.`)
+  const parsed = parseChatAnswers(c.args.answersJson, round)
+  if ('problems' in parsed) throw new Refuse(`Refused: these answers to the round "${round.title}" cannot be recorded. Nothing changed, and the round stays open.\n${parsed.problems.map(p => `- ${p}`).join('\n')}`)
+  const done = finishRound(round, parsed.answers, 'submitted', await $.clock.now())
+  const next: InterviewFile = { ...file, rounds: [...file.rounds, done], chatRound: undefined, posted: false }
+  try {
+    await writeInterview($, wf.root, next)
+  } catch (error) {
+    throw new Refuse(`Refused: the answers did not reach ${path}: ${error instanceof Error ? error.message : String(error)}. The round stays open. Repair: fix the cause, then call interview again with the same answersJson.`)
+  }
+  const failed = await postInterview($, wf, next)
+  return [JSON.stringify(resultOf(done, round)), ...failed, ...(failed.length ? ['The answers are safe in the file, and the exit call refuses until both comments are posted.'] : []), 'Ask the next round, or call interview with no arguments when no decision is open.', await answer($, wf, facts)].join('\n')
+}
+
 async function askInterview($: EngineInterface, c: Ctx, limits: WaitLimits): Promise<string> {
+  if (c.args.answersJson !== undefined) throw new Refuse('Refused: interview takes interviewJson or answersJson, not both. Nothing changed. Repair: record the answers of the open round with answersJson first, then ask the next round with interviewJson.')
   await whenTurnsFree($)
+  if (await isOrcaChat($)) return inTurn(() => askInChat($, c))
   const at = await $.clock.now()
   const id = `interview-${at}`
   const { root, issue, round, warnings } = await inTurn(async () => {
@@ -3258,7 +3304,7 @@ async function askInterview($: EngineInterface, c: Ctx, limits: WaitLimits): Pro
     const facts = await factsFor($, wf.root, c.project, wf)
     legal(wf, 'interview', facts)
     if (facts.steering === 'auto') throw new Refuse('Refused: this issue is on auto steering, so no human answers an interview. Nothing changed. Call interview with no arguments to go on.')
-    if (!(await read($, sessionHasHuman))) throw new Refuse('Refused: this session has no human to answer, so no pane can show. Nothing changed. Repair: call setSteering with steering "auto" and the reason.')
+    if (!(await read($, sessionHasHuman))) throw new Refuse('Refused: this session has no human to answer: it started as not interactive (claude -p or an SDK session), and it is not Orca Chat (ORCA_STRUCTURED_SESSION and ORCA_CHAT_SCRATCH_DIR are not set), so neither a pane nor the chat can show the round. Nothing changed. Repair: if no human is there, call setSteering with steering "auto" and the reason. If a human does answer in this session, call reportWorkflowBug and say how the session runs.')
     const showing = interviewCall()
     if (showing) throw new Refuse(`Refused: an interview round for #${showing.issue} is already open, and the pane shows one round at a time. Wait for its answers, then call interview again. Nothing changed.`)
     const file = await readInterview($, wf.root, wf.issue)

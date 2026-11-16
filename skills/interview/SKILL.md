@@ -84,6 +84,10 @@ The first line of the answer is JSON. Each entry of `answers` has `id` and `sele
 
 The answers go to the file, to one comment on the issue and to one comment on the PR. If GitHub fails, the tool gives you the failed command and its output. Repair the cause and call `interview()`. It refuses until both comments are posted.
 
+## In Orca Chat
+
+Orca Chat shows no pane, and the human answers in the chat. There `interview(interviewJson)` does not hold: it returns the round as Markdown. Post that Markdown to the human as it is, and end your turn. When the human replies, call `interview({ answersJson })` with one entry for each question id: `{ "<id>": { "selected": ["<option label>"], "other": "<the human's own words>", "notes": "<notes>" } }`. Record only what the human said. The tool checks each label, saves the round, posts both comments and gives you the same answer as after the pane.
+
 ## When no human can answer
 
 Under auto steering, the state does not ask, and a round refuses. If you run with no human and the steering is interactive, call `mcp__ndev__setSteering({ steering: "auto", reason })`. The tool puts the reason on the issue and on the PR and tells the human. You cannot change back. Never use it to avoid a question that a human can answer.

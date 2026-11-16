@@ -6,6 +6,7 @@ import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktre
 import { pullUrl } from './links'
 import { triageRemote } from './remote'
 import { loadEpic } from './workflow/epic'
+import { isOrcaChat } from './workflow/effects'
 import type { PrRow, TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
 // /dev triage: this session's model groups the open issues and then coordinates, and Orca does the
@@ -111,12 +112,7 @@ async function note($: EngineInterface, text: string): Promise<void> {
   unsent.push(text)
 }
 
-// Orca's Chat UI draws no pane and no toast, so there the triage writes into the chat as well. Orca marks such a
-// session with ORCA_STRUCTURED_SESSION ("a structured session has no pane"), and gives it ORCA_CHAT_SCRATCH_DIR.
-async function isOrcaChat($: EngineInterface): Promise<boolean> {
-  const [marker, scratch] = await Promise.all([$.env.get('ORCA_STRUCTURED_SESSION'), $.env.get('ORCA_CHAT_SCRATCH_DIR')])
-  return !!marker || !!scratch
-}
+// Orca's Chat UI draws no pane and no toast, so there the triage writes into the chat as well (isOrcaChat).
 // The progress lines that have not reached the chat yet. A reload loses them; the pane and /dev triage status keep the log.
 let unsent: string[] = []
 const FOR_THE_USER = 'Show this to the user as it is, in Markdown. It asks nothing of you: go on with what you were doing.'

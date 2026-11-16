@@ -287,6 +287,66 @@ test('in a session with no human the round refuses and names setSteering', async
   expect(w.state()?.state).toBe('interviewing')
 })
 
+// Orca Chat draws no pane, and its session can start as not interactive, while a human answers in the chat.
+test('in Orca Chat the round comes back as Markdown for the chat, and answersJson records the answers and posts both comments', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  w.s.env.ORCA_STRUCTURED_SESSION = '1'
+  await start($, w)
+  const asked = await tool($, 'interview', { interviewJson: ROUND })
+  expect(asked.isError).toBe(false)
+  expect(asked.text).toContain('**Q1: Session store**')
+  expect(asked.text).toContain('Where do **sessions** live?')
+  expect(asked.text).toContain('Redis (recommended)')
+  expect(asked.text).toContain('answersJson')
+  expect(w.state()?.state).toBe('interviewing')
+  const r = await tool($, 'interview', { answersJson: { store: { selected: ['Cookie'], notes: 'Only for now.' }, name: { other: 'session' }, browsers: { selected: ['Chrome', 'Edge'] } } })
+  expect(r.isError).toBe(false)
+  expect(answersIn(r).answers).toEqual([
+    { id: 'store', selected: ['Cookie'], notes: 'Only for now.' },
+    { id: 'name', selected: [], other: 'session' },
+    { id: 'browsers', selected: ['Chrome', 'Edge'] },
+  ])
+  expect(interviewFile(w).rounds.length).toBe(1)
+  expect(w.gh.filter(l => l.includes(' comment ')).length).toBe(2)
+  expect((await tool($, 'interview')).isError).toBe(false)
+  expect(w.state()?.state).toBe('planning')
+})
+
+test('in Orca Chat answersJson refuses an answer that is not an option, and one with no round open', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  w.s.env.ORCA_CHAT_SCRATCH_DIR = '/scratch'
+  await start($, w)
+  const none = await tool($, 'interview', { answersJson: { store: { selected: ['Redis'] } } })
+  expect(none.isError).toBe(true)
+  expect(none.text).toContain('interviewJson')
+  await tool($, 'interview', { interviewJson: ROUND })
+  const bad = await tool($, 'interview', { answersJson: { store: { selected: ['Mongo'] }, browsers: { selected: ['Safari'] } } })
+  expect(bad.isError).toBe(true)
+  expect(bad.text).toContain('Mongo')
+  expect(bad.text).toContain('"name"')
+  expect(interviewFile(w).rounds.length).toBe(0)
+  const lost = await tool($, 'interview', { answersJson: { store: { selected: ['Cookie'], notes: 42 }, name: { other: ['session'] }, browsers: { selected: ['Safari', 'Safari'] } } })
+  expect(lost.isError).toBe(true)
+  expect(lost.text).toContain('"browsers" repeats "Safari"')
+  expect(lost.text).toContain('"store": notes must be a text')
+  expect(lost.text).toContain('"name": other must be a text')
+  const both = await tool($, 'interview', { interviewJson: ROUND, answersJson: { store: { selected: ['Redis'] } } })
+  expect(both.isError).toBe(true)
+  expect(both.text).toContain('not both')
+  expect(interviewFile(w).rounds.length).toBe(0)
+})
+
+test('in Orca Chat, leaving the interview with a round still open says that the round is dropped', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'light' }) })
+  w.s.env.ORCA_STRUCTURED_SESSION = '1'
+  await start($, w)
+  await tool($, 'interview', { interviewJson: ROUND })
+  const out = await tool($, 'interview')
+  expect(out.isError).toBe(false)
+  expect(out.text).toContain('"The login page" had no answers')
+  expect(JSON.parse(w.files.get(INTERVIEW_FILE)!).chatRound).toBeUndefined()
+})
+
 test('a bad round refuses with each problem and opens no pane', async ($, on) => {
   const w = engine(on, { wf: asking() })
   await human($, w)

@@ -314,6 +314,13 @@ export async function orca($: EngineInterface, root: string, args: string[]): Pr
   return r.exitCode === 0 ? undefined : `orca worktree set exited ${r.exitCode}: ${said(r)}`
 }
 
+// Orca's Chat UI draws no pane and no toast, while a human reads and answers in the chat. Orca marks such a
+// session with ORCA_STRUCTURED_SESSION ("a structured session has no pane"), and gives it ORCA_CHAT_SCRATCH_DIR.
+export async function isOrcaChat($: EngineInterface): Promise<boolean> {
+  const [marker, scratch] = await Promise.all([$.env.get('ORCA_STRUCTURED_SESSION'), $.env.get('ORCA_CHAT_SCRATCH_DIR')])
+  return !!marker || !!scratch
+}
+
 export type Alert = { group: string; pid?: number; problem?: string }
 export async function raiseAlert($: EngineInterface, root: string, issue: number, message: string, title = `ndev: #${issue} is blocked`): Promise<Alert> {
   const group = `ndev-${root.split('/').pop()}-${issue}`
