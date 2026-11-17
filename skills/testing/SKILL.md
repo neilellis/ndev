@@ -26,7 +26,7 @@ The check scripts in `scripts/ndev/workflow/` run these tests when the workflow 
 - An integration test cleans up its resources and uses the smallest realistic fixture.
 - Add an end-to-end test only when a lower tier cannot observe the contract.
 - Mock only external boundaries.
-- A test never depends on time or machine load. Never assert how long something took (`performance.now()` or `Date.now()` minus a start), and never race a short timer. Prove the result, count the steps, or use a fake clock. A suite guard that scans the test files for elapsed-time checks keeps it so.
+- A test never depends on time or machine load. Never assert how long something took (`performance.now()` or `Date.now()` minus a start), and never race a short timer. Prove the result, count the steps, or use a fake clock.
 
 ## Test first
 
