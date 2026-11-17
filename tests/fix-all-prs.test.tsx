@@ -233,7 +233,7 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
     const checksOf = /^gh\.sh commit-checks (head-\d+-\d+)/.exec(args)
     if (checksOf) {
       const p = prs.find(x => x.headRefOid === checksOf[1])
-      return ok(JSON.stringify({ statuses: [], check_runs: (p?.statusCheckRollup ?? []).map(c => ({ name: c.name, status: c.status.toLowerCase(), conclusion: c.conclusion ? c.conclusion.toLowerCase() : null })) }))
+      return ok(JSON.stringify({ statuses: [], check_runs: (p?.statusCheckRollup ?? []).map((c: { name: string; status: string; conclusion: string; startedAt?: string }) => ({ name: c.name, started_at: c.startedAt ?? null, status: c.status.toLowerCase(), conclusion: c.conclusion ? c.conclusion.toLowerCase() : null })) }))
     }
     const one = /^gh\.sh pr-read (\d+)$/.exec(args)
     if (one) return ok(JSON.stringify(rest(prs.find(p => p.number === Number(one[1]))!)))
@@ -329,6 +329,23 @@ test('the loop asks the owning agent, merges once the checks pass and thanks the
   expect((await ui.find({ type: 'Text', text: /^Finished/ }))?.text).toBe('Finished')
   expect((await ui.find({ type: 'Text', text: /abcdef1/ }))?.text).toMatch(/abcdef1 on main · by issue-176/)
   await ui.unmount()
+})
+
+for (const via of ['the one-call list', 'the REST read of each pull request']) test(`a cancelled run of a check that ran again and passed on the same head is no failure, read through ${via}: the pull request merges with no agent asked`, async ($, on) => {
+  const green = pr(1179, '2026-10-26T11:00:00Z', 'SUCCESS', 'claude/issue-34')
+  // A concurrency group cancelled the first run of "checks"; the second run on the same commit passed.
+  green.statusCheckRollup = [
+    { name: 'checks', status: 'COMPLETED', conclusion: 'CANCELLED', startedAt: '2026-10-26T11:05:00Z' },
+    { name: 'checks', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-26T11:10:00Z' },
+  ] as never
+  const w = world(on, [green], [{ name: 'issue-34', status: 'idle' }])
+  if (via.startsWith('the REST')) w.fault.rowsError = 'GraphQL: API rate limit exceeded'
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start'))
+
+  await until(() => w.merged.length > 0 || w.sent.some(m => /needs:/i.test(m.text)))
+  expect(w.sent.map(m => m.text).filter(t => /needs:/i.test(t))).toEqual([])
+  expect(w.merged).toEqual(['gh pr merge 1179 --merge'])
 })
 
 test('start --no-merge fixes each pull request until it is green, then leaves the merge to a human', async ($, on) => {
