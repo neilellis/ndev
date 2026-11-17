@@ -79,7 +79,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, unchanged: [] as string[], removed: [] as string[], renamedFrom: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
-    ops: new Set<string>(), pushFails: '', noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
+    ops: new Set<string>(), pushFails: '', leaseOk: false, remoteOnly: ['cccc9'] as string[], replaced: [] as string[], leases: [] as string[], noOpenPr: false, diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
   }
   const gh: string[] = []
   const ready: string[] = []
@@ -207,6 +207,11 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (line.includes('--abbrev-ref')) return ok(`${s.branch ?? 'issue-7'}\n`)
       if (a[1] === 'rev-parse' && a[2] === 'HEAD') return ok(`${s.sha}\n`)
       if (a[1] === 'rev-parse' && a[2]?.startsWith('origin/')) return ok(`${s.upstream}\n`)
+      // As real git does: the commits of the remote branch that HEAD and every other remote ref lack.
+      if (a[1] === 'rev-list' && a.some(x => x.startsWith('--remotes'))) return ok(s.remoteOnly.map(c => `${c}\n`).join(''))
+      // As real git does: git cherry HEAD origin/<branch> marks with - each remote commit whose change HEAD holds.
+      if (a[1] === 'cherry') return ok(s.remoteOnly.map(c => `${s.replaced.includes(c) ? '-' : '+'} ${c}\n`).join(''))
+      if (a[1] === 'log' && line.includes('--no-walk')) return ok(s.remoteOnly.filter(c => a.includes(c)).map(c => `${c} subject of ${c}\n`).join(''))
       if (a[1] === 'rev-list' && s.ahead !== undefined) return ok(`${s.ahead}\n`)
       if (a[1] === 'rev-parse') return ok(`${ROOT}\n`)
       // As real git does: a folder of untracked files is one line, unless the call asks for all of them.
@@ -238,7 +243,8 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'diff' && a[2] === 'HEAD') return ok(s.diffText)
       if (a[1] === 'diff') return ok('', s.staged ? 1 : 0)
       if (a[1] === 'commit') { s.commitDirs.push(e.init?.cwd); const op = /Ndev-Op: (\S+)/.exec(line)?.[1]; if (op) s.ops.add(op); steps.push('commit'); commits.push(line); s.staged = false; s.sha = `bbbb${commits.length}`; return ok() }
-      if (a[1] === 'push' && s.pushFails) return ok('', 1, s.pushFails)
+      if (a[1] === 'push' && line.includes('--force-with-lease')) s.leases.push(line)
+      if (a[1] === 'push' && s.pushFails && !(s.leaseOk && line.includes('--force-with-lease'))) return ok('', 1, s.pushFails)
       if (a[1] === 'push') { pushes.push(line); s.upstream = s.sha; return ok() }
       return ok('', 1, `git not faked: ${line}`)
     }

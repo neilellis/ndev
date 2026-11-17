@@ -502,10 +502,39 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
     const mapNote = await writeChangeMap($, wf, declared)
     if (mapNote) notes.push(mapNote)
     const pushed = await withStep($, 'git push', 300_000, () => run($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 }))
-    if (pushed.exitCode !== 0) throw new Refuse(`git push of ${branch} exited ${pushed.exitCode}: ${said(pushed)}\nThe commit is local. Fix the cause (git pull --rebase for a rejected push) and call the tool again.`)
+    if (pushed.exitCode !== 0) {
+      if (!/\[rejected\]|non-fast-forward|fetch first/.test(`${pushed.stdout}\n${pushed.stderr}`)) throw new Refuse(`git push of ${branch} exited ${pushed.exitCode}: ${said(pushed)}\nThe commit is local. Fix the cause and call the tool again.`)
+      notes.push(await pushRebased($, root, branch, said(pushed)))
+    }
   }
   wf.op = undefined
   return notes
+}
+
+// A push that the remote rejected as behind. After a rebase, such as onto a new stack base, the remote
+// branch holds the old copies of this branch's commits and the old base. A force push with a lease
+// loses nothing when each commit that only this remote branch holds has its change in HEAD (git cherry
+// marks it -): the old base stays on its own remote branch. Any other commit is real work: refuse and name it.
+async function pushRebased($: EngineInterface, root: string, branch: string, rejected: string): Promise<string> {
+  const read = async (...args: string[]) => {
+    const r = await run($, ['git', ...args], { cwd: root })
+    if (r.exitCode !== 0) throw new Refuse(`git push of ${branch} was rejected (${rejected}), and git ${args.join(' ')} exited ${r.exitCode}: ${said(r)}. The commit is local.`)
+    return r.stdout
+  }
+  await read('fetch', 'origin', branch)
+  const remote = `origin/${branch}`
+  const lease = (await read('rev-parse', remote)).trim()
+  // The commits that HEAD lacks and that no other remote branch holds.
+  const only = (await read('rev-list', remote, '--not', 'HEAD', `--exclude=refs/remotes/${remote}`, '--remotes=origin')).split('\n').filter(Boolean)
+  const replaced = new Set((await read('cherry', 'HEAD', remote)).split('\n').filter(l => l.startsWith('- ')).map(l => l.slice(2).trim()))
+  const kept = only.filter(c => !replaced.has(c))
+  if (kept.length) {
+    const subjects = (await read('log', '--no-walk', '--format=%H %s', ...kept)).trim()
+    throw new Refuse(`git push of ${branch} was rejected: the remote branch is at ${lease.slice(0, 8)} and holds ${kept.length} commit(s) that HEAD lacks, whose change is not in HEAD and that no other remote branch holds:\n${subjects}\nThe commit is local, and nothing was forced. Repair: git -C ${root} pull --rebase origin ${branch} to take them, then call the tool again. If they are meant to go, ask the human.`)
+  }
+  const forced = await withStep($, 'git push', 300_000, () => run($, ['git', 'push', '-u', `--force-with-lease=refs/heads/${branch}:${lease}`, 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 }))
+  if (forced.exitCode !== 0) throw new Refuse(`git push --force-with-lease of ${branch} (expected remote ${lease.slice(0, 8)}) exited ${forced.exitCode}: ${said(forced)}\nThe commit is local. The remote branch may have moved since the fetch: call the tool again.`)
+  return `The remote branch ${branch} was behind a rebase: each of its ${only.length} commit(s) that HEAD lacks (${only.map(c => c.slice(0, 8)).join(', ') || 'none'}) has its change in HEAD or stays on another remote branch, so the push replaced ${lease.slice(0, 8)} with --force-with-lease.`
 }
 
 async function flagForHuman($: EngineInterface, wf: Workflow, notes: string[]) {
