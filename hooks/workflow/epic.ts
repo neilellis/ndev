@@ -6,6 +6,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { LoadedConfig } from '../config'
+import { type Server, triageRemote } from '../remote'
 import { Refuse, defaultBranch, gh, ghOne, gitOut, git, paths, readChecks, readPr, repoFromOrigin, run } from './effects'
 import { SECTION, boundRoot, inTurn, loadWorkflow, setDeclined } from './tools'
 
@@ -32,6 +33,9 @@ export type SubIssue = {
   mergedUnverified?: boolean
   // The state that a block interrupted, and the only state the issue goes back to.
   previous?: IssueState
+  // The saved Orca server that holds the workspace, set when the implementer brief is written for a start there.
+  // Without it the workspace is on this machine. The workspace is then the worktree id on the server, <repoId>::<path>.
+  remote?: Server
 }
 export type Epic = {
   epic: number
@@ -48,6 +52,10 @@ export type Epic = {
   // The Orca run and repository ids, for the worker-start command.
   run?: string
   repoId?: string
+  // The saved Orca server that new sub-issues start on, set only by epicStarted with remote and resolved once there;
+  // and the selector of the repository on that server, which its Orca needs to make a worktree.
+  remote?: Server
+  remoteRepo?: string
   issues: Record<string, SubIssue>
   history: { at: number; tool: string; from?: string; to: string }[]
 }
@@ -230,26 +238,49 @@ ${fileList(specFiles)}
 // A value safe in a POSIX shell: plain when it holds only safe characters, else in single quotes.
 export const shellQuote = (value: string) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`)
 
+const REPO_SELECTOR = /^(id|name|path):\S/
+// The worktree id that Orca gives a workspace: <repoId>::<absolute path>.
+const WORKTREE_ID = /^\S.*?::\/.+$/
+const served = (s: Server) => `${s.name} (${s.id})`
+const worktreeIdRepair = (s: Server) => `\`orca worktree list --environment ${s.id} --json\` lists it as the \`id\` of the new worktree`
+
+// Where a worker of the sub-issue runs: a sub-issue that has not started goes where the epic says now, and one in
+// flight stays where its workspace is. undefined is this machine.
+export function workerRemote(epic: Epic, sub: SubIssue, role: 'implementer' | 'reviewer'): Server | undefined {
+  const isStarted = sub.state !== 'waiting' && !(sub.state === 'blocked' && sub.previous === 'waiting')
+  return role === 'implementer' && !isStarted ? epic.remote : sub.remote
+}
+
 export type WorkerStartInput = { role: 'implementer' | 'reviewer'; briefPath: string; epic: Epic; sub: SubIssue; base?: string; pr?: number }
 // The orca orchestration worker-start command for one worker. A flag whose value the record lacks is
-// left out, and missing says which value and how to set it.
+// left out, and missing says which value and how to set it. On a saved server (--on) Orca takes only an exact
+// selector of that server, so a value it needs and the record lacks is refused, never guessed.
 export function workerStartCommand(o: WorkerStartInput): { command: string; missing: string[] } | { refused: string } {
   const { epic, sub } = o
   const role = epic.roles[o.role]
+  const remote = workerRemote(epic, sub, o.role)
   const missing: string[] = []
   const flag = (name: string, value: string | undefined) => (value === undefined ? [] : [name, shellQuote(value)])
   if (!epic.run) missing.push(`run: the Orca run id is not recorded, so --run is left out. Set it with mcp__ndev__epicStarted with issue ${epic.epic} and run <id>.`)
+  const on = remote ? ['--on', shellQuote(remote.id)] : []
   let place: string[]
   if (o.role === 'implementer') {
     if (!o.base) return { refused: `Refused: the default branch of ${epic.repo} is not known, so the implementer command has no --base-branch. Nothing was written.` }
-    if (!epic.repoId) missing.push(`repoId: the Orca repository id is not recorded, so --repo is left out. Set it with mcp__ndev__epicStarted with issue ${epic.epic} and repoId <id>.`)
-    place = ['--worktree', 'new-top-level', ...flag('--repo', epic.repoId && `id:${epic.repoId}`), '--name', shellQuote(`${sub.issue}-${sub.key}`), '--base-branch', shellQuote(`origin/${o.base}`)]
+    if (remote) {
+      // The repository id of this machine's Orca is not an id on the server.
+      if (!epic.remoteRepo) return { refused: `Refused: remoteRepo is not recorded, so the implementer of #${sub.issue} cannot start on ${served(remote)}: with --on, Orca needs --repo to name the repository on that server, and the id of this machine's Orca${epic.repoId ? ` (${epic.repoId})` : ''} is not one. Nothing was written. Repair: read the repository of ${epic.repo} on the server with \`orca repo list --environment ${remote.id} --json\`, then call mcp__ndev__epicStarted with issue ${epic.epic} and remoteRepo "id:<its id>" (or "name:<its name>"), then call epicBrief again. To start the workers on this machine instead, call mcp__ndev__epicStarted with issue ${epic.epic} and remote false.` }
+      place = ['--worktree', 'new-top-level', '--repo', shellQuote(epic.remoteRepo), '--name', shellQuote(`${sub.issue}-${sub.key}`), '--base-branch', shellQuote(`origin/${o.base}`)]
+    } else {
+      if (!epic.repoId) missing.push(`repoId: the Orca repository id is not recorded, so --repo is left out. Set it with mcp__ndev__epicStarted with issue ${epic.epic} and repoId <id>.`)
+      place = ['--worktree', 'new-top-level', ...flag('--repo', epic.repoId && `id:${epic.repoId}`), '--name', shellQuote(`${sub.issue}-${sub.key}`), '--base-branch', shellQuote(`origin/${o.base}`)]
+    }
   } else {
-    if (!sub.workspace) return { refused: `Refused: #${sub.issue} has no workspace, so the reviewer has no worktree to work in. Nothing was written. Repair: call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "${sub.state}" and workspace (the absolute path of the implementer's worktree), then call epicBrief again.` }
-    place = ['--worktree', shellQuote(`path:${sub.workspace}`)]
+    if (!sub.workspace) return { refused: `Refused: #${sub.issue} has no workspace, so the reviewer has no worktree to work in. Nothing was written. Repair: call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "${sub.state}" and workspace (${remote ? `the worktree id on ${served(remote)}, <repoId>::<path>: ${worktreeIdRepair(remote)}` : `the absolute path of the implementer's worktree`}), then call epicBrief again.` }
+    if (remote && !WORKTREE_ID.test(sub.workspace)) return { refused: `Refused: the workspace of #${sub.issue} is on ${served(remote)}, and the record holds "${sub.workspace}", which is not a worktree id (<repoId>::<path>). With --on, Orca takes only an exact selector of that server, and a path of the server is not known to be one. Nothing was written. Repair: call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "${sub.state}" and workspace (the worktree id: ${worktreeIdRepair(remote)}), then call epicBrief again.` }
+    place = ['--worktree', shellQuote(remote ? `id:${sub.workspace}` : `path:${sub.workspace}`)]
   }
   const title = o.role === 'implementer' ? `#${sub.issue} ${sub.title} (implementer)` : `#${sub.issue} ${sub.title} (reviewer, PR #${o.pr ?? sub.pr})`
-  const argv = ['orca', 'orchestration', 'worker-start', '--spec-file', shellQuote(o.briefPath), '--task-title', shellQuote(title), ...flag('--run', epic.run), ...place, '--agent', shellQuote(role.agent), ...flag('--model', role.model), '--json']
+  const argv = ['orca', 'orchestration', 'worker-start', '--spec-file', shellQuote(o.briefPath), '--task-title', shellQuote(title), ...flag('--run', epic.run), ...on, ...place, '--agent', shellQuote(role.agent), ...flag('--model', role.model), '--json']
   return { command: argv.join(' '), missing }
 }
 
@@ -358,6 +389,23 @@ async function epicStarted($: EngineInterface, c: Ctx): Promise<string> {
   const shortName = str(args, 'shortName')
   if (shortName && !SHORT_NAME.test(shortName)) throw new Refuse(`Refused: shortName must be two to five lower-case words joined by hyphens, such as "rework-billing". It is ${JSON.stringify(shortName)}. Nothing changed.`)
   for (const key of ['run', 'repoId']) if (args[key] !== undefined && !str(args, key)) throw new Refuse(`Refused: ${key} must be a non-empty string, and it is ${JSON.stringify(args[key])}. Nothing changed.`)
+  const remoteRepo = str(args, 'remoteRepo')
+  if (args.remoteRepo !== undefined && !REPO_SELECTOR.test(remoteRepo)) throw new Refuse(`Refused: remoteRepo must be an Orca repository selector on the server, id:<id>, name:<name> or path:<path>, and it is ${JSON.stringify(args.remoteRepo)}. Nothing changed. Repair: read the selectors with \`orca repo list --environment <server> --json\`.`)
+  if (args.remote !== undefined && typeof args.remote !== 'boolean' && !str(args, 'remote')) throw new Refuse(`Refused: remote must be true (the server that /dev remote saved for this project, else the only one Orca has), a saved server's name or id, or false (this machine), and it is ${JSON.stringify(args.remote)}. Nothing changed.`)
+  // The server is resolved once, here, before anything is filed or recorded. A server that cannot be resolved never
+  // becomes this machine.
+  let remote: Server | undefined
+  if (args.remote !== undefined && args.remote !== false) {
+    const again = `mcp__ndev__epicStarted with${args.issue === undefined ? '' : ` issue ${String(args.issue)} and`} remote`
+    try {
+      remote = await triageRemote($, project, args.remote === true ? '' : str(args, 'remote'), 'epicStarted remote', again)
+    } catch (error) {
+      throw new Refuse(`Refused: ${error instanceof Error ? error.message : String(error)}\nNothing changed, and no worker placement was switched to this machine. To start the workers on this machine, call mcp__ndev__epicStarted with remote false.`)
+    }
+  }
+  const placed = (epic: Epic) => (args.remote === undefined ? '' : epic.remote
+    ? `\nNew sub-issues start on the saved Orca server ${served(epic.remote)}${epic.remoteRepo ? `, in its repository ${epic.remoteRepo}` : `. remoteRepo is not recorded yet: read it with \`orca repo list --environment ${epic.remote.id} --json\` and call mcp__ndev__epicStarted with issue ${epic.epic} and remoteRepo "id:<its id>"`}. A sub-issue in flight stays where its workspace is. remote false turns it off.`
+    : `\nNew sub-issues start on this machine. A sub-issue in flight on a server stays there.`)
   const repo = project?.config.github?.repo ?? (await repoFromOrigin($, root))
   let n: number
   let title: string
@@ -380,9 +428,12 @@ async function epicStarted($: EngineInterface, c: Ctx): Promise<string> {
       existing.roles = { implementer: roleOf(args.implementer, 'implementer', existing.roles.implementer), reviewer: roleOf(args.reviewer, 'reviewer', existing.roles.reviewer) }
       if (str(args, 'run')) existing.run = str(args, 'run')
       if (str(args, 'repoId')) existing.repoId = str(args, 'repoId')
+      if (remoteRepo) existing.remoteRepo = remoteRepo
+      if (remote) existing.remote = { id: remote.id, name: remote.name }
+      else if (args.remote === false) delete existing.remote
       if (shortName) existing.shortName = shortName
       moved(existing, 'epicStarted', existing.state, now)
-      return begin($, existing, `Resumed epic #${n}: ${link(existing, n)}`)
+      return begin($, existing, `Resumed epic #${n}: ${link(existing, n)}${placed(existing)}`)
     }
     const read = await ghOne<{ state: string; title: string }>($, root, repo, ['issue-read', String(n)])
     if (read.state !== 'open') throw new Refuse(`Refused: #${n} is ${read.state} on GitHub, so it cannot be the epic. Nothing changed. Repair: reopen it, or call epicStarted with title to file a new epic.`)
@@ -394,10 +445,11 @@ async function epicStarted($: EngineInterface, c: Ctx): Promise<string> {
     parallel: args.parallel !== undefined ? Number(args.parallel) : DEFAULT_PARALLEL,
     roles: { implementer: roleOf(args.implementer, 'implementer', { agent: 'claude' }), reviewer: roleOf(args.reviewer, 'reviewer', { agent: 'codex' }) },
     ...(str(args, 'run') ? { run: str(args, 'run') } : {}), ...(str(args, 'repoId') ? { repoId: str(args, 'repoId') } : {}),
+    ...(remote ? { remote: { id: remote.id, name: remote.name } } : {}), ...(remoteRepo ? { remoteRepo } : {}),
     issues: {}, history: [],
   }
   moved(epic, 'epicStarted', 'framing', now)
-  return begin($, epic, lead)
+  return begin($, epic, `${lead}${placed(epic)}`)
 }
 
 async function begin($: EngineInterface, epic: Epic, lead: string): Promise<string> {
@@ -530,12 +582,27 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   if ('refused' in built) throw new Refuse(built.refused)
   const made = await run($, ['mkdir', '-p', folder], { cwd: epic.root })
   if (made.exitCode !== 0) throw new Error(`mkdir -p ${folder} exited ${made.exitCode}: ${made.stderr.trim()}`)
-  await $.fs.write(path, role === 'implementer' ? implementerBrief(epic, sub, specFiles) : reviewerBrief(epic, sub, specFiles, pr))
+  const remote = workerRemote(epic, sub, role)
+  // The server has no file of this machine: there, a spec file is its path in the repository.
+  const inRepo = (f: string) => (f.startsWith(`${epic.root}/`) ? f.slice(epic.root.length + 1) : f)
+  const shown = remote ? specFiles.map(inRepo) : specFiles
+  await $.fs.write(path, role === 'implementer' ? implementerBrief(epic, sub, shown) : reviewerBrief(epic, sub, shown, pr))
+  // Where the sub-issue starts is recorded with the command that starts it, so a later change of the epic's remote
+  // does not move a sub-issue in flight.
+  if (role === 'implementer' && sub.remote?.id !== remote?.id) {
+    if (remote) sub.remote = remote
+    else delete sub.remote
+    await saveEpic($, epic)
+  }
   const record = role === 'implementer'
-    ? `mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "implementing", worker (the dispatch id) and workspace (the absolute path of the new worktree)`
+    ? `mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "implementing", worker (the dispatch id) and workspace (${remote ? `the worktree id on the server, <repoId>::<path>: ${worktreeIdRepair(remote)}` : 'the absolute path of the new worktree'})`
     : `mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "reviewing", pr ${pr} and worker (the dispatch id)`
   const missing = built.missing.length ? `\nMissing values:\n${built.missing.map(m => `- ${m}`).join('\n')}` : ''
-  return `Brief for the ${role} of #${sub.issue}: ${path}\nRun this command:\n${built.command}${missing}\nNext: run the command, then record the dispatch id with ${record}.`
+  const outside = specFiles.filter(f => !f.startsWith(`${epic.root}/`))
+  const there = remote
+    ? `\nThis worker runs on the saved Orca server ${served(remote)}; the Run, its Tasks and its mail stay on this machine. Address the worker by its dispatch id only, never by a terminal handle. The server has only what is pushed: the brief names each spec file by its path in the repository, so each must be on origin/${base ?? (await defaultBranch($, epic.root, epic.repo))} or on the PR branch.${outside.length ? ` These spec files are outside ${epic.root}, so the server does not have them: ${outside.join(', ')}.` : ''}`
+    : ''
+  return `Brief for the ${role} of #${sub.issue}: ${path}\nRun this command:\n${built.command}${missing}${there}\nNext: run the command, then record the dispatch id with ${record}.`
 }
 
 // "merged" from "reviewing" or "fixing" is only for a PR that a human already merged: GitHub must say so.
@@ -559,7 +626,8 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
   const worker = str(args, 'worker')
   const note = str(args, 'note')
   const workspace = str(args, 'workspace')
-  if (args.workspace !== undefined && !workspace.startsWith('/')) throw new Refuse(`Refused: workspace must be the absolute path of the implementer's worktree, and it is ${JSON.stringify(args.workspace)}. Nothing changed.`)
+  if (args.workspace !== undefined && sub.remote && !WORKTREE_ID.test(workspace)) throw new Refuse(`Refused: #${sub.issue} starts on the saved Orca server ${served(sub.remote)}, so its workspace must be the worktree id there, <repoId>::<path>, and it is ${JSON.stringify(args.workspace)}. Nothing changed. Repair: give the id; ${worktreeIdRepair(sub.remote)}. If the worker in fact started on this machine, call mcp__ndev__epicStarted with issue ${epic.epic} and remote false, then epicBrief for the implementer again.`)
+  if (args.workspace !== undefined && !sub.remote && !workspace.startsWith('/')) throw new Refuse(`Refused: workspace must be the absolute path of the implementer's worktree, and it is ${JSON.stringify(args.workspace)}. Nothing changed.`)
   const now = await $.clock.now()
   const from = sub.state
   let extra = ''
@@ -693,8 +761,9 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
 }
 
 function statusText(epic: Epic): string {
-  const rows = Object.values(epic.issues).sort((a, b) => a.issue - b.issue).map(i => `- #${i.issue} "${i.title}": ${i.state}${i.pr ? `, PR #${i.pr}` : ''}${i.rounds ? `, ${i.rounds} rounds` : ''}${i.blockedBy.length ? `, after ${tags(i.blockedBy)}` : ''}${i.state === 'blocked' && i.note ? ` (${i.note})` : ''}`)
-  return `Epic #${epic.epic} "${epic.title}" in ${epic.root} is in the state "${epic.state}". Next: ${epicStep(epic)}${rows.length ? `\nSub-issues:\n${rows.join('\n')}` : ''}`
+  const rows = Object.values(epic.issues).sort((a, b) => a.issue - b.issue).map(i => `- #${i.issue} "${i.title}": ${i.state}${i.pr ? `, PR #${i.pr}` : ''}${i.rounds ? `, ${i.rounds} rounds` : ''}${i.blockedBy.length ? `, after ${tags(i.blockedBy)}` : ''}${i.remote ? `, on ${i.remote.name}` : ''}${i.state === 'blocked' && i.note ? ` (${i.note})` : ''}`)
+  const place = epic.remote ? `\nNew sub-issues start on the saved Orca server ${served(epic.remote)}${epic.remoteRepo ? `, repository ${epic.remoteRepo}` : ' (remoteRepo is not recorded)'}.` : ''
+  return `Epic #${epic.epic} "${epic.title}" in ${epic.root} is in the state "${epic.state}". Next: ${epicStep(epic)}${place}${rows.length ? `\nSub-issues:\n${rows.join('\n')}` : ''}`
 }
 
 async function epicStatus($: EngineInterface, c: Ctx): Promise<string> {
@@ -731,6 +800,8 @@ const SPECS: Spec[] = [
       reviewer: role('Optional: the reviewer agent. The default is codex'),
       run: string('Optional: the Orca run id, for the worker-start commands'),
       repoId: string('Optional: the Orca repository id, for the worker-start commands'),
+      remote: { description: 'Optional, and only when the human asks for it: start the workers of new sub-issues on a saved Orca server. true is the server that /dev remote saved for this project, else the only one Orca has; a string names one by name, recipe id or id; false goes back to this machine. With no value, nothing changes', anyOf: [{ type: 'boolean' }, { type: 'string' }] },
+      remoteRepo: string('With remote: the selector of the repository on that server, such as id:<id> or name:<name>, from `orca repo list --environment <server> --json`'),
       takeOver: { type: 'boolean', description: 'Only when the session that owns the epic is dead' },
     },
     required: [],
@@ -764,7 +835,7 @@ const SPECS: Spec[] = [
       state: { type: 'string', enum: ISSUE_STATES },
       pr: num('implementing→reviewing: the PR'),
       worker: string('The dispatch id of the worker that starts now'),
-      workspace: string("The absolute path of the implementer's worktree"),
+      workspace: string("The absolute path of the implementer's worktree; for a sub-issue on a saved Orca server, its worktree id there, <repoId>::<path>"),
       verdict: { type: 'string', enum: ['approve', 'changes'] },
       note: string('fixing: your ruling on each finding; blocked: what blocks it'),
     },

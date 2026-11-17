@@ -118,6 +118,7 @@ const engine = (on: On, opts: Opts = {}) => {
     now: 1_000, issues: {} as Record<number, { state: string; title: string } | string>,
     prs: {} as Record<number, Record<string, unknown>>, checks: { check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }], statuses: [] } as unknown,
     files: [] as { status: string; filename: string }[] | '__fail__', ignored: true, exclude: [] as string[],
+    servers: [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'dev-build VM 5e6f' }] as { id: string; name: string }[], orcaFails: '',
   }
   const gh: string[] = []
   const prompts: string[] = []
@@ -185,6 +186,7 @@ const engine = (on: On, opts: Opts = {}) => {
       return ok('', 1, `gh.sh not faked: ${line}`)
     }
     if (a[0] === 'mkdir') return ok()
+    if (a.slice(0, 3).join(' ') === 'orca environment list') return s.orcaFails ? ok('', 1, s.orcaFails) : ok(JSON.stringify({ id: 'x', ok: true, result: { environments: s.servers } }))
     if (a[0] === 'node') return ok(JSON.stringify({ file: null, copiedFrom: null, root: ROOT, main: ROOT, ignored: true, keys: [], missing: [] }))
     return ok('', 1, `not faked: ${line}`)
   })
@@ -739,4 +741,175 @@ test('a relative workspace is refused, and the workspace can be set later with n
   expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', workspace: '/w/41' })).isError).toBe(false)
   expect(w.epic()?.issues['41']).toMatchObject({ state: 'implementing', implementer: 'd1', workspace: '/w/41' })
   expect((await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'reviewer', pr: 12 })).isError).toBe(false)
+})
+
+// ---- workers on the saved remote Orca server ----
+
+const REMOTE = { id: 'bb22-y', name: 'dev-build VM 5e6f' }
+const REMOTE_STORE = '/home/neil/.config/ndev/remote.json'
+
+test('with a remote on the epic, the implementer command names the server and a repository on it, and refuses without that repository', () => {
+  const epic = epicOf({ state: 'coordinating', run: 'run-7', repoId: 'repo-1', remote: REMOTE, remoteRepo: 'name:w', issues: withIssues(sub(5, { key: 'schema' })) })
+  const r = workerStartCommand({ role: 'implementer', briefPath: '/g/b.md', epic, sub: epic.issues['5']!, base: 'main' })
+  expect(r).toEqual({ command: `orca orchestration worker-start --spec-file /g/b.md --task-title '#5 Part 5 (implementer)' --run run-7 --on bb22-y --worktree new-top-level --repo name:w --name 5-schema --base-branch origin/main --agent claude --json`, missing: [] })
+  // The repository id of this machine's Orca is never sent to the server.
+  const none = workerStartCommand({ role: 'implementer', briefPath: '/g/b.md', epic: { ...epic, remoteRepo: undefined }, sub: epic.issues['5']!, base: 'main' })
+  const refused = 'refused' in none ? none.refused : ''
+  expect(refused).toContain('remoteRepo')
+  expect(refused).toContain('dev-build VM 5e6f (bb22-y)')
+  expect(refused).toContain('orca repo list --environment bb22-y --json')
+  expect(refused).toContain('mcp__ndev__epicStarted with issue 40 and remoteRepo')
+  expect(refused).toContain('remote false')
+})
+
+test('the reviewer of a sub-issue on the server gets the server and the worktree id there, and a path alone is refused', () => {
+  const epic = epicOf({ state: 'coordinating', run: 'run-7', remote: REMOTE, remoteRepo: 'name:w', issues: withIssues(sub(5, { key: 'schema', state: 'implementing', pr: 12, remote: REMOTE, workspace: 'r9::/srv/w/5-schema' })) })
+  const r = workerStartCommand({ role: 'reviewer', briefPath: '/g/r.md', epic, sub: epic.issues['5']!, pr: 12 })
+  expect(r).toEqual({ command: `orca orchestration worker-start --spec-file /g/r.md --task-title '#5 Part 5 (reviewer, PR #12)' --run run-7 --on bb22-y --worktree id:r9::/srv/w/5-schema --agent codex --json`, missing: [] })
+  const path = workerStartCommand({ role: 'reviewer', briefPath: '/g/r.md', epic, sub: { ...epic.issues['5']!, workspace: '/srv/w/5-schema' }, pr: 12 })
+  const refused = 'refused' in path ? path.refused : ''
+  expect(refused).toContain('#5')
+  expect(refused).toContain('/srv/w/5-schema')
+  expect(refused).toContain('<repoId>::<path>')
+  expect(refused).toContain('orca worktree list --environment bb22-y --json')
+  expect(refused).toContain('mcp__ndev__epicIssue')
+})
+
+test('a sub-issue in flight on this machine keeps its place when the epic gets a remote, and one on the server keeps its server when the epic loses it', () => {
+  const local = sub(5, { key: 'schema', state: 'implementing', pr: 12, workspace: '/w/5-schema' })
+  const epic = epicOf({ state: 'coordinating', run: 'run-7', repoId: 'repo-1', remote: REMOTE, remoteRepo: 'name:w', issues: withIssues(local) })
+  const reviewer = workerStartCommand({ role: 'reviewer', briefPath: '/g/r.md', epic, sub: local, pr: 12 })
+  expect('command' in reviewer && reviewer.command).toBe(`orca orchestration worker-start --spec-file /g/r.md --task-title '#5 Part 5 (reviewer, PR #12)' --run run-7 --worktree path:/w/5-schema --agent codex --json`)
+  const again = workerStartCommand({ role: 'implementer', briefPath: '/g/b.md', epic, sub: local, base: 'main' })
+  expect('command' in again && again.command).toContain('--run run-7 --worktree new-top-level --repo id:repo-1 --name 5-schema')
+  expect('command' in again && again.command).not.toContain('--on')
+  const there = sub(6, { key: 'api', state: 'reviewing', pr: 13, remote: REMOTE, workspace: 'r9::/srv/w/6-api' })
+  const off = workerStartCommand({ role: 'reviewer', briefPath: '/g/r.md', epic: { ...epic, remote: undefined }, sub: there, pr: 13 })
+  expect('command' in off && off.command).toContain('--on bb22-y --worktree id:r9::/srv/w/6-api')
+})
+
+test('epicStarted takes a remote only when asked: the saved server alone changes nothing, and remote false turns it off', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  w.files.set(REMOTE_STORE, JSON.stringify({ projects: { [REPO]: { id: 'aa11-x', name: 'vm-a' } } }))
+  await start($)
+  await planned($)
+  expect((await tool($, 'epicStarted', { issue: 40, run: 'run-7', repoId: 'repo-1' })).isError).toBe(false)
+  expect(w.epic()?.remote).toBeUndefined()
+  const local = await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })
+  expect(local.text).toContain(`--run run-7 --worktree new-top-level --repo id:repo-1 --name 41-schema --base-branch origin/main --agent claude --json`)
+  expect(local.text).not.toContain('--on')
+  expect(w.epic()?.issues['41']?.remote).toBeUndefined()
+
+  // true: the server that /dev remote saved for the project.
+  const saved = await tool($, 'epicStarted', { issue: 40, remote: true })
+  expect(saved.isError).toBe(false)
+  expect(saved.text).toContain('vm-a (aa11-x)')
+  expect(w.epic()?.remote).toEqual({ id: 'aa11-x', name: 'vm-a' })
+  // A name: the recipe id that begins a saved server's name.
+  const named = await tool($, 'epicStarted', { issue: 40, remote: 'dev-build', remoteRepo: 'name:w' })
+  expect(named.isError).toBe(false)
+  expect(w.epic()).toMatchObject({ remote: REMOTE, remoteRepo: 'name:w' })
+  // A resume with no remote keeps it, and reads no server.
+  w.s.orcaFails = 'orca is not running'
+  expect((await tool($, 'epicStarted', { issue: 40 })).isError).toBe(false)
+  expect(w.epic()?.remote).toEqual(REMOTE)
+  expect((await tool($, 'epicStatus', { issue: 40 })).text).toContain('dev-build VM 5e6f (bb22-y)')
+
+  const off = await tool($, 'epicStarted', { issue: 40, remote: false })
+  expect(off.isError).toBe(false)
+  expect(off.text).toContain('this machine')
+  expect(w.epic()?.remote).toBeUndefined()
+})
+
+test('a remote that cannot be resolved is refused with the saved servers and the repair, and nothing changes or is filed', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  const fresh = await tool($, 'epicStarted', { title: 'Big change', shortName: 'big-change', remote: 'nope' })
+  expect(fresh.isError).toBe(true)
+  expect(fresh.text).toContain('Orca has no saved server "nope"')
+  expect(fresh.text).toContain('vm-a (aa11-x), dev-build VM 5e6f (bb22-y)')
+  expect(fresh.text).toContain('mcp__ndev__epicStarted')
+  expect(fresh.text).toContain('Nothing changed')
+  expect(w.gh.some(g => g.startsWith('issue-new'))).toBe(false)
+  expect(w.epic()).toBeUndefined()
+
+  await planned($)
+  // Several servers, none saved for the project and none named: no guess.
+  const several = await tool($, 'epicStarted', { issue: 40, remote: true })
+  expect(several.isError).toBe(true)
+  expect(several.text).toContain('Orca has 2 saved servers')
+  expect(w.epic()?.remote).toBeUndefined()
+  // The saved server is gone from Orca: no switch to another.
+  w.files.set(REMOTE_STORE, JSON.stringify({ projects: { [REPO]: { id: 'zz99-q', name: 'old-vm' } } }))
+  const stale = await tool($, 'epicStarted', { issue: 40, remote: true })
+  expect(stale.isError).toBe(true)
+  expect(stale.text).toContain('old-vm (zz99-q), is no longer in Orca')
+  expect(stale.text).toContain('/dev remote off')
+  // Orca itself fails: the command and its own output are named.
+  w.s.orcaFails = 'orca is not running'
+  const down = await tool($, 'epicStarted', { issue: 40, remote: 'vm-a' })
+  expect(down.isError).toBe(true)
+  expect(down.text).toContain('orca environment')
+  expect(down.text).toContain('orca is not running')
+  w.s.orcaFails = ''
+  for (const bad of [42, '', ' ']) {
+    const r = await tool($, 'epicStarted', { issue: 40, remote: bad })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('remote must be')
+  }
+  const repo = await tool($, 'epicStarted', { issue: 40, remoteRepo: 'w' })
+  expect(repo.isError).toBe(true)
+  expect(repo.text).toContain('name:<name>')
+  expect(w.epic()?.remote).toBeUndefined()
+  expect(w.epic()?.remoteRepo).toBeUndefined()
+})
+
+test('with a remote, epicBrief records where each sub-issue starts, takes the worktree id on the server as its workspace, and leaves a sub-issue in flight on this machine', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  expect((await tool($, 'epicStarted', { issue: 40, run: 'run-7', repoId: 'repo-1' })).isError).toBe(false)
+  // #43 starts on this machine, before the remote is set.
+  await tool($, 'epicBrief', { issue: 40, sub: 43, role: 'implementer' })
+  await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'implementing', worker: 'd0', workspace: '/w/43-docs' })
+  expect((await tool($, 'epicStarted', { issue: 40, remote: 'vm-a' })).isError).toBe(false)
+
+  const noRepo = await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })
+  expect(noRepo.isError).toBe(true)
+  expect(noRepo.text).toContain('remoteRepo')
+  expect(w.files.has(`${ROOT}/.git/worktrees/x/ndev-epic/epic-40-41-implementer.md`)).toBe(false)
+  expect(w.epic()?.issues['41']?.remote).toBeUndefined()
+  expect((await tool($, 'epicStarted', { issue: 40, remoteRepo: 'name:w' })).isError).toBe(false)
+
+  const r = await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain(`--task-title '#41 Schema (implementer)' --run run-7 --on aa11-x --worktree new-top-level --repo name:w --name 41-schema --base-branch origin/main --agent claude --json`)
+  expect(r.text).toContain('vm-a (aa11-x)')
+  expect(r.text).toContain('<repoId>::<path>')
+  expect(w.epic()?.issues['41']?.remote).toEqual({ id: 'aa11-x', name: 'vm-a' })
+  // The server has no file of this machine: a spec file is named by its path in the repository.
+  const brief = w.files.get(`${ROOT}/.git/worktrees/x/ndev-epic/epic-40-41-implementer.md`) ?? ''
+  expect(brief).toContain('- docs/spec.md')
+  expect(brief).not.toContain(`${ROOT}/docs/spec.md`)
+  expect(r.text).toContain('origin/main')
+
+  const path = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/srv/w/41-schema' })
+  expect(path.isError).toBe(true)
+  expect(path.text).toContain('<repoId>::<path>')
+  expect(path.text).toContain('orca worktree list --environment aa11-x --json')
+  expect(w.epic()?.issues['41']?.state).toBe('waiting')
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: 'r9::/srv/w/41-schema' })).isError).toBe(false)
+  const reviewer = await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'reviewer', pr: 12 })
+  expect(reviewer.text).toContain(`--run run-7 --on aa11-x --worktree id:r9::/srv/w/41-schema --agent codex --json`)
+
+  // #43 is on this machine: its reviewer is too, and a worktree id of the server is refused for it.
+  const local = await tool($, 'epicBrief', { issue: 40, sub: 43, role: 'reviewer', pr: 13 })
+  expect(local.text).toContain(`--run run-7 --worktree path:/w/43-docs --agent codex --json`)
+  expect(local.text).not.toContain('--on')
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 43, state: 'implementing', workspace: 'r9::/srv/w/43' })).isError).toBe(true)
+
+  // Turned off again, the sub-issue on the server keeps its server.
+  expect((await tool($, 'epicStarted', { issue: 40, remote: false })).isError).toBe(false)
+  const reviewerStill = await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'reviewer', pr: 12 })
+  expect(reviewerStill.text).toContain('--on aa11-x --worktree id:r9::/srv/w/41-schema')
 })
