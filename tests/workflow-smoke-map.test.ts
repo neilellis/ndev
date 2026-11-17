@@ -64,7 +64,7 @@ test('a human /flow skip leaves a required smoke stage, and a later commit of do
   await start($, w)
   await command($, 'skip no preview here')
   expect(w.state()?.state).toBe('finishing')
-  expect(w.state()?.evidence.smoke.text).toContain('skipped by the human')
+  expect(w.state()?.evidence.smoke?.text).toContain('skipped by the human')
   w.s.dirty = [' M README.md']
   w.s.staged = true
   await tool($, 'checkpoint', { message: 'docs', files: ['README.md'] })

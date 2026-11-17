@@ -71,7 +71,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     ...opts.files,
   }))
   const s = {
-    spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], untracked: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
+    agentCwd: undefined as string | undefined, spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], untracked: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
     otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined, checkMs: {} as Record<string, number>, checkStops: [] as string[],
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, env: {} as Record<string, string>, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
@@ -158,7 +158,7 @@ export const engine = (on: On, opts: Opts = {}) => {
   on('ui.close', () => ({ value: undefined }) as never)
   on('ui.status', (_, e) => { statuses.push(e.text); return { value: undefined } })
   on('ui.log', () => ({ value: undefined }) as never)
-  on('session.cwd', () => ({ value: ROOT }) as never)
+  on('session.cwd', () => ({ value: s.agentCwd ?? ROOT }) as never)
   let refReads = 0
   // What a check script answers: held while checkHold holds, failed for failCheck, cut for hugeCheck.
   type Answer = { value: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean; isStderrTruncated: boolean } }
@@ -193,8 +193,11 @@ export const engine = (on: On, opts: Opts = {}) => {
     }
     if (a[0] === 'git') {
       // Another repository on this computer, and a path that is not a repository.
-      if (a[1] === '-C' && a[2]?.startsWith('/home/neil/dev-wiki')) return ok('/home/neil/dev-wiki/.git\n')
+      if (a[1] === '-C' && a[2]?.startsWith('/home/neil/dev-wiki')) return ok('/home/neil/dev-wiki/.git\n/home/neil/dev-wiki/.git\n')
       if (a[1] === '-C' && a[2] === '/nowhere') return ok('', 128, 'fatal: cannot change to /nowhere')
+      if (a[1] === '-C' && a[2]?.startsWith('/helper-wt')) return ok('/main/.git/worktrees/helper\n/main/.git\n')
+      if (a[1] === '-C' && a[2] === '/main') return ok('/main/.git\n/main/.git\n')
+      if (a[1] === '-C' && a[2] === CLAIMED) return ok('/main/.git/worktrees/claimed\n/main/.git\n')
       if (line.includes('--path-format=absolute')) return ok(s.main ? '/main/.git\n/main/.git\n' : `${ROOT}/.git/worktrees/x\n/main/.git\n`)
       // Each read of the remote refs differs, so a Bash call that names a push lands.
       if (a[1] === 'for-each-ref') return ok(`refs/remotes/origin/issue-7 ${++refReads}\n`)

@@ -565,7 +565,7 @@ The record keeps the column in `board`, so a change inside a column makes no Git
 
 - The session stays on its own issue, and that issue's record does not change.
 - The hotfix never joins the PR of the session's issue.
-- The agent commits with plain git, and names the worktree with the full path: `git -C <worktree> commit`. The git guard lets only that form through, and a push from there goes only to the branch of the hotfix. The hooks run, and `--no-verify` is never used.
+- The agent commits with plain git, and names the worktree with the full path: `git -C <worktree> commit`. The git guard must see that folder for sure, and a push from there goes only to the branch of the hotfix. The hooks run, and `--no-verify` is never used.
 - The agent waits for the checks of the hotfix PR with `wait-for-pr-change.sh`, because the watchdog does not watch them. A human merges.
 - A `straw_man` project has no worktree and no PR: the fix goes on the base branch in the main checkout. The git guard stays on there. A session on an issue commits the fix with `checkpoint`, and a session with no workflow uses plain git.
 - If the set-up fails after the issue exists, the message names the issue. Repair: call `hotfix` again with `issue`, which files nothing new. A call without `issue` files a second one.
@@ -845,6 +845,16 @@ The tools write these values to `<git dir>/ndev-live-<issue|pr>-<n>.json`, and n
 ## Rules that the tools enforce
 
 While the workflow owns the checks, a raw `git commit` or `git push` is refused. Use `checkpoint`, also to end a merge. With no files, `checkpoint` pushes a held commit, except in `reviewing` and `developed`, where the commit waits for `finishedReview`; the refusal then names that route. The rule does not apply in `setup`, in `done`, when the workflow is off, or when a human skipped the setup of the check scripts.
+
+The guard reads what the command runs, not the text that it only passes on. A quoted heredoc body, a comment and a quoted word do not count. These do count: a heredoc that a shell can read, a substitution in a heredoc with no quotes on its tag, a string after a shell's or an interpreter's `-c` or `-e`, a string after `eval`, a string piped to a shell, and each command substitution.
+
+The guard applies to the workflow's own worktree, the worktrees that `followUp` started and the main checkout. A helper's own worktree of the same repository passes, and so does another repository. From a helper's worktree, a push does not pass if it names the workflow's branch or the base branch, uses `--all`, `--mirror` or a `*`, or has a variable in its target.
+
+To find the folder, the guard reads `git -C <absolute path>`. If there is none, it reads `cd <absolute path> && ...`, but only in a plain `&&` chain up to the git. A subagent with neither uses its own folder. A command that does not show its folder for sure is refused, for example `cd /x; git push`, a `pushd`, `env -C` or `GIT_DIR`.
+
+The guard keeps a cooperating agent on the workflow. It is not a sandbox. It does not read a script file that the command runs, and it does not see a variable used as a command, such as `$X push`. It also refuses some text that it cannot tell from a command, such as an unquoted `echo git push` or `python3 -c "print('git push')"`. Quote the words, or write them in a file.
+
+In `reviewing`, `checkpoint` with no files refuses, and the refusal names `finishedReview`. That tool pushes a commit that is held for the review.
 
 A retry commits each file that it names. If the last try stopped after its commit, and a tracked file changed after that commit, the tool refuses until you name the file. So the push cannot send a commit without its fix.
 

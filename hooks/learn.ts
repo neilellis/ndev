@@ -3,12 +3,13 @@
 import type { Register } from 'claude-code'
 
 import type { LoadedConfig } from './config'
+import { shellCode } from './shell-code'
 import { workflowOwnsChecks } from './workflow/tools'
 
 type On = Parameters<Register>[0]
 
-// `git push` (with options such as -C before it) or a push wrapper script such as push-checked.sh.
-const PUSH = /\bgit(?:\s+-[Cc]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+push\b|\bpush[\w-]*\.sh\b/
+// `git push` (with options such as -C before it), or a push wrapper script such as push-checked.sh as the command.
+const PUSH = /\bgit(?:\s+-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--(?:git-dir|work-tree)\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+push\b|(?:^|[;&|(\n`]\s*|(?:^|\s)(?:(?:ba|z|da|k)?sh|source|\.)\s+)["']?(?:\S*\/)?push[\w-]*\.sh\b/g
 const DRY_RUN = /\s--dry-run\b/
 
 const INGEST =
@@ -19,7 +20,10 @@ export const ingestText = (landedOn?: string) =>
     ? `A push is running in the background. When it finishes with exit 0, ${INGEST}`
     : `A push just landed on ${landedOn}. Before you go on, ${INGEST}`
 
-export const isPush = (command: string) => PUSH.test(command) && !DRY_RUN.test(command)
+export const isPush = (command: string) => {
+  const code = shellCode(command)
+  return [...code.matchAll(PUSH)].some(m => !DRY_RUN.test(code.slice(m.index).split(/[;&|\n]/)[0] ?? ''))
+}
 
 const SAYS_PUSH = /push/i
 

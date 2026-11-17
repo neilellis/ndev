@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 
-type On = Parameters<Parameters<typeof test>[1]>[1]
-type Dollar = Parameters<Parameters<typeof test>[1]>[0]
+declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
+
+type On = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[1]
+type Dollar = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0]
 
 const ROOT = '/proj'
 const MARKER = `${ROOT}/.ndev-inited`
@@ -135,7 +137,7 @@ test('once the agent writes the marker, the instruction goes away', async ($, on
   expect(await section($)).toBeDefined()
 
   files.set(MARKER, '')
-  await $.prompt.submit({ text: 'next' })
+  await $.prompt.submit({ text: 'next' } as never)
   expect(await section($)).toBeUndefined()
 })
 

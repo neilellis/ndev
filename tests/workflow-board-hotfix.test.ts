@@ -289,11 +289,10 @@ test('hotfix files the issue, gives it its own worktree and PR, and turns the wo
   expect((await tool($, 'status')).text).toContain('#7')
 })
 
-test('a commit that names the worktree of a hotfix passes the git guard, and only then', async ($, on) => {
+test('a commit that names the worktree of a hotfix passes the git guard, and the own issue keeps its guard', async ($, on) => {
   const w = engine(on, { wf: { state: 'developing' } })
   await start($, w)
   const commit = { tool: 'Bash', command: `git -C ${CLAIMED} commit -m fix` } as never
-  expect((await $.tool.call(commit) as { deny?: string }).deny).toContain('checkpoint')
   await tool($, 'hotfix', { shortName: 'fix-login' })
   expect((await $.tool.call(commit) as { deny?: string }).deny).toBeUndefined()
   expect((await $.tool.call({ tool: 'Bash', command: `git -C ${CLAIMED} push` } as never) as { deny?: string }).deny).toBeUndefined()
