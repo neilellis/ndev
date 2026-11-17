@@ -36,6 +36,9 @@ export type SubIssue = {
   // The saved Orca server that holds the workspace, set when the implementer brief is written for a start there.
   // Without it the workspace is on this machine. The workspace is then the worktree id on the server, <repoId>::<path>.
   remote?: Server
+  // The sub-issue whose PR branch this one started from, while that PR was not merged. epicBrief sets it with the
+  // stacked brief, and only a pass of the verify checks clears it: by then the PR's base is the default branch.
+  stackedOn?: number
 }
 export type Epic = {
   epic: number
@@ -64,6 +67,8 @@ export type Slice = { issue: number; key: string; title: string; blockedBy: numb
 export const EPIC_STATES: EpicState[] = ['framing', 'researching', 'specifying', 'deciding', 'spec-review', 'slicing', 'coordinating', 'closing', 'done']
 const ISSUE_STATES: IssueState[] = ['waiting', 'implementing', 'reviewing', 'fixing', 'verified', 'merged', 'blocked']
 const IN_FLIGHT: IssueState[] = ['implementing', 'reviewing', 'fixing', 'verified']
+// The states in which the implementer has pushed its branch and the record holds its PR.
+const PUSHED: IssueState[] = ['reviewing', 'fixing', 'verified']
 const PLAN_STATES: EpicState[] = ['framing', 'researching', 'specifying', 'deciding', 'spec-review', 'slicing']
 const ROUND_LIMIT = 3
 const DEFAULT_PARALLEL = 4
@@ -117,16 +122,51 @@ function findCycle(slices: Slice[]): number[] | undefined {
   return undefined
 }
 
-export type Frontier = { ready: SubIssue[]; held: SubIssue[]; inFlight: SubIssue[]; waitingOn: { issue: number; open: number[] }[]; blocked: SubIssue[]; free: number }
-// The issues that can start now: waiting, with each blocker merged, in number order, cut to the free places.
+export type StackPlan = { on: SubIssue } | { why: string; split?: true }
+// Where a sub-issue with an unmerged blocker can start: on the PR branch of that blocker (on), or nowhere yet (why).
+// undefined when every blocker is merged, so it starts from the default branch. With several unmerged blockers it
+// stacks only on the one whose branch holds the others: the record shows that as a chain of stackedOn.
+export function stackPlan(epic: Epic, sub: SubIssue): StackPlan | undefined {
+  const open = sub.blockedBy.map(b => epic.issues[String(b)]).filter((b): b is SubIssue => !!b && b.state !== 'merged')
+  if (!open.length) return undefined
+  const early = open.filter(b => !(PUSHED.includes(b.state) && b.pr))
+  if (early.length) return { why: `it waits for ${early.map(b => `${tag(b.issue)} ("${b.state}"${b.pr ? '' : ', no PR recorded'})`).join(', ')}: a blocker can carry a stack only in the states ${PUSHED.join(', ')}, when its branch is pushed` }
+  const below = (top: SubIssue) => {
+    const seen: number[] = []
+    for (let at = top.stackedOn; at !== undefined && !seen.includes(at); at = epic.issues[String(at)]?.stackedOn) seen.push(at)
+    return seen
+  }
+  const top = open.find(t => open.every(o => o === t || below(t).includes(o.issue)))
+  if (top) return { on: top }
+  return { split: true, why: `its unmerged blockers ${tags(open.map(b => b.issue))} are on different branches, and no one of those branches holds the others, so no one branch can be its base. It starts when all but one of them are merged` }
+}
+
+export type Frontier = {
+  ready: SubIssue[]; held: SubIssue[]; inFlight: SubIssue[]; waitingOn: { issue: number; open: number[] }[]; blocked: SubIssue[]; free: number
+  // The waiting issues that can start now on the PR branch of an unmerged blocker, and those that no place is free for.
+  stacked: { sub: SubIssue; on: SubIssue }[]; stackedHeld: SubIssue[]
+  // The waiting issues whose blockers all have a pushed PR, and that still cannot stack.
+  notStackable: { issue: number; why: string }[]
+}
+// The issues that can start now, in number order: waiting with each blocker merged (ready), then waiting on the PR
+// branch of an unmerged blocker (stacked). The two together are cut to the free places.
 export function frontier(epic: Epic): Frontier {
   const all = Object.values(epic.issues).sort((a, b) => a.issue - b.issue)
   const merged = new Set(all.filter(i => i.state === 'merged').map(i => i.issue))
   const inFlight = all.filter(i => IN_FLIGHT.includes(i.state))
   const free = Math.max(0, epic.parallel - inFlight.length)
-  const startable = all.filter(i => i.state === 'waiting' && i.blockedBy.every(b => merged.has(b)))
-  const waitingOn = all.filter(i => i.state === 'waiting' && !startable.includes(i)).map(i => ({ issue: i.issue, open: i.blockedBy.filter(b => !merged.has(b)) }))
-  return { ready: startable.slice(0, free), held: startable.slice(free), inFlight, waitingOn, blocked: all.filter(i => i.state === 'blocked'), free }
+  const waiting = all.filter(i => i.state === 'waiting').map(sub => ({ sub, plan: stackPlan(epic, sub) }))
+  const startable = waiting.filter(w => !w.plan).map(w => w.sub)
+  const stackable = waiting.flatMap(w => (w.plan && 'on' in w.plan ? [{ sub: w.sub, on: w.plan.on }] : []))
+  const cannot = waiting.flatMap(w => (w.plan && 'why' in w.plan ? [{ sub: w.sub, plan: w.plan }] : []))
+  const ready = startable.slice(0, free)
+  const left = free - ready.length
+  return {
+    ready, held: startable.slice(free), inFlight, free, blocked: all.filter(i => i.state === 'blocked'),
+    waitingOn: cannot.map(c => ({ issue: c.sub.issue, open: c.sub.blockedBy.filter(b => !merged.has(b)) })),
+    stacked: stackable.slice(0, left), stackedHeld: stackable.slice(left).map(s => s.sub),
+    notStackable: cannot.filter(c => c.plan.split).map(c => ({ issue: c.sub.issue, why: c.plan.why })),
+  }
 }
 
 export function frontierText(epic: Epic): string {
@@ -134,9 +174,11 @@ export function frontierText(epic: Epic): string {
   const named = (i: SubIssue) => `${tag(i.issue)} "${i.title}"`
   return [
     `Ready to start (${f.free} of ${epic.parallel} places free): ${f.ready.map(named).join(', ') || 'none'}.`,
-    ...(f.held.length ? [`Ready, but no place is free: ${tags(f.held.map(i => i.issue))}.`] : []),
+    ...(f.stacked.length ? [`Can start stacked, from the PR branch of a blocker that is not merged: ${f.stacked.map(s => `${named(s.sub)} on ${tag(s.on.issue)} (PR #${s.on.pr})`).join(', ')}.`] : []),
+    ...(f.held.length || f.stackedHeld.length ? [`Ready, but no place is free: ${tags([...f.held, ...f.stackedHeld].map(i => i.issue))}.`] : []),
     ...(f.waitingOn.length ? [`Waiting on blockers: ${f.waitingOn.map(w => `${tag(w.issue)} waits for ${tags(w.open)}`).join('; ')}.`] : []),
-    ...(f.inFlight.length ? [`In flight: ${f.inFlight.map(i => `${tag(i.issue)} ${i.state}${i.pr ? ` (PR #${i.pr})` : ''}`).join(', ')}.`] : []),
+    ...f.notStackable.map(n => `Not stackable: ${tag(n.issue)}: ${n.why}.`),
+    ...(f.inFlight.length ? [`In flight: ${f.inFlight.map(i => `${tag(i.issue)} ${i.state}${i.pr ? ` (PR #${i.pr})` : ''}${i.stackedOn ? `, stacked on ${tag(i.stackedOn)}` : ''}`).join(', ')}.`] : []),
     ...(f.blocked.length ? [`Blocked: ${f.blocked.map(i => `${tag(i.issue)}: ${i.note ?? 'no reason recorded'}`).join('; ')}.`] : []),
   ].join('\n')
 }
@@ -171,7 +213,7 @@ function epicAgentStep(epic: Epic): string {
     case 'deciding': return `Load the skill ndev:epic-plan. Settle each open decision of the spec with the human, then ${phase('deciding', 'evidence (the decisions, and that none is open)')}`
     case 'spec-review': return `Load the skill ndev:epic-plan. Get an independent review of the spec and rule on each finding, then ${phase('spec-review', 'files (the review) and evidence (the ruling on each finding)')}`
     case 'slicing': return `Load the skill ndev:epic-plan. File the sub-issues on GitHub, then ${phase('slicing', 'issues ([{ issue, key, title, blockedBy }]) and evidence')}`
-    case 'coordinating': return `Load the skill ndev:epic-coordinate. Call mcp__ndev__epicNext with issue ${n}; for each ready sub-issue call mcp__ndev__epicBrief and run the command that it gives, and record each move with mcp__ndev__epicIssue. When every sub-issue is merged, ${phase('coordinating', 'and evidence')}`
+    case 'coordinating': return `Load the skill ndev:epic-coordinate. Call mcp__ndev__epicNext with issue ${n}; for each sub-issue that it lists as ready or as able to start stacked call mcp__ndev__epicBrief and run the command that it gives, and record each move with mcp__ndev__epicIssue. When every sub-issue is merged, ${phase('coordinating', 'and evidence')}`
     case 'closing': return `Load the skill ndev:epic-coordinate. Verify the whole epic end to end, then ${phase('closing', 'evidence (what was verified, and what remains)')}`
     case 'done': return 'The epic is done. Nothing remains.'
   }
@@ -204,7 +246,29 @@ const PR_FILES = (repo: string, n: number) => ['api', '--paginate', `repos/${rep
 const link = (epic: Epic, n: number) => `https://github.com/${epic.repo}/issues/${n}`
 const fileList = (files: string[]) => (files.length ? files.map(f => `- ${f}`).join('\n') : '- (the epic records no spec file: read the epic issue)')
 
-export function implementerBrief(epic: Epic, sub: SubIssue, specFiles: string[]): string {
+// What the worker of the stacked issue does when the PR it is stacked on is merged. A merge and not a rebase: the
+// branch is pushed, and others may have pulled it.
+export const unstackSteps = (repo: string, base: string, pr: string) => `run \`git fetch origin\`, then \`git merge origin/${base}\`, and resolve each conflict. Commit and push with mcp__ndev__checkpoint. Then run \`gh pr edit ${pr} --repo ${repo} --base ${base}\``
+
+// The stack that an implementer starts on: the blocker, the head branch of its PR, and the default branch.
+export type Stack = { on: SubIssue; branch: string; base: string }
+function stackSection(epic: Epic, s: Stack): string {
+  const { on, branch, base } = s
+  return `
+## Stacked on #${on.issue}
+
+This issue needs the change of #${on.issue} "${on.title}" (PR #${on.pr}, ${link(epic, on.pr!).replace('/issues/', '/pull/')}), which is not merged. Your worktree starts from origin/${branch}, the branch of that PR, so its change is in your branch.
+
+1. Do not change or revert the work of #${on.issue}. If it must change, tell the coordinator.
+2. The workflow opens your draft PR against ${base}. As soon as it is open, run \`gh pr edit <your PR> --repo ${epic.repo} --base ${branch}\`, so the PR shows only the change of this issue.
+3. If mcp__ndev__started blocks this issue only on the open issue #${on.issue}, call mcp__ndev__unblocked and go on: its change is in your branch.
+4. The workflow still compares with ${base}. If a check or done refuses a file that came from #${on.issue}, such as a migration, leave the file and ask the coordinator.
+5. If the coordinator says that PR #${on.pr} changed, run \`git fetch origin\` and \`git merge origin/${branch}\`, then push with mcp__ndev__checkpoint.
+6. When the coordinator says that PR #${on.pr} is merged: ${unstackSteps(epic.repo, base, '<your PR>')}. Your PR cannot be verified before that.
+`
+}
+
+export function implementerBrief(epic: Epic, sub: SubIssue, specFiles: string[], stack?: Stack): string {
   return `# Implement #${sub.issue}: ${sub.title}
 
 You are the implementer of one sub-issue of epic #${epic.epic} ("${epic.title}", ${link(epic, epic.epic)}).
@@ -220,14 +284,14 @@ ${fileList(specFiles)}
 
 1. Read the issue, and the spec file(s) it names, before any code.
 2. Work in this worktree under the usual workflow: call mcp__ndev__started with issue ${sub.issue} and set the steering to auto. Work test first.
-3. Make one PR to the default branch.
+3. Make one PR to the default branch.${stack ? ` While #${stack.on.issue} is not merged, its base is ${stack.branch}: see "Stacked on #${stack.on.issue}" below.` : ''}
 4. Register each migration with mcp__ndev__addMigration.
 5. Stay inside the issue. Report a discovery outside it; do not fix it, unless it blocks the checks.
 6. Do not merge.
 7. Do no hosted or paid action (real model calls, publishes, hosted migrations) without the coordinator's word.
 8. When the spec and the code disagree, ask the coordinator with orca orchestration ask, and give a proposed default.
 9. Finish with worker_done. Give the PR, the checks as passed / failed / not run, each departure from the spec, and the open questions.
-`
+${stack ? stackSection(epic, stack) : ''}`
 }
 
 export function reviewerBrief(epic: Epic, sub: SubIssue, specFiles: string[], pr = sub.pr): string {
@@ -587,12 +651,28 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   const specFiles = epic.evidence.specifying?.files ?? []
   let pr: number | undefined
   let base: string | undefined
+  let stack: Stack | undefined
+  let unstacked = false
   if (role === 'reviewer') {
     if (args.pr !== undefined && !isCount(args.pr)) throw new Refuse(`Refused: pr must be a PR number, and it is ${JSON.stringify(args.pr)}. Nothing was written.`)
     pr = args.pr !== undefined ? Number(args.pr) : sub.pr
     if (!pr) throw new Refuse(`Refused: a reviewer brief needs the PR: #${sub.issue} has no pr recorded. Nothing was written. Repair: call epicBrief with pr, the number of the implementer's PR.`)
   } else {
-    base = await defaultBranch($, epic.root, epic.repo)
+    const main = await defaultBranch($, epic.root, epic.repo)
+    // A waiting issue stacks where the record allows it now. One that has started keeps the stack it started on.
+    const kept = sub.stackedOn === undefined ? undefined : epic.issues[String(sub.stackedOn)]
+    const plan = sub.state === 'waiting' ? stackPlan(epic, sub) : kept && kept.state !== 'merged' ? { on: kept } : undefined
+    if (plan && 'why' in plan) throw new Refuse(`Refused: #${sub.issue} cannot start yet: ${plan.why}. Nothing was written. Repair: call mcp__ndev__epicNext with issue ${epic.epic} for what can start now.`)
+    if (plan) {
+      const on = plan.on
+      const again = `then call epicBrief again`
+      const head = await readPr($, epic.root, epic.repo, on.pr!)
+      if (head.merged) throw new Refuse(`Refused: GitHub says PR #${on.pr} of #${on.issue} is merged, and the record has #${on.issue} in the state "${on.state}", so #${sub.issue} must not start from its branch. Nothing was written. Repair: call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${on.issue} and state "merged"${on.state === 'verified' ? '' : ` (it is "${on.state}": move it to "verified" first)`}, ${again}: #${sub.issue} then starts from ${main}.`)
+      if (head.state !== 'open') throw new Refuse(`Refused: GitHub says PR #${on.pr} of #${on.issue} is ${head.state} and not merged, so #${sub.issue} cannot start from its branch ${head.head.ref}. Nothing was written. Repair: reopen it with \`gh pr reopen ${on.pr} --repo ${epic.repo}\`, or record the new PR of #${on.issue}, ${again}.`)
+      stack = { on, branch: head.head.ref, base: main }
+    }
+    base = stack?.branch ?? main
+    unstacked = !stack && sub.state === 'waiting' && sub.stackedOn !== undefined
   }
   const { gitDir } = await paths($, epic.root)
   const folder = `${gitDir}/ndev-epic`
@@ -605,14 +685,20 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   // The server has no file of this machine: there, a spec file is its path in the repository.
   const inRepo = (f: string) => (f.startsWith(`${epic.root}/`) ? f.slice(epic.root.length + 1) : f)
   const shown = remote ? specFiles.map(inRepo) : specFiles
-  await $.fs.write(path, role === 'implementer' ? implementerBrief(epic, sub, shown) : reviewerBrief(epic, sub, shown, pr))
+  await $.fs.write(path, role === 'implementer' ? implementerBrief(epic, sub, shown, stack) : reviewerBrief(epic, sub, shown, pr))
   // Where the sub-issue starts is recorded with the command that starts it, so a later change of the epic's remote
   // does not move a sub-issue in flight.
-  if (role === 'implementer' && sub.remote?.id !== remote?.id) {
+  const movesServer = role === 'implementer' && sub.remote?.id !== remote?.id
+  if (movesServer) {
     if (remote) sub.remote = remote
     else delete sub.remote
-    await saveEpic($, epic)
   }
+  // The record follows the brief: the base that the worker starts from is the stack it is on.
+  const restacks = (stack && sub.stackedOn !== stack.on.issue) || unstacked
+  if (stack) sub.stackedOn = stack.on.issue
+  else if (unstacked) delete sub.stackedOn
+  if (movesServer || restacks) await saveEpic($, epic)
+  const stackedNote = stack ? `\nStacked on #${stack.on.issue}: the worktree starts from origin/${stack.branch}, the head of PR #${stack.on.pr}, which is not merged. The record has stackedOn ${stack.on.issue} for #${sub.issue}. The brief tells the worker to give its PR the base ${stack.branch}.` : ''
   const record = role === 'implementer'
     ? `mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "implementing", worker (the dispatch id) and workspace (${remote ? `the worktree id on the server, <repoId>::<path>: ${worktreeIdRepair(remote)}` : 'the absolute path of the new worktree'})`
     : `mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "reviewing", pr ${pr} and worker (the dispatch id)`
@@ -621,7 +707,7 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   const there = remote
     ? `\nThis worker runs on the saved Orca server ${served(remote)}; the Run, its Tasks and its mail stay on this machine. Address the worker by its dispatch id only, never by a terminal handle. The server has only what is pushed: the brief names each spec file by its path in the repository, so each must be on origin/${base ?? (await defaultBranch($, epic.root, epic.repo))} or on the PR branch.${outside.length ? ` These spec files are outside ${epic.root}, so the server does not have them: ${outside.join(', ')}.` : ''}`
     : ''
-  return `Brief for the ${role} of #${sub.issue}: ${path}\nRun this command:\n${built.command}${missing}${there}\nNext: run the command, then record the dispatch id with ${record}.`
+  return `Brief for the ${role} of #${sub.issue}: ${path}\nRun this command:\n${built.command}${missing}${there}${stackedNote}\nNext: run the command, then record the dispatch id with ${record}.`
 }
 
 // "merged" from "reviewing" or "fixing" is only for a PR that a human already merged: GitHub must say so.
@@ -670,7 +756,11 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
       case 'waiting>implementing': {
         const merged = new Set(Object.values(epic.issues).filter(i => i.state === 'merged').map(i => i.issue))
         const open = sub.blockedBy.filter(b => !merged.has(b))
-        if (open.length) throw new Refuse(`Refused: #${sub.issue} is not on the frontier: it waits for ${tags(open)} to merge. Nothing changed.`)
+        const plan = stackPlan(epic, sub)
+        if (plan && 'why' in plan) throw new Refuse(`Refused: #${sub.issue} is not on the frontier: it waits for ${tags(open)} to merge, and it cannot start stacked: ${plan.why}. Nothing changed.`)
+        // A stacked start needs the stacked brief first: the brief is what gives the worker the blocker's branch.
+        if (plan && sub.stackedOn !== plan.on.issue) throw new Refuse(`Refused: #${sub.issue} waits for ${tags(open)} to merge. It can start stacked on #${plan.on.issue} (PR #${plan.on.pr}), and the record has ${sub.stackedOn === undefined ? 'no stack for it' : `it stacked on #${sub.stackedOn}`}, so its worker did not start from that branch. Nothing changed. Repair: call mcp__ndev__epicBrief with issue ${epic.epic}, sub ${sub.issue} and role "implementer", start the worker with the command it gives, then call epicIssue again.`)
+        // The blockers merged after a stacked brief: the worktree is on the old branch, which the verify checks handle.
         const inFlight = Object.values(epic.issues).filter(i => IN_FLIGHT.includes(i.state))
         if (inFlight.length >= epic.parallel) throw new Refuse(`Refused: all ${epic.parallel} parallel places are taken by ${tags(inFlight.map(i => i.issue))}. Nothing changed. Repair: wait for one to merge, or ask the human to raise parallel (epicStarted with parallel).`)
         if (!worker) throw new Refuse(`Refused: "implementing" needs worker, the dispatch id of the implementer. Nothing changed.`)
@@ -717,6 +807,17 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
           sub.mergedUnverified = true
           extra = `\nA human merged PR #${sub.pr}${sub.mergeSha ? ` (merge commit ${sub.mergeSha})` : ''} while #${sub.issue} was in "${from}", so the verify checks did not run and the record says so. If the PR added migrations, ndev:merge did not run them: check them with the human.`
         }
+        const above = Object.values(epic.issues).filter(i => i.stackedOn === sub.issue && i.state !== 'merged').sort((a, b) => a.issue - b.issue)
+        if (above.length) {
+          let base = '<the default branch>'
+          try {
+            base = await defaultBranch($, epic.root, epic.repo)
+          } catch (e) {
+            extra += `\nThe default branch was not read (${(e instanceof Error ? e.message : String(e)).slice(0, 200)}): put it in the place of ${base} below.`
+          }
+          const told = (i: SubIssue) => `- ${tag(i.issue)} (${i.state}${i.pr ? `, PR #${i.pr}` : ', no PR recorded'}): ${i.implementer ? `\`orca orchestration send --to dispatch:${i.implementer}\`` : 'send its implementer'} this: "PR #${sub.pr} of #${sub.issue} is merged, so #${i.issue} is no longer stacked on origin/${pr.head.ref}. Now ${unstackSteps(epic.repo, base, i.pr ? String(i.pr) : '<your PR>')}. Report when it is done."`
+          extra += `\nStacked on #${sub.issue}: ${tags(above.map(i => i.issue))}. Each has the change of #${sub.issue} in its branch and a PR based on ${pr.head.ref}. Tell each worker now:\n${above.map(told).join('\n')}\nThe record keeps stackedOn for each until epicIssue moves it to "verified", which refuses while the base of its PR is not ${base}.`
+        }
         break
       }
     }
@@ -737,6 +838,11 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
   let body = ''
   // A merged PR has its own refusal: its old checks say nothing, and the repair is another move.
   let merged: Refuse | undefined
+  let main = '<the default branch>'
+  let wrongBase = false
+  const under = sub.stackedOn === undefined ? undefined : epic.issues[String(sub.stackedOn)]
+  const early = under && under.state !== 'merged' ? under : undefined
+  if (early) failed.push(`it is stacked on #${early.issue}, which is "${early.state}" and not merged in the record`)
   try {
     const pr = await readPr($, epic.root, epic.repo, n)
     body = pr.body ?? ''
@@ -744,6 +850,17 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
     if (pr.state !== 'open') failed.push(`the PR is ${pr.state}`)
     else if (pr.draft) failed.push('the PR is a draft')
     else passed.push('open and not a draft')
+    // A PR on another base merges into that branch, not into the default branch, so it is never verified.
+    try {
+      main = await defaultBranch($, epic.root, epic.repo)
+      if (!pr.base?.ref) notRun.push('base: GitHub gave no base branch for the PR')
+      else if (pr.base.ref !== main) {
+        wrongBase = true
+        failed.push(`the base is "${pr.base.ref}", not the default branch "${main}"`)
+      } else passed.push(`base is ${main}`)
+    } catch (e) {
+      notRun.push(`base: the default branch was not read: ${error(e)}`)
+    }
     if (pr.mergeable === true) passed.push('mergeable')
     else if (pr.mergeable === false) failed.push(`not mergeable (${pr.mergeable_state ?? 'unknown'})`)
     else notRun.push('mergeable: GitHub has not computed it yet')
@@ -770,17 +887,23 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
     notRun.push(`migrations: the changed files of PR #${n} were not read: ${error(e)}`)
   }
   const report = [`Passed: ${passed.join('; ') || 'none'}.`, `Failed: ${failed.join('; ') || 'none'}.`, `Not run: ${notRun.join('; ') || 'none'}.`].join('\n')
-  if (!failed.length && !notRun.length) return report
+  if (!failed.length && !notRun.length) {
+    // The PR is on the default branch and what it was stacked on is merged: the stack is over.
+    delete sub.stackedOn
+    return report
+  }
   const repairs = [
+    ...(early ? [`merge PR #${early.pr} of #${early.issue} first and call epicIssue with sub ${early.issue} and state "merged"`] : []),
+    ...(wrongBase ? [`the implementer of #${sub.issue} must ${unstackSteps(epic.repo, main, String(n))}`] : []),
     ...(missingMigrations.length ? [`the implementer must add each migration with mcp__ndev__addMigration, so the PR body lists it`] : []),
     ...(notRun.length ? ['run the verify again when GitHub answers'] : []),
-    ...(failed.length && !missingMigrations.length ? ['send the failures to the implementer, or move the issue to "fixing"'] : []),
+    ...(failed.length && !missingMigrations.length && !early && !wrongBase ? ['send the failures to the implementer, or move the issue to "fixing"'] : []),
   ]
   throw new Refuse(`Refused: PR #${n} for #${sub.issue} is not verified. Nothing changed.\n${report}\nRepair: ${repairs.join('; ')}.`)
 }
 
 function statusText(epic: Epic): string {
-  const rows = Object.values(epic.issues).sort((a, b) => a.issue - b.issue).map(i => `- #${i.issue} "${i.title}": ${i.state}${i.pr ? `, PR #${i.pr}` : ''}${i.rounds ? `, ${i.rounds} rounds` : ''}${i.blockedBy.length ? `, after ${tags(i.blockedBy)}` : ''}${i.remote ? `, on ${i.remote.name}` : ''}${i.state === 'blocked' && i.note ? ` (${i.note})` : ''}`)
+  const rows = Object.values(epic.issues).sort((a, b) => a.issue - b.issue).map(i => `- #${i.issue} "${i.title}": ${i.state}${i.pr ? `, PR #${i.pr}` : ''}${i.rounds ? `, ${i.rounds} rounds` : ''}${i.blockedBy.length ? `, after ${tags(i.blockedBy)}` : ''}${i.remote ? `, on ${i.remote.name}` : ''}${i.stackedOn ? `, stacked on ${tag(i.stackedOn)}` : ''}${i.state === 'blocked' && i.note ? ` (${i.note})` : ''}`)
   const place = epic.remote ? `\nNew sub-issues start on the saved Orca server ${served(epic.remote)}${epic.remoteRepo ? `, repository ${epic.remoteRepo}` : ' (remoteRepo is not recorded)'}.` : ''
   return `Epic #${epic.epic} "${epic.title}" in ${epic.root} is in the state "${epic.state}". Next: ${epicStep(epic)}${place}${rows.length ? `\nSub-issues:\n${rows.join('\n')}` : ''}`
 }
@@ -838,16 +961,16 @@ const SPECS: Spec[] = [
     },
     required: ['issue', 'finished', 'evidence'],
   },
-  { name: 'epicNext', description: 'Read-only: the sub-issues that can start now, what is in flight, and what waits or is blocked.', properties: { issue: num('The epic issue') }, required: ['issue'] },
+  { name: 'epicNext', description: 'Read-only: the sub-issues that can start now, from the default branch or stacked on the PR branch of a blocker that is not merged, what is in flight, and what waits or is blocked.', properties: { issue: num('The epic issue') }, required: ['issue'] },
   {
     name: 'epicBrief',
-    description: 'Write the brief for a worker of one sub-issue to a file, and answer with its path and the orca orchestration worker-start command to run.',
+    description: 'Write the brief for a worker of one sub-issue to a file, and answer with its path and the orca orchestration worker-start command to run. An implementer whose blocker has a pushed PR that is not merged starts from the branch of that PR, and the record keeps the stack.',
     properties: { issue: num('The epic issue'), sub: num('The sub-issue'), role: { type: 'string', enum: ['implementer', 'reviewer'] }, pr: num('reviewer only: the PR, when the record has none yet') },
     required: ['issue', 'sub', 'role'],
   },
   {
     name: 'epicIssue',
-    description: 'Record a move of one sub-issue: waiting→implementing, implementing→reviewing, reviewing→fixing, fixing→reviewing, reviewing→verified (runs the verify checks), verified→merged, reviewing or fixing→merged (only when a human already merged the PR), any→blocked and back. The same state with workspace records the workspace only.',
+    description: 'Record a move of one sub-issue: waiting→implementing, implementing→reviewing, reviewing→fixing, fixing→reviewing, reviewing→verified (runs the verify checks, which refuse a PR whose base is not the default branch), verified→merged (names each sub-issue stacked on it and what to tell its worker), reviewing or fixing→merged (only when a human already merged the PR), any→blocked and back. The same state with workspace records the workspace only.',
     properties: {
       issue: num('The epic issue'),
       sub: num('The sub-issue'),
