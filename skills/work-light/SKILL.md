@@ -97,6 +97,7 @@ If baseline health matters, check it once on the base commit. An unrelated basel
 - Documentation-only changes need validation of the artefact, not artificial failing tests.
 - Never hide a failure, weaken a rule, or add a recovery path that nobody approved.
 - Every error message prints the failed identifier and useful diagnostics. When the repair is known, the message names it.
+- Do not write comments in code. The only exception is a fact that took a lot of research or trial and error to find; if you are not sure, leave it out. The rule is `${CLAUDE_PLUGIN_ROOT}/kb/comments.md`.
 
 ## Finish once
 

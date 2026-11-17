@@ -33,7 +33,7 @@ This knowledge base holds the development method that the plugin's skills and ag
 | [ci.md](ci.md) | The gates and what each proves, proof that each test ran, local gate versus CI, diff scoping, main health, cost, preview and deploy gates, self-hosted runners. |
 | [logging.md](logging.md) | The level ladder, the healthy ratio, the write rules, the logging guard. |
 | [type-safety.md](type-safety.md) | Every rule at zero, one command, typed JSON boundaries, the traps. |
-| [comments.md](comments.md) | When a comment earns its place, and the deletion test. |
+| [comments.md](comments.md) | No comments in code by default; the one exception, and the deletion test. |
 | [architecture.md](architecture.md) | Layering, transaction size, sessions across network calls. |
 | [local-dev.md](local-dev.md) | The local stack refuses to start half-configured; run commands from the tree you test. |
 | [deployment.md](deployment.md) | Vercel lessons: production and previews, migrations versus merges, a build that fails closed, checks before a release tag. |

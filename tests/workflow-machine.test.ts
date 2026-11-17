@@ -372,3 +372,14 @@ test('the notice sets the Orca flag while the wait is past half', async () => {
   expect(view.comment).toContain('PR #44')
   expect(orcaView({ issue: 7, prs: [], state: 'wait', waiting: { what: 'x' } }).attention).toBe(false)
 })
+
+test('the steps that write code say to write no comments, with the one exception', () => {
+  for (const mode of ['light', 'heavy', 'hack'] as const) {
+    for (const state of ['developing', 'hardening'] as const) {
+      if (state === 'hardening' && mode !== 'hack') continue
+      const step = nextStep(state, facts({ mode }))
+      expect(step).toContain('Do not write comments in code')
+      expect(step).toContain('took a lot of research or trial and error')
+    }
+  }
+})

@@ -19,6 +19,7 @@ You implement **one self-contained task** end to end, in the temporary worktree 
 `isolation: worktree` gives you an isolated copy of the repository branched from the default branch. That is correct here because the task stands alone. `issue-implementer` and `tdd-implementer` share a `claude/issue-<n>` branch, so they manage worktrees themselves.
 
 - **Plan briefly** for anything non-trivial. Then work **test-first** (`mattpocock-skills:tdd`, preloaded): failing test → watch it fail for the intended reason → minimal code → run → commit.
+- **Do not write comments in code.** The only exception is a fact that took a lot of research or trial and error to find; if you are not sure, leave it out. The rule is `${CLAUDE_PLUGIN_ROOT}/kb/comments.md`.
 - **Verify before you claim done.** Run the relevant suites again, fresh, with 0 failures. Read the exit status yourself.
 - **Finish as a PR.** Never merge. Never push to the default branch. Every commit carries the commit trailer that the repository or session requires.
 - **Open ONE PR, never a second.** A related discovery of any size becomes a sub-issue that your PR carries: comment `Carried by #<pr>` on it, move its card to In progress, add `Closes #<child>` to your PR body, and give it to a `tdd-implementer` teammate on your branch. An unrelated discovery becomes a plain issue with no PR.
