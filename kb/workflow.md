@@ -606,6 +606,36 @@ The name is `/flow`, not `/ndev:workflow` or `/workflow`. The engine refuses a c
 
 If you skip `reviewing`, the held commit is not pushed yet. The agent pushes it with `checkpoint` and no files, and `finishedChecks` tells it to do this.
 
+## What the human can do next
+
+Each tool answer, `/flow status`, `/flow epic status` and each reminder ends with a `Tell the human:` line: the options that the human has in this state. In interactive steering the agent ends its turn with these options. In auto steering it goes on, and gives the options when it reports. The code is `humanStep` in `hooks/workflow/machine.ts` and `epicHumanStep` in `hooks/workflow/epic.ts`. A test checks that each state has a message and a row here.
+
+| State | The human can |
+|---|---|
+| `setup` | Wait, or run `/flow off <reason>` to work without the workflow. |
+| `interviewing` | Answer in the interview pane or the chat, or run `/flow skip <reason>`. In auto steering: run `/flow steering interactive` to take part. |
+| `planning` | Read the plan in the draft PR, then say go or ask for changes. |
+| `developing` | Wait, send a correction, or run `/flow status`. Light mode: run `/flow mode heavy` if the work has grown. Hack mode: say when the solution works. |
+| `hardening` | Wait, send a correction, or run `/flow status`. |
+| `developed` | Wait for the other issues on the PR, or tell the agent to take one. |
+| `reviewing` | Wait, then read the findings and fixes on the PR. |
+| `ci` | Wait, open the PR to watch the checks, or run `/flow status`. |
+| `smoke` | Wait, or try the preview and send what you find. |
+| `finishing` | Wait, or add review comments on the PR. |
+| `done` | Read the PR and merge it (or tell the agent to merge, where the level lets it), or add review comments. When merged: start the next issue. |
+| `revising` | Add more comments on the PR, or wait for the replies. |
+| `blocked` | Do what the block asks, then run `/unblock <answer>`, or `/flow goto <state>`. |
+| `wait` | Wait, or run `/unblock <message>` to end the wait now. |
+| epic `framing` | Answer the questions on what the epic is for, and name the sources of its requirements. |
+| epic `researching` | Wait for the notes, or point the agent at what it should read. |
+| epic `specifying` | Wait for the spec, then read it. Send a correction at any time. |
+| epic `deciding` | Settle each open decision: pick an option, or ask for more detail. |
+| epic `spec-review` | Read the review and each ruling. Agree, or overrule a ruling. |
+| epic `slicing` | Approve the proposed sub-issues, or ask for changes before they are filed. |
+| epic `coordinating` | Run `/flow epic status`. Answer a blocked sub-issue, review or merge a verified PR, or let the coordinator merge it. |
+| epic `closing` | Read the closing report, then ask for more checks or agree to close. |
+| epic `done` | Close the epic issue if it is open, and file what remains as new issues. |
+
 ## The epic workflow
 
 An epic is one issue that is planned once and built as many sub-issues. One session is its **coordinator**: it plans, decides, verifies and merges, and it writes no product code. Orca workers implement and review each sub-issue. The coordinator session leaves the usual one-issue workflow and follows this one; each implementer worker stays under the usual workflow in its own worktree.

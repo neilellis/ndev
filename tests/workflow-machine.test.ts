@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, boardColumn, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep } from '../hooks/workflow/machine'
+import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, boardColumn, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep, humanStep, STATES } from '../hooks/workflow/machine'
 import type { Facts, State, Tool } from '../hooks/workflow/machine'
 import { inferChangeTypes, isDocsOnly, pagesOf, reviewerBrief } from '../hooks/workflow/change-types'
 
@@ -162,6 +162,23 @@ test('the next step names the tool to call, and it follows the settings', () => 
   expect(nextStep('done', facts())).toContain('human')
 })
 
+test('every state tells the human what they can do next, in each mode and steering', () => {
+  for (const mode of ['light', 'heavy', 'hack'] as const) for (const steering of ['interactive', 'auto'] as const) for (const state of STATES) {
+    const human = humanStep(state, facts({ mode, steering }))
+    expect(human.length).toBeGreaterThan(20)
+    expect(nextStep(state, facts({ mode, steering }))).toContain(`Tell the human: ${human}`)
+  }
+  // Interactive steering ends the turn with the options; auto goes on.
+  expect(nextStep('developing', facts({ steering: 'interactive' }))).toContain('End your turn with')
+  expect(nextStep('developing', facts({ steering: 'auto' }))).not.toContain('End your turn with')
+  // The options follow the state and the facts.
+  expect(humanStep('blocked', facts())).toContain('/unblock')
+  expect(humanStep('wait', facts())).toContain('/unblock')
+  expect(humanStep('interviewing', facts({ steering: 'interactive' }))).toContain('/flow skip')
+  expect(humanStep('done', facts({ level: 'formal_project' }))).toContain('merge')
+  expect(humanStep('done', facts({ merged: true }))).not.toContain('merge the PR')
+})
+
 test('the attempt limit is three, as the flow chart says', () => {
   expect(ATTEMPT_LIMIT).toBe(3)
 })
@@ -194,8 +211,10 @@ test('a level that may merge has an interactive plan go straight on', () => {
 
 test('the last step says who merges', () => {
   expect(nextStep('finishing', facts({ level: 'poc' }))).toContain('merges')
-  expect(nextStep('done', facts({ level: 'formal_project' }))).toContain('human')
-  expect(nextStep('done', facts({ level: 'straw_man' }))).not.toContain('human')
+  // Every step now ends with "Tell the human:", so match the words that name who merges.
+  expect(nextStep('done', facts({ level: 'formal_project' }))).toContain('waits for a human to merge')
+  expect(nextStep('done', facts({ level: 'straw_man' }))).not.toContain('waits for a human to merge')
+  expect(nextStep('done', facts({ level: 'straw_man' }))).toContain('lets you merge')
 })
 
 // ---- /flow skip ----

@@ -384,10 +384,34 @@ function stepText(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level'
   }
 }
 
+// What the human can do next in each state, as options. kb/workflow.md "What the human can do next" lists them.
+export function humanStep(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level' | 'merged'>): string {
+  switch (state) {
+    case 'setup': return 'The agent is setting up the workflow. Wait, or run /flow off <reason> to work on this issue without the workflow.'
+    case 'interviewing': return facts.steering === 'auto' ? 'Steering is auto, so the agent skips the interview. Run /flow steering interactive to take part.' : 'Answer the questions in the interview pane or in the chat. Or run /flow skip <reason> to go on without the interview.'
+    case 'planning': return 'Wait for the plan in the draft PR. Then say go, or ask for changes.'
+    case 'developing': return facts.mode === 'hack' ? 'Try the change with the agent, and say when the solution works: the agent then hardens it with tests. Or send a correction.' : `The agent develops test first. Wait, or send a correction. Run /flow status to see progress.${facts.mode === 'light' ? ' If the work has grown, run /flow mode heavy.' : ''}`
+    case 'hardening': return 'The agent pins the hack with tests. Wait, or send a correction. Run /flow status to see progress.'
+    case 'developed': return 'This issue waits for the other issues on its PR. Wait, or tell the agent to take one of them.'
+    case 'reviewing': return 'An independent review of the change runs. Wait, then read the findings and the fixes on the PR.'
+    case 'ci': return 'The checks of the PR run. Wait, or open the PR to watch them. Run /flow status to see progress.'
+    case 'smoke': return 'The agent tests the running change. Wait, or try the preview yourself and send what you find.'
+    case 'finishing': return 'The agent does the last checks. Wait, or add review comments on the PR: the agent answers each one.'
+    case 'done':
+      if (facts.merged) return 'The work is merged. Start the next issue, or close the session.'
+      return mayMerge(facts.level) ? 'The PR is ready. Read it and tell the agent to merge it, or merge it yourself. Or add review comments: the agent answers each one.' : 'The PR is ready for you. Read it and merge it, or add review comments: the agent answers each one. Then start the next issue.'
+    case 'revising': return 'The agent answers your review comments. Add more comments on the PR, or wait for the replies.'
+    case 'blocked': return 'Do what the block message asks, then run /unblock <your answer>. Or run /flow goto <state> to move the workflow yourself.'
+    case 'wait': return 'The agent waits for a process or a check. Wait, or run /unblock <message> to end the wait now.'
+  }
+}
+
 export function nextStep(state: State, facts: Facts): string {
   const step = stepText(state, facts)
-  if (state === 'done' || state === 'blocked' || state === 'wait') return step
+  const human = `Tell the human: ${humanStep(state, facts)}`
+  const options = facts.steering === 'interactive' ? `End your turn with these options for the human. ${human}` : `When you report to the human, give these options. ${human}`
+  if (state === 'done' || state === 'blocked' || state === 'wait') return `${step} ${options}`
   // A question at the end of a turn stops the work until the human answers it, and that human may be away.
   const question = 'Do not ask permission for a step that the plan already allows. If only the human can answer a question, call blocked.'
-  return facts.steering === 'interactive' ? `${step} Report this checkpoint to the human in a short line. ${question}` : `${step} Continue without waiting. ${question}`
+  return facts.steering === 'interactive' ? `${step} Report this checkpoint to the human in a short line. ${question} ${options}` : `${step} Continue without waiting. ${question} ${options}`
 }

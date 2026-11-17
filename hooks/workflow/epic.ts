@@ -141,8 +141,27 @@ export function frontierText(epic: Epic): string {
   ].join('\n')
 }
 
+// What the human can do next in each epic state, as options. kb/workflow.md "What the human can do next" lists them.
+export function epicHumanStep(epic: Epic): string {
+  switch (epic.state) {
+    case 'framing': return 'Answer the agent\'s questions on what the epic is for, and name the sources of its requirements.'
+    case 'researching': return 'Wait for the research notes, or point the agent at code, documents or people it should read.'
+    case 'specifying': return 'Wait for the spec, then read it. Send a correction at any time.'
+    case 'deciding': return 'Settle each open decision with the agent: pick an option, or ask for more detail.'
+    case 'spec-review': return 'Read the spec review and the agent\'s ruling on each finding. Agree, or overrule a ruling.'
+    case 'slicing': return 'Read the proposed sub-issues, then approve them or ask for changes before they are filed.'
+    case 'coordinating': return 'Run /flow epic status to see each sub-issue. Answer a blocked sub-issue, review or merge a verified PR, or let the coordinator merge it.'
+    case 'closing': return 'Wait for the closing report, then read it: what was verified, and what remains. Ask for more checks, or agree to close.'
+    case 'done': return 'The epic is done. Close the epic issue if it is open, and file what remains as new issues.'
+  }
+}
+
 // The next step for each state, which names the skill to load.
 export function epicStep(epic: Epic): string {
+  return `${epicAgentStep(epic)} End your turn with these options for the human. Tell the human: ${epicHumanStep(epic)}`
+}
+
+function epicAgentStep(epic: Epic): string {
   const n = epic.epic
   const phase = (finished: EpicState, needs: string) => `call mcp__ndev__epicPhase with issue ${n}, finished "${finished}", ${needs}.`
   switch (epic.state) {

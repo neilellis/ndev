@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EPIC_STATES, addedMigrations, epicLineOf, epicStep, frontier, implementerBrief, nextEpicState, reviewerBrief, shellQuote, sliceProblems, unlistedMigrations, workerStartCommand } from '../hooks/workflow/epic'
+import { EPIC_STATES, addedMigrations, epicHumanStep, epicLineOf, epicStep, frontier, implementerBrief, nextEpicState, reviewerBrief, shellQuote, sliceProblems, unlistedMigrations, workerStartCommand } from '../hooks/workflow/epic'
 import type { Epic, SubIssue } from '../hooks/workflow/epic'
 
 type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
@@ -67,6 +67,16 @@ test('the next step names the plan skill up to slicing, and the coordinate skill
   for (const state of ['framing', 'researching', 'specifying', 'deciding', 'spec-review', 'slicing'] as const) expect(epicStep(epicOf({ state }))).toContain('ndev:epic-plan')
   for (const state of ['coordinating', 'closing'] as const) expect(epicStep(epicOf({ state }))).toContain('ndev:epic-coordinate')
   expect(epicStep(epicOf({ state: 'framing' }))).toContain('mcp__ndev__epicPhase')
+})
+
+test('every epic state tells the human what they can do next', () => {
+  for (const state of EPIC_STATES) {
+    const human = epicHumanStep(epicOf({ state }))
+    expect(human.length).toBeGreaterThan(20)
+    expect(epicStep(epicOf({ state }))).toContain(`Tell the human: ${human}`)
+  }
+  expect(epicHumanStep(epicOf({ state: 'slicing' }))).toContain('approve')
+  expect(epicHumanStep(epicOf({ state: 'coordinating' }))).toContain('/flow epic status')
 })
 
 test('the system line names the epic, its root, its state, the role and the next step', () => {
