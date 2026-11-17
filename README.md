@@ -157,6 +157,21 @@ lists each option. The guide is [kb/workflow.md](kb/workflow.md).
 
 Each failure names the step, the command, its exit code and output, the repair, and what the earlier steps did. When the box is off or paused, the failure also gives the `worker-start` command for each worker. Options: `--context`, `--server <Orca server>` (else the project's `/dev remote`), `--ssh`, `--agent <agent>` (for a worker whose agent Orca does not record) and `--yes`.
 
+## Use the workflow in another agent harness: `/dev export`
+
+`/dev export <harness> [--out <dir>] [--dry-run]` makes the plugin's skills, agents and workflow work in an agent harness that is not Claude Code. The harnesses with a profile are `codex`, `opencode` and `opencode2` (the same as `opencode`); the profiles are in `scripts/export/harnesses/`. Another harness needs `--skills-dir <dir>`, and `--agents-dir <dir>` if it has agents.
+
+The command has two parts:
+
+1. **The copy.** `scripts/export/export.mjs` copies each skill as `ndev-<name>` to the folder that the harness reads (`~/.agents/skills` for Codex, `~/.config/opencode/skills` for opencode), and each agent in the harness's format (`~/.codex/agents/*.toml`, `~/.config/opencode/agents/*.md`). The scripts, `kb/` and the workflow CLI go to `~/.ndev-export/<harness>/`. `--out <dir>` puts all of them under one folder. It changes each `${CLAUDE_PLUGIN_ROOT}` path to the exported files, each `ndev:<skill>` to `ndev-<skill>`, and each `mcp__ndev__<tool>` call to a command of the workflow CLI.
+2. **The adapter.** This session then reads `leftovers.json`, which lists each Claude-only construct that the copy did not change (a slash command, a subagent call, a question dialog), adapts those files for the harness, and verifies the install with the harness's own CLI (for Codex, `codex debug prompt-input`).
+
+Each generated file starts with a stamp that names the plugin version, the commit and the date, and says to run `/dev export <harness>` again to regenerate it. `manifest.json` in the export home lists the files of the export. A second export replaces them and removes those that the plugin no longer has. It refuses to overwrite a file that it did not generate: it names the file, writes nothing and exits 3. `--dry-run` writes nothing and gives the counts. The adapter's edits are lost at the next export, so an edit that applies to many files belongs in the export rules.
+
+**The workflow CLI.** `~/.ndev-export/<harness>/bin/ndev-flow` does the work of the `mcp__ndev__*` tools: `started`, `interview`, `finishedInterview`, `finishedPlan`, `checkpoint`, `finishedHacking`, `finishedDevelopment`, `finishedReview`, `finishedChecks`, `finishedSmoke`, `finishedRevision`, `done`, `blocked`, `unblocked`, `followUp`, `comment`, `addMigration`, `requestSecret`, `setSteering` and `status`, with the human's `skip`, `goto`, `mode` and `steering`. Flags have the form `--name value`; `ndev-flow help` lists them. It runs on a copy of the plugin's own state machine (`hooks/workflow/machine.ts`) and keeps the record in the same `.neil-dev.issue-<n>.json` file. It runs the same check scripts and opens the draft PR. After each command, it prints the state and the next step. A move that the state machine refuses exits 1 and changes nothing. A failed check exits 1 and names the script, its exit code and its log.
+
+Some parts need Claude Code, and the CLI says what to do instead. The interview pane becomes a question in the chat. In place of the review subagents, `finishedDevelopment` starts the harness's `reviewCommand` in the background and gives the wait command. In place of the CI watcher, the agent waits with `scripts/github/wait-for-pr-change.sh`, because nothing watches the PR between commands. Screenshots, epics, the wait tools, hotfix and Orca follow-ups exit 2 with what to do instead.
+
 ## Per-project settings: `.neil-dev.json`
 
 All the plugin's settings for a project live in one file at the project root, checked in with

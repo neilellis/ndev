@@ -21,6 +21,7 @@ import { learnAfterPush } from './learn'
 import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { interviewPane } from './workflow/interview'
+import { exportCommand, EXPORT_ARGUMENT_HINT, EXPORT_HELP } from './export'
 import { remoteCommand, REMOTE_ARGUMENT_HINT, REMOTE_HELP } from './remote'
 import { startTriage, triage, triageCommand, TRIAGE_ARGUMENT_HINT, TRIAGE_HELP } from './triage'
 import { showIdleStatus } from './workflow/progress'
@@ -252,6 +253,7 @@ async function helpText($: EngineInterface) {
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
     ...TRIAGE_HELP,
     ...REMOTE_HELP,
+    ...EXPORT_HELP,
     '  /dev-mode, /dev-steering and /dev-setup are the same as /dev mode, /dev steering and /dev setup.',
     '',
     `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
@@ -333,8 +335,8 @@ export const register: Register = (on, options) => {
     startComponentCheck()
     await $.command.register({
       name: 'dev',
-      description: 'ndev: help, setup, mode, steering, triage and remote (runs the set-up first if this project is not set up)',
-      argumentHint: `[help|setup|mode [light|heavy|hack]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}|${REMOTE_ARGUMENT_HINT}]`,
+      description: 'ndev: help, setup, mode, steering, triage, remote and export (runs the set-up first if this project is not set up)',
+      argumentHint: `[help|setup|mode [light|heavy|hack]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}|${REMOTE_ARGUMENT_HINT}|${EXPORT_ARGUMENT_HINT}]`,
     })
     await $.command.register({
       name: 'dev-mode',
@@ -428,7 +430,8 @@ export const register: Register = (on, options) => {
     if (word === 'help') return { text: await helpText($) }
     if (word === 'triage') return triageCommand($, args, () => project)
     if (word === 'remote') return remoteCommand($, args, project)
-    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering, /dev triage or /dev remote.` }
+    if (word === 'export') return exportCommand($, args)
+    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering, /dev triage, /dev remote or /dev export.` }
     if (project !== undefined && !project.error && missingGitHub(project.config).length > 0) return { text: await setup($, false) }
     return { text: await helpText($) }
   }).catch(($, e, next) => ({
@@ -465,7 +468,7 @@ export const register: Register = (on, options) => {
       githubText(project?.config.github),
       WIKI_TEXT,
       REPORT_TEXT,
-      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /dev triage start.',
+      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /dev triage start, and exports the workflow to another agent harness with /dev export <harness>.',
     ]
       .filter(Boolean)
       .join('\n\n')

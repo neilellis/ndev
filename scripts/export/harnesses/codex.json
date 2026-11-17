@@ -1,0 +1,13 @@
+{
+  "name": "codex",
+  "aliases": [],
+  "skillsDir": "~/.agents/skills",
+  "agentsDir": "~/.codex/agents",
+  "agentFormat": "codex-toml",
+  "instructionsFile": "~/.codex/AGENTS.md",
+  "reviewCommand": "codex exec --sandbox read-only --output-last-message {out} < {brief}",
+  "verify": "codex debug prompt-input hi",
+  "verifyExpect": "- ndev-work-light: ",
+  "askHuman": "Ask the human in the chat and end your turn.",
+  "notes": "Codex reads user skills from ~/.agents/skills and follows symlinked skill folders. Custom agents are ~/.codex/agents/*.toml with name, description and developer_instructions; they inherit the parent's sandbox, so a read-only reviewer runs as codex exec --sandbox read-only. The instructions file is AGENTS.md. Hooks are ~/.codex/hooks.json."
+}

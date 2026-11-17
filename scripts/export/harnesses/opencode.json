@@ -1,0 +1,13 @@
+{
+  "name": "opencode",
+  "aliases": ["opencode2"],
+  "skillsDir": "~/.config/opencode/skills",
+  "agentsDir": "~/.config/opencode/agents",
+  "agentFormat": "opencode-md",
+  "instructionsFile": "~/.config/opencode/AGENTS.md",
+  "reviewCommand": "opencode run --archived --agent ndev-diff-reviewer --file {brief} 'Review the change as the attached brief says.' > {out}",
+  "verify": null,
+  "verifyExpect": null,
+  "askHuman": "Ask the human in the chat and end your turn.",
+  "notes": "opencode v2 (also called opencode2) reads skills from ~/.config/opencode/skills, ~/.claude/skills and ~/.agents/skills; the skill id is the folder name, and a later source overrides the same id. Agents are ~/.config/opencode/agents/<id>.md with description, mode (primary, subagent or all) and permissions; the id is the file name. The instructions file is AGENTS.md only. There are no shell hooks: plugins are TypeScript in ~/.config/opencode/plugins. In v2.3.0 the skill listing (opencode api --standalone GET /api/skill) returned an empty list even for installed skills, so do not trust it as a check."
+}

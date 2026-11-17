@@ -1,0 +1,409 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const PLUGIN = resolve(HERE, '../../..')
+const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh']
+const fresh = () => mkdtempSync(join(tmpdir(), 'ndev-flow-'))
+
+function exportHome() {
+  const out = fresh()
+  const ran = spawnSync('node', [join(PLUGIN, 'scripts/export/export.mjs'), 'codex', '--out', out], { encoding: 'utf8' })
+  assert.equal(ran.status, 0, ran.stderr)
+  const home = join(out, 'home')
+  const profileFile = join(home, 'flow/profile.json')
+  const profile = JSON.parse(readFileSync(profileFile, 'utf8'))
+  writeFileSync(profileFile, JSON.stringify({ ...profile, reviewCommand: 'cat {brief} > {out}' }))
+  return home
+}
+const HOME = exportHome()
+
+const FAKE_GH = `#!/bin/bash
+echo "$*" >> "$FAKE_GH_LOG"
+case "$1" in
+  repo) echo '{"repo":"o/r"}' ;;
+  default-branch) echo '{"default_branch":"main"}' ;;
+  issue-read) echo '{"number":12,"title":"Add a thing","state":"open","body":"Make the thing.","url":"https://github.com/o/r/issues/12"}' ;;
+  pr-list) ;;
+  pr-new) echo '{"url":"https://github.com/o/r/pull/7"}' ;;
+  pr-edit) echo '{"number":7,"url":"https://github.com/o/r/pull/7"}' ;;
+  pr-read) cat "$FAKE_PR" ;;
+  feedback) cat "$FAKE_FEEDBACK" ;;
+  pr-ready) echo "ready" ;;
+  commit-checks) cat "$FAKE_CHECKS" ;;
+  comment) echo "https://github.com/o/r/issues/7#issuecomment-1" ;;
+  issue-new) echo '{"number":30,"url":"https://github.com/o/r/issues/30"}' ;;
+  *) echo "fake gh.sh: no answer for $1" >&2; exit 9 ;;
+esac
+`
+const CHECK = `#!/bin/sh
+echo "$(basename "$0") $*" >> "$CHECK_LOG"
+case "$0" in *"$FAIL_CHECK") [ -n "$FAIL_CHECK" ] && { echo "lint failed in $*" >&2; exit 1; } ;; esac
+exit 0
+`
+
+const git = (cwd, ...args) => {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`)
+  return r.stdout.trim()
+}
+
+function project({ scripts = true, config = { steering: 'auto' } } = {}) {
+  const dir = fresh()
+  const origin = join(dir, 'origin.git')
+  const work = join(dir, 'work')
+  git(dir, 'init', '-q', '--bare', '-b', 'main', origin)
+  git(dir, 'clone', '-q', origin, work)
+  git(work, 'config', 'user.email', 'flow@example.com')
+  git(work, 'config', 'user.name', 'Flow Test')
+  writeFileSync(join(work, 'README.md'), 'project\n')
+  writeFileSync(join(work, '.gitignore'), '.neil-dev.*\n')
+  if (config) writeFileSync(join(work, '.neil-dev.json'), JSON.stringify(config))
+  if (scripts) {
+    mkdirSync(join(work, 'scripts/ndev/workflow'), { recursive: true })
+    for (const name of CHECKS) {
+      writeFileSync(join(work, 'scripts/ndev/workflow', name), CHECK)
+      chmodSync(join(work, 'scripts/ndev/workflow', name), 0o755)
+    }
+  }
+  git(work, 'add', '-A')
+  git(work, 'commit', '-q', '-m', 'base', '--no-verify')
+  git(work, 'push', '-q', 'origin', 'HEAD:main')
+  git(work, 'switch', '-q', '-c', '12-add-thing')
+  const fakeGh = join(dir, 'gh.sh')
+  writeFileSync(fakeGh, FAKE_GH)
+  const fakeMerge = join(dir, 'merge.sh')
+  writeFileSync(fakeMerge, '#!/bin/bash\necho "$*" >> "$FAKE_GH_LOG"\necho \'{"merged":true}\'\n')
+  const env = { NDEV_FLOW_GH: fakeGh, NDEV_FLOW_MERGE: fakeMerge, FAKE_GH_LOG: join(dir, 'gh.log'), FAKE_CHECKS: join(dir, 'checks.json'), FAKE_PR: join(dir, 'pr.json'), FAKE_FEEDBACK: join(dir, 'feedback.jsonl'), CHECK_LOG: join(dir, 'checks.log'), FAIL_CHECK: '' }
+  writeFileSync(env.FAKE_GH_LOG, '')
+  writeFileSync(env.CHECK_LOG, '')
+  writeFileSync(env.FAKE_FEEDBACK, '')
+  const flow = (args, extra = {}) => {
+    const r = spawnSync(join(HOME, 'bin/ndev-flow'), args, { cwd: work, encoding: 'utf8', env: { ...process.env, ...env, ...extra } })
+    return { ...r, all: `${r.stdout}\n${r.stderr}` }
+  }
+  const record = () => JSON.parse(readFileSync(join(work, '.neil-dev.issue-12.json'), 'utf8')).workflow
+  const read = name => readFileSync(env[name], 'utf8')
+  const setChecks = runs => writeFileSync(env.FAKE_CHECKS, JSON.stringify({ check_runs: runs, statuses: [] }))
+  const setPr = (fields = {}) => writeFileSync(env.FAKE_PR, JSON.stringify({ number: 7, state: 'open', merged: false, draft: false, mergeable: true, body: 'Plan.\n\nCloses #12\n', created_at: '2026-01-01T00:00:00Z', head: { sha: git(work, 'rev-parse', 'HEAD'), ref: '12-add-thing' }, ...fields }))
+  const setFeedback = comments => writeFileSync(env.FAKE_FEEDBACK, comments.map(c => JSON.stringify(c)).join('\n'))
+  const writeRecord = change => {
+    const file = join(work, '.neil-dev.issue-12.json')
+    const all = JSON.parse(readFileSync(file, 'utf8'))
+    all.workflow = change(all.workflow)
+    writeFileSync(file, JSON.stringify(all))
+  }
+  setPr()
+  return { work, origin, env, flow, record, read, setChecks, setPr, setFeedback, writeRecord }
+}
+
+const ok = (r, what) => assert.equal(r.status, 0, `${what} exited ${r.status}:\n${r.all}`)
+const CLAUDE_ONLY = [/\/flow /, /\/unblock/, /\bndev:[a-z]/, /The plugin started/, /mcp__ndev__/]
+const noClaude = r => {
+  for (const re of CLAUDE_ONLY) assert.doesNotMatch(r.stdout, re, `Claude-only text in:\n${r.stdout}`)
+}
+const until = (check, what) => {
+  const end = Date.now() + 10_000
+  while (!check()) {
+    if (Date.now() > end) assert.fail(`timed out waiting for ${what}`)
+    spawnSync('sleep', ['0.1'])
+  }
+}
+
+test('a light issue goes from started to done through the plugin state machine', () => {
+  const p = project()
+  const started = p.flow(['started', '--issue', '12', '--short-name', 'add-thing'])
+  ok(started, 'started')
+  noClaude(started)
+  assert.match(started.stdout, /State: developing/)
+  assert.match(started.stdout, /https:\/\/github\.com\/o\/r\/pull\/7/)
+  assert.match(started.stdout, /finishedInterview/)
+  const first = p.record()
+  assert.equal(first.state, 'developing')
+  assert.deepEqual(first.prs, [7])
+  assert.equal(first.repo, 'o/r')
+  assert.equal(first.base, 'main')
+  assert.equal(first.branch, '12-add-thing')
+  for (const key of ['root', 'evidence', 'attempts', 'nudges', 'followUps', 'migrations', 'history']) assert.ok(key in first, `the record has ${key}`)
+  assert.match(p.read('FAKE_GH_LOG'), /^pr-new .*--base main --head 12-add-thing/m)
+  assert.match(git(p.work, 'log', '-1', '--format=%B', 'origin/12-add-thing'), /Start work on #12[\s\S]*Ndev-Op: start-12/)
+
+  const interviewed = p.flow(['finishedInterview'])
+  ok(interviewed, 'finishedInterview')
+  assert.match(p.read('CHECK_LOG'), /pre-commit-check\.sh/)
+  assert.equal(p.record().baseCheck.exitCode, 0)
+
+  mkdirSync(join(p.work, 'src'))
+  writeFileSync(join(p.work, 'src/a.py'), 'a = 1\n')
+  const saved = p.flow(['checkpoint', '--message', 'Add a', '--files', 'src/a.py'])
+  ok(saved, 'checkpoint')
+  noClaude(saved)
+  assert.match(p.read('CHECK_LOG'), /fast-checks\.sh src\/a\.py\n.*pre-commit-check\.sh.*\n.*pre-push-check\.sh/)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), git(p.work, 'rev-parse', 'origin/12-add-thing'), 'checkpoint pushed')
+  assert.deepEqual(p.record().changeTypes, ['backend'])
+
+  writeFileSync(join(p.work, 'src/b.py'), 'b = 2\n')
+  const developed = p.flow(['finishedDevelopment', '--message', 'Add b', '--files', 'src/b.py'])
+  ok(developed, 'finishedDevelopment')
+  noClaude(developed)
+  assert.match(developed.stdout, /State: reviewing/)
+  assert.notEqual(git(p.work, 'rev-parse', 'HEAD'), git(p.work, 'rev-parse', 'origin/12-add-thing'), 'the reviewed commit waits for the review')
+  const review = p.record().exportReview
+  assert.equal(review.runs.length, 1)
+  until(() => existsSync(review.runs[0].out) && readFileSync(review.runs[0].out, 'utf8').length > 0, 'the review output')
+  const brief = readFileSync(review.runs[0].out, 'utf8')
+  assert.match(brief, /Add a thing/)
+  assert.match(brief, /git diff origin\/main\.\.\.HEAD/)
+  assert.match(developed.stdout, new RegExp(`wait_for_process_end\\.sh ${review.runs[0].pid}`))
+
+  const wrong = p.flow(['finishedChecks'])
+  assert.equal(wrong.status, 1)
+  assert.match(wrong.all, /Refused: finishedChecks is not valid in the state "reviewing"/)
+
+  const reviewed = p.flow(['finishedReview', '--review', 'No findings.', '--deadcode', 'none', '--remembered', 'nothing: a test'])
+  ok(reviewed, 'finishedReview')
+  noClaude(reviewed)
+  assert.match(reviewed.stdout, /State: ci/)
+  assert.match(reviewed.stdout, /wait-for-pr-change\.sh 7 --skip-success --json/)
+  assert.match(p.read('CHECK_LOG'), /pre-ready-check\.sh/)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), git(p.work, 'rev-parse', 'origin/12-add-thing'), 'finishedReview pushed')
+  assert.match(p.read('FAKE_GH_LOG'), /^pr-ready 7$/m)
+
+  p.setChecks([{ name: 'test', status: 'in_progress', conclusion: null, started_at: '2026-11-17T12:00:00Z' }])
+  const pending = p.flow(['finishedChecks'])
+  assert.equal(pending.status, 1)
+  assert.match(pending.all, /test/)
+  assert.match(pending.all, /wait-for-pr-change\.sh 7 --skip-success --json/)
+  p.setChecks([{ name: 'test', status: 'completed', conclusion: 'failure', started_at: '2026-11-17T12:00:00Z' }])
+  const red = p.flow(['finishedChecks'])
+  assert.equal(red.status, 1)
+  assert.match(red.all, /test \(failure\)/)
+  p.setChecks([{ name: 'test', status: 'completed', conclusion: 'success', started_at: '2026-11-17T12:00:00Z' }])
+  const green = p.flow(['finishedChecks'])
+  ok(green, 'finishedChecks')
+  assert.match(green.stdout, /State: finishing/)
+
+  p.setPr()
+  const done = p.flow(['done', '--message', 'Added the thing.'])
+  ok(done, 'done')
+  noClaude(done)
+  assert.match(done.stdout, /State: done/)
+  assert.match(p.read('FAKE_GH_LOG'), /^comment 7 --body <!-- ndev-flow -->\nndev-flow done: Added the thing\./m)
+  assert.equal(p.record().state, 'done')
+  assert.ok(p.record().history.length >= 5)
+})
+
+test('started goes to setup and names the missing check scripts and the template', () => {
+  const p = project({ scripts: false })
+  const r = p.flow(['started', '--issue', '12', '--short-name', 'add-thing'])
+  ok(r, 'started')
+  assert.match(r.stdout, /State: setup/)
+  for (const name of CHECKS) assert.match(r.stdout, new RegExp(name.replace('.', '\\.')))
+  assert.match(r.stdout, new RegExp(`${HOME}/scripts/workflow/fast-checks-template\\.sh`))
+  assert.ok(!/pr-new/.test(p.read('FAKE_GH_LOG')), 'no PR before the scripts exist')
+})
+
+test('an interactive light issue starts with the interview and asks in the chat', () => {
+  const p = project({ config: null })
+  const r = p.flow(['started', '--issue', '12', '--short-name', 'add-thing'])
+  ok(r, 'started')
+  noClaude(r)
+  assert.match(r.stdout, /State: interviewing/)
+  assert.match(r.stdout, /ndev-interview/)
+  const on = p.flow(['interview'])
+  ok(on, 'interview')
+  assert.match(on.stdout, /State: developing/)
+  assert.match(p.read('CHECK_LOG'), /pre-commit-check\.sh/, 'leaving the interview runs the base check')
+})
+
+test('a failed check stops checkpoint, names the script, its exit code and its log, and commits nothing', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  const before = git(p.work, 'rev-parse', 'HEAD')
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  const r = p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py'], { FAIL_CHECK: 'pre-commit-check.sh' })
+  assert.equal(r.status, 1, r.all)
+  assert.match(r.all, /scripts\/ndev\/workflow\/pre-commit-check\.sh exited 1/)
+  assert.match(r.all, /lint failed/)
+  assert.match(r.all, /ndev-pre-commit-check\.sh\.log/)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), before)
+})
+
+test('a tool that only the Claude plugin has is refused with what to do instead', () => {
+  const p = project()
+  for (const tool of ['screenshot', 'epicStarted', 'waitForPR', 'hotfix', 'reportWorkflowBug']) {
+    const r = p.flow([tool])
+    assert.equal(r.status, 2, `${tool}: ${r.all}`)
+    assert.match(r.stderr, /Instead|instead/, tool)
+  }
+  const unknown = p.flow(['nonsense'])
+  assert.equal(unknown.status, 2)
+  assert.match(unknown.stderr, /ndev-flow help/)
+})
+
+test('followUp issue_only files an issue and leaves the state as it was', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  const r = p.flow(['followUp', '--mode', 'issue_only', '--message', 'Fix the other thing\nIt breaks.'])
+  ok(r, 'followUp')
+  assert.match(r.stdout, /#30/)
+  assert.match(p.read('FAKE_GH_LOG'), /^issue-new --title Fix the other thing --body-file /m)
+  assert.equal(p.record().state, 'developing')
+  const worktree = p.flow(['followUp', '--mode', 'worktree', '--message', 'x'])
+  assert.equal(worktree.status, 2)
+})
+
+test('the human skips a phase and the steps say how the human acts', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  const blocked = p.flow(['blocked', '--message', 'Which colour?'])
+  ok(blocked, 'blocked')
+  noClaude(blocked)
+  assert.match(blocked.stdout, /ndev-flow unblocked/)
+  ok(p.flow(['unblocked', '--message', 'Blue.']), 'unblocked')
+  const skipped = p.flow(['skip', '--reason', 'no review needed'])
+  ok(skipped, 'skip')
+  assert.match(skipped.stdout, /State: reviewing/)
+  const status = p.flow(['status'])
+  ok(status, 'status')
+  assert.match(status.stdout, /State: reviewing/)
+})
+
+const green = p => p.setChecks([{ name: 'test', status: 'completed', conclusion: 'success', started_at: '2026-11-17T12:00:00Z' }])
+function toFinishing(p, config) {
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  ok(p.flow(['finishedDevelopment', '--message', 'Add a', '--files', 'a.py']), 'finishedDevelopment')
+  ok(p.flow(['finishedReview', '--review', 'No findings.', '--deadcode', 'none', '--remembered', 'nothing: a test']), 'finishedReview')
+  green(p)
+  p.setPr()
+  ok(p.flow(['finishedChecks']), 'finishedChecks')
+}
+
+test('the record has the shapes that the Claude plugin reads, so either one can resume the issue', () => {
+  const p = project()
+  toFinishing(p)
+  const wf = p.record()
+  for (const h of wf.history) assert.equal(typeof h.at, 'number', `history at ${JSON.stringify(h)}`)
+  assert.equal(typeof wf.owner.at, 'number')
+  assert.ok(Array.isArray(wf.deadcode.results), `deadcode ${JSON.stringify(wf.deadcode)}`)
+  assert.equal(wf.hooks.remember.result, 'nothing: a test')
+  assert.equal(typeof wf.hooks.remember.firedAt, 'number')
+  assert.equal(wf.hooks.review.result, 'No findings.')
+  const head = git(p.work, 'rev-parse', 'HEAD')
+  assert.equal(wf.evidence.review.sha, head)
+  assert.equal(typeof wf.evidence.review.text, 'string')
+  assert.deepEqual(Object.keys(wf.evidence.checks).sort(), ['sha', 'text'])
+  assert.equal(wf.evidence.checks.sha, head)
+})
+
+test('started refuses a workflow that a live Claude session owns, and --take-over takes it', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  p.writeRecord(wf => ({ ...wf, owner: { session: 'claude-session-1', at: Date.now() } }))
+  const refused = p.flow(['started', '--issue', '12'])
+  assert.equal(refused.status, 1, refused.all)
+  assert.match(refused.all, /claude-session-1/)
+  assert.match(refused.all, /--take-over true/)
+  const saved = p.flow(['checkpoint', '--message', 'x', '--files', 'README.md'])
+  assert.equal(saved.status, 1, saved.all)
+  assert.match(saved.all, /claude-session-1/)
+  ok(p.flow(['started', '--issue', '12', '--take-over', 'true']), 'take over')
+  assert.match(p.record().owner.session, /^ndev-flow:/)
+})
+
+test('started on a resumed workflow with no PR opens the PR', () => {
+  const p = project({ scripts: false })
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  ok(p.flow(['skip', '--reason', 'no checks here']), 'skip setup')
+  assert.deepEqual(p.record().prs, [])
+  const resumed = p.flow(['started', '--issue', '12'])
+  ok(resumed, 'resume')
+  assert.deepEqual(p.record().prs, [7])
+  assert.match(p.read('FAKE_GH_LOG'), /^pr-new /m)
+})
+
+test('done refuses each problem at once: a dirty tree, a draft PR at another commit, and a lost Closes line', () => {
+  const p = project()
+  toFinishing(p)
+  p.writeRecord(wf => ({ ...wf, followUps: [{ hash: '1', mode: 'this_agent', issue: 30, title: 'x' }] }))
+  writeFileSync(join(p.work, 'stray.txt'), 'x\n')
+  p.setPr({ draft: true, head: { sha: 'abcdef1234', ref: '12-add-thing' } })
+  const r = p.flow(['done', '--message', 'Done.'])
+  assert.equal(r.status, 1, r.all)
+  assert.match(r.all, /stray\.txt/)
+  assert.match(r.all, /draft/)
+  assert.match(r.all, /abcdef12/)
+  assert.match(r.all, /Closes #30/)
+  assert.equal(p.record().state, 'finishing')
+})
+
+test('done with new human feedback goes to revising, and ndev-flow comments and acks are not feedback', () => {
+  const p = project()
+  toFinishing(p)
+  p.setFeedback([
+    { id: 1, body: '<!-- ndev-flow -->\nReview of abc', user: { login: 'me' }, created_at: '2026-11-17T12:00:00Z' },
+    { id: 2, body: 'Please rename b.', user: { login: 'me' }, created_at: '2026-11-17T12:00:01Z' },
+    { id: 3, body: 'lgtm', user: { login: 'ci[bot]', type: 'Bot' }, created_at: '2026-11-17T12:00:02Z' },
+    { id: 4, body: 'Old note.', user: { login: 'me' }, created_at: '2025-11-17T12:00:02Z' },
+  ])
+  const r = p.flow(['done', '--message', 'Done.'])
+  ok(r, 'done')
+  assert.match(r.stdout, /State: revising/)
+  assert.match(r.stdout, /#2 from me: Please rename b\./)
+  assert.doesNotMatch(r.stdout, /#1 |#3 |#4 /)
+  p.setFeedback([
+    { id: 2, body: 'Please rename b.', user: { login: 'me' }, created_at: '2026-11-17T12:00:01Z' },
+    { id: 5, body: '<!-- ndev-flow -->\nack:2', user: { login: 'me' }, created_at: '2026-11-17T12:00:03Z' },
+  ])
+  ok(p.flow(['finishedRevision']), 'finishedRevision')
+  assert.equal(typeof p.record().feedbackAt, 'number')
+  assert.match(p.read('FAKE_GH_LOG'), /^comment 7 --body <!-- ndev-flow -->/m)
+})
+
+test('done merges the PR when the project level lets the agent merge', () => {
+  const p = project({ config: { steering: 'auto', projectLevel: 'poc' } })
+  toFinishing(p)
+  const r = p.flow(['done', '--message', 'Done.'])
+  ok(r, 'done')
+  assert.match(p.read('FAKE_GH_LOG'), /^7 --repo o\/r$/m)
+  assert.equal(p.record().merged, true)
+  assert.match(r.stdout, /PR #7 is merged/)
+})
+
+test('a human skip of ci lets done pass on red checks, and goto uses the plugin list of states', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  ok(p.flow(['finishedDevelopment', '--message', 'Add a', '--files', 'a.py']), 'finishedDevelopment')
+  ok(p.flow(['finishedReview', '--review', 'No findings.', '--deadcode', 'none', '--remembered', 'nothing: a test']), 'finishedReview')
+  p.setChecks([{ name: 'test', status: 'completed', conclusion: 'failure', started_at: '2026-11-17T12:00:00Z' }])
+  ok(p.flow(['skip', '--reason', 'flaky runner']), 'skip ci')
+  const checks = p.record().evidence.checks
+  assert.equal(checks.byHuman, true)
+  assert.equal(checks.text, 'skipped by the human: flaky runner')
+  p.setPr()
+  const finished = p.flow(['done', '--message', 'Done.'])
+  ok(finished, 'done')
+  for (const state of ['blocked', 'wait', 'developed']) {
+    const r = p.flow(['goto', '--state', state])
+    assert.equal(r.status, 2, `${state}: ${r.all}`)
+  }
+})
+
+test('followUp this_agent files the issue and adds its Closes line to the PR body', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  const r = p.flow(['followUp', '--mode', 'this_agent', '--message', 'Fix the other thing\nIt breaks.'])
+  ok(r, 'followUp')
+  const edit = /^pr-edit 7 --body-file (\S+)$/m.exec(p.read('FAKE_GH_LOG'))
+  assert.ok(edit, p.read('FAKE_GH_LOG'))
+  const body = readFileSync(edit[1], 'utf8')
+  assert.match(body, /Closes #12/)
+  assert.match(body, /Closes #30/)
+})
