@@ -373,12 +373,26 @@ function reviewerFile(): string | undefined {
   if (!dir) return undefined
   return [join(dir, 'ndev-diff-reviewer.toml'), join(dir, 'ndev-diff-reviewer.md'), join(dir, 'diff-reviewer.md')].find(existsSync)
 }
+const MAX_REVIEW_ROUNDS = 3
+function reviewRounds(wf: Workflow): number {
+  if (typeof wf.reviewRounds === 'number') return wf.reviewRounds
+  if (!wf.exportReview) return 0
+  return 1 + wf.history.filter(({ tool, from, to }) => tool === 'checkpoint' && from === 'reviewing' && to === 'reviewing').length
+}
+const reviewLimitNotice = `The limit of ${MAX_REVIEW_ROUNDS} review rounds has been reached. No more reviews will start. Use ndev-flow finishedReview --waive-review "<reason>" for nitpicks after checking the current diff, or report any substantive blocker.`
 function startReview(wf: Workflow): string[] {
+  const sha = headSha(wf.root)
+  if (wf.exportReview?.sha === sha) return []
+  const rounds = reviewRounds(wf)
+  if (rounds >= MAX_REVIEW_ROUNDS) {
+    wf.reviewRounds = rounds
+    wf.deadcode = { sha, results: sweepDeadCode(wf) }
+    return [reviewLimitNotice, sweepText(wf.deadcode.results)]
+  }
   const issue = ghJson<{ title: string; body: string | null }>(wf.root, wf.repo, ['issue-read', String(wf.issue)])
   const axes = MACHINES[wf.mode as 'light'].twoAxisReview ? ['standards', 'specification'] : ['review']
   const dir = gitDir(wf.root)
   const reviewer = reviewerFile()
-  const sha = headSha(wf.root)
   const runs = axes.map(axis => {
     const brief = join(dir, `ndev-review-${axis}.md`)
     const out = join(dir, `ndev-review-${axis}.out.md`)
@@ -409,6 +423,7 @@ function startReview(wf: Workflow): string[] {
     child.unref()
     return { axis, brief, out, log, pid: child.pid }
   })
+  wf.reviewRounds = rounds + 1
   wf.exportReview = { sha, at: now(), runs }
   if (!standalone) {
     wf.hooks = { ...wf.hooks, review: { firedAt: now() }, remember: { firedAt: now() } }
@@ -418,12 +433,14 @@ function startReview(wf: Workflow): string[] {
   return [sweepText(wf.deadcode.results)]
 }
 function reviewText(wf: Workflow): string {
+  const waiver = 'For nitpicks, you can use ndev-flow finishedReview --waive-review "<reason>". The pre-ready checks still run.'
+  if (reviewRounds(wf) >= MAX_REVIEW_ROUNDS && wf.exportReview?.sha !== headSha(wf.root)) return reviewLimitNotice
   const runs: { axis: string; brief: string; out: string; log: string; pid?: number }[] = wf.exportReview?.runs ?? []
-  if (!runs.length) return 'ndev-flow started no review. Run ndev-flow skip only if the human says so; else ask the human.'
-  if (!standalone && runs.some(r => 'dispatchId' in r)) return wf.exportReview.runs.map((r: {axis: string; dispatchId: string}) => `${r.axis} reviewer ${r.dispatchId}. Wait with ndev wait agent dispatch:${r.dispatchId} and read its report.`).join(' ')
-  if (!runs[0]!.pid) return `This harness has no review command, so ndev-flow wrote the brief${runs.length > 1 ? 's' : ''} and started nothing: ${runs.map(r => r.brief).join(', ')}. Give each brief to an independent reviewer (a subagent of this harness, or another agent) and keep the reports apart.`
+  if (!runs.length) return `ndev-flow started no review. ${waiver}`
+  if (!standalone && runs.some(r => 'dispatchId' in r)) return wf.exportReview.runs.map((r: {axis: string; dispatchId: string}) => `${r.axis} reviewer ${r.dispatchId}. Wait with ndev wait agent dispatch:${r.dispatchId} and read its report.`).join(' ') + ' ' + waiver
+  if (!runs[0]!.pid) return `This harness has no review command, so ndev-flow wrote the brief${runs.length > 1 ? 's' : ''} and started nothing: ${runs.map(r => r.brief).join(', ')}. Give each brief to an independent reviewer (a subagent of this harness, or another agent) and keep the reports apart. ${waiver}`
   const each = runs.map(r => `${r.axis === 'review' ? 'the review' : `the ${r.axis} review`} (pid ${r.pid}): wait with ${WAIT_PID} ${r.pid}, then read ${r.out} (log ${r.log})`).join('; ')
-  return `ndev-flow started ${runs.length === 1 ? 'one independent review' : `the two-axis review, ${runs.length} reviewers`} with the review command of this harness: ${each}. Do not start another review.${runs.length > 1 ? ' Keep the reports apart.' : ''} The wait is one blocking call, not a loop.`
+  return `ndev-flow started ${runs.length === 1 ? 'one independent review' : `the two-axis review, ${runs.length} reviewers`} with the review command of this harness: ${each}. Do not start another review.${runs.length > 1 ? ' Keep the reports apart.' : ''} The wait is one blocking call, not a loop. ${waiver}`
 }
 function reviewAlive(wf: Workflow): string[] {
   const runs: { axis: string; pid?: number }[] = wf.exportReview?.runs ?? []
@@ -684,20 +701,26 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = 
 }
 
 function finishedReview(wf: Workflow, config: Config, args: Args) {
-  const fields = { review: need(args, 'review'), deadcode: need(args, 'deadcode'), remembered: need(args, 'remembered') }
+  const waived = args['waive-review'] !== undefined
+  if (waived && args.review !== undefined) throw new Fail(2, 'Choose either --review or --waive-review.')
+  const review = waived ? `Independent review waived: ${need(args, 'waive-review')}` : need(args, 'review')
+  const fields = { review, deadcode: need(args, 'deadcode'), remembered: need(args, 'remembered') }
   const to = moveFor(wf, config, 'finishedReview')
-  if (!standalone && wf.exportReview?.sha && wf.exportReview.sha !== headSha(wf.root)) throw new Fail(1, `Review covers ${wf.exportReview.sha}, but HEAD is ${headSha(wf.root)}. Review the current commit before recording evidence.`)
-  if (!standalone && wf.exportReview?.runs?.some((r: Record<string, unknown>) => r.dispatchId || r.starting)) {
+  const reviewed = headSha(wf.root)
+  if (!waived && wf.exportReview?.sha && wf.exportReview.sha !== reviewed) {
+    if (reviewRounds(wf) >= MAX_REVIEW_ROUNDS) throw new Fail(1, reviewLimitNotice)
+    if (!standalone) throw new Fail(1, `Review covers ${wf.exportReview.sha}, but HEAD is ${reviewed}. Review the current commit before recording evidence or give a reason with --waive-review.`)
+  }
+  if (!waived && !standalone && wf.exportReview?.runs?.some((r: Record<string, unknown>) => r.dispatchId || r.starting)) {
     ensureReviewWorkers(wf)
     for (const reviewer of wf.exportReview.runs) {
       const receipt = orca(wf.root, reviewer.environment, ['orchestration', 'worker-show', '--dispatch', reviewer.dispatchId, '--full'])
       if (!['completed', 'done', 'settled', 'succeeded', 'finished'].includes(receipt.state)) throw new Fail(1, `Reviewer ${reviewer.dispatchId} is ${receipt.state}: ${receipt.lastError || receipt.recovery || 'wait with ndev wait agent dispatch:' + reviewer.dispatchId}.`)
     }
   }
-  const alive = reviewAlive(wf)
+  const alive = waived ? [] : reviewAlive(wf)
   if (alive.length) throw new Fail(1, `ndev-flow: the review still runs: ${alive.join(', ')}. Wait with ${WAIT_PID} <pid>, read its report, then run ndev-flow finishedReview again.`)
   const notes: string[] = []
-  const reviewed = headSha(wf.root)
   const note = runCheck(wf, 'pre-ready-check.sh', [], wf.changeTypes ?? [])
   if (!standalone) assertHead(wf, reviewed)
   if (note) notes.push(note)
@@ -1113,7 +1136,7 @@ Agent commands:
   checkpoint --message <m> --files <a,b> [--change-types <t,..>]   checks, commit, push
   finishedHacking                                hack: the human agrees that the hack works
   finishedDevelopment --message <m> --files <a,b> [--body-file <f>] [--hardening <t>]   commit, start the review and the dead-code sweep
-  finishedReview --review <r> --deadcode <d> --remembered <w>   pre-ready check, push, mark the PR ready
+  finishedReview (--review <r> | --waive-review <reason>) --deadcode <d> --remembered <w>   pre-ready check, push, mark the PR ready
   finishedChecks                                 read the checks of HEAD
   finishedSmoke --report <r> | --skipped <reason>
   finishedRevision

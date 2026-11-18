@@ -55,7 +55,7 @@ const commands: Record<string, [string, string]> = {
   'finished-hacking': ['', 'issue pr'],
   checkpoint: ['', 'issue pr message file change-type worktree'],
   'finished-development': ['', 'issue pr message file change-type body-file hardening'],
-  'finished-review': ['', 'issue pr review deadcode remembered'],
+  'finished-review': ['', 'issue pr review waive-review deadcode remembered'],
   'finished-checks': ['', 'issue pr'],
   'finished-smoke': ['', 'issue pr report-file skipped'],
   'finished-revision': ['', 'issue pr'],
