@@ -1,6 +1,6 @@
 // Reading, creating and copying the ndev files of a workspace. No Orca API in here, so it can be tested on real folders.
 import { execFile } from 'node:child_process'
-import { chmod, copyFile, constants, lstat, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { copyFile, constants, link, lstat, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -31,11 +31,18 @@ async function git(dir, args) {
   }
 }
 
-/** The main checkout (the folder that holds the real .git) of the repository that `dir` belongs to. */
+async function findMainCheckout(dir) {
+  const list = await git(dir, ['worktree', 'list', '--porcelain', '-z'])
+  const first = list.split('\0\0', 1)[0].split('\0')
+  if (first.includes('bare')) return null
+  if (!first[0].startsWith('worktree ')) throw new NdevError('git', `git worktree list did not identify the main checkout in ${dir}.`)
+  return first[0].slice('worktree '.length)
+}
+
 export async function mainCheckout(dir) {
-  const common = await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
-  if (path.basename(common) !== '.git') throw new NdevError('git', `${dir} has a git common folder ${common} that is not a ".git" folder, so its main checkout is unknown.`)
-  return path.dirname(common)
+  const main = await findMainCheckout(dir)
+  if (main === null) throw new NdevError('no_main', `${dir} belongs to a bare repository with no main checkout.`)
+  return main
 }
 
 /** The same folder through symlinks (macOS /var is /private/var), so two spellings compare equal. */
@@ -116,12 +123,29 @@ async function assertEnvIgnored(dir) {
   }
 }
 
+async function writePrivateEnv(dir, target, contents) {
+  const gitDir = await git(dir, ['rev-parse', '--path-format=absolute', '--git-dir'])
+  const scratch = await mkdtemp(path.join(gitDir, 'ndev-env-'))
+  const file = path.join(scratch, ENV_FILE)
+  try {
+    await writeFile(file, contents, { flag: 'wx', mode: 0o600 })
+    try {
+      await link(file, target)
+    } catch (error) {
+      if (error.code !== 'EXDEV') throw error
+      await copyFile(file, target, constants.COPYFILE_EXCL)
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true })
+  }
+}
+
 export async function createFile(dir, name) {
   assertKnown(name)
   const target = path.join(dir, name)
   if (name === ENV_FILE) await assertEnvIgnored(dir)
   try {
-    if (name === ENV_FILE) await writeFile(target, ENV_HEADER, { flag: 'wx', mode: 0o600 })
+    if (name === ENV_FILE) await writePrivateEnv(dir, target, ENV_HEADER)
     else await writeFile(target, `${JSON.stringify(DEFAULT_JSON, null, 2)}\n`, { flag: 'wx' })
   } catch (error) {
     if (error.code === 'EEXIST') throw new NdevError('exists', `${target} already exists. It was not changed.`)
@@ -134,18 +158,41 @@ export async function copyFromMain(dir, name) {
   assertKnown(name)
   const main = await mainCheckout(dir)
   if (await sameFolder(main, dir)) throw new NdevError('is_main', `${dir} is the main checkout, so there is nothing to copy from.`)
-  const source = path.join(main, name)
+  return copyInto(dir, name, path.join(main, name))
+}
+
+async function copyInto(dir, name, source) {
   const target = path.join(dir, name)
   const sourceInfo = await exists(source)
   if (!sourceInfo) throw new NdevError('no_source', `The main checkout has no ${source}. Create it there first.`)
   if (!sourceInfo.isFile()) throw new NdevError('invalid_params', `Use a regular file for ${source}.`)
   if (name === ENV_FILE) await assertEnvIgnored(dir)
   try {
-    await copyFile(source, target, constants.COPYFILE_EXCL)
-    if (name === ENV_FILE) await chmod(target, 0o600)
+    if (name === ENV_FILE) await writePrivateEnv(dir, target, await readFile(source))
+    else await copyFile(source, target, constants.COPYFILE_EXCL)
   } catch (error) {
     if (error.code === 'EEXIST') throw new NdevError('exists', `${target} already exists. It was not changed.`)
     throw new NdevError('write_failed', `Could not copy ${source} to ${target}: ${error.message}`)
   }
   return describe(dir, name)
+}
+
+export async function ensureProjectFiles(dir) {
+  const main = await findMainCheckout(dir)
+  for (const name of [JSON_FILE, ENV_FILE]) {
+    const target = path.join(dir, name)
+    const info = await exists(target)
+    if (info) {
+      if (!info.isFile()) throw new NdevError('invalid_params', `Use a regular file for ${target}.`)
+      continue
+    }
+    const source = main && path.join(main, name)
+    try {
+      if (source && await exists(source)) await copyInto(dir, name, source)
+      else await createFile(dir, name)
+    } catch (error) {
+      if (error.code !== 'exists') throw error
+      if (!(await exists(target))?.isFile()) throw new NdevError('invalid_params', `Use a regular file for ${target}.`)
+    }
+  }
 }
