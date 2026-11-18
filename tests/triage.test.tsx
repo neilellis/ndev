@@ -261,7 +261,7 @@ test('with no board, /dev triage start asks the model to group the open issues t
   // Closing a done issue needs no --hint, and the human picks each one.
   expect(w.prompts[0]).toMatch(/AskUserQuestion/)
   expect(w.prompts[0]).toMatch(/gh issue close <n> --repo acme\/widgets --reason completed --comment/)
-  expect(w.prompts[0]).toMatch(/groups: \[\{ issues, title, complexity, hint, implemented, evidence, after \}\], closed, unfinished: \[\{ issue, pr \}\] \}/)
+  expect(w.prompts[0]).toMatch(/groups: \[\{ issues, title, complexity, hint, implemented, evidence, after \}\], closed, skipped, unfinished: \[\{ issue, pr \}\] \}/)
   expect(w.prompts[0]).toMatch(/#3\b/)
   expect(w.prompts[0]).toMatch(/#9\b/)
   expect(w.prompts[0]).not.toMatch(/#7\b/)
