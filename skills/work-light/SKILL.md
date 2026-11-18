@@ -5,6 +5,8 @@ description: "The interactive lightweight development skill (light mode, the def
 
 # Light work
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the change affects project goals, rules, or behaviour.
+
 One main agent owns each fix from diagnosis to PR. Small helpers keep its context focused.
 This is the everyday coding workflow. Use the `work-heavy` skill for multi-step features, cross-cutting or high-risk changes that need a plan, reviews and staged verification.
 Repository safety rules, required gates and domain rules still apply.

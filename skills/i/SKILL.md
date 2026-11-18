@@ -4,6 +4,8 @@ description: "Alias of issue: create a GitHub issue from a description and put i
 argument-hint: "[--orca] <description of the issue>"
 ---
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the issue changes project goals, rules, or public claims.
+
 Load the `ndev:issue` skill and follow it. The description is: $ARGUMENTS
 
 ## The workflow

@@ -5,6 +5,8 @@ description: "Push the current change in a website or app project and keep fixin
 
 # Finish the current change
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the change affects project rules or user behaviour.
+
 The user may not be technical. Tell them what is happening in plain English, with clear links. Never merge. Merging needs `/publish` or "Approve and publish" (see `publish`).
 
 ## The workflow

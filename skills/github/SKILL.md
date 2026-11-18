@@ -5,6 +5,8 @@ description: "Operate GitHub issues, pull requests, checks, milestones, Actions 
 
 # GitHub operations
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you triage issues or decide whether a change meets project goals or rules.
+
 Use the helpers in `${CLAUDE_PLUGIN_ROOT}/scripts/github/` (the plugin's shared `scripts/` folder; other skills use them too). Pass absolute paths to other agents. `${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`. Read the matching reference before complex work:
 
 - `references/issues.md`: issues, sub-issues, blockers, milestones, board.

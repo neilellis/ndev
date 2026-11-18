@@ -5,6 +5,8 @@ description: "Write and review an explainer video of 2 to 5 minutes that shows h
 
 # Explainer videos
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
+
 An explainer shows how something works and why it matters to the viewer's organisation. It teaches first. The sales angle is slight: the viewer should finish understanding the idea, and only then hear one soft invitation. The shared rules are in `video-types`.
 
 ## The workflow

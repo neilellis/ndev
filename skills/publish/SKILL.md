@@ -5,6 +5,8 @@ description: "Merge the current change's pull request in a website or app projec
 
 # Publish the current change
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the work affects project goals, rules, or public claims.
+
 When the user types `/publish`, that is their approval to merge the pull request for the current change. Use `finish` to get it ready and `github` for pull request operations. Never push to the base branch directly. Report only results that tools confirm.
 
 If `<project root>/.neil-dev.json` has a `branding` key, follow the project's brand copy rules for the publication report. Use the `copy` skill for those rules. Find the root with `git rev-parse --show-toplevel`.

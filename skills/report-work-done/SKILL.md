@@ -5,6 +5,8 @@ description: "Summarize what actually shipped by reading merged pull requests in
 
 # Report shipped work
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the work affects project goals, rules, or public claims.
+
 1. Define the window and the author filter exactly.
 2. Fetch merged PRs with this skill's `scripts/fetch-prs.sh`:
    ```bash

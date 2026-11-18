@@ -14,6 +14,8 @@ This is a vendored copy of the MIT-licensed Archify package (`tt-a1i/archify`). 
 
 # Archify
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check for diagrams that show project architecture or domain rules.
+
 Create a self-contained, interactive HTML diagram from a small typed JSON specification. Static output is the default; enable motion only when the user asks for a demo or presentation.
 
 ## The workflow

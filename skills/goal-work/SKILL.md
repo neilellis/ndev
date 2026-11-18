@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Work a goal
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before you rank or group issues that affect the project goals.
+
 `$ARGUMENTS` selects a set of issues. If it is empty, ask for the condition. This skill is for an attended set. Use `work-heavy-auto` for the Ready column and `work-light` or `work-heavy` for one issue that is already specified.
 
 ## The workflow

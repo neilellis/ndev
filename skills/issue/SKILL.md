@@ -6,6 +6,8 @@ argument-hint: "[--orca] <description of the issue>"
 
 # Create an issue in Backlog
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the issue changes project goals, rules, or public claims.
+
 The description is: $ARGUMENTS
 
 If the arguments contain `--orca`, remove it from the description. After the issue is created and on the board (steps 1 to 5), do step 6. Never open the workspace before the issue exists, because the workspace needs the issue number.

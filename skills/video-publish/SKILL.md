@@ -5,6 +5,8 @@ description: "Merge the current video change's pull request and confirm the prod
 
 # Publish the current change
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
+
 When the user types `/publish`, that is their approval to merge the pull request for the current change. Use `video-finish` to get it ready. Never push to the base branch directly.
 
 ## The workflow

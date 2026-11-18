@@ -210,6 +210,8 @@ Sub-issue: #${sub.issue} "${sub.title}", ${link(epic, sub.issue)}
 Spec files:
 ${fileList(specFiles)}
 
+Read only the cited sections of \`NORTH_STAR.md\` in the issue or spec. Use those sections to guide implementation and add the checks they require.
+
 ## Rules
 
 1. Read the issue, and the spec file(s) it names, before any code.
@@ -236,6 +238,8 @@ PR: PR #${pr ?? '?'}
 
 Spec files:
 ${fileList(specFiles)}
+
+Read only the cited sections of \`NORTH_STAR.md\` in the issue or spec. Check the diff and the test evidence against those sections.
 
 ## Rules
 

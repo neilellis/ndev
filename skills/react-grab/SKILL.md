@@ -5,6 +5,8 @@ description: "Continuously receive React Grab selections and act on their attach
 
 # Watch React Grab
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if a requested edit changes behaviour governed by the project.
+
 Run on the same machine as the browser: the watcher reads that machine's clipboard. Use this skill for a watch loop that the user asked for, not for one pasted selection.
 
 ```bash

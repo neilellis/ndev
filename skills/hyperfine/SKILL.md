@@ -5,6 +5,8 @@ description: "Benchmark and compare command durations when a speed claim or befo
 
 # Benchmark commands
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the project sets a performance limit for the work you measure.
+
 Use `hyperfine` to explore. Use `scripts/ab.sh` in this skill's folder for a number that you will report:
 
 ```bash
