@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -137,4 +137,47 @@ test('Codex SessionStart directs the first work turn to the linked GitHub issue'
   assert.match(start('startup').hookSpecificOutput.additionalContext, /Before development work, run ndev flow start 17\./)
   writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}')
   assert.match(start('startup').systemMessage, /Workflow is disabled.*ndev flow on --project/)
+})
+
+test('native chat prompt guard blocks stale sends and allows retry after local compaction', t => {
+  const root = fixture(t)
+  const state = join(root, 'state')
+  const enabled = join(state, 'ndev', 'chat-guard')
+  mkdirSync(join(state, 'ndev'), { recursive: true })
+  const transcript = join(root, 'conversation.jsonl')
+  const call = (harness, prompt, rows, structured = '1', modifiedAt) => {
+    writeFileSync(transcript, rows.map(row => JSON.stringify(row)).join('\n') + '\n')
+    if (modifiedAt) utimesSync(transcript, modifiedAt, modifiedAt)
+    const result = spawnSync(ndev, ['hook', 'prompt-submit', '--harness', harness], {
+      cwd: root, encoding: 'utf8',
+      env: { HOME: root, PATH: process.env.PATH, XDG_STATE_HOME: state, ORCA_STRUCTURED_SESSION: structured },
+      input: JSON.stringify({ cwd: root, session_id: 'fixture', transcript_path: transcript, prompt }),
+    })
+    assert.equal(result.status, 0, result.stderr)
+    return JSON.parse(result.stdout)
+  }
+  const stamp = minutes => new Date(Date.now() - minutes * 60_000).toISOString()
+  const codex = (minutes, tokens) => ({
+    timestamp: stamp(minutes), type: 'event_msg',
+    payload: { type: 'token_count', info: { last_token_usage: { total_tokens: tokens } } },
+  })
+  const stale = [codex(6, 200_001)]
+  assert.notEqual(call('codex', 'draft', stale).decision, 'block')
+  writeFileSync(enabled, '')
+  assert.notEqual(call('codex', 'draft', stale, '').decision, 'block')
+  assert.notEqual(call('codex', 'draft', [codex(6, 200_000)]).decision, 'block')
+  assert.notEqual(call('codex', 'draft', [codex(4, 300_000)]).decision, 'block')
+  const blocked = call('codex', 'draft', stale)
+  assert.equal(blocked.decision, 'block')
+  assert.match(blocked.reason, /200,001 tokens.*\/compact/)
+  assert.notEqual(call('codex', '/compact keep the plan', stale).decision, 'block')
+  assert.notEqual(call('codex', 'draft', [...stale, { timestamp: stamp(0), type: 'compacted' }]).decision, 'block')
+  const claude = {
+    timestamp: stamp(51), type: 'assistant',
+    message: { usage: { input_tokens: 100, cache_read_input_tokens: 100, output_tokens: 10 } },
+  }
+  assert.match(call('claude', 'draft', [claude]).reason, /51 minutes.*\/compact/)
+  assert.notEqual(call('claude', 'draft', [claude, { timestamp: stamp(0), type: 'system', subtype: 'compact_boundary' }]).decision, 'block')
+  const oldLargeRecord = { ...claude, content: 'a'.repeat(1024 * 1024) }
+  assert.equal(call('claude', 'draft', [oldLargeRecord], '1', new Date(stamp(51))).decision, 'block')
 })

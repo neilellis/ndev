@@ -1,3 +1,4 @@
+import { blockedNativePrompt } from './chat-guard.mjs'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
@@ -292,6 +293,10 @@ export async function runHook([event, ...argv], supplied) {
     } catch (error) {
       throw new CliError(2, `Hook ${event} could not read its JSON payload: ${error.message}.`, { repair: 'Pass the native event as JSON on stdin.' })
     }
+  }
+  if (event === 'prompt-submit') {
+    const native = blockedNativePrompt(harness, payload)
+    if (native) return { event, native }
   }
   const cwd = payload.cwd ?? payload.directory ?? process.cwd()
   const id = process.env.ORCA_AGENT_SESSION_ID ?? payload.session_id ?? payload.sessionID

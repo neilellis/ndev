@@ -156,6 +156,12 @@ The hook process reads the event on stdin. Each event runs through shared CLI ha
 
 On a new session, instruct the agent to start the saved workflow before development. When the worktree has no workflow record, use a selected GitHub issue or the only issue Orca links from the configured repository. Ask which issue to use when the choice is ambiguous. A project that disables the workflow receives a startup notice with the command to enable it.
 
+### Native Orca chat guard
+
+Run `ndev chat-guard on` to enable the guard for local Codex and Claude Code native chats. The prompt hook blocks a send after five minutes above 200,000 context tokens, or after more than 50 minutes of inactivity. It uses the latest available provider transcript accounting, so the token count is approximate. The guard reads a bounded transcript tail. If only the age of a truncated transcript is known, it can still enforce the 50-minute rule.
+
+Run `/compact` in the chat, wait for it to finish, then retry the prompt. The guard leaves Orca's draft handling to the app. Run `ndev chat-guard off` to disable it or `ndev chat-guard status` to check whether it is enabled.
+
 Install one entry per native event for ndev so its checks run in order. Claude Code uses `~/.claude/settings.json`. Codex uses `~/.codex/hooks.json`, or the active Codex config directory, with hook trust set by the user. opencode uses a server plugin that calls the binary with an argument vector and sends JSON on stdin. Test the v2 event names and denial path with the installed v2 host. For Claude Code and Codex, the pre-tool adapter uses each host's denial JSON. Both hosts use a single native prompt hook to run both prompt handlers in order. Preserve other hook entries.
 
 Native interfaces
