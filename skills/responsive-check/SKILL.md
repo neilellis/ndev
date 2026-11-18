@@ -5,6 +5,8 @@ description: "Check a website's layout on phones, tablets and desktops, in light
 
 # Responsive check
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the project sets rules for the layout or behaviour you review.
+
 The check runs a matrix: **routes × viewports × colour schemes**. Each cell loads one route at one viewport in one scheme, in the engine of the real device (WebKit for Apple devices, Chromium for the rest). The probe measures the page and the script reports each defect with a CSS selector.
 
 The ndev pane **Responsive matrix** follows the run live. It opens when the runner starts. `/responsive-matrix` opens it again and shows the newest run.

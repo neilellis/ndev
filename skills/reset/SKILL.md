@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Reset a worktree
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if work on a pull request changes behaviour governed by the project.
+
 This skill changes the repository. Use it only when the user invokes it. The commands are in this skill's `scripts/reset.sh`; call it with an absolute path.
 
 Settings: `RESET_BASE` (base branch; default origin/HEAD, else `main`), `COMMIT_TRAILERS` (trailer lines that the session requires), `PR_FOOTER` (appended to a new PR body), `GH_USE_KEYRING=1` (use the gh keyring login).

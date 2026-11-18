@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Release notes
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the release changes project goals, rules, or public claims.
+
 Use only when the user invokes it with a milestone. This skill reads GitHub and writes only the notes file. Do not comment, move cards or publish a release (that is `milestone-release`).
 
 ## The workflow

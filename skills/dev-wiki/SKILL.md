@@ -5,6 +5,8 @@ description: "Read and grow the living development wiki at ~/dev-wiki. Use at th
 
 # dev-wiki
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before adding or changing a claim about how the project must work.
+
 `~/dev-wiki` is the living development wiki. The plugin creates it from its `kb/` the first time
 a session starts. It is a git repository on this computer. Its rules are in `~/dev-wiki/AGENTS.md`.
 

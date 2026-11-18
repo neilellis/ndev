@@ -5,6 +5,8 @@ description: "Search the codebase by parsed code shape. Use for call sites, impo
 
 # Structural code search
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when a search prepares a change to a domain rule.
+
 Use the ast-grep CLI that the project pins (for example `pnpm exec ast-grep`). If the project pins none, use an installed `ast-grep`. Do not run a bare `sg`: on many machines that name is a different program.
 
 Use ast-grep directly to explore. Use `scripts/find.sh` in this skill's folder for a result that you will report:

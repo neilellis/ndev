@@ -5,6 +5,8 @@ description: "Check whether the current work is actually finished. Use for \"are
 
 # Close out honestly
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the closeout covers project rules or goals.
+
 Answer whether the work is finished. Do not write a general activity summary. Run the checks; do not rely on conversation memory:
 
 ```bash

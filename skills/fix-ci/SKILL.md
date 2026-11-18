@@ -5,6 +5,8 @@ description: "Fix failed checks and merge conflicts on the associated pull reque
 
 # Fix CI on the associated PR
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when a fix changes a rule that a test or guard checks.
+
 Keep working until the associated PR is out of draft, green and mergeable. A human merges. Never merge the PR and never push to the base branch.
 Use `work-light` for development and `github` for PR operations. Keep diagnosis and design in one main agent context. Keep the original task, closing issue references and session constraints.
 

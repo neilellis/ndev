@@ -5,6 +5,8 @@ description: "Settle the decisions of an issue with the human before the plan or
 
 # Interview
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Read the applicable sections before you ask about a project goal, domain rule, or user behaviour.
+
 Reach a shared understanding with the human before you plan or write code. Ask only about decisions that are the human's to make.
 
 `mcp__ndev__interview(interviewJson)` shows one round in the interview pane and holds until the human answers. `mcp__ndev__interview()` with no arguments ends the interview. Only that call leaves the state `interviewing`.

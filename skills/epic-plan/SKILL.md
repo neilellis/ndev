@@ -24,6 +24,8 @@ The plan is finished when a worker who has only the spec and one sub-issue can i
 
 ## Framing
 
+Read all of `NORTH_STAR.md` before you frame the epic. Follow the framing gate in `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Record the governing sections in the framing evidence. Include their checks in the spec and pass the applicable section names to each worker.
+
 Ask the human, in one round, for what code cannot tell you:
 
 - **The aim**: one or two sentences on what the product is for and what this epic changes for it. Every brief and every ruling later quotes it.
@@ -76,7 +78,7 @@ Rule on every finding against the aim and the posture: **fix** (amend the spec) 
 Slice only when the spec has passed review and is merged to the default branch, so that each worker reads it from its base.
 
 - One sub-issue is one workspace and one pull request. Group pieces that touch the same files; keep an issue small enough that an agent does not forget part of it.
-- Each issue body has: why (the aim); the spec sections to read; the scope; the completion checklist; the verification (tests first, the commands); `Depends on`; the rules of the work. The spec is the authority; the issue points at it.
+- Each issue body has: why (the aim); the spec sections to read; the scope; the completion checklist; the verification (tests first, the commands); `Depends on`; the rules of the work. Cite the applicable North Star sections beside the checks. Point to the spec.
 - Record each dependency as a blocked-by link, and only where it is real: a shared interface, schema, fixture or file. Order the early issues so that the first ones unblock the most.
 - Generate the issues with one script from the plan rows, run it dry first, and keep the key-to-number map it writes.
 

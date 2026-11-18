@@ -5,6 +5,8 @@ description: "Reuse tested commands for local checks, saved logs, PR waits, and 
 
 # Reuse commands
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if a saved command verifies a project rule and the rule has changed.
+
 Use a tested command for a known procedure. Keep the reasoning in the main agent and the repeated mechanics in scripts.
 This is a command guide, not a development workflow. Do not load every linked skill or audit history for each fix.
 

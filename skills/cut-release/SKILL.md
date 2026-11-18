@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Cut a release
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check for release notes that describe changes to project goals or rules.
+
 A release is outward-facing. Its tag is immutable, and publication can start release workflows.
 Confirm the tag, the target commit and the notes with the user before `draft`. Confirm again before `publish`.
 

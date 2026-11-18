@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Continue open PRs
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if work on a pull request changes behaviour governed by the project.
+
 1. Survey every open PR with the GitHub CLI or REST: draft state, mergeability, checks, branch, closing issues.
    ```bash
    gh pr list --state open --json number,title,isDraft,mergeable,headRefName,statusCheckRollup,closingIssuesReferences

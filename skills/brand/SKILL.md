@@ -6,6 +6,8 @@ argument-hint: "create | check | apply [path or note]"
 
 # Brand
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you set brand principles or make claims about the product.
+
 The arguments are: $ARGUMENTS
 
 Take the first word as the action. If it is not `create`, `check` or `apply`, ask which one, in one question, and stop.

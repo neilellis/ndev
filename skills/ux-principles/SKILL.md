@@ -5,6 +5,8 @@ description: "Apply the project's UX guidance to navigation, disclosure, touch, 
 
 # UX guidance
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before making choices that affect project architecture, goals, or user behaviour.
+
 Find the project's UX pages from its wiki index file (usually under a `visual/` section). Read only the pages that apply to the decision. If the project has no UX pages, use the principles below and record the decision in the wiki.
 
 | Decision | Principle |

@@ -40,6 +40,26 @@ test('install all plans active harness paths, a single shared release, and leave
   assert.equal(existsSync(env.CLAUDE_CONFIG_DIR), false)
 })
 
+test('installed SDLC skills link to the shared North Star guide and require full reads at epic gates', t => {
+  const { home, env, prefix, install } = fixture(t)
+  install('all')
+  const guide = join(prefix, 'share/ndev/kb/north-star.md')
+  for (const skills of [join(env.CLAUDE_CONFIG_DIR, 'skills'), join(home, '.agents/skills'), join(env.XDG_CONFIG_HOME, 'opencode/skills')]) {
+    const body = name => readFileSync(join(skills, `ndev-${name}/SKILL.md`), 'utf8')
+    for (const name of ['epic-plan', 'epic-coordinate', 'work-light', 'work-heavy', 'work-heavy-auto', 'implement-spec', 'interview', 'testing', 'adversarial-review', 'docs', 'publish']) {
+      assert.ok(body(name).includes(guide), `ndev-${name} in ${skills} must link to ${guide}`)
+      assert.match(body(name), /NORTH_STAR\.md/)
+    }
+    assert.match(body('epic-plan'), /read all of `NORTH_STAR\.md` before you frame/i)
+    assert.match(body('epic-coordinate'), /read all of `NORTH_STAR\.md` again from the default branch/i)
+    assert.match(body('epic-coordinate'), /approval before you run `ndev epic phase`/)
+    assert.doesNotMatch(body('work-light'), /read all of `NORTH_STAR\.md`/i)
+  }
+  const policy = readFileSync(guide, 'utf8')
+  assert.match(policy, /keep the phase open/i)
+  assert.match(policy, /read only the sections that apply/i)
+})
+
 test('sequential installs preserve foreign hook entries, install the CLI and repair missing owned files', t => {
   const { env, home, prefix, run, install } = fixture(t)
   const config = join(env.CLAUDE_CONFIG_DIR, 'settings.json')
