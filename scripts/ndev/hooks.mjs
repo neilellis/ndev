@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { checkText, isComponent } from '../../hooks/component-files.ts'
 import { gitCode, gitFolder, OWN_WAIT, pushNames, pushesOnly, RAW_GIT } from '../../hooks/workflow/git-guard.ts'
 import { envFor, SCRIPT, TIMEOUT_MS, validateQuality } from '../../hooks/quality-shared.ts'
+import { ensureProjectFiles } from '../../orca-plugin/ndev/worker/files.mjs'
 import { binding } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
 import { readProject } from './project.mjs'
@@ -264,8 +265,7 @@ function workflowStartup(root, config, workflow, source) {
   return { ...linked, context: linked.context ?? 'Ask which issue to work on when the human starts development work.' }
 }
 
-function sessionStart(root, workspace, id) {
-  if (workspace.linked) checked('bash', [worktreeScript, 'init', '--worktree', root], { cwd: root, repair: 'Check the worktree and run ndev hook session-start again.' })
+function sessionStart(root, id) {
   changeSession(root, id, { startedAt: Date.now(), activityAt: Date.now(), endedAt: null })
   const home = process.env.HOME
   if (home && !existsSync(join(home, 'dev-wiki/wiki.md'))) {
@@ -309,6 +309,14 @@ export async function runHook([event, ...argv], supplied) {
   const workspace = findWorkspace(cwd)
   if (!workspace) return { native: null, event, outsideWorktree: true }
   const { root } = workspace
+  if (event === 'session-start' && workspace.linked) {
+    checked('bash', [worktreeScript, 'init', '--worktree', root, '--session-start'], { cwd: root })
+    try {
+      await ensureProjectFiles(root)
+    } catch (error) {
+      throw new CliError(1, error.message, { repair: 'Check the named file and start a new session.' })
+    }
+  }
   const config = readProject(root)
   const scoped = workflowRootFor(root, id)
   const { activeEpic } = await import('./epic.mjs')
@@ -323,7 +331,7 @@ export async function runHook([event, ...argv], supplied) {
     reason = rawGitReason(call.command, workspace, workflow, helperCwd)
   }
   if (event === 'session-start') {
-    const note = sessionStart(root, workspace, id)
+    const note = sessionStart(root, id)
     if (note) notes.push(note)
     if (!epic) {
       const startup = workflowStartup(root, config, workflow, payload.source)

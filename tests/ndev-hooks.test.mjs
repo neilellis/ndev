@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -27,6 +27,119 @@ function hook(root, harness, toolName, command) {
   assert.equal(result.status, 0, result.stderr)
   return result.stdout.trim() ? JSON.parse(result.stdout) : null
 }
+
+function linkedFixture(t, ignore = '', separateGitDir = false) {
+  const home = mkdtempSync(join(tmpdir(), 'ndev-hook-start-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const main = join(home, 'project')
+  const linked = join(home, 'linked')
+  const metadata = join(home, 'metadata')
+  const env = { HOME: home, PATH: process.env.PATH }
+  const git = (cwd, ...args) => spawnSync('git', args, { cwd, env, encoding: 'utf8' })
+  const checkedGit = (cwd, ...args) => {
+    const result = git(cwd, ...args)
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  mkdirSync(main)
+  checkedGit(main, 'init', '-q', ...(separateGitDir ? ['--separate-git-dir', metadata] : []))
+  writeFileSync(join(main, '.gitignore'), ignore)
+  checkedGit(main, 'add', '.gitignore')
+  checkedGit(main, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'fixture')
+  checkedGit(main, 'worktree', 'add', '-q', '-b', 'topic', linked)
+  const start = (harness = 'codex') => spawnSync(ndev, ['hook', 'session-start', '--harness', harness], {
+    cwd: main, env, encoding: 'utf8', input: JSON.stringify({ session_id: 'fixture', cwd: linked }),
+  })
+  return { main, linked, metadata, git, checkedGit, start }
+}
+
+test('session start copies project files and creates a separate worktree record', t => {
+  const { main, linked, checkedGit, start } = linkedFixture(t, '.neil-dev.env\n')
+  const config = '{"mode":"heavy","workflow":false}\n'
+  const credentials = 'FIXTURE_API_KEY=fixture-only-secret\n'
+  const projectFile = name => join(main, name)
+  const linkedFile = name => join(linked, name)
+  writeFileSync(projectFile('.neil-dev.json'), config)
+  writeFileSync(projectFile('.neil-dev.env'), credentials, { mode: 0o644 })
+  writeFileSync(projectFile('.neil-dev.worktree.json'), '{"version":1,"stacks":["different checkout"]}\n')
+  const first = start()
+  assert.equal(first.status, 0, first.stderr)
+  assert.equal(readFileSync(linkedFile('.neil-dev.json'), 'utf8'), config)
+  assert.equal(readFileSync(linkedFile('.neil-dev.env'), 'utf8'), credentials)
+  assert.equal(statSync(linkedFile('.neil-dev.env')).mode & 0o777, 0o600)
+  const record = linkedFile('.neil-dev.worktree.json')
+  const fresh = JSON.parse(readFileSync(record, 'utf8'))
+  assert.deepEqual(fresh, { version: 2, resources: { docker: [], 'dev-servers': {} } })
+  assert.doesNotMatch(first.stdout + first.stderr, /fixture-only-secret/)
+  assert.doesNotMatch(first.stdout, /Ask which issue/)
+  assert.equal(checkedGit(linked, 'check-ignore', '.neil-dev.env', '.neil-dev.worktree.json'), '.neil-dev.env\n.neil-dev.worktree.json')
+  writeFileSync(linkedFile('.neil-dev.json'), '{"mode":"light"}\n')
+  writeFileSync(linkedFile('.neil-dev.env'), 'FIXTURE_API_KEY=local\n')
+  writeFileSync(record, JSON.stringify({ ...fresh, settings: { steering: 'auto' } }))
+  const again = start('claude')
+  assert.equal(again.status, 0, again.stderr)
+  assert.equal(readFileSync(linkedFile('.neil-dev.json'), 'utf8'), '{"mode":"light"}\n')
+  assert.equal(readFileSync(linkedFile('.neil-dev.env'), 'utf8'), 'FIXTURE_API_KEY=local\n')
+  assert.deepEqual(JSON.parse(readFileSync(record, 'utf8')).settings, { steering: 'auto' })
+})
+
+test('session start creates defaults when neither checkout has project files', t => {
+  const { main, linked, checkedGit, start } = linkedFixture(t)
+  const result = start('opencode')
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')), { mode: 'light', steering: 'interactive' })
+  const credentials = join(linked, '.neil-dev.env')
+  assert.match(readFileSync(credentials, 'utf8'), /^(?:#.*\n)*$/)
+  assert.equal(statSync(credentials).mode & 0o777, 0o600)
+  assert.ok(existsSync(join(linked, '.neil-dev.worktree.json')))
+  assert.equal(checkedGit(linked, 'check-ignore', '.neil-dev.env', '.neil-dev.worktree.json'), '.neil-dev.env\n.neil-dev.worktree.json')
+  assert.equal(checkedGit(linked, 'diff', '--', '.gitignore'), '')
+  assert.equal(existsSync(join(main, '.neil-dev.env')), false)
+})
+
+test('session start refuses to put credentials in a worktree that explicitly exposes them', t => {
+  const { main, linked, start } = linkedFixture(t, '!.neil-dev.env\n.neil-dev.worktree.json\n')
+  writeFileSync(join(main, '.neil-dev.env'), 'FIXTURE_API_KEY=fixture-only-secret\n', { mode: 0o600 })
+  const result = start()
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /\.neil-dev\.env is not git-ignored/)
+  assert.match(result.stderr, /Repair:.*remove any line that un-ignores it/)
+  assert.doesNotMatch(result.stdout + result.stderr, /fixture-only-secret/)
+  assert.equal(existsSync(join(linked, '.neil-dev.env')), false)
+})
+
+test('session start creates defaults for a linked worktree of a bare repository', t => {
+  const { main, linked, checkedGit, start } = linkedFixture(t)
+  const bare = join(main, 'bare.git')
+  checkedGit(main, 'worktree', 'remove', linked)
+  checkedGit(main, 'clone', '-q', '--bare', main, bare)
+  checkedGit(bare, 'worktree', 'add', '-q', linked, 'topic')
+  const result = start()
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')).mode, 'light')
+  assert.equal(statSync(join(linked, '.neil-dev.env')).mode & 0o777, 0o600)
+  assert.ok(existsSync(join(linked, '.neil-dev.worktree.json')))
+})
+
+test('session start does not copy project files from a separate Git metadata directory', t => {
+  const { linked, metadata, start } = linkedFixture(t, '', true)
+  writeFileSync(join(metadata, '.neil-dev.json'), '{"mode":"heavy"}')
+  writeFileSync(join(metadata, '.neil-dev.env'), 'FIXTURE_WRONG_SOURCE=metadata\n')
+  const result = start()
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')).mode, 'light')
+  assert.doesNotMatch(readFileSync(join(linked, '.neil-dev.env'), 'utf8'), /FIXTURE_WRONG_SOURCE/)
+})
+
+test('session start does not replace a dangling worktree record symlink', t => {
+  const { linked, start } = linkedFixture(t, '.neil-dev.worktree.json\n')
+  const record = join(linked, '.neil-dev.worktree.json')
+  symlinkSync('missing-record', record)
+  const result = start()
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /\.neil-dev\.worktree\.json.*regular file/)
+  assert.equal(readlinkSync(record), 'missing-record')
+})
 
 test('hook denies a guarded commit inside a shell script for every native adapter', t => {
   const root = fixture(t)
