@@ -1574,9 +1574,11 @@ function dispatchWorker(wf: Workflow, entry: Record<string, any>, command: strin
   save(wf)
 }
 function ensureReviewWorkers(wf: Workflow) {
+  const agent = process.env.NDEV_REVIEW_AGENT || (process.env.CLAUDECODE === '1' ? 'claude' : 'codex')
+  const model = agent === 'claude' ? 'sonnet' : agent === 'codex' ? 'gpt-6.1-terra' : undefined
   for (const reviewer of wf.exportReview.runs) {
     const spec = readFileSync(reviewer.brief, 'utf8')
-    const command = ['orchestration', 'worker-start', '--spec', spec, '--task-title', `Review #${wf.issue} (${reviewer.axis})`, '--worktree', `path:${wf.root}`, '--agent', process.env.NDEV_REVIEW_AGENT || 'codex', '--full']
+    const command = ['orchestration', 'worker-start', '--spec', spec, '--task-title', `Review #${wf.issue} (${reviewer.axis})`, '--worktree', `path:${wf.root}`, '--agent', agent, ...(model ? ['--model', model] : []), '--full']
     dispatchWorker(wf, reviewer, command, `review of #${wf.issue} (${reviewer.axis})`)
   }
 }

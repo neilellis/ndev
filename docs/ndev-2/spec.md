@@ -138,6 +138,8 @@ Keep draft PRs until their workflow gates are met. Follow the project merge sett
 
 An epic stores GitHub sub-issues and their blocker links. A child can start from a pushed open blocker PR when the frontier and capacity rules allow it. Record the stack in its brief and give Orca the base branch. After the blocker merges, tell the worker to rebase and retarget. Verify the child only once the blocker is merged and the child PR targets the default branch. Resolve remote worktrees by their server and repository ID. Carry the worker role, agent, and model in its brief. Keep local and remote workers on the same epic state rules.
 
+Workflow code reviews use GPT-6.1 Terra for Codex and Sonnet for Claude. `NDEV_REVIEW_AGENT` selects the Orca harness. Other harnesses use their configured model.
+
 ## Hooks and watcher
 
 The hook process reads the event on stdin. Each event runs through shared CLI handlers. The adapter takes the harness event and gives the same worktree, session, tool, command, and result fields to the handler when those fields exist. The adapter writes the wire format that its harness expects. A decision to deny a tool call must reach the harness before it runs the call. A denial tells the agent to use `ndev flow checkpoint` when that repair applies.

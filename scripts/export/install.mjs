@@ -85,7 +85,7 @@ function profilesFor(opts, home, before) {
       : name === 'codex' ? (process.env.CODEX_HOME || join(home, '.codex')) : join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode')
     const config = resolve(dir)
     return { name, skillsDir: name === 'codex' ? join(home, '.agents/skills') : join(config, 'skills'),
-      agentsDir: join(config, 'agents'), agentFormat: base.agentFormat,
+      agentsDir: join(config, 'agents'), agentFormat: base.agentFormat, agentModels: base.agentModels,
       ...(name === 'opencode' ? { adapter: join(config, 'plugins/ndev/index.ts') } : { config: join(config, name === 'codex' ? 'hooks.json' : 'settings.json') }) }
   })
 }

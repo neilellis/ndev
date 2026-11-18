@@ -275,7 +275,7 @@ test('the code review checks the base North Star without copying it into reviewe
     git(p.work, 'commit', '-qm', 'Record the project North Star')
     git(p.work, 'push', '-q', 'origin', 'main')
     git(p.work, 'switch', '-q', 'feature')
-    const fake = services(p)
+    const fake = { ...services(p), NDEV_REVIEW_AGENT: mode === 'heavy' ? 'claude' : 'codex' }
     if (mode === 'heavy') {
       const gh = join(p.dir, 'fake-bin/gh')
       writeFileSync(gh, '#!/bin/sh\n[ "$1 $2" = "pr view" ] || exit 22\njq -n --rawfile body "$PR_BODY" \'{body: $body, state: "OPEN", mergeStateStatus: "CLEAN"}\'\n', { mode: 0o755 })
@@ -300,6 +300,7 @@ test('the code review checks the base North Star without copying it into reviewe
     assert.match(standard, /when the file is absent, use the remaining project guidance/i)
     if (mode === 'heavy') assert.doesNotMatch(briefs.get('specification'), /NORTH_STAR\.md/)
     const dispatched = readFileSync(fake.ORCA_LOG, 'utf8')
+    assert.ok(dispatched.includes(mode === 'heavy' ? '--model sonnet' : '--model gpt-6.1-terra'), dispatched)
     assert.match(dispatched, /origin\/main:NORTH_STAR\.md/)
     assert.doesNotMatch(dispatched, /Fixture statement kept out/)
   }
