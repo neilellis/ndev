@@ -52,7 +52,7 @@ const loop = atom(
 const activity = atom({ plugin: 'ndev', key: 'activity' } as const, {} as { at?: number }, { shape: 'activity-1' })
 const STALE_MS = 50 * 60_000
 
-type Check = { name?: string; context?: string; status?: string; conclusion?: string; state?: string }
+type Check = { name?: string; context?: string; status?: string; conclusion?: string; state?: string; startedAt?: string | null }
 type GhPr = {
   number: number
   title: string
@@ -69,8 +69,21 @@ type GhPr = {
 
 const FAILED = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
 
+// A concurrency group cancels the older run of a check when a newer one starts on the same commit, and both stay
+// listed. Only the newest run of each name counts, so a cancelled run that a later one replaced is no failure.
+function latestRuns(checks: Check[]): Check[] {
+  const latest = new Map<string, Check>()
+  const out: Check[] = []
+  for (const c of checks) {
+    if (!c.status || !c.name) { out.push(c); continue }
+    const seen = latest.get(c.name)
+    if (!seen || (c.startedAt ?? '') >= (seen.startedAt ?? '')) latest.set(c.name, c)
+  }
+  return [...latest.values(), ...out]
+}
+
 function toRow(pr: GhPr): PrRow {
-  const checks = pr.statusCheckRollup ?? []
+  const checks = latestRuns(pr.statusCheckRollup ?? [])
   // A check run reports status + conclusion; a commit status reports state alone.
   const result = (c: Check) => c.conclusion || c.state || ''
   const done = (c: Check) => (c.status ? c.status === 'COMPLETED' : c.state !== 'PENDING' && c.state !== 'EXPECTED')
@@ -188,9 +201,9 @@ async function readPull(run: Run, repo: string, n: number): Promise<GhPr> {
   const p = (await gh(run, ['pr-read', String(n)])) as RestPull
   let checks: Check[] | null = null
   if (p.state === 'open') {
-    const { check_runs: runs, statuses } = (await gh(run, ['commit-checks', p.head.sha, '--pr', String(n)])) as { check_runs: { name: string; status: string; conclusion: string | null }[]; statuses: { context: string; state: string }[] }
+    const { check_runs: runs, statuses } = (await gh(run, ['commit-checks', p.head.sha, '--pr', String(n)])) as { check_runs: { name: string; status: string; conclusion: string | null; started_at?: string | null }[]; statuses: { context: string; state: string }[] }
     checks = [
-      ...runs.map(c => ({ name: c.name, status: c.status.toUpperCase(), conclusion: (c.conclusion ?? '').toUpperCase() })),
+      ...runs.map(c => ({ name: c.name, status: c.status.toUpperCase(), conclusion: (c.conclusion ?? '').toUpperCase(), startedAt: c.started_at ?? null })),
       ...statuses.map(s => ({ context: s.context, state: s.state.toUpperCase() })),
     ]
   }
@@ -249,11 +262,13 @@ async function listAgents($: EngineInterface): Promise<Agent[]> {
 
 const RANK: Record<string, number> = { busy: 0, waiting: 1, idle: 2 }
 
-// The agent that owns a pull request by its name: pr-<n>, or issue-<k> when the branch ends in issue-<k>.
+// The agent that owns a pull request by its name: pr-<n>, <n>-<short name> (the workflow renames its workspace
+// to the PR's number once the PR is added), or issue-<k> or <k>-<short name> when the branch ends in issue-<k>.
+// Issues and pull requests share one number sequence, so <n>- names one of them only.
 function matchOwner(row: PrRow, agents: Agent[]): Agent | undefined {
   const issue = /issue-(\d+)$/.exec(row.branch)?.[1]
   const fits = (name: string) =>
-    name === `pr-${row.number}` || name.startsWith(`pr-${row.number}-`) ||
+    name === `pr-${row.number}` || name.startsWith(`pr-${row.number}-`) || name.startsWith(`${row.number}-`) ||
     (issue !== undefined && (name === `issue-${issue}` || name.startsWith(`issue-${issue}-`) || name.startsWith(`${issue}-`)))
   return agents
     .filter(a => fits(a.name))
@@ -372,9 +387,10 @@ export async function orca(run: Run, args: string[], noAnswer = START_ORCA): Pro
 }
 
 // Every Orca worktree, of every repository, since one can sit inside another's folder. A list cut short is refused:
-// the worktree missing from it could hold the pull request. `retry` ends the repair.
-export async function orcaWorktrees(run: Run, retry = ''): Promise<OrcaWorktree[]> {
-  const listed = (await orca(run, ['worktree', 'list', '--limit', '1000'])) as { worktrees: OrcaWorktree[]; totalCount?: number; truncated?: boolean }
+// the worktree missing from it could hold the pull request. `retry` ends the repair. With `environment`, the worktrees
+// of that saved Orca server, which the list of this machine leaves out.
+export async function orcaWorktrees(run: Run, retry = '', environment?: string): Promise<OrcaWorktree[]> {
+  const listed = (await orca(run, ['worktree', 'list', '--limit', '1000', ...(environment ? ['--environment', environment] : [])])) as { worktrees: OrcaWorktree[]; totalCount?: number; truncated?: boolean }
   if (listed.truncated) {
     throw new Error(`orca worktree list answered ${listed.worktrees.length} of ${listed.totalCount ?? 'more'} worktrees, so one that holds the pull request could be missing.\nRepair: archive the Orca workspaces you no longer need${retry}.`)
   }

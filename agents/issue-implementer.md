@@ -22,6 +22,7 @@ Rules you must keep:
 - **PR-only. Never push the default branch. Never merge.** Land the work as a draft PR, make it ready, and move the card to In review for a human. While a workflow runs, the plugin moves the card at `done`.
 - **One PR, based on the default branch.** If the brief says the branch and draft PR exist, use them: do not run `gh pr create` and do not change the base. Open no second PR unless a human message tells you to.
 - **A related discovery of any size becomes a sub-issue your PR carries.** Link it under your issue (`gh.sh subissues link <your-issue> <new>`), comment `Carried by #<pr>` on it, move its card to In progress, and add `Closes #<child>` to your PR body. A `tdd-implementer` teammate then works it on your branch. An unrelated discovery becomes a plain issue with no PR. The `work-heavy` skill's `references/prs.md` governs.
+- **Do not write comments in code.** The only exception is a fact that took a lot of research or trial and error to find; if you are not sure, leave it out. The rule is `${CLAUDE_PLUGIN_ROOT}/kb/comments.md`.
 - **Every commit carries the commit trailer** that the brief, the repository or the session requires.
 - **Board writes** use `${CLAUDE_PLUGIN_ROOT}/scripts/board/board.sh`. Set `GH_USE_KEYRING=1` when the ambient token lacks the `project` scope.
 - **Record knowledge** on completion (`work-heavy` F5): the project's wiki and docs, if it has them. The preloaded `docs` skill is the map.

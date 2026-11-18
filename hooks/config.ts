@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Mode, Steering } from '../types'
+import { SECRET_NAME } from './workflow/secrets.ts'
 
 // All per-project settings of the plugin live in one checked-in file at the project root.
 export const CONFIG_FILE = '.neil-dev.json'
@@ -15,7 +16,17 @@ export type NeilDevConfig = {
   services?: Services
   projectLevel?: ProjectLevel
   workflow?: boolean
+  checkEnv?: string[]
+  remote?: Remote
 }
+
+// remote.hcloudContext: the hcloud context (the Hetzner project) of the box that /dev remote resize changes. It is
+// named here or with --context; the active context is never used.
+export type Remote = { hcloudContext?: string }
+
+// checkEnv: the names of the .neil-dev.env keys that the check scripts get, such as the URL of a local test
+// database. Absent: they get none. The file also holds credentials for hosted services, and a test that finds
+// such a key, as fcc-proto's do with FALKORDB_URL, runs against the hosted service and not a local one.
 
 // How much risk the workflow tools take. straw_man: the agent may commit to main and merge PRs.
 // poc: the agent may merge PRs. small_project and formal_project: a human merges, and
@@ -51,9 +62,9 @@ export type LoadedConfig = {
   error?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv', 'remote'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
-const MODES: readonly string[] = ['light', 'heavy']
+const MODES: readonly string[] = ['light', 'heavy', 'hack']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
 
 // The project root is the git top level of the session's folder; outside a repository, the folder itself.
@@ -62,15 +73,19 @@ export async function projectRoot($: EngineInterface, cwd: string) {
   return ran.exitCode === 0 && ran.stdout.trim() !== '' ? ran.stdout.trim() : cwd
 }
 
-const validate = (raw: unknown): string | undefined => {
+export const validate = (raw: unknown): string | undefined => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'the file must hold a JSON object'
   const value = raw as Record<string, unknown>
   const unknown = Object.keys(value).filter(k => !(KEYS as readonly string[]).includes(k))
   if (unknown.length > 0) return `unknown key ${unknown.map(k => `"${k}"`).join(', ')}; the keys are ${KEYS.join(', ')}`
-  if (value.mode !== undefined && !MODES.includes(value.mode as string)) return `"mode" is ${JSON.stringify(value.mode)}; use "light" or "heavy"`
+  if (value.mode !== undefined && !MODES.includes(value.mode as string)) return `"mode" is ${JSON.stringify(value.mode)}; use "light", "heavy" or "hack"`
   if (value.steering !== undefined && !STEERINGS.includes(value.steering as string)) return `"steering" is ${JSON.stringify(value.steering)}; use "interactive" or "auto"`
+  // A human steers each step of a hack, so hack mode is interactive only.
+  if (value.mode === 'hack' && value.steering === 'auto') return '"mode" is "hack" and "steering" is "auto", but hack mode is interactive only; set "steering" to "interactive" or "mode" to "light"'
+
   if (value.projectLevel !== undefined && !(PROJECT_LEVELS as readonly unknown[]).includes(value.projectLevel)) return `"projectLevel" is ${JSON.stringify(value.projectLevel)}; use ${PROJECT_LEVELS.map(l => `"${l}"`).join(', ')}`
   if (value.workflow !== undefined && typeof value.workflow !== 'boolean') return `"workflow" is ${JSON.stringify(value.workflow)}; use true or false`
+  if (value.checkEnv !== undefined && (!Array.isArray(value.checkEnv) || value.checkEnv.some(k => typeof k !== 'string' || !SECRET_NAME.test(k)))) return `"checkEnv" is ${JSON.stringify(value.checkEnv)}; use a list of key names, such as ["TEST_DATABASE_URL"]`
   if (value.quality !== undefined && (typeof value.quality !== 'object' || value.quality === null || Array.isArray(value.quality))) return '"quality" must be an object'
   if (value.branding !== undefined) {
     const b = value.branding as Record<string, unknown>
@@ -110,6 +125,13 @@ const validate = (raw: unknown): string | undefined => {
       if (typeof e !== 'object' || e === null || Array.isArray(e) || Object.keys(e).some(k => k !== 'url')) return `"services.${name}" must be { "url": "https://..." }; the only key is url`
       if (typeof e.url !== 'string' || !/^https?:\/\/\S+$/.test(e.url)) return `"services.${name}.url" is ${JSON.stringify(e.url)}; use an http or https URL`
     }
+  }
+  if (value.remote !== undefined) {
+    const r = value.remote as Record<string, unknown>
+    if (typeof r !== 'object' || r === null || Array.isArray(r)) return '"remote" must be an object such as { "hcloudContext": "<hcloud context>" }'
+    const extra = Object.keys(r).filter(k => k !== 'hcloudContext')
+    if (extra.length > 0) return `unknown "remote" key ${extra.map(k => `"${k}"`).join(', ')}; the key is hcloudContext`
+    if (r.hcloudContext !== undefined && (typeof r.hcloudContext !== 'string' || r.hcloudContext.trim() === '')) return `"remote.hcloudContext" must be a non-empty string (the name of an hcloud context, as hcloud context list shows it); got ${JSON.stringify(r.hcloudContext)}`
   }
   return undefined
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Proves orca-shot.sh against a fake `orca` on PATH. The fake answers like Orca
-# 1.4: JSON with "ok", exit 1 on a failed command.
+# 1.4: JSON with "ok", exit 1 on a failed command, and `screenshot` saves a file
+# and answers with its path.
 #
 # Each failure case also proves that no screenshot file is left behind: a stale
 # PNG from an earlier run must never pass as evidence.
@@ -35,7 +36,11 @@ case "\$1" in
   status)
     printf '{"ok":true,"result":{"runtime":{"reachable":%s}}}\n' "\${FAKE_REACHABLE:-true}" ;;
   tab)
-    if [ "\${FAKE_TAB:-ok}" = ok ]; then
+    if [ "\$2" = close ]; then
+      [ "\${FAKE_CLOSE:-ok}" != warn ] || echo "a warning on stderr" >&2
+      [ "\${FAKE_CLOSE:-ok}" != fail ] || fail browser_host_unavailable "The tab did not close"
+      printf '{"ok":true,"result":{}}\n'
+    elif [ "\${FAKE_TAB:-ok}" = ok ]; then
       printf '{"ok":true,"result":{"browserPageId":"new-page"}}\n'
     else
       printf '{"ok":true,"result":{}}\n'
@@ -49,9 +54,14 @@ case "\$1" in
     printf '{"ok":true,"result":{"result":"%s"}}\n' "\${FAKE_WIDTH:-390}" ;;
   screenshot)
     [ "\${FAKE_SHOT:-ok}" != fail ] || fail browser_host_unavailable "The desktop is offline"
-    [ "\${FAKE_SHOT:-ok}" != text ] || { printf '{"ok":true,"result":{"data":"aGVsbG8="}}\n'; exit 0; }
+    [ "\${FAKE_SHOT:-ok}" != nopath ] || { printf '{"ok":true,"result":{"format":"png"}}\n'; exit 0; }
+    if [ "\${FAKE_SHOT:-ok}" = text ]; then
+      echo hello > "$root/shot.png"
+    else
+      base64 -D <<<"$PNG_B64" > "$root/shot.png"
+    fi
     echo "a warning on stderr" >&2
-    printf '{"ok":true,"result":{"data":"%s"}}\n' "$PNG_B64" ;;
+    printf '{"ok":true,"result":{"format":"png","path":"%s"}}\n' "$root/shot.png" ;;
   *) fail unknown "unexpected \$1" ;;
 esac
 EOF
@@ -76,13 +86,15 @@ out="$(FAKE_REACHABLE=false run "$R" https://x.test "$R/o.png")"; rc=$?
 grep -q "orca open" <<<"$out" && ok "names orca open" || bad "no repair in: $out"
 [ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
 
-echo "case 3 — no --page: a new tab, PNG written, page id printed"
+echo "case 3 — no --page: a new tab, PNG written, the tab closed"
 R="$(new_env)"
 out="$(run "$R" https://x.test "$R/o.png")"; rc=$?
 [ "$rc" = 0 ] && ok "exit 0" || bad "exit $rc, expected 0 ($out)"
 grep -q "tab create --url https://x.test" "$R/calls.log" && ok "tab created" || bad "no tab create: $(cat "$R/calls.log")"
 [ "$(head -c 4 "$R/o.png" | od -An -c | tr -d ' ')" = "211PNG" ] && ok "PNG written" || bad "not a PNG"
 grep -q "page=new-page" <<<"$out" && ok "prints page id" || bad "no page id in: $out"
+grep -q "^tab close --page new-page" "$R/calls.log" && ok "tab closed" || bad "tab left open: $(cat "$R/calls.log")"
+grep -q "tab=closed" <<<"$out" && ok "says closed" || bad "no tab state in: $out"
 
 echo "case 4 — --page: navigates that tab, creates none"
 R="$(new_env)"
@@ -90,6 +102,7 @@ out="$(run "$R" https://x.test "$R/o.png" --page p1)"; rc=$?
 [ "$rc" = 0 ] && ok "exit 0" || bad "exit $rc, expected 0 ($out)"
 grep -q "goto --url https://x.test --page p1" "$R/calls.log" && ok "goto on p1" || bad "no goto: $(cat "$R/calls.log")"
 grep -q "^tab create" "$R/calls.log" && bad "created a tab" || ok "no new tab"
+grep -q "^tab close" "$R/calls.log" && bad "closed the caller's tab" || ok "the caller's tab stays"
 
 echo "case 5 — --page not found: exit 1, names orca tab list"
 R="$(new_env)"; echo stale > "$R/o.png"
@@ -134,6 +147,50 @@ R="$(new_env)"
 out="$(FAKE_TAB=noid run "$R" https://x.test "$R/o.png")"; rc=$?
 [ "$rc" = 1 ] && ok "exit 1" || bad "exit $rc, expected 1 ($out)"
 grep -q "browserPageId" <<<"$out" && ok "names browserPageId" || bad "no detail in: $out"
+
+echo "case 12 — the opened tab closes on each failure, as the caller never gets its id"
+for fake in FAKE_SHOT=fail FAKE_SHOT=text FAKE_SHOT=nopath FAKE_WIDTH=1200; do
+  R="$(new_env)"
+  out="$(env "$fake" PATH="$R/bin:/usr/bin:/bin" "$SHOT" https://x.test "$R/o.png" --viewport 390x844 --keep-tab 2>&1)"; rc=$?
+  [ "$rc" = 1 ] && ok "$fake: exit 1" || bad "$fake: exit $rc, expected 1 ($out)"
+  grep -q "^tab close --page new-page" "$R/calls.log" && ok "$fake: tab closed" || bad "$fake: tab left open: $(cat "$R/calls.log")"
+done
+
+echo "case 13 — a failure on the caller's tab leaves that tab open"
+R="$(new_env)"
+out="$(FAKE_SHOT=fail run "$R" https://x.test "$R/o.png" --page p1)"; rc=$?
+[ "$rc" = 1 ] && ok "exit 1" || bad "exit $rc, expected 1 ($out)"
+grep -q "^tab close" "$R/calls.log" && bad "closed the caller's tab" || ok "the caller's tab stays"
+
+echo "case 14 — --keep-tab: the new tab stays, and the id is for the next call"
+R="$(new_env)"
+out="$(run "$R" https://x.test "$R/o.png" --keep-tab)"; rc=$?
+[ "$rc" = 0 ] && ok "exit 0" || bad "exit $rc, expected 0 ($out)"
+grep -q "^tab close" "$R/calls.log" && bad "closed a kept tab" || ok "tab kept"
+grep -q "page=new-page.*tab=kept" <<<"$out" && ok "says kept" || bad "no tab state in: $out"
+grep -q "orca tab close --page new-page" <<<"$out" && ok "names how to close it" || bad "no close command in: $out"
+
+echo "case 15 — the tab does not close: the PNG stands, and the repair is named"
+R="$(new_env)"
+out="$(FAKE_CLOSE=fail run "$R" https://x.test "$R/o.png")"; rc=$?
+[ "$rc" = 0 ] && ok "exit 0" || bad "exit $rc, expected 0 ($out)"
+[ -s "$R/o.png" ] && ok "PNG kept" || bad "PNG lost"
+grep -q "Repair: orca tab close --page new-page" <<<"$out" && ok "names the repair" || bad "no repair in: $out"
+grep -q "tab=open" <<<"$out" && ok "says open" || bad "no tab state in: $out"
+
+echo "case 17 — a warning on stderr does not make a closed tab look open"
+R="$(new_env)"
+out="$(FAKE_CLOSE=warn run "$R" https://x.test "$R/o.png")"; rc=$?
+[ "$rc" = 0 ] && ok "exit 0" || bad "exit $rc, expected 0 ($out)"
+grep -q "tab=closed" <<<"$out" && ok "says closed" || bad "no closed state in: $out"
+grep -q "Repair:" <<<"$out" && bad "needless repair in: $out" || ok "names no repair"
+
+echo "case 16 — Orca gives no file path: exit 1, shows the answer"
+R="$(new_env)"; echo stale > "$R/o.png"
+out="$(FAKE_SHOT=nopath run "$R" https://x.test "$R/o.png")"; rc=$?
+[ "$rc" = 1 ] && ok "exit 1" || bad "exit $rc, expected 1 ($out)"
+grep -q 'no file path' <<<"$out" && ok "says no path" || bad "no detail in: $out"
+[ ! -e "$R/o.png" ] && ok "stale file removed" || bad "stale file left"
 
 echo "case 11 — bad arguments: exit 2, never hangs"
 R="$(new_env)"

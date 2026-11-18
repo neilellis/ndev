@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 # Opens a URL in Orca's built-in browser and saves a PNG screenshot of the viewport.
 # Orca's browser keeps the user's signed-in sessions, so a signed-in page needs no
-# password. Without --page it makes a new tab and prints its id: pass that id as
-# --page on later calls, so the user's own tabs stay where they are.
+# password. Without --page it makes a new tab and closes it after the screenshot.
+# With --page it uses that tab and leaves it open, so the user's own tabs stay.
 #
-# Usage: orca-shot.sh <url> <out.png> [--page <id>] [--viewport <W>x<H>] [--wait <seconds>]
+# Usage: orca-shot.sh <url> <out.png> [--page <id>] [--keep-tab] [--viewport <W>x<H>] [--wait <seconds>]
 #   --page      a browserPageId from `orca tab list --json` (or `--worktree all`)
+#   --keep-tab  keep the new tab, to pass its id as --page on the next call. Close it yourself.
 #   --viewport  sets the CSS viewport, then checks window.innerWidth
 #   --wait      extra seconds after the page loads (animations, late data)
 #
-# Prints: <out.png> page=<id> width=<innerWidth>
+# Prints: <out.png> page=<id> width=<innerWidth> tab=<closed|kept|open|caller's>
+# A failed run always closes the tab that it opened, because the caller gets no id.
 # Exit codes: 0 saved, 1 a browser command failed, 2 bad arguments,
 # 3 Orca is not available (run `orca open`).
 set -uo pipefail
 
 usage() {
-  sed -n 's/^# \{0,1\}//; 7,10p' "$0" >&2
+  sed -n '7,11s/^# \{0,1\}//p' "$0" >&2
   exit 2
 }
 
 [ $# -ge 2 ] || usage
 URL="$1"; OUT="$2"; shift 2
-PAGE=""; VIEWPORT=""; WAIT=0
+PAGE=""; VIEWPORT=""; WAIT=0; KEEP=0
 while [ $# -gt 0 ]; do
+  if [ "$1" = --keep-tab ]; then KEEP=1; shift; continue; fi
   [ $# -ge 2 ] || { echo "orca-shot: $1 needs a value" >&2; usage; }
   case "$1" in
     --page) PAGE="${2:-}"; shift 2 ;;
@@ -53,7 +56,24 @@ fi
 json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1" 2>/dev/null; }
 
 ERRF="$(mktemp)"
-trap 'rm -f "$ERRF"' EXIT
+OPENED=""
+TAB="caller's"
+
+# close_opened closes the tab that this run opened. A tab that stays open is named with its repair.
+close_opened() {
+  [ -n "$OPENED" ] || return 0
+  local page="$OPENED"; OPENED=""
+  local said; said="$(orca tab close --page "$page" --json 2>"$ERRF")"
+  local rc=$?
+  if [ $rc = 0 ] && [ "$(json 'd["ok"]' <<<"$said")" = True ]; then
+    TAB=closed
+    return 0
+  fi
+  TAB=open
+  echo "orca-shot: 'orca tab close --page $page' failed (exit $rc): $said $(cat "$ERRF")" >&2
+  echo "Repair: orca tab close --page $page" >&2
+}
+trap 'close_opened; rm -f "$ERRF"' EXIT
 
 # call <orca args...> runs one Orca command and keeps its JSON (stdout only) in
 # $REPLY. On failure it prints the command, Orca's error code, its output and the repair.
@@ -87,6 +107,7 @@ else
   call tab create --url "$URL"
   PAGE="$(json 'd["result"]["browserPageId"]' <<<"$REPLY")"
   [ -n "$PAGE" ] || { echo "orca-shot: 'orca tab create' gave no browserPageId: $REPLY" >&2; exit 1; }
+  OPENED="$PAGE"
 fi
 
 # A page load resets the viewport, so set it after the load.
@@ -105,9 +126,14 @@ if [ -n "$VIEWPORT" ] && [ "$WIDTH" != "$W" ]; then
 fi
 
 call screenshot --format png --page "$PAGE"
-if ! json 'd["result"]["data"]' <<<"$REPLY" | python3 -c 'import base64,sys; open(sys.argv[1],"wb").write(base64.b64decode(sys.stdin.read()))' "$OUT"; then
+SHOT="$(json 'd["result"]["path"]' <<<"$REPLY")"
+if [ -z "$SHOT" ]; then
+  echo "orca-shot: 'orca screenshot' gave no file path for page $PAGE: $REPLY" >&2
+  exit 1
+fi
+if ! cp "$SHOT" "$OUT"; then
   rm -f "$OUT"
-  echo "orca-shot: could not decode the screenshot of page $PAGE into $OUT." >&2
+  echo "orca-shot: could not copy the screenshot of page $PAGE from $SHOT to $OUT." >&2
   exit 1
 fi
 if [ "$(head -c 4 "$OUT" | od -An -c | tr -d ' ')" != "211PNG" ]; then
@@ -116,4 +142,10 @@ if [ "$(head -c 4 "$OUT" | od -An -c | tr -d ' ')" != "211PNG" ]; then
   exit 1
 fi
 
-echo "$OUT page=$PAGE width=$WIDTH"
+if [ "$KEEP" = 1 ] && [ -n "$OPENED" ]; then
+  OPENED=""; TAB=kept
+  echo "orca-shot: page $PAGE stays open. Pass --page $PAGE on the next call. When you finish: orca tab close --page $PAGE" >&2
+else
+  close_opened
+fi
+echo "$OUT page=$PAGE width=$WIDTH tab=$TAB"

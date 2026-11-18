@@ -30,6 +30,8 @@ export type InterviewFile = {
   issue: number
   rounds: RecordedRound[]
   draft?: Record<string, DraftAnswer>
+  // In Orca Chat, which shows no pane: the round that the agent posted in the chat, until answersJson records its answers.
+  chatRound?: InterviewRound
   // prNumber: the PR that the comment pr is on. A worker's copy of the file has no record that names it.
   commentIds?: { issue?: number; pr?: number; prNumber?: number }
   posted?: boolean
@@ -39,7 +41,7 @@ export type InterviewFile = {
 
 // The keys of an issue file that the interview owns. The workflow and the PR records in that file belong to
 // set-workflow. INTERVIEW_KEYS in scripts/work/worktree_env.mjs keeps the same list.
-export const INTERVIEW_KEYS = ['rounds', 'draft', 'commentIds', 'posted', 'closed', 'startedByFollowUp'] as const
+export const INTERVIEW_KEYS = ['rounds', 'draft', 'chatRound', 'commentIds', 'posted', 'closed', 'startedByFollowUp'] as const
 export const interviewFileName = (issue: number) => `.neil-dev.issue-${issue}.json`
 export const INTERVIEW_FILE_PATTERN = '.neil-dev.issue-*.json'
 export const emptyFile = (issue: number): InterviewFile => ({ version: 1, issue, rounds: [] })
@@ -151,6 +153,66 @@ export function finishRound(round: InterviewRound, answers: Record<string, Draft
   }
   const sourceOf = (q: InterviewQuestion): AnswerSource => (end === 'submitted' || answers[q.id]!.touched ? 'human' : 'recommended')
   return { ...round, answers: round.questions.map(q => finalAnswer(q.id, answers[q.id]!, sourceOf(q))), at, ...(end === 'trustMeBro' ? { trustMeBro: true as const } : {}) }
+}
+
+// A round as Markdown, for a chat that shows no pane. The labels run on from the rounds before it.
+export function roundMarkdown(round: InterviewRound, file: InterviewFile): string {
+  const labels = labelsOf([...allQuestions(file), ...round.questions])
+  const items = round.questions.map(q => {
+    const options = (q.options ?? []).map(o => [
+      `- ${o.label}${o.recommended ? ' (recommended)' : ''}${o.description ? ` — ${o.description}` : ''}`,
+      ...(o.preview ? [`  ${o.preview.split('\n').join('\n  ')}`] : []),
+    ].join('\n'))
+    return [
+      `**${labels[q.id]}: ${q.header}**${q.followUpTo ? ` (follow-up to ${labels[q.followUpTo] ?? q.followUpTo})` : ''}`,
+      q.question,
+      ...(q.context ? [q.context] : []),
+      ...(options.length ? [`${q.multiSelect ? 'Pick one or more:' : 'Pick one:'}\n${options.join('\n')}`] : [`Suggested: ${q.suggested}`]),
+    ].join('\n\n')
+  })
+  return [`### ${round.title}`, ...(round.intro ? [round.intro] : []), ...items, 'Reply with your answer to each question, and any notes.'].join('\n\n')
+}
+
+// The human's chat answers to the open chat round, as the agent sends them: { "<id>": { selected?, other?, notes? } }.
+// Each question needs an answer, and each selected label must be an option of its question.
+export function parseChatAnswers(raw: unknown, round: InterviewRound): { answers: Record<string, DraftAnswer> } | { problems: string[] } {
+  let value = raw
+  if (typeof raw === 'string') {
+    try {
+      value = JSON.parse(raw)
+    } catch (error) {
+      return { problems: [`answersJson is not valid JSON: ${error instanceof Error ? error.message : String(error)}.`] }
+    }
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { problems: [`answersJson must be an object with one entry for each question id, and it is ${JSON.stringify(raw)?.slice(0, 80)}.`] }
+  const given = value as Record<string, { selected?: unknown; other?: unknown; notes?: unknown } | undefined>
+  const ids = new Set(round.questions.map(q => q.id))
+  const problems = Object.keys(given).filter(id => !ids.has(id)).map(id => `"${id}" is not a question of the round "${round.title}". Its questions are ${[...ids].map(i => `"${i}"`).join(', ')}.`)
+  const answers: Record<string, DraftAnswer> = {}
+  for (const q of round.questions) {
+    const a = given[q.id]
+    if (typeof a !== 'object' || a === null) {
+      problems.push(`"${q.id}" (${q.header}) has no answer. Record what the human said, or ask the human again.`)
+      continue
+    }
+    const selected = a.selected === undefined ? [] : a.selected
+    if (!Array.isArray(selected) || !selected.every(isText)) {
+      problems.push(`"${q.id}": selected must be a list of option labels, and it is ${JSON.stringify(a.selected)}.`)
+      continue
+    }
+    const labels = (q.options ?? []).map(o => o.label)
+    const unknown = selected.filter(l => !labels.includes(l))
+    if (unknown.length) problems.push(`"${q.id}": ${unknown.map(l => `"${l}"`).join(', ')} ${unknown.length > 1 ? 'are' : 'is'} not ${labels.length ? `an option (${labels.map(l => `"${l}"`).join(', ')})` : 'possible: the question has no options'}. Put the human's own words in other.`)
+    if (selected.length > 1 && !q.multiSelect) problems.push(`"${q.id}" takes one answer, and it got ${selected.length}.`)
+    const repeated = [...new Set(selected.filter((l, i) => selected.indexOf(l) !== i))]
+    if (repeated.length) problems.push(`"${q.id}" repeats ${repeated.map(l => `"${l}"`).join(', ')}. Give each label once.`)
+    for (const key of ['other', 'notes'] as const) if (a[key] !== undefined && typeof a[key] !== 'string') problems.push(`"${q.id}": ${key} must be a text, and it is ${JSON.stringify(a[key])?.slice(0, 80)}.`)
+    const other = isText(a.other) ? a.other : ''
+    const notes = isText(a.notes) ? a.notes : ''
+    if (!selected.length && !other) problems.push(`"${q.id}" (${q.header}) has no answer: give selected or other.`)
+    answers[q.id] = { selected, other, notes, touched: true }
+  }
+  return problems.length ? { problems } : { answers }
 }
 
 // What the agent gets back.

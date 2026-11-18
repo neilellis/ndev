@@ -105,21 +105,20 @@ test('pr-list with no pull requests prints nothing and passes', () => {
 const ROLLUP = { headRefOid: 'abc', statusCheckRollup: [{ __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: 't1' }, { __typename: 'CheckRun', name: 'e2e', status: 'IN_PROGRESS', conclusion: '' }, { __typename: 'StatusContext', context: 'vercel', state: 'PENDING' }] }
 const CHECKS = { check_runs: [{ name: 'unit', started_at: 't1', status: 'completed', conclusion: 'success' }, { name: 'e2e', started_at: null, status: 'in_progress', conclusion: null }], statuses: [{ context: 'vercel', state: 'pending' }] }
 
-test('commit-checks reads the PR rollup in one gh call, in the shape of REST', () => {
-  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'pr view 12', out: JSON.stringify(ROLLUP) }])
+test('commit-checks --pr reads the commit and the PR branch in one gh call, in the shape of REST', () => {
+  const graph = { data: { repository: { pullRequest: { headRefName: 'feat' }, object: { statusCheckRollup: { contexts: { nodes: ROLLUP.statusCheckRollup } } } } } }
+  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'api graphql', out: JSON.stringify(graph) }])
   assert.equal(r.code, 0, r.err)
   assert.equal(r.calls.length, 1)
   assert.deepEqual(json(r), CHECKS)
 })
 
-test('commit-checks reads the commit through REST when the PR head is another commit, or gh fails', () => {
-  const rules = [{ match: 'pr view', out: JSON.stringify({ ...ROLLUP, headRefOid: 'other' }) }, { match: 'commits/abc/check-runs', out: JSON.stringify({ check_runs: CHECKS.check_runs, total_count: 2 }) }, { match: 'commits/abc/status', out: JSON.stringify({ statuses: CHECKS.statuses, state: 'pending' }) }]
-  const moved = ghsh(['commit-checks', 'abc', '--pr', '12'], rules)
-  assert.equal(moved.code, 0, moved.err)
-  assert.deepEqual(json(moved), CHECKS)
-  const failed = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'pr view', err: LIMITED, exit: 1 }, ...rules.slice(1)])
+test('commit-checks reads the commit through REST when gh fails, or with no PR', () => {
+  const rules = [{ match: 'commits/abc/check-runs', out: JSON.stringify({ check_runs: CHECKS.check_runs, total_count: 2 }) }, { match: 'commits/abc/status', out: JSON.stringify({ statuses: CHECKS.statuses, state: 'pending' }) }]
+  const failed = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'api graphql', err: LIMITED, exit: 1 }, { match: 'api repos/o/r/pulls/12', out: JSON.stringify(REST_PR) }, { match: 'commits/abc/check-suites', out: '{"total_count":0,"check_suites":[]}' }, ...rules])
+  assert.equal(failed.code, 0, failed.err)
   assert.deepEqual(json(failed), CHECKS)
-  const noPr = ghsh(['commit-checks', 'abc'], rules.slice(1))
+  const noPr = ghsh(['commit-checks', 'abc'], rules)
   assert.equal(noPr.calls.filter(c => c.startsWith('pr ')).length, 0)
   assert.deepEqual(json(noPr), CHECKS)
 })
@@ -128,6 +127,44 @@ test('commit-checks with no PR and no REST quota reads the commit through GraphQ
   const r = ghsh(['commit-checks', 'abc'], [{ match: 'commits/abc', err: LIMITED, exit: 1 }, { match: 'api graphql', out: JSON.stringify({ data: { repository: { object: { statusCheckRollup: { contexts: { nodes: ROLLUP.statusCheckRollup } } } } } }) }])
   assert.equal(r.code, 0, r.err)
   assert.deepEqual(json(r), CHECKS)
+})
+
+// Two PRs from two branches can share a head commit. GitHub lists the checks by commit, so the
+// rollup of one PR holds the runs of the other. Only the runs of this PR's branch are its checks.
+const MINE = { headRefOid: 'abc', headRefName: 'feat', statusCheckRollup: [
+  { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: 't1', checkSuite: { branch: { name: 'feat' } } },
+  { __typename: 'CheckRun', name: 'postgres', status: 'QUEUED', conclusion: '', startedAt: 't3', checkSuite: { branch: { name: 'feat' } } },
+  { __typename: 'CheckRun', name: 'postgres', status: 'COMPLETED', conclusion: 'CANCELLED', startedAt: 't2', checkSuite: { branch: { name: 'other' } } },
+  { __typename: 'CheckRun', name: 'sql-tests', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: 't4', checkSuite: { branch: { name: 'other' } } },
+  { __typename: 'CheckRun', name: 'app', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: 't1', checkSuite: { branch: null } },
+  { __typename: 'StatusContext', context: 'vercel', state: 'PENDING' }] }
+const OWN = { check_runs: [{ name: 'unit', started_at: 't1', status: 'completed', conclusion: 'success' }, { name: 'postgres', started_at: 't3', status: 'queued', conclusion: null }, { name: 'app', started_at: 't1', status: 'completed', conclusion: 'success' }], statuses: [{ context: 'vercel', state: 'pending' }] }
+const GRAPH_MINE = { data: { repository: { pullRequest: { headRefName: 'feat' }, object: { statusCheckRollup: { contexts: { nodes: MINE.statusCheckRollup } } } } } }
+
+test('commit-checks --pr leaves out the runs of another PR that has the same head commit', () => {
+  const rollup = { headRefOid: 'abc', statusCheckRollup: MINE.statusCheckRollup.map(({ checkSuite, ...c }) => c) }
+  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [{ match: 'pr view 12', out: JSON.stringify(rollup) }, { match: 'api graphql', out: JSON.stringify(GRAPH_MINE) }])
+  assert.equal(r.code, 0, r.err)
+  assert.equal(r.calls.length, 1)
+  assert.deepEqual(json(r), OWN)
+})
+
+test('commit-checks --pr through REST also leaves out the runs of another branch', () => {
+  const runs = { total_count: 5, check_runs: [
+    { name: 'unit', started_at: 't1', status: 'completed', conclusion: 'success', check_suite: { id: 1 } },
+    { name: 'postgres', started_at: 't3', status: 'queued', conclusion: null, check_suite: { id: 1 } },
+    { name: 'postgres', started_at: 't2', status: 'completed', conclusion: 'cancelled', check_suite: { id: 2 } },
+    { name: 'sql-tests', started_at: 't4', status: 'completed', conclusion: 'failure', check_suite: { id: 2 } },
+    { name: 'app', started_at: 't1', status: 'completed', conclusion: 'success', check_suite: { id: 3 } }] }
+  const suites = { total_count: 3, check_suites: [{ id: 1, head_branch: 'feat' }, { id: 2, head_branch: 'other' }, { id: 3, head_branch: null }] }
+  const r = ghsh(['commit-checks', 'abc', '--pr', '12'], [
+    { match: 'pr view', err: LIMITED, exit: 1 }, { match: 'api graphql', err: LIMITED, exit: 1 },
+    { match: 'api repos/o/r/pulls/12', out: JSON.stringify(REST_PR) },
+    { match: 'commits/abc/check-runs', out: JSON.stringify(runs) }, { match: 'commits/abc/check-suites', out: JSON.stringify(suites) },
+    { match: 'commits/abc/status', out: JSON.stringify({ statuses: OWN.statuses, state: 'pending' }) }])
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.err, /Trying REST/)
+  assert.deepEqual(json(r), OWN)
 })
 
 test('a command that says why on stdout still has its words in the failure', () => {
@@ -463,4 +500,71 @@ test('pr-merge reports a failed or queued merge-async result with GitHub words, 
   const queued = ghsh(['pr-merge', '12', '--method', 'merge'], stackRules(1, '{"status":"enqueued"}'), { env: fast })
   assert.notEqual(queued.code, 0)
   assert.match(queued.err, /merge queue/)
+})
+
+// What GitHub answers to the PUT: the request id is in details.uuid, and there is no top-level id.
+const ENQUEUED = '{"status":"pending","details":{"message":"Merge request enqueued.","uuid":"e9-1","merge_method":"merge","merge_action":"direct_merge","expected_head_sha":"h1"}}'
+const uuidRules = (poll, pr = {}) => [
+  { match: 'pr merge 12', err: STACKED_GH, exit: 1 },
+  { match: 'merge-async/e9-1', ...poll },
+  { match: 'pulls/12/merge-async', out: ENQUEUED },
+  { match: 'api repos/o/r/pulls/12', out: JSON.stringify({ ...JSON.parse(stackedPr(1)), ...pr }) },
+]
+
+test('pr-merge takes "pending" with details.uuid as accepted, and waits for the request to merge', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], uuidRules({ out: '{"status":"merged","details":{"sha":"m1"}}' }), { env: fast })
+  assert.equal(r.code, 0, r.err)
+  assert.doesNotMatch(r.err, /no request id/)
+  assert.ok(r.calls.some(c => c.includes('pulls/12/merge-async/e9-1')), r.calls.join('\n'))
+})
+
+test('pr-merge reads the PR when the merge-async request cannot be read, and a merged PR is a merge', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], uuidRules({ err: 'gh: Not Found (HTTP 404)', exit: 1 }, { merged: true, state: 'closed' }), { env: fast })
+  assert.equal(r.code, 0, r.err)
+  assert.match(r.err, /PR #12 of o\/r reads merged/)
+})
+
+test('pr-merge that never sees the merge stops after its tries and names the last answer of the request', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], uuidRules({ err: 'gh: Not Found (HTTP 404)', exit: 1 }), { env: { ...fast, GH_MERGE_ASYNC_TRIES: '2' } })
+  assert.equal(r.code, 1, r.err)
+  assert.match(r.err, /e9-1/)
+  assert.match(r.err, /Not Found \(HTTP 404\)/)
+  assert.match(r.err, /still pending/)
+})
+
+test('pr-merge with no id in the merge-async answer names the keys it looked for', () => {
+  const rules = uuidRules({ out: '{}' })
+  rules[2] = { match: 'pulls/12/merge-async', out: '{"status":"pending","details":{"message":"x"}}' }
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], rules, { env: fast })
+  assert.equal(r.code, 1)
+  assert.match(r.err, /details\.uuid/)
+  assert.match(r.err, /gh pr view 12/)
+})
+
+// GET /repos/{o}/{r}/stacks/{number}: the PRs of the stack from the bottom up, each with its state.
+const stackOf = (...states) => JSON.stringify({ number: 7, pull_requests: states.map((state, i) => ({ number: 10 + i, state })) })
+const aboveRules = stack => [
+  ...stackRules(3, '{"status":"merged"}').slice(0, 4),
+  { match: 'api repos/o/r/stacks/7', ...stack },
+  { match: 'api repos/o/r/pulls/12', out: JSON.stringify({ ...JSON.parse(stackedPr(3)), stack: { number: 7, position: 3, size: 3 } }) },
+]
+
+test('pr-merge merges a PR above the bottom without --stack when every PR below it is closed', () => {
+  const r = ghsh(['pr-merge', '12', '--method', 'merge'], aboveRules({ out: stackOf('closed', 'closed', 'open') }), { env: fast })
+  assert.equal(r.code, 0, r.err)
+  assert.ok(r.calls.some(c => c.includes('pulls/12/merge-async') && c.includes('-X PUT')), r.calls.join('\n'))
+})
+
+test('pr-merge refuses without --stack and names each open PR below, and says so when the stack cannot be read', () => {
+  const open = ghsh(['pr-merge', '12', '--method', 'merge'], aboveRules({ out: stackOf('closed', 'open', 'open') }), { env: fast })
+  assert.equal(open.code, 1)
+  assert.match(open.err, /3 of 3 in a stack/)
+  assert.match(open.err, /1 open PR\(s\) below it \(#11\)/)
+  assert.match(open.err, /--stack/)
+  assert.ok(!open.calls.some(c => c.includes('merge-async')), open.calls.join('\n'))
+  const unread = ghsh(['pr-merge', '12', '--method', 'merge'], aboveRules({ err: 'gh: Server Error (HTTP 500)', exit: 1 }), { env: fast })
+  assert.equal(unread.code, 1)
+  assert.match(unread.err, /Server Error \(HTTP 500\)/)
+  assert.match(unread.err, /--stack/)
+  assert.ok(!unread.calls.some(c => c.includes('merge-async')), unread.calls.join('\n'))
 })

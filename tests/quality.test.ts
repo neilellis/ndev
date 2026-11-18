@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
-type On = Parameters<Parameters<typeof test>[1]>[1]
+declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
+
+type On = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[1]
 type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; stdin?: string }
 
 const ROOT = '/proj'
@@ -19,7 +21,7 @@ const answered = (config: string | undefined) => {
 // The engine beneath the plugin: a project at /proj whose .neil-dev.json holds `config`
 // (undefined: no file), and hook scripts that answer with `script`.
 const engine = async (
-  $: Parameters<Parameters<typeof test>[1]>[0],
+  $: Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0],
   on: On,
   config: string | undefined,
   script: { exitCode: number; stdout?: string; stderr?: string } = { exitCode: 0 },

@@ -9,7 +9,8 @@ const engine = (opts: { mainMoved: boolean; branchEdited: boolean }) => {
   const ok = (stdout = '', exitCode = 0) => ({ exitCode, stdout, stderr: '' })
   return {
     plugin: { root: '/plugin' },
-    fs: { write: async () => {} },
+    // No .neil-dev.json and no .neil-dev.env: the check gets no project env.
+    fs: { write: async () => {}, exists: async () => false },
     clock: { now: async () => 0 },
     ui: { log: () => {}, status: () => {} },
     process: {
@@ -23,6 +24,8 @@ const engine = (opts: { mainMoved: boolean; branchEdited: boolean }) => {
         if (a[1] === 'show') return ok('#!/bin/sh\n')
         if (a[1] === 'merge-base') return ok('abc\n')
         if (a[1] === 'status') return ok()
+        // The change-type read lists paths and exits 0, as real git does; only --quiet says changed by its exit code.
+        if (a[1] === 'diff' && a.includes('--name-only')) return ok(opts.branchEdited ? 'scripts/ndev/workflow/pre-commit-check.sh\n' : '')
         if (a[1] === 'diff') {
           const threeDot = a.some(x => x.includes('...'))
           const changed = opts.branchEdited || (!threeDot && opts.mainMoved)

@@ -4,12 +4,14 @@
 # Usage: merge.sh <pr> [--repo owner/name] [--method merge|squash|rebase] [--stack]
 #
 # A stacked PR merges through GitHub's merge-async endpoint, which also merges each open PR below it.
-# So a PR above the bottom of its stack is refused unless --stack is given.
+# So a PR with an open PR below it in its stack is refused unless --stack is given.
 #
 # Safe to run twice: a merged pull request is not merged again. A migration is a path in the
-# marked section of the PR body, written by the addMigration tool.
+# marked section of the PR body, written by the addMigration tool. A .sql file that the PR adds under
+# any supabase/migrations/ folder and that the section does not list goes in "unlisted", with a
+# warning on stderr: nothing will run it after the merge unless someone does.
 #
-# Prints JSON: {"pr":n,"merged":true,"alreadyMerged":bool,"sha":"...","base":"...","migrations":[...]}
+# Prints JSON: {"pr":n,"merged":true,"alreadyMerged":bool,"sha":"...","base":"...","migrations":[...],"unlisted":[...]}
 # Exit: 0 merged, 1 GitHub refused (the message names the reason), 2 bad usage or no PR read.
 set -euo pipefail
 
@@ -41,6 +43,18 @@ migrations="$(jq -c '[(.body // "") | split("\n") as $l
   | if $a and $b then $l[$a:$b][] else empty end
   | capture("^- `(?<p>[^`]+)`").p]' <<<"$json")"
 base="$(jq -r .base.ref <<<"$json")"
+# Read before the merge, so that a failed read stops it. --paginate prints one array per page.
+files="$(bash "$GHSH" api --paginate "repos/$repo/pulls/$pr/files?per_page=100")" \
+  || die 2 "could not read the files of PR #$pr of $repo (exit $?), see above. Nothing is merged. Run it again when GitHub answers"
+unlisted="$(jq -sc --argjson listed "$migrations" '[.[][] | select(.status == "added" or .status == "renamed")
+  | .filename | select(test("(^|/)supabase/migrations/[^/]+\\.sql$")) | select(. as $f | $listed | index($f) | not)]' <<<"$files")"
+if [ "$unlisted" != "[]" ]; then
+  {
+    echo "merge.sh: PR #$pr of $repo adds $(jq length <<<"$unlisted") migration file(s) that its body does not list, so nothing runs them after the merge:"
+    jq -r '.[] | "- " + .' <<<"$unlisted"
+    echo "Repair: before the merge, register each one with mcp__ndev__addMigration (newVersion: true if a newer migration reached the database first). After the merge, check it with supabase migration list and apply it with supabase db push."
+  } >&2
+fi
 already=false
 if [ "$(jq -r .merged <<<"$json")" = true ]; then
   already=true
@@ -56,5 +70,5 @@ else
     sha=unknown
   fi
 fi
-jq -cn --argjson pr "$pr" --argjson already "$already" --arg sha "$sha" --arg base "$base" --argjson migrations "$migrations" \
-  '{pr:$pr,merged:true,alreadyMerged:$already,sha:$sha,base:$base,migrations:$migrations}'
+jq -cn --argjson pr "$pr" --argjson already "$already" --arg sha "$sha" --arg base "$base" --argjson migrations "$migrations" --argjson unlisted "$unlisted" \
+  '{pr:$pr,merged:true,alreadyMerged:$already,sha:$sha,base:$base,migrations:$migrations,unlisted:$unlisted}'

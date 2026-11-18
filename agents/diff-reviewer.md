@@ -15,7 +15,7 @@ When the caller says the change follows the `work-heavy` skill, also check what 
 
 Follow `mattpocock-skills:code-review` (preloaded). It reviews on two separate axes: does the code follow the repository's written standards, and does it implement the specification it came from. It also has a baseline of code smells to check where the repository documents nothing. You have no `Agent` tool, so do both axes yourself in one pass. Do not spawn the two sub-agents that skill describes.
 
-Read the diff and the code around it (`git diff`, Read, Grep, Glob). Run tests or checks read-only if that helps. Report **Critical** and **Important** findings first: correctness bugs, then security, then simplification, reuse and efficiency. Give each one a `file:line` and a concrete failure scenario. Skip nits unless asked. Be concise; the caller fixes and runs again.
+Read the diff and the code around it (`git diff`, Read, Grep, Glob). Run tests or checks read-only if that helps. Report **Critical** and **Important** findings first: correctness bugs, then security, then simplification, reuse and efficiency. Give each one a `file:line` and a concrete failure scenario. Report each new code comment or docstring that fails `${CLAUDE_PLUGIN_ROOT}/kb/comments.md` as an Important finding: the default is no comment, and only a fact that took real research or trial and error to find may stay. Skip nits unless asked. Be concise; the caller fixes and runs again.
 
 ## The workflow
 

@@ -16,7 +16,8 @@ The colours are the same in both diagrams: grey is the start, blue is the work, 
 stateDiagram-v2
     %%{init: {"theme":"base","themeVariables":{"fontFamily":"ui-sans-serif, system-ui, sans-serif","fontSize":"14px","primaryColor":"#334155","primaryTextColor":"#ffffff","primaryBorderColor":"#94a3b8","lineColor":"#8b95a5","edgeLabelBackground":"#1e293b","tertiaryTextColor":"#e2e8f0","textColor":"#e2e8f0"},"state":{"nodeSpacing":60,"rankSpacing":70}}}%%
     [*] --> setup: started, a check script is missing
-    [*] --> interviewing: started, interactive steering
+    [*] --> interviewing: started, interactive steering, light or heavy mode
+    [*] --> developing: started, hack mode
     [*] --> planning: started, auto steering, heavy mode
     [*] --> developing: started, auto steering, light mode
     [*] --> blocked: started, a blocker is open
@@ -32,6 +33,8 @@ stateDiagram-v2
     developing --> developed: finishedDevelopment, another issue of the PR is not complete
     developed --> reviewing: finishedDevelopment of the last issue
     developed --> developing: checkpoint
+    developing --> hardening: finishedHacking, hack mode
+    hardening --> reviewing: finishedDevelopment with the hardening evidence
     reviewing --> ci: finishedReview
     ci --> smoke: finishedChecks, a web change, a docs change, or a preview in heavy mode
     ci --> finishing: finishedChecks, nothing to smoke
@@ -65,7 +68,7 @@ stateDiagram-v2
     classDef hold fill:#6d28d9,stroke:#c4b5fd,color:#ffffff
     classDef any fill:#1e293b,stroke:#94a3b8,color:#ffffff,stroke-dasharray:5 4
     class setup start
-    class interviewing,planning,developing,developed build
+    class interviewing,planning,developing,hardening,developed build
     class reviewing,ci,smoke,finishing verify
     class revising revise
     class done finished
@@ -96,10 +99,13 @@ flowchart TD
     interviewing -->|"interview(), light"| developing
     checks -->|"auto, heavy"| planning[planning<br/>plan in the PR body]
     checks -->|"auto, light"| developing
+    checks -->|"interactive, hack:<br/>no interview, no plan"| developing
 
     planning -->|"finishedPlan(file)<br/>auto, or straw_man or poc"| developing[developing<br/>test first]
     planning -->|"finishedPlan(file)<br/>interactive: wait for sign-off"| blocked
 
+    developing -->|"finishedHacking(), hack<br/>local commits only, no push"| hardening[hardening<br/>each test fails on the base, full checks, no push]
+    hardening -->|"finishedDevelopment(..., hardening)<br/>pre-push, gates, evidence on the PR. No push."| reviewing
     developing -->|"finishedDevelopment(issues, prs, message, files, body_file)<br/>fast, pre-commit, commit. No push."| reviewing[reviewing<br/>the plugin starts the review, runs the dead-code sweep,<br/>REMEMBER HOOK fires]
     reviewing -->|"finishedReview(review, deadcode, remembered)<br/>pre-ready, pre-push, push, mark PR ready"| ci[ci<br/>the plugin watches the checks]
     ci -->|"finishedChecks()<br/>green, web change, docs change, or preview in heavy mode"| smoke[smoke<br/>browser smoke test]
@@ -114,6 +120,7 @@ flowchart TD
 
     smoke & finishing -->|"checkpoint: a new commit<br/>makes the evidence stale.<br/>Documents only: stays in finishing,<br/>or goes to smoke when a docs smoke test is due"| ci
     reviewing & ci & smoke & finishing -->|"followUp('this_agent')"| developing
+    reviewing & ci & smoke & finishing -->|"followUp('this_agent'), hack"| hardening
 
     active["any active state"] -->|"blocked(message)<br/>or 3 failed attempts<br/>or stalled with no progress"| blocked[[blocked<br/>keeps the previous state]]
     blocked -->|"unblocked(message) or /unblock message<br/>goes back to the previous state"| active
@@ -129,7 +136,7 @@ flowchart TD
     classDef hold fill:#6d28d9,stroke:#c4b5fd,color:#ffffff
     classDef any fill:#1e293b,stroke:#94a3b8,color:#ffffff,stroke-dasharray:5 4
     class session,none,setup,ask,checks start
-    class interviewing,planning,developing build
+    class interviewing,planning,developing,hardening build
     class reviewing,ci,smoke,finishing verify
     class revising revise
     class done finished
@@ -155,10 +162,11 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `finishedPlan(issue, markdown_file)`                                 | Moves the plan into the PR body, with `Closes #n`.                                                                                                                            | The plan has no `Test entry point:` line.                                                                                                        |
 | `hotfix(shortName, description, issue)` | Files an issue for an urgent fix, and gives it its own worktree and draft PR, with the workflow off there. The answer gives the hotfix instructions. See [hotfix](#hotfix). |
 | `finishedInterview(issue)` | For an issue that did not leave an interview, such as under auto steering. Runs the base check and records the result. Valid only in `developing`. It can run again. `checkpoint` and `finishedDevelopment` refuse until it has run. See [Checks](#checks). |
-| `checkpoint(issue or pr, message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit. In `done` on an open PR, it commits and goes back to `ci`. `changeTypes` is optional. See [Change types](#change-types). | A check script fails. In `done`, the PR is merged or closed, or there is no PR.                                                                                                                            |
+| `finishedHacking(issue)` | Hack mode: the human agrees that the hack works. Moves to `hardening` and names the commits held on this computer. | The issue is not a hack, or it is not in `developing`. |
+| `checkpoint(issue or pr, message, files, changeTypes)`                     | Commits the named files and pushes. In `reviewing` it holds the commit. With no files, it pushes a held commit, but not in `reviewing` or `developed`: there the commit waits for `finishedReview`, and the refusal names that route and `/flow skip`. In `done` on an open PR, it commits and goes back to `ci`. In `reviewing`, `ci`, `smoke` or `revising` on a merged PR it commits nothing and names `done`. `changeTypes` is optional. See [Change types](#change-types). | A check script fails. In `done`, the PR is merged or closed, or there is no PR.                                                                                                                            |
 | `finishedDevelopment(issues, prs, message, files, body_file)`                    | Commits the named files for the listed issues. An optional `body_file` goes in its own section of the PR body, so the plan and its sign-off stay. A missing file refuses before the commit. It does not push. When each issue of the PR is complete, it starts the code review and lists the changed UI files. Until then, the listed issues wait in `developed`.                                                             | Changed files are not named.                                                                                                                     |
 | `finishedReview(issue or pr, review, deadcode, remembered)`                | Takes the results of the review and remember hooks. Runs `pre-ready-check.sh`, pushes, marks the PR ready.                                                                    | A field is empty. A `formal_project` sends `skipped:`. A check fails, and then nothing is pushed.                                                |
-| `finishedChecks(issue or pr)`                                            | Reads the checks of HEAD.                                                                                                                                                     | Checks are pending or red. HEAD is not pushed.                                                                                                   |
+| `finishedChecks(issue or pr)`                                            | Reads the checks of HEAD.                                                                                                                                                     | Checks are pending or red. HEAD is not pushed. The PR is merged: the refusal names `done`.                                                                                                   |
 | `finishedSmoke(issue or pr, report)`                                       | Records the smoke test on HEAD.                                                                                                                                               | HEAD is not in the report. A `formal_project` sends `skipped:`.                                                                                  |
 | `finishedRevision(issue or pr)`                                          | Goes back to `ci` after you answer the feedback.                                                                                                                              | Feedback has no answer.                                                                                                                          |
 | `blocked(issue or pr, message)`                                            | Sends a notification that stays until you dismiss it, and flags the Orca worktree.                                                                                            | It is already blocked.                                                                                                                           |
@@ -171,7 +179,7 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 | `waitForPR(issue, pr, state, period, attempts, timeout)`             | Holds the agent until the PR is `open`, `closed`, `merged`, `draft`, `ready` or `mergeable`. It does not wait for checks, because the workflow watches those.                 | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
 | `waitForIssue(issue or pr, waitOn, state, period, attempts, timeout)`       | Holds the agent until each issue in the list `waitOn` is `open` or `closed`.                                                                                                                        | See [Wait tools](#wait-tools). The state is not on this list. `period` is less than 60.                                                          |
 | `waitForState(issue or pr, issue_id, state, period, attempts, timeout)` | Holds the agent until the workflow of the issue `issue_id` reaches `state` (any workflow state), or is past it on the main line. It reads the records in the worktrees of this repository, every 30 s by default, and makes no GitHub call. | See [Wait tools](#wait-tools). The state is not a workflow state. `issue_id` is an issue that this agent is on. |
-| `done(issue or pr, message, remembered)`                                   | Runs the done checks. It needs `remembered` only when a human skipped the review stage. Merges if the project level allows it. If the PR is already merged, it runs no checks, reads no feedback, marks the work done and merged, and names the listed migrations for the human to confirm. Stops the stacks and dev servers of the worktree, and leaves the worktree to Orca. If the settings file has an error, it stops nothing and names the repair.                                                | `remembered` is empty. A check fails, and then the message lists each problem.                                                                   |
+| `done(issue or pr, message, remembered)`                                   | Runs the done checks. It needs `remembered` only when a human skipped the review stage. Merges if the project level allows it. If the PR is already merged, it runs no checks, reads no feedback, marks the work done and merged, and names the listed migrations for the human to confirm. Stops the stacks and dev servers of the worktree, and leaves the worktree to Orca. If the settings file has an error, it stops nothing and names the repair. In `interviewing`, `planning` or `developing` it ends an issue that was closed with no change, such as one that another change fixed: the issue must be closed, the branch must change nothing from its base, and no PR may be open. It then runs no review and merges nothing. It also ends there an issue whose PR merged outside the workflow, such as by `gh pr merge`: the issue must be closed and the tree clean, and the branch may differ from its base, as a squash merge leaves it. It then marks the work merged. In `reviewing`, `ci`, `smoke` or `revising` it ends the work when a human merged the PR before `finishing`, as on a merged PR in `finishing`.                                                | `remembered` is empty. A check fails, and then the message lists each problem.                                                                   |
 | `followUp(issue or pr, mode, message)`                                     | Creates an issue, then acts by mode.                                                                                                                                          | After `done`, only `issue_only` is allowed.                                                                                                      |
 | `addMigration(issue or pr, name)`                                          | Makes the empty migration file and lists it in the PR body, to run after the merge. With `newVersion` true, gives a listed migration a new version and moves its SQL there.   | The name holds other than lower-case letters, digits and underscores. The workflow has no PR. The state is `setup`, `done`, `blocked` or `wait`. |
 | `requestSecret(name)`                                         | Says where a secret is: the file and the line. It never returns the value.                                                                                                    | Never. A secret that it cannot find is reported.                                                                                                 |
@@ -226,6 +234,8 @@ The engine runs git with the repository's hooks off, so the tools run the checks
 **The base check.** After the interview and before any code, one check runs on the base, so that a base that is already broken shows while nothing depends on it. Light mode runs `pre-commit-check.sh`, in `interview()` when it goes on to development, or in `finishedInterview` under auto steering. Heavy mode runs `pre-push-check.sh`, in `finishedPlan`, before the sign-off, and the sign-off message names a failure. A failure of the base check does not stop the tool. The answer gives the script, the exit code, the output and the log. The agent then fixes it if the fix is small, files it with `followUp`, or calls `blocked`. The later commits run the same checks, so the failure also stops them until it is fixed. An agent that `followUp` started has no interview, and an issue that `followUp` adds to this PR has none, so this does not apply to them.
 
 **The merge base.** Each script gets `NDEV_MERGE_BASE`: the merge base that the commit will have with `origin/<base>`. A check that compares with the base reads it, not `git merge-base HEAD origin/<base>`. When a commit ends a merge of the base into the branch, the checks run before that commit, so `HEAD` is still the commit before the merge, and `git merge-base HEAD` gives the old base: errors that the base brought in then count as the branch's. A failed check during a merge says so and gives the value.
+
+**The change types.** Each script also gets `NDEV_CHANGE_TYPES`: the branch's change types, comma-separated, in the order `web,backend,database,docs,tests,config`. They are the types that a checkpoint or finishedDevelopment declared, the types already recorded for the issue, and the types of each staged path that differs from `NDEV_MERGE_BASE`. The checks before a commit run before the commit is made, so the staged files count. A script uses the list to choose its tests, such as no web tests for a change with no `web`. The variable is unset when the paths cannot be read or no type applies, and the tool's answer names the failed git command. A script that finds it unset or empty reads its own diff from `NDEV_MERGE_BASE`.
 
 Each other failed script stops the tool. The message gives the script, the exit code and the last lines of output. When the base branch has the script, the tool runs the base version, so a branch cannot weaken its own check.
 
@@ -293,7 +303,7 @@ On the phone, the pane sends the human to the terminal. There is no change to th
 
 ## Triage: `/dev triage`
 
-`/dev triage start` (the same as `/orca-triage start`) makes the session a coordinator. The session's model groups the open issues, and the mod makes one Orca Run with one Task for each group. Orca makes a workspace and starts a worker for each Task that is ready.
+`/dev triage start` makes the session a coordinator. The session's model groups the open issues, and the mod makes one Orca Run with one Task for each group. Orca makes a workspace and starts a worker for each Task that is ready. The start leaves out an issue that an Orca workspace links. It also leaves out an epic that is not done and has a `.neil-dev.epic-<n>.json` record in an Orca workspace of the repository on this machine, and each sub-issue in that record, because the epic's coordinator works them. A record that is not valid JSON stops the start and names the file. An epic with no record is not seen: leave it out with `--hint`.
 
 - **The worker** takes its group through this workflow on one PR. It calls `started` for each issue of the group and `setSteering` with `auto` after each one. It asks with `orca orchestration ask --wait`, so that its turn stays open and the workflow's reminders do not count the wait as no progress. It sends `worker_done` after `done` accepts the PR. A group that follows another starts from the branch of that group's open PR. The mod sends that branch in Orca mail, and the worker retargets its own PR to it.
 - **The coordinator** does not call `started`, edit or commit for these issues. The mod sends it each question from a worker, each escalation, each failure and a failed launch. A worker that ends its turn with its Dispatch open, as in the state `ci`, has not failed: only `worker_done` or the status of the Task ends a group. It answers the worker, or it asks the human when the decision is the human's. When all groups have ended, the mod asks it to report to the human.
@@ -302,15 +312,25 @@ On the phone, the pane sends the human to the terminal. There is no change to th
 
 **Codex hook trust.** Codex stops at a "Hooks need review" screen when a hook is new or changed (after a Codex or Orca update, for example), and `orchestration worker-start` fails with `agent-hooks-review-prompt`. `worker-start` passes no Codex flags, so the repair is Orca's own setting: Settings → Agents → Codex default arguments `--dangerously-bypass-hook-trust`, or choose "Trust all and continue" once in a Codex tab. The mod names this repair in the failed group.
 
-**`--batch <size>` and `--sequential`.** At most `<size>` workers at a time, in batches: the mod starts up to `<size>` ready groups, and starts the next batch only when every worker of the last one has sent `worker_done` (succeeded or failed). `--sequential` is `--batch 1`. The coordinator decides the order: the brief asks it to list the groups in the order to run them, and the next ready groups in that list start (a group still waits for its `after`). A size that is not a whole number above 0, or `--sequential` with another size, is refused. Use it when the machine is busy or the groups may touch the same files.
+**`--batch <size>` and `--sequential`.** At most `<size>` workers at a time, in batches: the mod starts up to `<size>` ready groups, and starts the next batch only when every worker of the last one has sent `worker_done` (succeeded or failed) or its Task is completed or failed in Orca. A worker that exits with no `worker_done` holds its batch: the next refresh tells the coordinator once, with the state of its pull request and the `orca orchestration task-update` command that completes its Task, and the refresh after that starts the next batch. With neither option the size is 5. `--sequential` is `--batch 1`. The coordinator decides the order: the brief asks it to list the groups in the order to run them, and the next ready groups in that list start (a group still waits for its `after`). A size that is not a whole number above 0, or `--sequential` with another size, is refused. Use it when the machine is busy or the groups may touch the same files.
 
 **`--since <n>` and `--reverse`.** `--since <n>` takes only the issues with a number above `<n>`. GitHub search has no range of numbers, so the mod reads the date that #n was opened and adds `created:>=<date>` to the search. Then it drops each issue with a number of `<n>` or lower. A number that GitHub does not know stops the run, with the error. On a board, the mod drops the cards with a number of `<n>` or lower. `--reverse` lists the issues newest first, and the brief asks the coordinator to list the groups newest first. `clean` takes both options too. With `--reverse`, a clean takes the newest 200 issues and not the oldest.
 
-**`--bugs-only`.** The coordinator groups only the bugs. It puts each other issue in `screened`, with one kind: `enhancement` (a feature to add now), `proposal` (a speculative idea, not yet agreed), `human` (a decision, an account, a key or a manual step that no code change does) or `other`. When it is not sure that an issue is a bug, it screens the issue out. Before the mod records the groups, it labels each grouped issue `bug`, each enhancement `enhancement` and each proposal `proposed`, with `gh.sh label`. A human action or other issue gets no label. If a label fails, the mod records nothing and refuses the report. The refusal names each issue, the error and the `gh label create` repair. A label that an issue has already is no change, so the next call labels again. The mod does not remove a label, because a human can own it too. So a retry that gives a labelled issue another kind is refused, with the `gh issue edit --remove-label` repair. A dry run writes no label: `/orca-triage launch` writes the labels before it starts a worker. `screened` without `--bugs-only` is refused, and so is an issue that `screened` names twice.
+**`--bugs-only`.** The coordinator groups only the bugs. It puts each other issue in `screened`, with one kind: `enhancement` (a feature to add now), `proposal` (a speculative idea, not yet agreed), `human` (a decision, an account, a key or a manual step that no code change does) or `other`. When it is not sure that an issue is a bug, it screens the issue out. Before the mod records the groups, it labels each grouped issue `bug`, each enhancement `enhancement` and each proposal `proposed`, with `gh.sh label`. A human action or other issue gets no label. If a label fails, the mod records nothing and refuses the report. The refusal names each issue, the error and the `gh label create` repair. A label that an issue has already is no change, so the next call labels again. The mod does not remove a label, because a human can own it too. So a retry that gives a labelled issue another kind is refused, with the `gh issue edit --remove-label` repair. A dry run writes no label: `/dev triage launch` writes the labels before it starts a worker. `screened` without `--bugs-only` is refused, and so is an issue that `screened` names twice.
 
 **PR watch.** Every 10 minutes while the triage runs, the mod reads the open PR of each group (2 GitHub calls each). When a PR conflicts with its base, is behind it, or has a failing check, the mod sends the group's worker an Orca message that names the PR, its head and each fault, and asks it to fix them or escalate. A worker that has sent `worker_done` gets the message in a new turn. The same faults on the same head are sent again only after 30 minutes, so a fix has time to land. Running checks, a draft and a review the base branch needs are not faults. A group with no worker goes to the coordinator. A merged or closed PR is read once and then left out. The watch stops when the triage ends, because the coordinator hears the workers only while it runs.
 
 **Restarted workers.** A coordinator may restart a failed Task by hand with `orca orchestration worker-start --retry-of <old ctx>`, which makes a new Dispatch of the same Task. On each refresh (`worker-list`, newest first), on a message from an unknown Dispatch of a known Task, and before the PR watch's first prod in a pass, the mod takes the Task's newest Dispatch: its terminal for Jump, the prods, no old failure, a fresh prod, and its followers no longer blocked; a triage that had ended runs again.
+
+**`--mine`.** Only the issues that you opened: `author:@me` in the search, and on a board, the cards whose author is your gh login.
+
+**`--remote [<server>]`.** Each workspace is made on a saved Orca server (`orca worktree create --environment <id>`) and each worker runs there (`orca orchestration worker-start --on <id>`). The Run, its Tasks and its mail stay on this machine's Orca. The server is named by its name, its id, the start of its id, or the recipe id that begins its name (Orca names a recipe's saved server `<recipe id> VM <id>`); a recipe id that several saved servers have is refused with those servers. A name with no saved server but with an `environmentRecipes` entry in the primary checkout's `orca.yaml` is refused with the one step that saves it: in the Orca app, New workspace, then Run on, then the recipe. With none named, it is the server that `/dev remote <server>` saved for this project, else the only server Orca has. No saved server, several and none named, or a name that matches none is refused with the list of saved servers. A server that `/dev remote` saved and that Orca no longer has is refused with the repairs `/dev remote <server>` and `/dev remote off`; the triage never switches to another server. The setting alone does not make a triage remote: only `--remote` does. The issue list leaves out an issue that a workspace on this machine or on the server links, and the refresh reads the workspaces back from the server. `--remote` with `--codex` is refused: a Codex worker's Task names the workflow file in this machine's copy of the plugin. The server needs the plugin installed and the project's credentials file. Jump passes the server (`orca terminal switch --environment <id>`), since a terminal handle belongs to the server that issued it. The server takes no mail for a worker that has finished (`dispatch_inactive`), and a completed Task cannot start again, so a PR-watch prod to a finished worker starts a new worker in the group's workspace on the server, with a new Task that holds the group's brief and the prod; the group then follows that worker. If that start fails, the coordinator is asked, with the command to start one by hand.
+
+**`/dev remote create <name>` and `/dev remote remove <name>`.** They make and delete the Hetzner Cloud server behind a remote (`hooks/remote-host.ts`; README, `/dev remote`). The rules that hold: every hcloud call names its context (`--context` or the one kept for the name, never the active one) and runs with `HCLOUD_TOKEN` and `HCLOUD_CONTEXT` removed; each command confirms before a spend or a deletion, and with no one to answer it refuses unless `--yes` is given; each touches only what carries `managed-by=ndev` and `ndev-name=<name>`. `remove` goes shutdown, snapshot, wait for `available`, and only then deletes the server and the older snapshot; a failed snapshot deletes nothing. `create` restores the snapshot, or builds from the base image when there is none. The remote's address is a floating IPv4 that `remove` keeps and `create` assigns again; on the server it is `ip addr add <floating ip> dev eth0` plus the netplan file `/etc/netplan/60-floating-ip.yaml`. The host key of the first build is in the snapshot and in `~/.config/ndev/remote.json`, and no key is trusted on first use. Orca's CLI cannot save an SSH host as a server, so `create` prints that manual step and sets `/dev remote` only when Orca already has a saved server with the remote's name.
+
+**`/dev remote import <hetzner-id> --context <context>`.** It hands a server that was made by hand to `create` and `remove` (`hooks/remote-import.ts`). It only adds the two labels, to the server, to each firewall applied to it and to its floating IPv4, and records the remote in `~/.config/ndev/remote.json`; it creates, deletes, resizes and reassigns nothing. The remote takes the server's Hetzner name. The refusals of `create` and `remove` for a server without the labels name this command. It refuses a label of another owner, a firewall that other servers share, several floating IPv4s with no `--floating-ip`, and a record of that name that is another server. The host key rule: import reads the key that the address presents, shows its SHA256 fingerprint in the confirmation, and records it only on yes, which is the one moment trust is given; a different key in `known_hosts` is refused with both fingerprints, and `--yes` confirms only a key this machine already holds. The record carries `imported: true`, and `remove` of an imported server first signs in over `ssh` as `root` with the recorded key as the only known host key (`StrictHostKeyChecking=yes`, a temporary `known_hosts`), so the server must prove it holds that key (`ssh-keyscan` proves nothing: it reads a public key any machine can show); a key that is not proved, or a sign-in that does not finish, refuses before the question, the shutdown and the snapshot (a record with a host key and no `sshKey`, written before the marker, counts as imported). With no host key saved on the machine for the server (no record, a record with no `hostKey`, or a record for another hcloud context), `remove` refuses and names both repairs: run it on the machine that created or imported the server, or pass `--unverified-host`, which removes with no host key check and prints one warning line; the option skips no check that a saved key allows. An imported server was not built by `root-setup.sh`, so a restore keeps its host key only when its own cloud-init keeps host keys (`ssh_deletekeys: false`).
+
+**`/dev remote resize [<type>]`.** It changes the server type of the box under the project's Orca server (`hooks/remote-resize.ts`; README, `/dev remote`). The rules that hold: the hcloud context is `--context` or `remote.hcloudContext` in `.neil-dev.json`, never the active one; the box is the Hetzner server whose id the metadata service gives over SSH; a person confirms (or `--yes`); every live worker on the server writes `~/handoff/<issue>.md` with the line `paused <dispatch id>` before the shutdown, and the wait reads those files over SSH, because the mail of a remote worker can arrive on either Orca; a failed shutdown becomes a poweroff with a `WARNING`; `--keep-disk` keeps the disk; the workers are found Run by Run, on the server's own records and on this machine's, because a `worker-list` with no `--run` shows only the bound Run; each worker starts again as a new Task with `--worktree id:<worker's worktree id>` (Orca's `<repo id>::<path>` value, which `path:` would read against this machine) and its first brief plus the handoff, and the result names the old and new task ids.
 
 **`--open`.** The issues are every open issue of the repository, also when a board is set. An issue that an Orca workspace links is left out, as always.
 
@@ -318,22 +338,30 @@ On the phone, the pane sends the human to the terminal. There is no change to th
 
 - **Merged.** The coordinator checks the code. When the code does all that the issue asks, it asks the human with AskUserQuestion, closes only the issues that the human picks with `--reason completed`, and lists them in `closed`. No `--hint` is necessary. When work is left, it groups the issue.
 - **Closed without a merge.** The work is not done, so the coordinator groups the issue.
-- **Open.** That PR is the unfinished work, and no group starts it again. The coordinator lists the issue in `unfinished` as `{ issue, pr }`. The mod gives each PR to the `/fix-prs` loop (`/fix-prs start --prs <n,n>`), which works it with its owner until it is green and merged. A running or paused loop adds them to its queue and does not start again. A dry run gives them at `/orca-triage launch`. The mod reads each PR first, and refuses the report when a PR is not open or GitHub does not give it. It also refuses an issue that `unfinished` names twice.
+- **Open.** That PR is the unfinished work, and no group starts it again. The coordinator lists the issue in `unfinished` as `{ issue, pr }`. The mod gives each PR to the `/fix-prs` loop (`/fix-prs start --prs <n,n>`), which works it with its owner until it is green and merged. A running or paused loop adds them to its queue and does not start again. A dry run gives them at `/dev triage launch`. The mod reads each PR first, and refuses the report when a PR is not open or GitHub does not give it. It also refuses an issue that `unfinished` names twice.
 
-**`--hint "<text>"`.** The human's own steer, added to the coordinator's brief, such as `--hint "close outdated/superseded issues"`. Quote a text that holds a word starting with `--`; without quotes the hint runs to the next option. A `--hint` with no text is refused. When the hint asks the coordinator to close issues, it asks the human first, closes only those the human picks, and lists them in `closed` of `triage_groups`: those issues are in no group, and an issue there that is not one of the issues to group is refused.
+**`--hint "<text>"`.** The human's own steer, added to the coordinator's brief, such as `--hint "close outdated/superseded issues"`. Quote a text that holds a word starting with `--`; without quotes the hint runs to the next option. A `--hint` with no text is refused. When the hint asks the coordinator to close issues, it asks the human first, closes only those the human picks, and lists them in `closed` of `triage_groups`: those issues are in no group, and an issue there that is not one of the issues to group is refused. When the hint asks to skip issues without closing them, the coordinator lists them in `skipped` of `triage_groups`, each as `{ issue, reason }`: those issues stay open and untouched, get no worker, and show on the Triage pane with the reason. `skipped` needs no `--hint`: when you tell the coordinator in the conversation to leave issues out, it lists them in `skipped` in the same way. The coordinator must not skip an issue that you did not ask it to leave out.
 
-**`/dev triage clean [--hint "<text>"]`** (also `/orca-triage clean`) only closes issues: it groups nothing, starts no worker and leaves the Triage pane as it is. It reads every open issue, the ones with a linked PR and every board column too, oldest first, at most 200 a time (the toast says when there are more, and a second clean takes the next). An issue that an Orca workspace links is checked too, marked so in the brief: the model also reads that workspace's branch and PR, and its merged work makes the issue done. The model reads each issue, looks for a merged PR that fixed it but left it open, and compares it with the code on the default branch and with the later PRs and commits. It marks each done, outdated, superseded or needs work; when it is not sure, the issue needs work. It asks the human with AskUserQuestion about only the issues it is pretty sure of, with the evidence, and closes only those the human picks, with a comment (`--reason completed` when a PR or commit fixed it, else `not planned`). `--hint` adds the human's own steer, as for start.
+**`/dev triage clean [--since <n>] [--reverse] [--mine] [--hint "<text>"]`** only closes issues: it groups nothing, starts no worker and leaves the Triage pane as it is. It reads every open issue, the ones with a linked PR and every board column too, oldest first, at most 200 a time (the toast says when there are more, and a second clean takes the next). An issue that an Orca workspace links is checked too, marked so in the brief: the model also reads that workspace's branch and PR, and its merged work makes the issue done. The model reads each issue, looks for a merged PR that fixed it but left it open, and compares it with the code on the default branch and with the later PRs and commits. It marks each done, outdated, superseded or needs work; when it is not sure, the issue needs work. It asks the human with AskUserQuestion about only the issues it is pretty sure of, with the evidence, and closes only those the human picks, with a comment (`--reason completed` when a PR or commit fixed it, else `not planned`). `--hint` adds the human's own steer, as for start.
 
 Limit: `started` always takes the default branch as the base, and the worker changes only the base of the PR on GitHub. The review, the sweep and the checks of a stacked group can still compare with the default branch. So `done` can refuse a migration that came from the earlier group. The worker leaves that file and asks the coordinator.
 
 ## Mode and steering
 
 
-| Step       | light                             | heavy                                                                                                                  |
-| ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Plan       | Skipped                           | Required, in the PR body                                                                                               |
-| Review     | One reviewer that the tool starts | Two reviewers that the tool starts: one for standards, one for the specification. A change of documents only gets one. |
-| `gates.sh` | Not run                           | Run at `finishedDevelopment`                                                                                           |
+| Step       | light                             | heavy                                                                                                                  | hack |
+| ---------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---- |
+| Interview  | Under interactive steering        | Under interactive steering                                                                                             | None: `started` goes to `developing`, and the agent writes the goal in one line in the PR body |
+| Plan       | Skipped                           | Required, in the PR body                                                                                               | None |
+| Base check | `pre-commit-check.sh`             | `pre-push-check.sh`                                                                                                    | None |
+| `checkpoint` in `developing` | Checks, commits and pushes | Checks, commits and pushes                                                                                  | Commits on this computer only. `fast-checks.sh` only advises, and `pre-commit-check.sh` does not run. Nothing is pushed and no CI runs |
+| Hardening  | None                              | None                                                                                                                   | `finishedHacking` goes to `hardening`. Each test must fail on the base and pass on HEAD. `checkpoint` runs the full checks and still pushes nothing. `finishedDevelopment` needs `hardening` (the evidence), runs `pre-push-check.sh` and `gates.sh`, and puts the evidence on the PR |
+| Review     | One reviewer that the tool starts | Two reviewers that the tool starts: one for standards, one for the specification. A change of documents only gets one. | The two reviewers of heavy, and the agent runs `ndev:adversarial-review` |
+| `gates.sh` | Not run                           | Run at `finishedDevelopment`                                                                                           | Run at `finishedDevelopment` |
+| Smoke test | For a web or docs change          | For a web or docs change, or a preview                                                                                 | Always. `finishedSmoke` refuses `skipped`: only a human skips, with `/flow skip <reason>` |
+| Steering   | Either                            | Either                                                                                                                 | Interactive only. `started`, `create`, `setSteering`, `/flow`, `/dev mode` and `/dev steering` refuse to put hack and auto together |
+
+More work after the review (`followUp` with `this_agent`, an issue that joins the PR, `checkpoint` in `developed`) goes back to `developing` in light and heavy, and to `hardening` in hack.
 
 
 
@@ -355,11 +383,11 @@ Each issue in a worktree can have its own mode and steering. The first value in 
 
 An issue with no value of its own stores nothing, and it follows the worktree.
 
-- **The agent chooses the mode at the start.** It gives `mode` to `started` or `create`: `heavy` for a multi-step, cross-cutting or high-risk change, and `light` for the others. Past `setup`, `started` refuses a different mode and names the command for the human. The agent cannot choose the steering.
+- **The agent chooses the mode at the start.** It gives `mode` to `started` or `create`: `heavy` for a multi-step, cross-cutting or high-risk change, `hack` when the human wants to find the solution by trial and error first, and `light` for the others. Past `setup`, `started` refuses a different mode and names the command for the human. The agent cannot choose the steering.
 - **The human can change either setting at any time.** `/flow mode heavy 7` or `/flow steering auto 7`. With no number, the command sets the active issue. With no value, it shows the setting. The steps that remain follow the new setting, and the steps that are complete stay complete.
-- **A PR follows the strictest of its issues.** Heavy wins over light, and interactive wins over auto. An issue with no setting of its own counts with what it inherits from the worktree. When no issue has its own setting, the PR record stores none and follows the worktree. The PR record takes these values when an issue comes to the PR. After that, `/flow mode` on that record sets the PR. `finishedDevelopment` runs `gates.sh` for each heavy issue that it finishes, and the review of the PR follows the strictest setting.
+- **A PR follows the strictest of its issues.** Light, then hack, then heavy: heavy wins over both, and hack wins over light. Interactive wins over auto. An issue with no setting of its own counts with what it inherits from the worktree. When no issue has its own setting, the PR record stores none and follows the worktree. The PR record takes these values when an issue comes to the PR. After that, `/flow mode` on that record sets the PR. `finishedDevelopment` runs `gates.sh` for each heavy issue that it finishes, and the review of the PR follows the strictest setting.
 
-**`started` loads the skill of the mode.** Its answer holds the text of `work-light` or `work-heavy`, so the agent has the method from the first step. A session gets each skill once, and again after a compaction. Steering does not change the choice, because `work-light-auto` and `work-heavy-auto` dispatch workers and an agent on one issue does not. If the file cannot be read, the workflow still starts, and the agent is told to call the Skill tool.
+**`started` loads the skill of the mode.** Its answer holds the text of `work-light`, `work-heavy` or `work-hack`, so the agent has the method from the first step. A session gets each skill once, and again after a compaction. Steering does not change the choice, because `work-light-auto` and `work-heavy-auto` dispatch workers and an agent on one issue does not. If the file cannot be read, the workflow still starts, and the agent is told to call the Skill tool.
 
 `/dev mode` still sets the worktree. It does not change an issue that has its own value. `started` names the mode and the steering, and each prompt names them when they apply to an issue.
 
@@ -449,7 +477,7 @@ To see where a session is in the flow, type `/view`. It draws the flow as a chai
 
 ## blocked
 
-`blocked` runs `scripts/workflow/notify.sh`. It shows an `alerter` notification that stays until you dismiss it. A click on it opens the Orca terminal of the worktree. It also sets a comment and the unread flag on the Orca worktree. To install `alerter`: `brew install vjeantet/tap/alerter`. If `alerter` is missing, the Orca flag still appears, and the reply gives the install command.
+`blocked` runs `scripts/workflow/notify.sh`. It shows one macOS notification with `osascript` and leaves no process running. It also sets a comment and the unread flag on the Orca worktree, which stay until the issue is unblocked. macOS cannot withdraw an `osascript` notification, and a click on it does not open the Orca terminal: the Orca flag does both jobs. The notification stays on screen only if Script Editor's notification style is Alerts (System Settings > Notifications > Script Editor). If `osascript` fails, the Orca flag still appears, and the reply gives the exit code and output. The plugin used `alerter` before, which kept one process per alert until it was dismissed and leaked memory.
 
 To end a block with your answer, type `/unblock <message>`. The message is compulsory. The agent gets it in a prompt, with the next step. With no message, the command changes nothing and shows the block message. The notification and the flag are withdrawn.
 
@@ -492,7 +520,7 @@ A wait ends in one of these ways:
 - A wait reads its own record, so a change of issue during the wait does not lose it. If the record is missing, the wait reads it 3 times, 1 second apart, and then fails with the files it read and the repair.
 - `waitFor` runs the command that the agent gives, with the same rights as the Bash tool.
 - `waitForState` ends at once when the issue is done or has its workflow off and did not reach the state, and the answer says so. An issue with no record does not end the wait, because it may not have started. Its limit: it reads only the worktrees of this repository on this machine, so a removed worktree looks like an issue that has not started. Use `waitForIssue` for that case.
-- A wait that passes half of its retries tells the human as `blocked` does: a persistent notification and the Orca flag. The retries are `attempts`, or as many as `timeout` allows at this `period`. Half of `timeout` counts too. The wait goes on, and it withdraws the notice when it ends. `waitForSeconds` has no retries, so it never does this.
+- A wait that passes half of its retries tells the human as `blocked` does: a macOS notification and the Orca flag. The retries are `attempts`, or as many as `timeout` allows at this `period`. Half of `timeout` counts too. The wait goes on, and it clears the Orca flag when it ends. `waitForSeconds` has no retries, so it never does this.
 - In `ci`, the plugin still watches the checks. Use a wait tool for something else, not for the checks.
 
 The plugin pauses with a short `sleep` process and not with `$.clock.sleep`. A hook has 10 seconds of its own time, and a `$.clock` wait uses that time, but a `$.process.run` call does not.
@@ -501,18 +529,18 @@ The plugin pauses with a short `sleep` process and not with `$.clock.sleep`. A h
 
 In an Orca workspace, each save of the state updates the workspace. Tools, the heartbeat and `/flow` all go through that one step.
 
-- **Name:** the workspace is `<issue>-<shortName>`, such as `7-add-sub`. The agent chooses `shortName` from the issue when it calls `started`, and the record keeps it. A project that commits to its base branch keeps the name of its main checkout.
+- **Name:** the workspace is `<issue>-<shortName>`, such as `7-add-sub`, and `<PR>-<shortName>`, such as `12-add-sub`, once a PR is added. Issues and PRs share one number sequence, so the number names one of them only. The agent chooses `shortName` from the issue when it calls `started`, and the record keeps it. A project that commits to its base branch keeps the name of its main checkout.
 - **Status:** see the table below. A block keeps the status that the work had.
-- **Comment:** the state and what happens in it, the block message, what a wait is for, or the message of `done`. This replaces any earlier comment. For example, `/orca-triage` sets the title of the issue there.
+- **Comment:** the state and what happens in it, the block message, what a wait is for, or the message of `done`. This replaces any earlier comment. For example, `/dev triage` sets the title of the issue there.
 - **Links:** the issue and the first PR.
-- **Unread dot:** set when the work is blocked or done, because a human must act. Cleared when the work goes on. A wait does not set it, because no human must act.
+- **Unread dot:** set when the work is blocked or done, because a human must act. Cleared when the work goes on. A wait does not set it, because no human must act. Nor does a `done` that closed an issue with no change, because nothing waits for a human.
 
 
 | Workflow                                      | Orca status   |
 | --------------------------------------------- | ------------- |
 | `setup` to `finishing`, `revising` and `wait` | `in-progress` |
 | `done`, not merged                            | `in-review`   |
-| Merged                                        | `completed`   |
+| Merged, or `done` closed it with no change    | `completed`   |
 
 
 - The plugin sends only what changed, and these calls go to the local Orca, not to GitHub.
@@ -527,10 +555,10 @@ Each change of state moves the card, through `saveWorkflow`, so the tools, the w
 
 | State | Column |
 | ----- | ------ |
-| `setup`, `planning`, `developing`, `reviewing`, `ci`, `smoke`, `finishing`, `revising` | In progress |
+| `setup`, `planning`, `developing`, `hardening`, `reviewing`, `ci`, `smoke`, `finishing`, `revising` | In progress |
 | `blocked` | Awaiting feedback |
 | `done`, not merged | In review: no more automated development is due |
-| `done`, merged | Done |
+| `done`, merged or closed with no change | Done |
 | `wait`, `developed` | No change |
 
 A `straw_man` issue goes to Done at `done`, because its commit is on the base branch. The settings come from the worktree. If that file has no board, they come from the main checkout. A file with an error shows a toast and moves no card.
@@ -543,7 +571,7 @@ The record keeps the column in `board`, so a change inside a column makes no Git
 
 - The session stays on its own issue, and that issue's record does not change.
 - The hotfix never joins the PR of the session's issue.
-- The agent commits with plain git, and names the worktree with the full path: `git -C <worktree> commit`. The git guard lets only that form through, and a push from there goes only to the branch of the hotfix. The hooks run, and `--no-verify` is never used.
+- The agent commits with plain git, and names the worktree with the full path: `git -C <worktree> commit`. The git guard must see that folder for sure, and a push from there goes only to the branch of the hotfix. The hooks run, and `--no-verify` is never used.
 - The agent waits for the checks of the hotfix PR with `wait-for-pr-change.sh`, because the watchdog does not watch them. A human merges.
 - A `straw_man` project has no worktree and no PR: the fix goes on the base branch in the main checkout. The git guard stays on there. A session on an issue commits the fix with `checkpoint`, and a session with no workflow uses plain git.
 - If the set-up fails after the issue exists, the message names the issue. Repair: call `hotfix` again with `issue`, which files nothing new. A call without `issue` files a second one.
@@ -572,17 +600,97 @@ The name is `/flow`, not `/ndev:workflow` or `/workflow`. The engine refuses a c
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `/flow guide`                      | Shows this guide.                                                                                                         |
 | `/flow status`                     | Shows the state and the next step.                                                                                        |
-| `/flow mode [light\|heavy] [issue]` | Shows or sets the mode of one issue. See [The settings of one issue](#the-settings-of-one-issue). |
+| `/flow mode [light\|heavy\|hack] [issue]` | Shows or sets the mode of one issue. See [The settings of one issue](#the-settings-of-one-issue). |
 | `/flow steering [interactive\|auto] [issue]` | Shows or sets the steering of one issue. |
 | `/flow skip [reason]`              | Leaves the current phase and goes to the next one. The PR records the reason.                                             |
 | `/flow goto <state> [reason]`      | Goes to a named state. The PR records the reason.                                                                         |
 | `/unblock <message>`                        | Gives the agent your answer and ends `blocked` or `wait`. The message is compulsory. It runs at once, also during a turn. |
 | `/flow unblock [message]`          | Ends `blocked`, for when the agent does not. The message is optional. It runs after the turn.                             |
-| `/flow off [reason]` / `on`        | Turns the tools and the reminders off or on for one record: the issue or PR that this agent is on. The record stays. |
+| `/flow off [reason]` / `on`        | Turns the tools and the reminders off or on for one record: the issue or PR that this agent is on. The record stays. When this agent has no record, `off` turns the workflow off for the session: the tools that move a state refuse, also on a record that the call names, and no reminder comes. `addMigration`, `finishedInterview` and `status` still work. The answer names the records in the worktree. |
 | `/flow off project` / `on project` | Does the same for the whole project, in `.neil-dev.json`.                                                                 |
 
 
 If you skip `reviewing`, the held commit is not pushed yet. The agent pushes it with `checkpoint` and no files, and `finishedChecks` tells it to do this.
+
+## What the human can do next
+
+Each tool answer, `/flow status`, `/flow epic status` and each reminder ends with a `Tell the human:` line: the options that the human has in this state. In interactive steering the agent ends its turn with these options. In auto steering it goes on, and gives the options when it reports. The code is `humanStep` in `hooks/workflow/machine.ts` and `epicHumanStep` in `hooks/workflow/epic.ts`. A test checks that each state has a message and a row here.
+
+| State | The human can |
+|---|---|
+| `setup` | Wait, or run `/flow off <reason>` to work without the workflow. |
+| `interviewing` | Answer in the interview pane or the chat, or run `/flow skip <reason>`. In auto steering: run `/flow steering interactive` to take part. |
+| `planning` | Read the plan in the draft PR, then say go or ask for changes. |
+| `developing` | Wait, send a correction, or run `/flow status`. Light mode: run `/flow mode heavy` if the work has grown. Hack mode: say when the solution works. |
+| `hardening` | Wait, send a correction, or run `/flow status`. |
+| `developed` | Wait for the other issues on the PR, or tell the agent to take one. |
+| `reviewing` | Wait, then read the findings and fixes on the PR. |
+| `ci` | Wait, open the PR to watch the checks, or run `/flow status`. |
+| `smoke` | Wait, or try the preview and send what you find. |
+| `finishing` | Wait, or add review comments on the PR. |
+| `done` | Read the PR and merge it (or tell the agent to merge, where the level lets it), or add review comments. When merged: start the next issue. |
+| `revising` | Add more comments on the PR, or wait for the replies. |
+| `blocked` | Do what the block asks, then run `/unblock <answer>`, or `/flow goto <state>`. |
+| `wait` | Wait, or run `/unblock <message>` to end the wait now. |
+| epic `framing` | Answer the questions on what the epic is for, and name the sources of its requirements. |
+| epic `researching` | Wait for the notes, or point the agent at what it should read. |
+| epic `specifying` | Wait for the spec, then read it. Send a correction at any time. |
+| epic `deciding` | Settle each open decision: pick an option, or ask for more detail. |
+| epic `spec-review` | Read the review and each ruling. Agree, or overrule a ruling. |
+| epic `slicing` | Approve the proposed sub-issues, or ask for changes before they are filed. |
+| epic `coordinating` | Run `/flow epic status`. Answer a blocked sub-issue, review or merge a verified PR, or let the coordinator merge it. |
+| epic `closing` | Read the closing report, then ask for more checks or agree to close. |
+| epic `done` | Close the epic issue if it is open, and file what remains as new issues. |
+
+## The epic workflow
+
+An epic is one issue that is planned once and built as many sub-issues. One session is its **coordinator**: it plans, decides, verifies and merges, and it writes no product code. Orca workers implement and review each sub-issue. The coordinator session leaves the usual one-issue workflow and follows this one; each implementer worker stays under the usual workflow in its own worktree.
+
+`/flow epic [issue | title]` starts it. The skills are `epic-plan` (the states `framing` to `slicing`) and `epic-coordinate` (`coordinating` and `closing`).
+
+| State | Ends when | `epicPhase` needs |
+|---|---|---|
+| `framing` | The aim, the posture, the form of the spec and the gates are agreed | `aim` |
+| `researching` | Each research question has a findings file | `files` |
+| `specifying` | The spec is written and self-checked | `files` |
+| `deciding` | The human has ruled on every decision | `evidence` |
+| `spec-review` | Each finding of a review by a different model has a ruling | `files`, `evidence` |
+| `slicing` | Each sub-issue is filed with its blockers | `issues` |
+| `coordinating` | Every sub-issue is merged | |
+| `closing` | The epic is checked end to end | `evidence` |
+
+A sub-issue goes `waiting → implementing → reviewing → verified → merged`, with `reviewing ⇄ fixing` for each round of findings and `blocked` from any state. After three rounds the answer says to narrow the issue, split it or ask the human. A sub-issue starts when each blocker is merged, or **stacked**: on the PR branch of a blocker that is not merged yet (below).
+
+| Tool | What it does |
+|---|---|
+| `epicStarted` | Starts or resumes the epic, binds the session and turns the usual workflow off for it. It keeps the Orca `run` and `repoId`, the roles (default: a Claude implementer, a Codex reviewer) and `parallel` (default 4). With `remote` it starts the workers of new sub-issues on a saved Orca server (below). It refuses while a usual workflow of the session is open. |
+| `epicPhase` | Ends the current phase after its check. `slicing` refuses an empty list, a duplicate, an unknown blocker, a cycle and an issue that is not open. `closing` turns the usual workflow back on. |
+| `epicNext` | Read-only. The frontier, in number order: the waiting sub-issues whose blockers are all merged, then those that can start stacked, the two together cut to the free places. It names each issue that cannot stack and why. Code computes the order, never the model. |
+| `epicBrief` | Writes the implementer or reviewer brief to a file outside the worktree and answers with the filled `orca orchestration worker-start` command. The reviewer command works in the implementer's workspace and is refused while the record has none. For an implementer that starts stacked, it reads the blocker's PR from GitHub, gives `--base-branch origin/<head branch of that PR>`, adds the stack rules to the brief and records `stackedOn`. It refuses an implementer brief for a waiting sub-issue that can start neither way. The tool starts no worker: the coordinator runs the command. |
+| `epicIssue` | Records one move of a sub-issue. A start must be on the frontier, and a stacked start needs the stacked brief first. `reviewing → verified` runs the verify checks. `verified → merged` needs GitHub to say the PR is merged, and answers with the new frontier and with each sub-issue stacked on the merged one. | When a human merged the PR while the sub-issue was in `reviewing` or `fixing`, `merged` is accepted from there too: the record keeps the merge commit and says that the verify checks did not run.
+| `epicStatus` | Read-only. The state, the next step and the sub-issues by state. |
+
+**Workers on the saved Orca server.** `epicStarted` with `remote` is the one switch: `true` takes the server that `/dev remote <server>` saved for the project, else the only server Orca has; a string names a saved server by its name, its recipe id, its id or the start of its id; `false` goes back to this machine. With no `remote` in the call nothing changes, so a saved server alone never makes an epic remote. The server is resolved once, at that call, with the matcher of `/dev triage start --remote`, and the record keeps its id and name (`remote`). A server that is not found, several with none named, or a saved one that Orca no longer has is refused with the list of saved servers and the repair; the epic never switches to this machine or to another server by itself. With a remote, the implementer command is `orca orchestration worker-start … --on <server id> --worktree new-top-level --repo <remoteRepo> --name <issue>-<key> --base-branch origin/<base>`. `remoteRepo` is the selector of the repository on that server (`id:<id>` or `name:<name>`, from `orca repo list --environment <server id> --json`), set with `epicStarted`; the repository id of this machine's Orca (`repoId`) is not sent to a server, and without `remoteRepo` the brief is refused. `epicBrief` records on the sub-issue where its implementer starts. Its `workspace` is then the worktree id on the server (`<repoId>::<path>`, the `id` that `orca worktree list --environment <server id> --json` lists), and the reviewer command is `… --on <server id> --worktree id:<workspace>`; a path alone is refused, because with `--on` Orca takes only an exact selector of the server. A sub-issue in flight keeps its place: one with a workspace on this machine gets `--worktree path:<workspace>` and no `--on` after the epic gets a remote, and one on the server keeps `--on` after `remote: false`. The Run, its Tasks and its mail stay on this machine's Orca. The briefs for a server name each spec file by its path in the repository, so the spec must be pushed; the server also needs the plugin and the project's credentials file, and each agent of the roles enabled there.
+
+The verify checks refuse unless the PR is open and not a draft, its base is the default branch, every check on its head commit has passed, it is mergeable, the sub-issue it was stacked on is merged in the record, and each file that the diff adds under `supabase/migrations/` is in the section of the PR body that `addMigration` writes. The answer gives passed, failed and not run apart; a check that could not be read is not a pass.
+
+**Stacked sub-issues.** A chain P1 → P2 → P3 would run one at a time if each waited for a merge. So a waiting sub-issue can start while a blocker is in `reviewing`, `fixing` or `verified` with its PR recorded: the blocker's branch is pushed by then. Its worktree starts from that branch, and its PR takes that branch as its base, so the PR shows only its own change.
+
+- One unmerged blocker: the sub-issue stacks on it. Several: it stacks only when one of their branches holds the others, which the record shows as a chain of `stackedOn`. Otherwise `epicNext` answers "Not stackable" with the reason, and the sub-issue waits until all but one are merged.
+- `epicBrief` sets `stackedOn` on the sub-issue. It refuses when GitHub says the blocker's PR is merged (record the merge first) or closed.
+- When the blocker moves to `merged`, `epicIssue` names each sub-issue stacked on it and the instruction for its worker: `git fetch origin`, `git merge origin/<default branch>`, push with `checkpoint`, then `gh pr edit <PR> --repo <repo> --base <default branch>`. The tool sends nothing: the coordinator sends it. The worker merges and does not rebase: the branch is pushed, and others may have pulled it.
+- `stackedOn` stays until the verify checks pass. They refuse a PR whose base is not the default branch, and a stacked PR whose blocker is not `merged` in the record, each with its repair. So a stack merges from the bottom.
+
+Limits: as for a stacked triage group, the worker's `started` takes the default branch as the base and the worker changes only the base of the PR on GitHub. `started` can block on the open blocker, and the review, the sweep and `done` can count a file of the blocker, such as a migration, as the worker's; the brief names both repairs. A fix to a blocker's PR does not reach its stack by itself: the coordinator tells the stacked worker to merge the blocker's branch in. The head branch must be in `origin`; a PR from a fork cannot carry a stack.
+
+The record is `.neil-dev.epic-<issue>.json` in the worktree root, git-ignored. While the session is bound to an epic that is not done, the system text carries one line with the epic, its state and the next step, so a compaction does not lose it. Only the main agent may call the tools.
+
+| Command | What it does |
+|---|---|
+| `/flow epic [issue \| title]` | Tells the agent to start or resume the epic. With an epic bound, it shows the status. |
+| `/flow epic status` | Shows the state, the next step and the sub-issues. |
+| `/flow epic skip [reason]` / `goto <state> [reason]` | Moves the phase as the human decides, and records the reason as its evidence. |
+| `/flow epic off` | Unbinds the session and turns the usual workflow back on. The record stays. |
 
 ## Change types
 
@@ -718,7 +826,7 @@ A new issue joins the unfinished issue of the agent. It uses the same worktree, 
 
 | Record | States | Tools |
 | ------ | ------ | ----- |
-| Issue | `setup`, `interviewing`, `planning`, `developing`, `developed` | `started`, `create`, `interview`, `finishedPlan`, `finishedDevelopment` |
+| Issue | `setup`, `interviewing`, `planning`, `developing`, `hardening`, `developed` | `started`, `create`, `interview`, `finishedPlan`, `finishedHacking`, `finishedDevelopment` |
 | PR | `reviewing`, `ci`, `smoke`, `finishing`, `revising`, `done` | `finishedReview`, `finishedChecks`, `finishedSmoke`, `finishedRevision`, `done` |
 | Either | `blocked`, `wait` | `blocked`, `unblocked`, the wait tools, `status`, `comment`, `checkpoint`, `followUp`, `addMigration` |
 
@@ -751,7 +859,17 @@ The tools write these values to `<git dir>/ndev-live-<issue|pr>-<n>.json`, and n
 
 ## Rules that the tools enforce
 
-While the workflow owns the checks, a raw `git commit` or `git push` is refused. Use `checkpoint`, also to end a merge. With no files, `checkpoint` pushes a held commit. The rule does not apply in `setup`, in `done`, when the workflow is off, or when a human skipped the setup of the check scripts.
+While the workflow owns the checks, a raw `git commit` or `git push` is refused. Use `checkpoint`, also to end a merge. With no files, `checkpoint` pushes a held commit, except in `reviewing` and `developed`, where the commit waits for `finishedReview`; the refusal then names that route. The rule does not apply in `setup`, in `done`, when the workflow is off, or when a human skipped the setup of the check scripts.
+
+The guard reads what the command runs, not the text that it only passes on. A quoted heredoc body, a comment and a quoted word do not count. These do count: a heredoc that a shell can read, a substitution in a heredoc with no quotes on its tag, a string after a shell's or an interpreter's `-c` or `-e`, a string after `eval`, a string piped to a shell, and each command substitution.
+
+The guard applies to the workflow's own worktree, the worktrees that `followUp` started and the main checkout. A helper's own worktree of the same repository passes, and so does another repository. From a helper's worktree, a push does not pass if it names the workflow's branch or the base branch, uses `--all`, `--mirror` or a `*`, or has a variable in its target.
+
+To find the folder, the guard reads `git -C <absolute path>`. If there is none, it reads `cd <absolute path> && ...`, but only in a plain `&&` chain up to the git. A subagent with neither uses its own folder. A command that does not show its folder for sure is refused, for example `cd /x; git push`, a `pushd`, `env -C` or `GIT_DIR`.
+
+The guard keeps a cooperating agent on the workflow. It is not a sandbox. It does not read a script file that the command runs, and it does not see a variable used as a command, such as `$X push`. It also refuses some text that it cannot tell from a command, such as an unquoted `echo git push` or `python3 -c "print('git push')"`. Quote the words, or write them in a file.
+
+In `reviewing`, `checkpoint` with no files refuses, and the refusal names `finishedReview`. That tool pushes a commit that is held for the review.
 
 A retry commits each file that it names. If the last try stopped after its commit, and a tracked file changed after that commit, the tool refuses until you name the file. So the push cannot send a commit without its fix.
 

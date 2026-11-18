@@ -1,5 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
+declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
+
 type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
 type On = Parameters<Body>[1]
 type Dollar = Parameters<Body>[0]

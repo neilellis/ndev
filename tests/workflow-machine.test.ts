@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep } from '../hooks/workflow/machine'
+import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, boardColumn, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep, humanStep, STATES } from '../hooks/workflow/machine'
 import type { Facts, State, Tool } from '../hooks/workflow/machine'
 import { inferChangeTypes, isDocsOnly, pagesOf, reviewerBrief } from '../hooks/workflow/change-types'
 
@@ -162,6 +162,23 @@ test('the next step names the tool to call, and it follows the settings', () => 
   expect(nextStep('done', facts())).toContain('human')
 })
 
+test('every state tells the human what they can do next, in each mode and steering', () => {
+  for (const mode of ['light', 'heavy', 'hack'] as const) for (const steering of ['interactive', 'auto'] as const) for (const state of STATES) {
+    const human = humanStep(state, facts({ mode, steering }))
+    expect(human.length).toBeGreaterThan(20)
+    expect(nextStep(state, facts({ mode, steering }))).toContain(`Tell the human: ${human}`)
+  }
+  // Interactive steering ends the turn with the options; auto goes on.
+  expect(nextStep('developing', facts({ steering: 'interactive' }))).toContain('End your turn with')
+  expect(nextStep('developing', facts({ steering: 'auto' }))).not.toContain('End your turn with')
+  // The options follow the state and the facts.
+  expect(humanStep('blocked', facts())).toContain('/unblock')
+  expect(humanStep('wait', facts())).toContain('/unblock')
+  expect(humanStep('interviewing', facts({ steering: 'interactive' }))).toContain('/flow skip')
+  expect(humanStep('done', facts({ level: 'formal_project' }))).toContain('merge')
+  expect(humanStep('done', facts({ merged: true }))).not.toContain('merge the PR')
+})
+
 test('the attempt limit is three, as the flow chart says', () => {
   expect(ATTEMPT_LIMIT).toBe(3)
 })
@@ -194,8 +211,10 @@ test('a level that may merge has an interactive plan go straight on', () => {
 
 test('the last step says who merges', () => {
   expect(nextStep('finishing', facts({ level: 'poc' }))).toContain('merges')
-  expect(nextStep('done', facts({ level: 'formal_project' }))).toContain('human')
-  expect(nextStep('done', facts({ level: 'straw_man' }))).not.toContain('human')
+  // Every step now ends with "Tell the human:", so match the words that name who merges.
+  expect(nextStep('done', facts({ level: 'formal_project' }))).toContain('waits for a human to merge')
+  expect(nextStep('done', facts({ level: 'straw_man' }))).not.toContain('waits for a human to merge')
+  expect(nextStep('done', facts({ level: 'straw_man' }))).toContain('lets you merge')
 })
 
 // ---- /flow skip ----
@@ -328,9 +347,39 @@ test('the flow shows a wait at the state it holds; Orca shows what it waits for 
   expect(view.status).toBe('in-progress')
 })
 
+test('the Orca workspace takes the issue number until a PR is added, then the PR number', () => {
+  expect(orcaView({ issue: 7, shortName: 'add-sub', prs: [], state: 'developing' }).name).toBe('7-add-sub')
+  expect(orcaView({ issue: 7, shortName: 'add-sub', prs: [12], state: 'developing' }).name).toBe('12-add-sub')
+  expect(orcaView({ issue: 7, prs: [12], state: 'developing' }).name).toBeUndefined()
+  expect(orcaView({ issue: 7, shortName: 'add-sub', direct: true, prs: [12], state: 'developing' }).name).toBeUndefined()
+})
+
+test('an issue closed with no change is complete: Orca asks no human, and its card goes to done', () => {
+  const ended = { issue: 7, prs: [12], state: 'done' as const, closedNoChange: true, doneMessage: 'already fixed on main' }
+  const view = orcaView(ended)
+  expect(view.status).toBe('completed')
+  expect(view.attention).toBe(false)
+  expect(view.comment).toBe('Closed with no change: already fixed on main')
+  expect(boardColumn(ended)).toBe('done')
+  // A done that waits for a merge still asks the human.
+  expect(orcaView({ issue: 7, prs: [12], state: 'done' }).attention).toBe(true)
+  expect(boardColumn({ state: 'done' })).toBe('review')
+})
+
 test('the notice sets the Orca flag while the wait is past half', async () => {
   const view = orcaView({ issue: 7, prs: [], state: 'wait', waiting: { what: 'PR #44 to be merged', alert: { group: 'g' } } })
   expect(view.attention).toBe(true)
   expect(view.comment).toContain('PR #44')
   expect(orcaView({ issue: 7, prs: [], state: 'wait', waiting: { what: 'x' } }).attention).toBe(false)
+})
+
+test('the steps that write code say to write no comments, with the one exception', () => {
+  for (const mode of ['light', 'heavy', 'hack'] as const) {
+    for (const state of ['developing', 'hardening'] as const) {
+      if (state === 'hardening' && mode !== 'hack') continue
+      const step = nextStep(state, facts({ mode }))
+      expect(step).toContain('Do not write comments in code')
+      expect(step).toContain('took a lot of research or trial and error')
+    }
+  }
 })

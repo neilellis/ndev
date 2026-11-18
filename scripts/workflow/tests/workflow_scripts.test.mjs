@@ -1,4 +1,4 @@
-// Tests for notify.sh, merge.sh and fast-checks-template.sh. Fake alerter, orca and gh programs stand in for the real ones:
+// Tests for notify.sh, merge.sh and fast-checks-template.sh. Fake osascript, orca and gh programs stand in for the real ones:
 // no test raises a real alert or calls GitHub. Run: node --test scripts/workflow/tests/workflow_scripts.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -30,47 +30,43 @@ const until = (check, what) => {
 }
 
 // ---- notify.sh ----
-const notifyEnv = (dir, answer) => ({
+// A fake osascript records its arguments, one per line, then a blank line.
+const notifyEnv = (dir, body = '') => ({
   ...process.env,
-  NDEV_ALERTER: program(dir, 'alerter', `echo "$*" >> "${dir}/alerter.log"\n[ "$1" = --remove ] && exit 0\n${answer}`),
-  NDEV_ORCA: program(dir, 'orca', `echo "$*" >> "${dir}/orca.log"`),
+  NDEV_OSASCRIPT: program(dir, 'osascript', `printf '%s\\n' "$@" >> "${dir}/osascript.log"; echo >> "${dir}/osascript.log"\n${body}`),
 })
 const raise = (dir, env, ...extra) =>
-  spawnSync('bash', [NOTIFY, 'raise', '--group', 'g1', '--title', 'T', '--message', 'M', '--log', join(dir, 'n.log'), ...extra], { encoding: 'utf8', env })
+  spawnSync('bash', [NOTIFY, 'raise', '--group', 'g1', '--title', 'T "quoted"', '--message', 'M \\ $HOME', ...extra], { encoding: 'utf8', env })
 
-test('raise prints the watcher pid, and a click switches to the Orca terminal', () => {
+test('raise shows one notification, passes the text as arguments and leaves no process behind', () => {
   const dir = folder()
-  const r = raise(dir, notifyEnv(dir, 'echo @CONTENTCLICKED'), '--terminal', 't-1')
+  const r = raise(dir, notifyEnv(dir))
   assert.equal(r.status, 0, r.stderr)
-  assert.match(r.stdout.trim(), /^\d+$/)
-  until(() => lines(join(dir, 'orca.log')).length > 0, 'the Orca switch')
-  assert.deepEqual(lines(join(dir, 'orca.log')), ['terminal switch --terminal t-1'])
-  assert.match(lines(join(dir, 'alerter.log'))[0], /--group g1/)
+  assert.equal(r.stdout, '')
+  const said = readFileSync(join(dir, 'osascript.log'), 'utf8')
+  assert.match(said, /^T "quoted"$/m)
+  assert.match(said, /^M \\ \$HOME$/m)
 })
 
-test('a dismissed alert does not switch the terminal, and the log says what came back', () => {
+test('a failed osascript exits 3 and gives its exit code and output', () => {
   const dir = folder()
-  raise(dir, notifyEnv(dir, 'echo @CLOSED'), '--terminal', 't-1')
-  until(() => /alerter exited 0: @CLOSED/.test(existsSync(join(dir, 'n.log')) ? readFileSync(join(dir, 'n.log'), 'utf8') : ''), 'the log line')
-  assert.deepEqual(lines(join(dir, 'orca.log')), [])
-})
-
-test('withdraw stops the watcher and removes the alert', () => {
-  const dir = folder()
-  const env = notifyEnv(dir, 'exec sleep 60')
-  const pid = raise(dir, env).stdout.trim()
-  until(() => lines(join(dir, 'alerter.log')).length > 0, 'the alert')
-  const r = spawnSync('bash', [NOTIFY, 'withdraw', '--group', 'g1', '--pid', pid], { encoding: 'utf8', env })
-  assert.equal(r.status, 0, r.stderr)
-  assert.match(lines(join(dir, 'alerter.log')).at(-1), /--remove g1/)
-  until(() => spawnSync('kill', ['-0', pid]).status !== 0, 'the watcher to end')
-})
-
-test('a missing alerter exits 3 and names the install command', () => {
-  const dir = folder()
-  const r = raise(dir, { ...process.env, NDEV_ALERTER: join(dir, 'no-such-alerter') })
+  const r = raise(dir, notifyEnv(dir, 'echo "not allowed" >&2; exit 1'))
   assert.equal(r.status, 3)
-  assert.match(r.stderr, /brew install vjeantet\/tap\/alerter/)
+  assert.match(r.stderr, /osascript exited 1: not allowed/)
+})
+
+test('withdraw stops a watcher that an older version started', () => {
+  const dir = folder()
+  const old = spawnSync('bash', ['-c', 'nohup sleep 60 >/dev/null 2>&1 & echo $!'], { encoding: 'utf8' }).stdout.trim()
+  const r = spawnSync('bash', [NOTIFY, 'withdraw', '--group', 'g1', '--pid', old], { encoding: 'utf8', env: notifyEnv(dir) })
+  assert.equal(r.status, 0, r.stderr)
+  until(() => spawnSync('kill', ['-0', old]).status !== 0, 'the old watcher to end')
+  assert.equal(existsSync(join(dir, 'osascript.log')), false)
+})
+
+test('withdraw with no pid does nothing and succeeds', () => {
+  const dir = folder()
+  assert.equal(spawnSync('bash', [NOTIFY, 'withdraw', '--group', 'g1'], { encoding: 'utf8', env: notifyEnv(dir) }).status, 0)
 })
 
 test('bad usage exits 2', () => {
@@ -83,13 +79,21 @@ const BODY = 'Plan\n<!-- ndev:migrations -->\n- `supabase/migrations/1_a.sql`: f
 const OPEN_PR = { state: 'open', draft: false, merged: false, base: { ref: 'main' }, body: BODY }
 // The fake gh answers a read in the words of gh pr view, runs mergeBody for the merge, and logs each call.
 const ghPr = pr => ({ number: 12, title: 'T', url: 'u', author: { login: 'neil' }, createdAt: 'c', headRefOid: 'h', headRefName: 'b', baseRefName: pr.base?.ref ?? 'main', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: !!pr.draft, body: pr.body ?? null, state: pr.merged ? 'MERGED' : String(pr.state).toUpperCase(), mergeCommit: pr.merge_commit_sha ? { oid: pr.merge_commit_sha } : null })
+// The files of the PR, in the shape of GET /pulls/{n}/files. 1_a and 2_b are the listed migrations.
+const LISTED_FILES = [
+  { filename: 'supabase/migrations/1_a.sql', status: 'added' },
+  { filename: 'supabase/migrations/2_b.sql', status: 'added' },
+  { filename: 'src/a.ts', status: 'modified' },
+]
 const merge = (pr, mergeBody = 'true', ...args) => {
   const dir = folder()
+  writeFileSync(join(dir, 'files.json'), JSON.stringify(pr.files ?? LISTED_FILES))
   writeFileSync(join(dir, 'pr.json'), JSON.stringify(ghPr(pr)))
   writeFileSync(join(dir, 'merged.json'), JSON.stringify(ghPr({ ...pr, merged: true, merge_commit_sha: 'abc' })))
   writeFileSync(join(dir, 'rest.json'), JSON.stringify({ number: 12, state: 'open', head: { sha: 'h1', ref: 'b' }, base: { ref: 'main' }, stack: pr.stack ?? null }))
   program(dir, 'gh', `echo "$*" >> "${dir}/gh.log"
 if [[ "$*" == "api repos/o/r/pulls/12" ]]; then cat "${dir}/rest.json"; exit 0; fi
+if [[ "$*" == "api --paginate repos/o/r/pulls/12/files?per_page=100" ]]; then ${pr.filesBody ?? `cat "${dir}/files.json"`}; exit $?; fi
 if [[ "$*" == "pr merge"* || "$*" == *"-X PUT"* ]]; then ${mergeBody}; exit $?; fi
 if grep -q "pr merge" "${dir}/gh.log"; then cat "${dir}/merged.json"; else cat "${dir}/pr.json"; fi`)
   const r = spawnSync('bash', [MERGE, '12', '--repo', 'o/r', ...args], { encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } })
@@ -101,12 +105,47 @@ test('merge reads, merges through gh, reads the sha and lists the migrations in 
   assert.equal(r.status, 0, r.stderr)
   assert.deepEqual(JSON.parse(r.stdout), {
     pr: 12, merged: true, alreadyMerged: false, sha: 'abc', base: 'main',
-    migrations: ['supabase/migrations/1_a.sql', 'supabase/migrations/2_b.sql'],
+    migrations: ['supabase/migrations/1_a.sql', 'supabase/migrations/2_b.sql'], unlisted: [],
   })
-  assert.equal(r.calls.length, 3)
+  assert.doesNotMatch(r.stderr, /not listed/)
+  assert.equal(r.calls.length, 4)
   assert.ok(r.calls[0].startsWith('pr view 12 --repo o/r'), r.calls[0])
-  assert.equal(r.calls[1], 'pr merge 12 --repo o/r --merge')
-  assert.ok(r.calls[2].startsWith('pr view 12 --repo o/r'), r.calls[2])
+  assert.equal(r.calls[1], 'api --paginate repos/o/r/pulls/12/files?per_page=100')
+  assert.equal(r.calls[2], 'pr merge 12 --repo o/r --merge')
+  assert.ok(r.calls[3].startsWith('pr view 12 --repo o/r'), r.calls[3])
+})
+
+test('a migration file the PR adds but does not list is named in unlisted and in a warning with the repair', () => {
+  const files = [
+    ...LISTED_FILES,
+    { filename: 'supabase/migrations/20261113135004_gate_reply_wording.sql', status: 'added' },
+    { filename: 'apps/db/supabase/migrations/3_c.sql', status: 'added' },
+    { filename: 'supabase/migrations/0_old.sql', status: 'modified' },
+    { filename: 'supabase/migrations/README.md', status: 'added' },
+  ]
+  const added = ['supabase/migrations/20261113135004_gate_reply_wording.sql', 'apps/db/supabase/migrations/3_c.sql']
+  const cases = [
+    [{ ...OPEN_PR, files }, added],
+    [{ ...OPEN_PR, files, merged: true, state: 'closed', merge_commit_sha: 'def' }, added],
+    [{ ...OPEN_PR, files, body: 'Plan' }, ['supabase/migrations/1_a.sql', 'supabase/migrations/2_b.sql', ...added]],
+  ]
+  for (const [pr, unlisted] of cases) {
+    const r = merge(pr)
+    assert.equal(r.status, 0, r.stderr)
+    assert.deepEqual(JSON.parse(r.stdout).unlisted, unlisted)
+    for (const f of unlisted) assert.match(r.stderr, new RegExp(`- ${f.replaceAll('.', '\\.')}\\n`))
+    assert.match(r.stderr, new RegExp(`PR #12 of o/r adds ${unlisted.length} migration file\\(s\\) that its body does not list`))
+    assert.match(r.stderr, /addMigration/)
+    assert.match(r.stderr, /supabase db push/)
+  }
+})
+
+test('a failed read of the PR files exits 2 before the merge and gives the exit code', () => {
+  const r = merge({ ...OPEN_PR, filesBody: 'echo "HTTP 502: Bad gateway" >&2; exit 1' })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /could not read the files of PR #12 of o\/r \(exit 1\)/)
+  assert.match(r.stderr, /Bad gateway/)
+  assert.ok(!r.calls.some(c => c.startsWith('pr merge')), r.calls.join('\n'))
 })
 
 test('a PR already merged is not merged again, and still names its migrations', () => {
@@ -116,7 +155,7 @@ test('a PR already merged is not merged again, and still names its migrations', 
   assert.equal(out.alreadyMerged, true)
   assert.equal(out.sha, 'def')
   assert.equal(out.migrations.length, 2)
-  assert.equal(r.calls.length, 1)
+  assert.equal(r.calls.length, 2)
 })
 
 test('a PR with no migrations section gives an empty list', () => {
@@ -131,7 +170,7 @@ test('a draft and a closed PR are refused with no merge call', () => {
   const closed = merge({ ...OPEN_PR, state: 'closed' })
   assert.equal(closed.status, 1)
   assert.match(closed.stderr, /closed and not merged/)
-  assert.equal(draft.calls.length + closed.calls.length, 2)
+  assert.ok(![...draft.calls, ...closed.calls].some(c => c.startsWith('pr merge')))
 })
 
 test('a merge GitHub refuses exits 1 and prints its reason', () => {
@@ -266,4 +305,70 @@ test('run-check.sh stop ends the check and the processes it started', () => {
   assert.equal(gone.status, 3)
   assert.match(gone.stderr, /wrote no exit code/)
   assert.notEqual(spawnSync('pgrep', ['-f', marker]).status, 0)
+})
+
+// fcc-proto PR 905: checkpoint ran pre-push-check.sh on the default node (v26) though .nvmrc said 24, and the tests failed.
+// A fake node on PATH stands for the default; a fake nvm, fnm or Homebrew node stands for the one the project asks for.
+const fakeNode = (bin, version) => {
+  mkdirSync(bin, { recursive: true })
+  program(bin, 'node', `echo ${version}`)
+  return bin
+}
+const nodeCheck = (dir, files) => {
+  const repo = join(dir, 'repo')
+  mkdirSync(repo, { recursive: true })
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(repo, name), body)
+  return { repo, check: program(dir, 'check.sh', 'node') }
+}
+const startIn = (repo, args, env) => spawnSync('bash', [RUN_CHECK, ...args], { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } })
+const runToEnd = (repo, dir, check, env) => {
+  const started = startIn(repo, ['start', join(dir, 'run'), check], env)
+  if (started.status !== 0) return { started }
+  const ended = runCheck(['wait', join(dir, 'run'), started.stdout.trim(), '20'])
+  return { started, exit: ended.stdout.trim(), out: runCheck(['out', join(dir, 'run')]).stdout, err: runCheck(['err', join(dir, 'run')]).stdout }
+}
+
+test('run-check.sh runs the check on the nvm Node that .nvmrc names when the default node is another major', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.nvmrc': 'v24\n' })
+  const home = join(dir, 'home')
+  fakeNode(join(home, '.nvm', 'versions', 'node', 'v24.2.0', 'bin'), 'v24.2.0')
+  fakeNode(join(home, '.nvm', 'versions', 'node', 'v24.10.1', 'bin'), 'v24.10.1')
+  const def = fakeNode(join(dir, 'default'), 'v26.13.0')
+  const r = runToEnd(repo, dir, check, { HOME: home, NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: join(dir, 'brew'), PATH: `${def}:/usr/bin:/bin` })
+  assert.equal(r.started.status, 0, r.started.stderr)
+  assert.equal(r.out, 'v24.10.1\n')
+  assert.match(r.err, /\.nvmrc asks for Node 24/)
+})
+
+test('run-check.sh takes .node-version and a Homebrew node@<major>', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.node-version': '24.1.0\n' })
+  const brew = join(dir, 'brew')
+  fakeNode(join(brew, 'opt', 'node@24', 'bin'), 'v24.1.0')
+  const def = fakeNode(join(dir, 'default'), 'v26.13.0')
+  const r = runToEnd(repo, dir, check, { HOME: join(dir, 'home'), NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: brew, PATH: `${def}:/usr/bin:/bin` })
+  assert.equal(r.started.status, 0, r.started.stderr)
+  assert.equal(r.out, 'v24.1.0\n')
+})
+
+test('run-check.sh keeps the default node when its major is the one .nvmrc names', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.nvmrc': '24' })
+  const def = fakeNode(join(dir, 'default'), 'v24.5.0')
+  const r = runToEnd(repo, dir, check, { HOME: join(dir, 'home'), NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: join(dir, 'brew'), PATH: `${def}:/usr/bin:/bin` })
+  assert.equal(r.started.status, 0, r.started.stderr)
+  assert.equal(r.out, 'v24.5.0\n')
+})
+
+test('run-check.sh does not start a check when no Node of the .nvmrc major is installed, and names the mismatch and the repair', () => {
+  const dir = folder()
+  const { repo, check } = nodeCheck(dir, { '.nvmrc': '24\n' })
+  const def = fakeNode(join(dir, 'default'), 'v26.13.0')
+  const r = startIn(repo, ['start', join(dir, 'run'), check], { HOME: join(dir, 'home'), NVM_DIR: '', FNM_DIR: '', HOMEBREW_PREFIX: join(dir, 'brew'), PATH: `${def}:/usr/bin:/bin` })
+  assert.notEqual(r.status, 0)
+  assert.match(r.stderr, /\.nvmrc asks for Node 24/)
+  assert.match(r.stderr, /v26\.13\.0/)
+  assert.match(r.stderr, /brew install node@24/)
+  assert.match(r.stderr, /nvm install 24/)
 })

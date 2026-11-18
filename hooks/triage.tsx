@@ -2,11 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, start as startFixPrs, closedPulls, START_ORCA, type Run } from './fix-all-prs'
+import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, start as startFixPrs, closedPulls, START_ORCA, type OrcaWorktree, type Run } from './fix-all-prs'
 import { pullUrl } from './links'
+import { triageRemote } from './remote'
+import { loadEpic } from './workflow/epic'
+import { isOrcaChat } from './workflow/effects'
 import type { PrRow, TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
-// /dev triage (also /orca-triage): this session's model groups the open issues and then coordinates, and Orca does the
+// /dev triage: this session's model groups the open issues and then coordinates, and Orca does the
 // work. Each group becomes one Task of one Orca Run; Orca makes the workspace, linked to the group's issues, and starts a
 // supervised Claude worker in it that takes the group through the ndev workflow on one pull request. The session answers
 // the workers and reports to the human. The mod keeps only the plan and reads the rest back from Orca.
@@ -47,8 +50,11 @@ const AGENT_NAME: Record<TriageAgent, string> = { claude: 'Claude', codex: 'Code
 // batch: how many workers run at once, each batch after the last has ended; 0 for no limit.
 // hint: the human's own steer for the coordinator (--hint), empty for none.
 // since: only the issues with a number above it (--since <n>), 0 for all. isReverse: the newest issues first (--reverse).
+// isMine: only the issues that the gh login opened (--mine).
 // isBugsOnly: group only the bugs, and label each issue by its kind (--bugs-only).
-type Options = { isDryRun: boolean; agent: TriageAgent; isOpen: boolean; batch: number; hint: string; since: number; isReverse: boolean; isBugsOnly: boolean }
+// remote: the saved Orca server that holds the workspaces and runs the workers (--remote), by id, id prefix or name;
+// '' for the one saved server, undefined for this machine.
+type Options = { isDryRun: boolean; agent: TriageAgent; isOpen: boolean; batch: number; hint: string; since: number; isReverse: boolean; isBugsOnly: boolean; isMine: boolean; remote?: string }
 // With --bugs-only, each issue that is not a bug is screened out with one of these kinds, and gets its label when it has one.
 const SCREEN_KINDS: Record<string, { when: string; label?: string }> = {
   enhancement: { when: 'a feature or improvement to add now', label: 'enhancement' },
@@ -103,12 +109,78 @@ function runner($: EngineInterface, timeoutMs: number, env?: Record<string, stri
 async function note($: EngineInterface, text: string): Promise<void> {
   const at = await $.clock.now()
   await update($, view, v => ({ ...v, log: [...v.log, { at, text }].slice(-50) }))
+  unsent.push(text)
+}
+
+// Orca's Chat UI draws no pane and no toast, so there the triage writes into the chat as well (isOrcaChat).
+// The progress lines that have not reached the chat yet. A reload loses them; the pane and /dev triage status keep the log.
+let unsent: string[] = []
+const FOR_THE_USER = 'Show this to the user as it is, in Markdown. It asks nothing of you: go on with what you were doing.'
+
+// A result or failure for the human: a toast, and in Orca's Chat UI a chat message too.
+async function tell($: EngineInterface, text: string): Promise<void> {
+  $.ui.toast(text)
+  unsent = []
+  if (!(await isOrcaChat($))) return
+  // A text that begins with / would run as a command, and prompt.submit refuses it: the label comes first.
+  ask($, 'a notice for the user', `Triage notice:\n\n${text}\n\n${FOR_THE_USER}`)
+}
+
+// In Orca's Chat UI: the progress lines since the last flush, as one message with the groups' table. Called at the end
+// of each piece of work (a launch, an inbox delivery, a tick, a pull request check), so a batch of lines is one message.
+async function flush($: EngineInterface): Promise<void> {
+  if (!unsent.length) return
+  if (!(await isOrcaChat($))) { unsent = []; return }
+  const lines = unsent
+  unsent = []
+  const table = groupTable(await read($, view))
+  ask($, 'the triage progress', `Triage progress:\n${lines.map(l => `- ${l}`).join('\n')}${table ? `\n\n${table}` : ''}\n\n${FOR_THE_USER}`)
+}
+
+// What the pane calls each group's state.
+function stateOf(g: TriageGroup): { word: string; color: string } {
+  return g.error ? { word: 'failed', color: 'error' }
+    : g.blockedBy !== undefined ? { word: 'blocked', color: 'warning' }
+      : g.question ? { word: 'question', color: 'warning' }
+        : g.task === 'completed' ? { word: 'done', color: 'success' }
+          : g.task === 'failed' ? { word: 'failed', color: 'error' }
+            : g.dispatchId ? { word: 'working', color: 'claude' }
+              : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
+}
+const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim()
+
+// The groups as a GitHub-flavoured Markdown table, for /dev triage status and the chat; empty with no group.
+function groupTable(v: TriageView): string {
+  if (!v.groups.length) return ''
+  const issueUrl = (n: number) => v.issues.find(i => i.number === n)?.url ?? `https://github.com/${v.repo}/issues/${n}`
+  const row = (cells: string[]) => `|${cells.map(c => (c ? ` ${c} ` : ' ')).join('|')}|`
+  return [
+    row(['Group', 'Issues', 'State', 'PR', 'Worker']),
+    row(['---', '---', '---', '---', '---']),
+    ...v.groups.map(g => row([
+      `[#${g.lead}](${issueUrl(g.lead)}) ${cell(g.title)}`,
+      g.issues.map(n => `#${n}`).join(' '),
+      stateOf(g).word,
+      g.pr && v.repo ? `[#${g.pr}](${pullUrl(v.repo, g.pr)})` : g.pr ? `#${g.pr}` : '',
+      g.dispatchId ?? '',
+    ])),
+  ].join('\n')
+}
+
+// /dev triage status: the phase, the error, every group and the latest activity, in Markdown.
+function statusText(v: TriageView): string {
+  const head = v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups, ${AGENT_NAME[agentOf(v)]} workers${v.runId ? `, Orca Run ${v.runId}` : ''}.`
+    : v.error ? 'The last /dev triage did not start a triage.' : 'No triage yet. /dev triage start reads the issues.'
+  const error = v.error ? `**Error:** ${v.error}` : ''
+  const table = groupTable(v)
+  const log = v.log.length ? `Latest activity:\n${v.log.slice(-8).map(e => `- ${e.text}`).join('\n')}` : ''
+  return [head, error, table, log].filter(Boolean).join('\n\n')
 }
 
 // Sends a prompt to this session's model; a prompt the engine drops is shown, never lost.
 function ask($: EngineInterface, what: string, text: string): void {
   detach($.prompt.submit({ text }).catch((err: unknown) => {
-    $.ui.toast(`/orca-triage could not send ${what} to the model: ${message(err)}`)
+    $.ui.toast(`/dev triage could not send ${what} to the model: ${message(err)}`)
     return update($, view, v => ({ ...v, error: `${what} was not sent to the model: ${message(err)}` }))
   }))
 }
@@ -124,69 +196,347 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
   if (project?.config.workflow === false) throw new Error(`each triage worker needs the ndev workflow, and ${project.path} sets "workflow": false.\nRepair: remove that setting, or work the issues without /dev triage.`)
   const repo = g.repo
-  if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /orca-triage refresh reads it again.`
-  await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined }))
-  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '', `/orca-triage start again${g.board ? ' without --open' : ''}`, o.since)
-  const { issues, skipped } = got
-  const left = ordered(got.left, o.isReverse)
+  if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /dev triage refresh reads it again.`
+  const remote = o.remote === undefined ? undefined : await triageRemote($, project, o.remote)
+  await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined, isMine: o.isMine || undefined, remote }))
+  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '', `/dev triage start again${g.board ? ' without --open' : ''}`, o.since, o.isMine, remote?.id)
+  // An epic coordinator links no workspace to its epic, so its record says which issues it works. Only a workspace on
+  // this machine can be read.
+  const epics = await epicsInWork($, got.local, `/dev triage start again`)
+  const inEpic = new Set(epics.flatMap(e => [e.epic, ...e.subs]))
+  const { issues } = got
+  const left = ordered(got.left.filter(i => !inEpic.has(i.number)), o.isReverse)
+  const skipped = issues.length - left.length
+  const epicLines = epics.map(e => `left out epic #${e.epic}${e.subs.length ? ` and its sub-issues ${e.subs.map(n => `#${n}`).join(' ')}` : ''}: its coordinator works them (${e.path})`)
+  for (const line of epicLines) await note($, line)
+  const epicText = epicLines.map(l => ` It ${l}.`).join('')
   if (issues.length > LIMIT) {
-    throw new Error(`${repo} has more than ${LIMIT} open issues, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /orca-triage start again${g.board ? ' without --open' : ''}. /orca-triage clean closes the outdated ones first.`)
+    throw new Error(`${repo} has more than ${LIMIT} open issues, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /dev triage start again${g.board ? ' without --open' : ''}. /dev triage clean closes the outdated ones first.`)
   }
   if (!left.length) {
-    await note($, `${issues.length} issues read${o.since ? ` above #${o.since}` : ''}; none is left without an Orca workspace`)
-    return `No issue of ${repo}${o.since ? ` above #${o.since}` : ''} is left to triage: ${issues.length} read, ${skipped} already linked to an Orca workspace.`
+    await note($, `${issues.length} issues read${o.since ? ` above #${o.since}` : ''}; none is left without an Orca workspace or an epic coordinator`)
+    return `No issue of ${repo}${o.since ? ` above #${o.since}` : ''} is left to triage: ${issues.length} read, ${skipped} already linked to an Orca workspace or in an epic that its coordinator works.${epicText}`
   }
   await update($, view, (v): TriageView => ({ ...v, phase: 'grouping', issues: left }))
-  await note($, `asked the model to group ${left.length} issues${skipped ? ` (${skipped} already in Orca workspaces)` : ''}`)
+  await note($, `asked the model to group ${left.length} issues${skipped ? ` (${skipped} already in Orca workspaces or epics)` : ''}`)
   ask($, 'the issues to group', brief(repo, left, o.agent, o.batch, o.hint, o.isReverse, o.isBugsOnly))
-  return `Triage of ${repo}: ${left.length} issues sent to the model to group.`
+  return `Triage of ${repo}: ${left.length} issues sent to the model to group.${epicText}`
 }
 
-// /orca-triage clean: the model checks every open issue (the board's too, whatever its column) against the code and the pull requests after it, and closes
-// the ones it is sure are done, outdated or superseded, once the human confirms. It groups nothing and starts no worker,
-// and leaves the triage pane as it is. It reads the issues with a linked pull request too: one a merged pull request
-// fixed but never closed is the commonest leftover.
-async function clean($: EngineInterface, project: LoadedConfig | undefined, o: Pick<Options, 'hint' | 'since' | 'isReverse'>): Promise<string> {
+// /dev triage clean: code gathers a fact record for every open issue (the board's too, whatever its column): its body,
+// comments, labels, sub-issues, parent, closing and cross-referenced pull requests, the merged pull requests and the
+// default branch's commits that name it, and its Orca workspace. Code flags what it can tell on its own. The model gets
+// the records in chunks of CLEAN_CHUNK and judges each issue through mcp__ndev__clean_verdicts, which refuses a chunk
+// that leaves an issue without a verdict, or a close verdict with no evidence. Only then is the model told to ask the
+// human and close the picked ones, and the end report is built from the recorded verdicts. A clean groups nothing,
+// starts no worker and leaves the triage pane as it is. It reads the issues with a linked pull request too: one a
+// merged pull request fixed but never closed is the commonest leftover.
+const CLEAN_TOOL = 'mcp__ndev__clean_verdicts'
+// Issues per chunk: few enough that the model judges each one and does not skim.
+const CLEAN_CHUNK = 10
+// Issues per GraphQL query.
+const GRAPHQL_BATCH = 20
+// The pull requests read for the ones that name an issue, newest first; the brief says when the list is cut.
+const PR_LIMIT = 300
+const LOG_LIMIT = 3000
+const VERDICTS = ['done', 'outdated', 'superseded', 'duplicate', 'needs_work'] as const
+type VerdictKind = (typeof VERDICTS)[number]
+const CONFIDENCES = ['high', 'medium', 'low'] as const
+// What a close verdict's evidence must name: a pull request or issue number, a commit sha or a file:line.
+const EVIDENCE = /#\d+|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b|[\w./-]+\.\w+:\d+/
+
+type IssueNode = {
+  number: number; title: string; url: string; body?: string | null
+  labels?: { nodes?: { name: string }[] }
+  comments?: { nodes?: { author?: { login?: string } | null; body?: string; createdAt?: string }[] }
+  subIssues?: { nodes?: { number: number; title?: string; state: string }[] }
+  parent?: { number: number; state: string } | null
+  closedByPullRequestsReferences?: { nodes?: Pull[] }
+  timelineItems?: { nodes?: { source?: (Partial<Pull> & { __typename?: string }) | null; willCloseTarget?: boolean }[] }
+}
+type Pull = { number: number; title: string; state: string; mergedAt: string | null; changedFiles?: number; headRefName?: string }
+type Found = { number: number; title: string; state: string; merged?: boolean; merged_at?: string | null; body?: string }
+type Workspace = { path: string; branch?: string; ahead: number | string; pr?: number }
+type CleanRecord = {
+  issue: TriageIssue; isLinked: boolean; body: string; labels: string[]; comments: string[]
+  subIssues: { number: number; state: string }[]; parent?: { number: number; state: string }
+  closingPrs: Pull[]; crossRefs: string[]; namingPrs: Found[]; commits: string[]; workspaces: Workspace[]; flags: string[]
+}
+type Verdict = { issue: number; verdict: VerdictKind; confidence: string; evidence: string; by?: number }
+type Cleaning = { repo: string; issues: TriageIssue[]; members: number[][]; chunks: string[]; at: number; verdicts: Map<number, Verdict> }
+// Module state, which a reload loses: the tool then says to run the clean again.
+let cleaning: Cleaning | undefined
+
+const ISSUE_FIELDS = `fragment F on Issue {
+  number title url body
+  labels(first: 20) { nodes { name } }
+  comments(last: 5) { nodes { author { login } body createdAt } }
+  subIssues(first: 50) { nodes { number title state } }
+  parent { number state }
+  closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { number title state mergedAt changedFiles headRefName } }
+  timelineItems(first: 50, itemTypes: [CROSS_REFERENCED_EVENT]) { nodes { ... on CrossReferencedEvent { willCloseTarget source { __typename ... on PullRequest { number title state mergedAt changedFiles } ... on Issue { number title state } } } } }
+}`
+
+const slices = <T,>(xs: T[], size: number) => Array.from({ length: Math.ceil(xs.length / size) }, (_, k) => xs.slice(k * size, (k + 1) * size))
+const flat = (s: string | null | undefined, max: number) => { const t = (s ?? '').replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1)}…` : t }
+const names = (n: number) => new RegExp(`(^|[^\\w&])#${n}\\b`)
+const words = (title: string) => new Set(title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))
+function likeness(a: Set<string>, b: Set<string>): number {
+  const both = [...a].filter(w => b.has(w)).length
+  return both / (a.size + b.size - both || 1)
+}
+const pullText = (p: Pull) => `#${p.number} ${p.state.toLowerCase()}${p.mergedAt ? ` (merged ${p.mergedAt.slice(0, 10)})` : ''}${p.changedFiles === 0 ? ' (no changed files)' : ''}`
+
+async function clean($: EngineInterface, project: LoadedConfig | undefined, o: Pick<Options, 'hint' | 'since' | 'isReverse' | 'isMine'>): Promise<string> {
   const g = project?.config.github
+  // A new clean ends the one before it, even when this one fails or finds nothing: its verdicts must not be taken for this one's.
+  cleaning = undefined
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
   const repo = g.repo
-  const got = await openIssues($, repo, undefined, o.isReverse ? 'sort:created-desc' : 'sort:created-asc', '/orca-triage clean again', o.since)
+  const got = await openIssues($, repo, undefined, o.isReverse ? 'sort:created-desc' : 'sort:created-asc', '/dev triage clean again', o.since, o.isMine)
   // More than LIMIT: the oldest LIMIT (the newest with --reverse) go now, and the human is told; the closed ones drop out, so a second clean takes the next.
   const isCut = got.issues.length > LIMIT
-  // An issue an Orca workspace links is checked too: its work may have merged, or the workspace may be stale. The brief marks it.
+  // An issue an Orca workspace links is checked too: its work may have merged, or the workspace may be stale. Its record gives the workspace.
   const issues = ordered(ordered(got.issues, o.isReverse).slice(0, LIMIT), o.isReverse)
   const end = o.isReverse ? 'newest' : 'oldest'
   if (!issues.length) return `No open issue of ${repo}${o.since ? ` above #${o.since}` : ''} to clean.`
+  const { records, base, isPrListCut } = await cleanFacts($, repo, project!.root, issues, got.worktrees, got.linked)
+  const byNumber = new Map(records.map(r => [r.issue.number, r]))
+  const members = slices(issues.map(i => i.number), CLEAN_CHUNK)
+  const chunks = members.map((m, k) => chunkText(k, members.length, m.map(n => byNumber.get(n)!), base))
+  cleaning = { repo, issues, members, chunks, at: 0, verdicts: new Map() }
   const inWorkspace = issues.filter(i => got.linked.has(i.number)).length
-  ask($, 'the issues to clean', cleanBrief(repo, issues, got.linked, o.hint))
-  return `Clean of ${repo}: ${issues.length} issues sent to the model to check${inWorkspace ? ` (${inWorkspace} linked to an Orca workspace)` : ''}.${isCut ? ` ${repo} has more than ${LIMIT} open issues: these are the ${end} ${LIMIT}, and /orca-triage clean again takes the next.` : ''}`
+  ask($, 'the issues to clean', cleanBrief(repo, issues.length, members.length, chunks[0]!, o.hint, isPrListCut))
+  return `Clean of ${repo}: a fact record for each of ${issues.length} issues sent to the model in ${members.length} chunks${inWorkspace ? ` (${inWorkspace} linked to an Orca workspace)` : ''}.${isCut ? ` ${repo} has more than ${LIMIT} open issues: these are the ${end} ${LIMIT}, and /dev triage clean again takes the next.` : ''}`
 }
 
-function cleanBrief(repo: string, issues: TriageIssue[], linked: Set<number>, hint: string): string {
+// One fact record for each issue, read in batches: one GraphQL query per GRAPHQL_BATCH issues, one list of the
+// repository's pull requests, one log of the default branch, and one rev-list for each linked Orca workspace.
+async function cleanFacts($: EngineInterface, repo: string, root: string, issues: TriageIssue[], worktrees: OrcaWorktree[], linked: Set<number>) {
+  const run = runner($, 120_000, { GH_REPO: repo })
+  const base = ((await gh(run, ['default-branch'])) as { default_branch?: string }).default_branch
+  if (!base) throw new Error(`gh.sh default-branch gave no default branch for ${repo}.\nRepair: run \`gh repo view ${repo} --json defaultBranchRef\` to see why, then /dev triage clean again.`)
+  const [owner, name] = repo.split('/')
+  const nodes = new Map<number, IssueNode>()
+  for (const batch of slices(issues.map(i => i.number), GRAPHQL_BATCH)) {
+    const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${batch.map(n => `i${n}: issue(number: ${n}) { ...F }`).join(' ')} } } ${ISSUE_FIELDS}`
+    const span = `#${batch[0]}–#${batch[batch.length - 1]}`
+    const got = (await gh(run, ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${query}`]).catch((err: unknown) => {
+      throw new Error(`the GraphQL read of ${span} of ${repo} failed: ${message(err)}`)
+    })) as { data?: { repository?: Record<string, IssueNode | null> } }
+    for (const n of batch) {
+      const x = got.data?.repository?.[`i${n}`]
+      if (!x) throw new Error(`the GraphQL read of issues ${batch.map(m => `#${m}`).join(' ')} of ${repo} gave no record for #${n}, so the clean cannot judge it: ${JSON.stringify(got).slice(0, 300)}\nRepair: check #${n} with \`gh issue view ${n} --repo ${repo}\`, then run /dev triage clean again.`)
+      nodes.set(n, x)
+    }
+  }
+  const pulls = await ghLines<Found>(run, ['pr-search', 'sort:updated-desc', '--limit', String(PR_LIMIT)])
+  // The log must be of the default branch as GitHub has it now, or a commit merged since the last fetch reads as missing.
+  const fetched = await run(['git', '-C', root, 'fetch', 'origin', base])
+  if (fetched.exitCode !== 0) throw new Error(`git -C ${root} fetch origin ${base} exited ${fetched.exitCode}: ${(fetched.stderr.trim() || fetched.stdout.trim()).slice(0, 300)}\nRepair: check the remote and the network with \`git -C ${root} remote -v\` and \`git -C ${root} fetch origin ${base}\`, then /dev triage clean again.`)
+  const log = await run(['git', '-C', root, 'log', `origin/${base}`, '-n', String(LOG_LIMIT), '--format=%h%x1f%s%x1f%b%x1e'])
+  if (log.exitCode !== 0) throw new Error(`git -C ${root} log origin/${base} exited ${log.exitCode}: ${(log.stderr.trim() || log.stdout.trim()).slice(0, 300)}\nRepair: run \`git -C ${root} fetch origin ${base}\`, then /dev triage clean again.`)
+  // A cut log would drop commits, and their issues would read "no commit names it".
+  if (log.isStdoutTruncated) throw new Error(`git -C ${root} log origin/${base} -n ${LOG_LIMIT} printed more than the engine keeps, so commits would be missing from the records.\nRepair: lower LOG_LIMIT in hooks/triage.tsx, then /dev triage clean again.`)
+  const commits = log.stdout.split('\x1e').map(c => c.trim()).filter(Boolean).map(c => c.split('\x1f'))
+  const ahead = new Map<string, number | string>()
+  for (const w of worktrees) {
+    if (!(w.linkedItems ?? []).some(i => i.type === 'issue' && issues.some(x => x.number === i.number))) continue
+    const r = await run(['git', '-C', w.path, 'rev-list', '--count', `origin/${base}..HEAD`])
+    // A workspace that git cannot read is a fact for the model too, and the record says why.
+    ahead.set(w.path, r.exitCode === 0 ? Number(r.stdout.trim()) : `not read (git rev-list exited ${r.exitCode}: ${flat(r.stderr || r.stdout, 200)})`)
+  }
+  const titles = issues.map(i => ({ number: i.number, title: i.title, words: words(i.title) }))
+  const records = issues.map((i): CleanRecord => {
+    const x = nodes.get(i.number)!
+    const n = i.number
+    const closingPrs = x.closedByPullRequestsReferences?.nodes ?? []
+    const subIssues = (x.subIssues?.nodes ?? []).map(s => ({ number: s.number, state: s.state }))
+    const refs = (x.timelineItems?.nodes ?? []).flatMap(t => (t.source?.number === undefined ? [] : [{ ...t.source, willCloseTarget: t.willCloseTarget }]))
+    const crossRefs = [...new Map(refs.map(r => [r.number, r])).values()].filter(r => !closingPrs.some(p => p.number === r.number))
+      .map(r => (r.__typename === 'PullRequest' ? `PR ${pullText(r as Pull)}` : `issue #${r.number} ${String(r.state).toLowerCase()}`))
+    const namingPrs = pulls.filter(p => names(n).test(`${p.title}\n${p.body ?? ''}`))
+    const named = commits.filter(([, s, b]) => names(n).test(`${s}\n${b ?? ''}`)).map(([sha, s]) => `${sha} ${s}`)
+    const workspaces = worktrees.filter(w => (w.linkedItems ?? []).some(l => l.type === 'issue' && l.number === n))
+      .map(w => ({ path: w.path, branch: w.branch, ahead: ahead.get(w.path) ?? 'not read', pr: w.linkedPR ?? undefined }))
+    const openPrs = [...closingPrs, ...refs.filter((r): r is Pull & { __typename?: string } => r.__typename === 'PullRequest')]
+    const flags = [
+      ...closingPrs.filter(p => p.mergedAt).map(p => `closed by merged PR #${p.number} (merged ${p.mergedAt!.slice(0, 10)}) but still open`),
+      ...(subIssues.length && subIssues.every(s => s.state === 'CLOSED') ? [`every sub-issue is closed: ${subIssues.map(s => `#${s.number}`).join(', ')}`] : []),
+      ...[...new Map(openPrs.filter(p => p.state === 'OPEN' && p.changedFiles === 0).map(p => [p.number, p])).values()].map(p => `open PR #${p.number} has no changed files`),
+      ...workspaces.filter(w => w.ahead === 0 && !w.pr).map(() => 'the workspace has no commits and no PR'),
+      ...titles.filter(t => t.number !== n && likeness(t.words, words(i.title)) >= 0.75).map(t => `title near #${t.number} "${t.title}": a possible duplicate`),
+      ...namingPrs.filter(p => p.merged && !closingPrs.some(c => c.number === p.number)).map(p => `merged PR #${p.number} names #${n} but does not close it`),
+    ]
+    return {
+      issue: i, isLinked: linked.has(n), body: flat(x.body, 1500), labels: (x.labels?.nodes ?? []).map(l => l.name),
+      comments: (x.comments?.nodes ?? []).map(c => `${c.author?.login ?? 'someone'} ${(c.createdAt ?? '').slice(0, 10)}: ${flat(c.body, 400)}`),
+      subIssues, parent: x.parent ?? undefined, closingPrs, crossRefs, namingPrs, commits: named, workspaces, flags,
+    }
+  })
+  return { records, base, isPrListCut: pulls.length >= PR_LIMIT }
+}
+
+function recordText(r: CleanRecord, base: string): string {
+  const n = r.issue.number
   return [
-    `Clean: find which of these ${issues.length} open issues of ${repo} are done, outdated or superseded, and close those once the user confirms. Do no other work on them.`,
-    '',
-    ...issues.map(i => `#${i.number} ${i.title} — ${i.url}${linked.has(i.number) ? ' (linked to an Orca workspace)' : ''}`),
-    '',
-    'For each issue:',
-    `- Read it with \`gh issue view <n> --repo ${repo} --comments\` (body, comments, sub-issues, linked pull requests).`,
-    `- Look for a merged pull request that fixed or closes it but left it open: its linked pull requests, and \`gh pr list --repo ${repo} --state merged --search "<n>"\` or words from its title.`,
-    '- Compare what it asks with the code as it is now on the default branch, and with later pull requests and commits (`git log --grep`, `git log -S`): work already done, code it names that is gone or replaced, or a later issue or pull request that covers it.',
-    '- An issue linked to an Orca workspace may be in progress: also check that workspace\'s branch and pull request (`orca worktree list`). Its work merged means done; open work means needs work.',
-    '- Mark it done (fixed by a merged pull request or commit), outdated (the code or plan it is about is gone), superseded (a later issue or pull request covers it, name it), or needs work. When you are not sure, it needs work: leave it open.',
-    '',
-    'Then, for only the issues you are pretty sure of, ask the user with AskUserQuestion (multiSelect, at most 4 issues a question, 4 questions a call; ask again for the rest). Each option is one issue: "#<n> <title>", and its description gives the verdict and the evidence (the pull request, commit, or file and line).',
-    `Close each issue the user picks, and only those: \`gh issue close <n> --repo ${repo} --reason "not planned" --comment "<verdict and evidence>"\`, or --reason completed when a merged pull request or commit fixed it. Never close an issue the user did not pick.`,
-    ...(hint ? ['', `The human's hint for this clean: ${hint}`] : []),
-    '',
-    'End with a short list: each issue closed and why, each issue left open, and each close that failed with its error.',
+    `### #${n} ${r.issue.title} — ${r.issue.url}${r.isLinked ? ' (linked to an Orca workspace)' : ''}`,
+    `labels: ${r.labels.join(', ') || 'none'}${r.parent ? ` · parent: #${r.parent.number} (${r.parent.state.toLowerCase()})` : ''}`,
+    ...(r.subIssues.length ? [`sub-issues: ${r.subIssues.map(s => `#${s.number} ${s.state.toLowerCase()}`).join(', ')}`] : []),
+    `closing PRs: ${r.closingPrs.map(pullText).join(', ') || 'none'}`,
+    ...(r.crossRefs.length ? [`cross-referenced by: ${r.crossRefs.join(', ')}`] : []),
+    `PRs naming #${n}: ${r.namingPrs.map(p => `#${p.number} ${p.merged ? `merged ${(p.merged_at ?? '').slice(0, 10)}` : p.state} "${flat(p.title, 80)}"`).join(', ') || 'none'}`,
+    `commits naming #${n}: ${r.commits.join('; ') || `none on ${base}`}`,
+    ...r.workspaces.map(w => `workspace ${w.path} (branch ${w.branch ?? 'unknown'}): ${typeof w.ahead === 'number' ? `${w.ahead} commits ahead of ${base}` : `commits ahead of ${base} ${w.ahead}`}, ${w.pr ? `PR #${w.pr}` : 'no PR'}`),
+    `flags: ${r.flags.join('; ') || 'none'}`,
+    `body: ${r.body || '(empty)'}`,
+    ...r.comments.map(c => `comment by ${c}`),
   ].join('\n')
 }
 
+function chunkText(k: number, total: number, records: CleanRecord[], base: string): string {
+  return [
+    `Chunk ${k + 1} of ${total}: ${records.map(r => `#${r.issue.number}`).join(', ')}`,
+    '',
+    records.map(r => recordText(r, base)).join('\n\n'),
+    '',
+    `Judge each of these ${records.length} issues, then call \`${CLEAN_TOOL}\` once with { verdicts } for exactly these ${records.length}.`,
+  ].join('\n')
+}
+
+function cleanBrief(repo: string, count: number, chunkCount: number, first: string, hint: string, isPrListCut: boolean): string {
+  return [
+    `Clean: judge each of these ${count} open issues of ${repo}: done, outdated, superseded, duplicate or needs work. Do no other work on them.`,
+    `Code has read every issue: the record of each gives its body, comments, labels, sub-issues, parent, closing and cross-referenced pull requests, the merged pull requests and commits on the default branch that name it, and its Orca workspace, with flags for what code could tell. The issues come in ${chunkCount} chunks; this message holds the first, and each answer of the tool holds the next.`,
+    ...(isPrListCut ? [`The pull request list holds the newest ${PR_LIMIT} pull requests of ${repo}: an older one that names an issue is not in its record.`] : []),
+    '',
+    'For each issue of a chunk:',
+    '- Judge it from its record. Where the record does not settle it, compare what it asks with the code on the default branch and with later pull requests and commits (`git log --grep`, `git log -S`, the files it names).',
+    '- An issue linked to an Orca workspace may be in progress: its record gives the workspace branch, its commits ahead and its pull request. Its work merged means done; open work means needs_work.',
+    '- A flag is a lead, not a verdict. An open pull request alone does not make an issue need work, and a merged pull request that fixed or closes it is strong evidence of done.',
+    '- verdict: done (a merged pull request or commit fixed it), outdated (the code or plan it is about is gone), superseded (a later issue or pull request covers it: give it in by), duplicate (another issue asks the same: give it in by), or needs_work. confidence: high, medium or low. evidence: for every verdict but needs_work, a pull request or issue number (#n), a commit sha or a file:line. When you are not sure, the verdict is needs_work.',
+    `- Call \`${CLEAN_TOOL}\` with { verdicts: [{ issue, verdict, confidence, evidence, by }] } for exactly the issues of the chunk. If it refuses, fix what it names and call it again.`,
+    '- You may judge a chunk in a subagent: give it the chunk as it stands, and call the tool yourself with the verdicts it returns.',
+    '',
+    'When every issue has a verdict, the tool answers with the issues to ask the user about and how to close them. Ask nothing and close nothing before that.',
+    ...(hint ? ['', `The human's hint for this clean: ${hint}`] : []),
+    '',
+    first,
+  ].join('\n')
+}
+
+// The reasons a verdicts call is refused; none when it can be recorded.
+function verdictProblems(c: Cleaning, items: unknown[]): string[] {
+  const own = c.members[c.at]!
+  const range = `chunk ${c.at + 1} (${own.map(n => `#${n}`).join(', ')})`
+  const out: string[] = []
+  const seen = new Set<number>()
+  items.forEach((x, k) => {
+    if (x === null || typeof x !== 'object') { out.push(`verdict item ${k + 1} is not an object; give { issue, verdict, confidence, evidence, by }`); return }
+    const v = x as { issue?: unknown; verdict?: unknown; confidence?: unknown; evidence?: unknown; by?: unknown }
+    const n = v.issue
+    if (!Number.isInteger(n)) { out.push(`verdict item ${k + 1} names the issue ${JSON.stringify(n)}; give its number`); return }
+    const m = n as number
+    if (!own.includes(m)) {
+      out.push(c.issues.some(i => i.number === m) ? `#${m} is not in ${range}; give its verdict with its own chunk` : `#${m} is not one of the issues of this clean`)
+      return
+    }
+    if (seen.has(m)) out.push(`#${m} has two verdicts; give it one`)
+    seen.add(m)
+    if (typeof v.verdict !== 'string' || !(VERDICTS as readonly string[]).includes(v.verdict)) { out.push(`#${m}: ${JSON.stringify(v.verdict)} is not a verdict; use one of ${VERDICTS.join(', ')}`); return }
+    if (typeof v.confidence !== 'string' || !(CONFIDENCES as readonly string[]).includes(v.confidence)) out.push(`#${m}: ${JSON.stringify(v.confidence)} is not a confidence; use one of ${CONFIDENCES.join(', ')}`)
+    if (v.verdict === 'needs_work') return
+    if (typeof v.evidence !== 'string' || !EVIDENCE.test(v.evidence)) out.push(`#${m} is ${v.verdict} but its evidence names no PR number, commit sha or file:line`)
+    if ((v.verdict === 'superseded' || v.verdict === 'duplicate') && (!Number.isInteger(v.by) || v.by === m)) out.push(`#${m} is ${v.verdict} but gives no by: the number of the issue or pull request that covers it`)
+  })
+  for (const n of own) if (!seen.has(n)) out.push(`#${n} has no verdict`)
+  return out
+}
+
+const isAsked = (v: Verdict) => v.verdict !== 'needs_work' && v.confidence !== 'low'
+const verdictLine = (v: Verdict, title: string) =>
+  `- #${v.issue} ${v.verdict}${v.by ? ` ${v.verdict === 'superseded' ? 'by' : 'of'} #${v.by}` : ''}: ${v.evidence} (${v.confidence} confidence) — "${title}"`
+
+function askText(c: Cleaning): string {
+  const asked = [...c.verdicts.values()].filter(isAsked)
+  const title = (n: number) => c.issues.find(i => i.number === n)?.title ?? ''
+  if (!asked.length) return `Recorded: all ${c.issues.length} issues have a verdict, and none is a close you are sure of. Ask the user nothing and close nothing. Call \`${CLEAN_TOOL}\` with { closed: [] } for the end report, and give the user that report.`
+  return [
+    `Recorded: all ${c.issues.length} issues have a verdict. Ask the user which of these ${asked.length} to close with AskUserQuestion (multiSelect, at most 4 issues a question, 4 questions a call; ask again for the rest). Each option is one issue: "#<n> <title>", and its description gives the verdict and the evidence.`,
+    ...asked.map(v => verdictLine(v, title(v.issue))),
+    '',
+    `Close each issue the user picks, and only those: \`gh issue close <n> --repo ${c.repo} --reason "not planned" --comment "<verdict and evidence>"\`, or --reason completed for done. Never close an issue the user did not pick.`,
+    `Then call \`${CLEAN_TOOL}\` with { closed: [<each issue closed>], failed: [{ issue, error }] } for the end report, and give the user that report.`,
+  ].join('\n')
+}
+
+// The end report, from the recorded verdicts: what was closed, what failed, and what stays open and why.
+function cleanReport(c: Cleaning, closed: number[], failed: { issue: number; error: string }[]): string {
+  const done = new Set([...closed, ...failed.map(f => f.issue)])
+  const all = [...c.verdicts.values()].filter(v => !closed.includes(v.issue))
+  const list = (vs: Verdict[]) => vs.map(v => v.issue).sort((a, b) => a - b).map(n => `#${n}`).join(', ')
+  const needs = all.filter(v => v.verdict === 'needs_work')
+  const unsure = all.filter(v => v.verdict !== 'needs_work' && v.confidence === 'low')
+  const notPicked = all.filter(v => isAsked(v) && !done.has(v.issue))
+  const why = (n: number) => { const v = c.verdicts.get(n); return v ? `${v.verdict}${v.verdict !== 'needs_work' && v.confidence === 'low' ? ', low confidence' : ''}` : 'not in this clean' }
+  // A close the verdicts did not allow (needs work, low confidence, or an issue outside this clean) is reported, never hidden.
+  const stray = closed.filter(n => { const v = c.verdicts.get(n); return !v || !isAsked(v) })
+  return [
+    `Clean of ${c.repo}. Closed ${closed.length} of ${c.issues.length} issues${closed.length ? `: ${closed.map(n => `#${n} (${why(n)})`).join(', ')}` : ''}.`,
+    ...(stray.length ? [`Closed with no close verdict, so check them: ${stray.map(n => `#${n} (${why(n)})`).join(', ')}. To undo: \`gh issue reopen <n> --repo ${c.repo}\`.`] : []),
+    ...(failed.length ? [`Failed to close ${failed.length}: ${failed.map(f => `#${f.issue}: ${f.error}`).join('; ')}.`] : []),
+    ...(notPicked.length ? [`${notPicked.length} not picked and left open: ${list(notPicked)}.`] : []),
+    ...(unsure.length ? [`${unsure.length} left open with a low-confidence verdict: ${unsure.map(v => `#${v.issue} (${v.verdict})`).join(', ')}.`] : []),
+    `${needs.length} judged needs work and left open${needs.length ? `: ${list(needs)}` : ''}.`,
+  ].join('\n')
+}
+
+// The answer to one mcp__ndev__clean_verdicts call: a chunk's verdicts, or the closes for the end report.
+async function cleanVerdicts(input: { verdicts?: unknown; closed?: unknown; failed?: unknown }): Promise<{ result: string; isError?: true }> {
+  const c = cleaning
+  const refuse = (wrong: string[]) => ({ result: `Refused, nothing recorded:\n- ${wrong.join('\n- ')}\nFix these and call ${CLEAN_TOOL} again.`, isError: true as const })
+  if (!c) return { result: 'Refused: no /dev triage clean is waiting for verdicts (a reload ends one). Run /dev triage clean to start one.', isError: true }
+  if (input.closed !== undefined || input.failed !== undefined) {
+    const missing = c.issues.filter(i => !c.verdicts.has(i.number)).map(i => `#${i.number}`)
+    if (missing.length) return refuse([`${missing.join(', ')} ${missing.length === 1 ? 'has' : 'have'} no verdict yet: give the verdicts of chunk ${c.at + 1} first`])
+    const closed = Array.isArray(input.closed) ? input.closed : []
+    const failedItems = Array.isArray(input.failed) ? input.failed : []
+    const wrong: string[] = []
+    // Only malformed input is refused. A close that has already happened is reported whatever its verdict, so the human sees it.
+    const named = new Set<number>()
+    const check = (n: unknown, what: string) => {
+      if (!Number.isInteger(n) || (n as number) < 1) return wrong.push(`${what} names ${JSON.stringify(n)}, which is not an issue number`)
+      if (named.has(n as number)) return wrong.push(`#${n} is named twice; name each issue once, in closed or in failed`)
+      named.add(n as number)
+    }
+    closed.forEach(n => check(n, 'closed'))
+    const failed = failedItems.flatMap((f, k) => {
+      const x = f as { issue?: unknown; error?: unknown } | null
+      if (x === null || typeof x !== 'object' || typeof x.error !== 'string' || !x.error.trim()) { wrong.push(`failed item ${k + 1} needs { issue, error }`); return [] }
+      check(x.issue, 'failed')
+      return [{ issue: x.issue as number, error: x.error.trim() }]
+    })
+    if (wrong.length) return refuse(wrong)
+    cleaning = undefined
+    return { result: `${cleanReport(c, closed as number[], failed)}\nGive the user this report as it stands.` }
+  }
+  if (c.at >= c.members.length) return refuse([`every chunk has its verdicts; call ${CLEAN_TOOL} with { closed, failed } for the end report`])
+  const items = Array.isArray(input.verdicts) ? (input.verdicts as unknown[]) : []
+  const wrong = verdictProblems(c, items)
+  if (wrong.length) return refuse(wrong)
+  for (const x of items as Verdict[]) {
+    c.verdicts.set(x.issue, { issue: x.issue, verdict: x.verdict, confidence: x.confidence, evidence: typeof x.evidence === 'string' ? x.evidence.trim() : '', ...(Number.isInteger(x.by) ? { by: x.by } : {}) })
+  }
+  c.at += 1
+  if (c.at < c.members.length) return { result: `Recorded the verdicts of chunk ${c.at} of ${c.members.length}.\n\n${c.chunks[c.at]}` }
+  return { result: askText(c) }
+}
+
 // The open issues of repo: the board's Ready and In progress issue cards when board is given, else up to limit open
-// issues that match query, oldest first. With since above 0, only the issues with a higher number. An issue an Orca
+// issues that match query, oldest first. With since above 0, only the issues with a higher number. With isMine, only
+// the issues that the gh login opened. An issue an Orca
 // workspace already links is someone's work, so it is left out of left.
-async function openIssues($: EngineInterface, repo: string, board: { owner: string; number: number } | undefined, query: string, again: string, since = 0) {
+async function openIssues($: EngineInterface, repo: string, board: { owner: string; number: number } | undefined, query: string, again: string, since = 0, isMine = false, environment?: string) {
   const run = runner($, 120_000)
   let issues: TriageIssue[]
   if (board) {
@@ -198,20 +548,61 @@ async function openIssues($: EngineInterface, repo: string, board: { owner: stri
     const cards = out.stdout.split('\n').filter(Boolean).map(l => JSON.parse(l) as TriageIssue & { status?: string })
     // A shared board holds other repositories' cards, and a draft card has no url.
     const own = `https://github.com/${repo}/issues/`.toLowerCase()
+    const login = isMine ? await myLogin(run, again) : undefined
     issues = cards.filter(c => (c.status === 'Ready' || c.status === 'In progress') && typeof c.url === 'string' && c.url.toLowerCase().startsWith(own))
+      .filter(c => !login || (c as { author?: string | null }).author?.toLowerCase() === login.toLowerCase())
       .map(({ number, title, url }) => ({ number, title, url }))
   } else {
     // GitHub search has no range of numbers. Numbers go up with time, so the date that #since was opened bounds the
     // search, and the number check below drops #since itself and any issue opened in the same second.
     const from = since ? ` created:>=${await openedAt(run, repo, since)}` : ''
     // The date bound matches #since too, which the number check drops: one more result keeps a cut visible.
-    issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${from}`.trim(), '--limit', String(LIMIT + (since ? 2 : 1))])
+    issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${isMine ? ' author:@me' : ''}${from}`.trim(), '--limit', String(LIMIT + (since ? 2 : 1))])
   }
   if (since) issues = issues.filter(i => i.number > since)
-  const linked = new Set(ofRepo(await orcaWorktrees(run, `, then run ${again}`), repo).filter(w => !w.isArchived)
-    .flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number))
+  // With --remote, a workspace on this machine and one on the server are each someone's work.
+  const retry = `, then run ${again}`
+  const [local, far = []] = environment ? await Promise.all([orcaWorktrees(run, retry), orcaWorktrees(run, retry, environment)]) : [await orcaWorktrees(run, retry)]
+  const worktrees = ofRepo([...local, ...far], repo).filter(w => !w.isArchived)
+  const linked = new Set(worktrees.flatMap(w => w.linkedItems ?? []).filter(i => i.type === 'issue').map(i => i.number!))
   const left = issues.filter(i => !linked.has(i.number)).sort((a, b) => a.number - b.number)
-  return { issues, left, skipped: issues.length - left.length, linked }
+  return { issues, left, skipped: issues.length - left.length, linked, worktrees, local: ofRepo(local, repo).filter(w => !w.isArchived) }
+}
+
+const EPIC_RECORD = /^\.neil-dev\.epic-([1-9]\d*)\.json$/
+
+// Each epic, not done, whose .neil-dev.epic-<n>.json sits in one of the worktrees: its coordinator owns it and its sub-issues.
+async function epicsInWork($: EngineInterface, worktrees: OrcaWorktree[], again: string) {
+  const found: { epic: number; subs: number[]; path: string }[] = []
+  for (const w of worktrees) {
+    if (!(await $.fs.exists(w.path))) continue
+    for (const entry of await $.fs.list(w.path)) {
+      const n = Number(EPIC_RECORD.exec(entry.name)?.[1])
+      if (!n) continue
+      const path = `${w.path}/${entry.name}`
+      let epic
+      try {
+        epic = await loadEpic($, w.path, n)
+      } catch (error) {
+        throw new Error(`${(error as Error).message.replace(/ Repair:.*$/s, '')}\nRepair: fix or delete the file, then run ${again}.`)
+      }
+      if (epic && epic.state !== 'done') found.push({ epic: n, subs: Object.values(epic.issues).map(i => i.issue).filter(i => typeof i === 'number'), path })
+    }
+  }
+  return found
+}
+
+// The login that gh is signed in as, for --mine on a board, whose cards carry their author's login.
+async function myLogin(run: Run, again: string): Promise<string> {
+  let got: unknown
+  try {
+    got = await gh(run, ['api', 'user'])
+  } catch (err) {
+    throw new Error(`--mine: GitHub did not give the signed-in user. ${err instanceof Error ? err.message : String(err)}\nRepair: run \`gh auth status\`, sign in with \`gh auth login\` if needed, then run ${again}.`)
+  }
+  const login = (got as { login?: unknown }).login
+  if (typeof login !== 'string' || !login) throw new Error(`--mine: GitHub gave the signed-in user with no login: ${JSON.stringify(got).slice(0, 200)}`)
+  return login
 }
 
 // When issue or pull request #n of repo was opened, as GitHub gives it (2026-05-01T00:00:00Z).
@@ -247,6 +638,7 @@ function brief(repo: string, issues: TriageIssue[], agent: TriageAgent, batch: n
     ...(isReverse ? ['- This triage works the newest issues first: list the groups with the newest issues first, unless after or a risk needs another order.'] : []),
     ...(batch === 1 ? ['- This triage runs one worker at a time, in the order you list the groups: you decide that order. Put first what unblocks others, is most urgent, or is smallest and safest, so each pull request can merge before the next starts. A group still waits for the groups in its after.'] : []),
     ...(batch > 1 ? [`- This triage runs at most ${batch} workers at a time, in batches, in the order you list the groups: you decide that order. The next batch starts only when every worker of the last one has ended. Put first what unblocks others, is most urgent, or is smallest and safest, and put groups that touch the same files in different batches. A group still waits for the groups in its after.`] : []),
+    '- When the human asks you, in a hint or in this conversation, to skip or leave out issues without closing them, list them in skipped as { issue, reason } instead of in a group: they stay open, untouched, and get no worker. Never skip an issue that the human did not ask you to leave out.',
     `- A linked pull request does not end the check of an issue. Read each one with \`gh issue view <n> --repo ${repo} --json closedByPullRequestsReferences\` and \`gh pr view <pr> --repo ${repo}\`.`,
     '  - Its pull request merged: check the code. When the code does all that the issue asks, the issue is done but open. Ask the user with AskUserQuestion which of these to close,'
     + ` close only those the user picks with \`gh issue close <n> --repo ${repo} --reason completed --comment "<the pull request and the evidence>"\`, and list them in closed. When work is left, group the issue for that work.`,
@@ -254,7 +646,7 @@ function brief(repo: string, issues: TriageIssue[], agent: TriageAgent, batch: n
     '  - It has an open pull request: that pull request is the unfinished work, and no group starts it again. List it in unfinished as { issue, pr }. The mod hands each one to the /fix-prs loop, which works it with its owner until it is green and merged.',
     ...(hint ? ['', `The human's hint for this triage: ${hint}`, `Follow it where it goes beyond these rules. When it asks you to close issues that need no work, ask the user first with AskUserQuestion, close only those the user picks with \`gh issue close <n> --repo ${repo} --comment "<why>"\`, and list them in closed instead of in a group.`] : []),
     '',
-    `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }], closed, unfinished: [{ issue, pr }]${isBugsOnly ? ', screened' : ''} }.`,
+    `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }], closed, skipped, unfinished: [{ issue, pr }]${isBugsOnly ? ', screened' : ''} }.`,
     'If it refuses, fix what it names and call it again.',
     '',
     `You are the coordinator of this triage: one Orca worker takes each group through the ndev workflow (kb/workflow.md), and you do none of that work. Never call mcp__ndev__started for these issues, and never edit, commit or open a pull request for them. Answer the workers, decide what to do when one fails, and report to the user. The mod sends you each of these moments.`,
@@ -284,7 +676,7 @@ function problems(issues: TriageIssue[], groups: Proposed[]): string[] {
   })
   for (const n of known) {
     const count = groups.filter(g => nums(g.issues).includes(n)).length
-    if (count === 0) out.push(`#${n} is in no group`)
+    if (count === 0) out.push(`#${n} is in no group; put it in a group, or in skipped as { issue, reason } when the human asked you to leave it out`)
     if (count > 1) out.push(`#${n} is in ${count} groups`)
   }
   for (const [lead, after] of leads) for (const a of after) if (a === lead || !leads.has(a)) out.push(`the group led by #${lead} runs after #${a}, which leads no group`)
@@ -383,7 +775,7 @@ async function launch($: EngineInterface): Promise<void> {
   const pending = await read($, view)
   if (pending.phase === 'planned' && pending.repo && pending.labels?.length) {
     const failed = await writeLabels($, pending.repo, pending.labels)
-    if (failed.length) throw new Error(`${failed.length} of ${pending.labels.length} labels failed, so no worker started:\n- ${failed.join('\n- ')}\n${labelRepair(pending.repo, pending.labels)}, then run /orca-triage launch again.`)
+    if (failed.length) throw new Error(`${failed.length} of ${pending.labels.length} labels failed, so no worker started:\n- ${failed.join('\n- ')}\n${labelRepair(pending.repo, pending.labels)}, then run /dev triage launch again.`)
     await update($, view, (x): TriageView => ({ ...x, labels: undefined }))
   }
   // A dry run keeps the pull requests of its unfinished issues for the launch, which hands them to the /fix-prs loop.
@@ -403,16 +795,17 @@ async function launch($: EngineInterface): Promise<void> {
     v = x
     return x.phase === 'planned' && x.repo ? { ...x, phase: 'running' } : x
   })
-  if (v?.phase !== 'planned' || !v.repo) throw new Error(`there is no plan to launch (the triage is ${v?.phase}).\nRepair: run /orca-triage start.`)
+  if (v?.phase !== 'planned' || !v.repo) throw new Error(`there is no plan to launch (the triage is ${v?.phase}).\nRepair: run /dev triage start.`)
   try {
     await create($, v)
   } catch (err) {
     const runId = (await read($, view)).runId
     await update($, view, (x): TriageView => ({ ...x, phase: 'done' }))
-    ask($, 'the failed launch', `Triage: the launch stopped part way: ${message(err)}\nNo worker will write to you. Tell the user, with the repair: /orca-triage reset clears this triage, then /orca-triage start begins again.`)
-    throw new Error(`the launch stopped part way: ${message(err)}\n${runId ? `Orca Run ${runId} keeps the Tasks it made. ` : ''}Repair: /orca-triage reset clears this triage, then /orca-triage start begins again.`)
+    ask($, 'the failed launch', `Triage: the launch stopped part way: ${message(err)}\nNo worker will write to you. Tell the user, with the repair: /dev triage reset clears this triage, then /dev triage start begins again.`)
+    throw new Error(`the launch stopped part way: ${message(err)}\n${runId ? `Orca Run ${runId} keeps the Tasks it made. ` : ''}Repair: /dev triage reset clears this triage, then /dev triage start begins again.`)
   }
   await startReady($)
+  await flush($)
   waitLater($)
 }
 
@@ -452,14 +845,16 @@ function startReady($: EngineInterface): Promise<unknown> {
   return starting
 }
 
-const isInFlight = (g: TriageGroup) => !!g.dispatchId && !g.summary && !g.error
+// A worker is in flight until it reports worker_done or fails to start, or until its Task ends in Orca: a worker that
+// exits with no worker_done leaves its Task for the coordinator to complete or fail by hand.
+const isInFlight = (g: TriageGroup) => !!g.dispatchId && !g.summary && !g.error && g.task !== 'completed' && g.task !== 'failed'
 // The batch size: --batch <n>, or 1 for a triage saved by --sequential before --batch; 0 for no limit.
 const batchOf = (v: TriageView) => v.batch ?? (v.isSequential ? 1 : 0)
 
 async function startNow($: EngineInterface): Promise<void> {
   const v = await read($, view)
   if (v.phase !== 'running' || !v.runId || !v.repo) return
-  // --batch: no start while a worker of the last batch has not reported worker_done.
+  // --batch: no start while a worker of the last batch is in flight.
   const batch = batchOf(v)
   if (batch && v.groups.some(isInFlight)) return
   const ready = (await orca(runner($, 60_000), ['orchestration', 'task-list', '--ready', '--run', v.runId])) as { tasks: { id: string }[] }
@@ -522,14 +917,15 @@ async function settle($: EngineInterface): Promise<void> {
 async function makeWorkspace($: EngineInterface, repo: string, g: TriageGroup, issues: TriageIssue[]): Promise<string> {
   const refs = g.issues.flatMap(n => ['--reference', issues.find(i => i.number === n)?.url ?? `https://github.com/${repo}/issues/${n}`])
   const base = await baseOf($, repo, g)
+  const remote = (await read($, view)).remote
   const made = (await orca(runner($, 600_000), [
-    'worktree', 'create', '--project', orcaProject(repo), '--name', `issue-${g.lead}`, '--no-parent', '--setup', 'run', '--comment', g.title, ...refs,
+    'worktree', 'create', ...(remote ? ['--environment', remote.id] : []), '--project', orcaProject(repo), '--name', `issue-${g.lead}`, '--no-parent', '--setup', 'run', '--comment', g.title, ...refs,
     ...(base ? ['--base-branch', `origin/${base}`] : []),
   ])) as { worktree?: { id?: string } }
   const id = made.worktree?.id
   if (!id) throw new Error(`orca worktree create for #${g.lead} answered no worktree id: ${JSON.stringify(made).slice(0, 300)}${START_ORCA}`)
   await setGroup($, g.lead, { worktree: id, base })
-  await note($, `#${g.lead}: Orca made workspace issue-${g.lead}`)
+  await note($, `#${g.lead}: Orca made workspace issue-${g.lead}${remote ? ` on ${remote.name}` : ''}`)
   return id
 }
 
@@ -538,8 +934,8 @@ async function makeWorkspace($: EngineInterface, repo: string, g: TriageGroup, i
 // has its change on the default branch, and its branch may be gone.
 async function baseOf($: EngineInterface, repo: string, g: TriageGroup): Promise<string | undefined> {
   if (!g.after.length) return undefined
-  const groups = (await read($, view)).groups
-  const worktrees = await orcaWorktrees(runner($, 60_000))
+  const { groups, remote } = await read($, view)
+  const worktrees = await orcaWorktrees(runner($, 60_000), '', remote?.id)
   for (const a of g.after) {
     const before = groups.find(x => x.lead === a)
     const pr = worktrees.find(w => w.id === before?.worktree)?.linkedPR ?? before?.pr
@@ -564,7 +960,9 @@ type StartReceipt = {
 // worker-start prints its receipt with `ok: true` even when the start failed and it exits 1, so the receipt's
 // state decides, not the exit code.
 async function startWorker($: EngineInterface, runId: string, g: TriageGroup, worktree: string, agent: TriageAgent): Promise<void> {
-  const args = ['orchestration', 'worker-start', '--task', g.taskId!, '--run', runId, '--worktree', `id:${worktree}`,
+  // With --remote the worker runs on the saved server; the Run, its mail and its Tasks stay on this machine's Orca.
+  const remote = (await read($, view)).remote
+  const args = ['orchestration', 'worker-start', '--task', g.taskId!, '--run', runId, ...(remote ? ['--on', remote.id] : []), '--worktree', `id:${worktree}`,
     '--agent', agent, '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000', '--full', '--json']
   const out = await $.process.run(['orca', ...args], { timeoutMs: 180_000 })
   let reply: { ok?: boolean; result?: StartReceipt; error?: { code?: string; message?: string } } | undefined
@@ -574,7 +972,7 @@ async function startWorker($: EngineInterface, runId: string, g: TriageGroup, wo
     throw new Error(`orca orchestration worker-start for #${g.lead} exited ${out.exitCode} and printed no JSON: ${(out.stderr.trim() || out.stdout.trim()).slice(0, 300)}${START_ORCA}`)
   }
   if (!reply?.ok || !reply.result) {
-    throw new Error(`orca orchestration worker-start for #${g.lead} refused: ${reply?.error?.code ?? ''}: ${reply?.error?.message ?? JSON.stringify(reply).slice(0, 300)}\nRepair: fix what Orca names, then /orca-triage reset and /orca-triage start again; \`orca orchestration task-list --run ${runId} --json\` shows the Task.`)
+    throw new Error(`orca orchestration worker-start for #${g.lead} refused: ${reply?.error?.code ?? ''}: ${reply?.error?.message ?? JSON.stringify(reply).slice(0, 300)}\nRepair: fix what Orca names, then /dev triage reset and /dev triage start again; \`orca orchestration task-list --run ${runId} --json\` shows the Task.`)
   }
   const r = reply.result
   const terminal = r.effects?.find(x => x.kind === 'terminal' && x.role === 'agent')?.id
@@ -626,6 +1024,7 @@ async function waitLoop($: EngineInterface): Promise<void> {
     if (got.deliveryId) await orca(runner($, 60_000), ['orchestration', 'check', '--run', v.runId, '--ack', got.deliveryId])
     // A wait that ended with no message changed nothing, so the timer's refresh is enough.
     if (got.messages?.length) await refresh($)
+    await flush($)
   }
 }
 
@@ -685,7 +1084,7 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
     // Its Dispatch stays open, so this settles nothing: only worker_done or the Task's status ends a group.
     if (g) await setGroup($, g.lead, { summary: `Needs a decision: ${firstLine(m.body)}` })
     await note($, `${who} escalated: ${firstLine(m.body)}`)
-    $.ui.toast(`/orca-triage: ${who} escalated: ${firstLine(m.body)}`)
+    $.ui.toast(`/dev triage: ${who} escalated: ${firstLine(m.body)}`)
     askToDecide($, `the escalation from ${who}`, `Triage: the Orca worker for ${who} escalated:`, m.body, g, v.runId)
   }
 }
@@ -751,9 +1150,10 @@ async function refresh($: EngineInterface): Promise<void> {
   const [tasks, workers, worktrees] = await Promise.all([
     orca(run, ['orchestration', 'task-list', '--run', v.runId]) as Promise<{ tasks: { id: string; status: string }[] }>,
     orca(run, ['orchestration', 'worker-list', '--run', v.runId]) as Promise<{ workers: Worker[] }>,
-    orcaWorktrees(run),
+    orcaWorktrees(run, '', v.remote?.id),
   ])
   await adoptRestarts($, workers.workers)
+  const wasExited = new Set((await read($, view)).groups.filter(g => g.liveness === 'exited').map(g => g.dispatchId))
   const now = await $.clock.now()
   for (const g of v.groups) {
     if (g.task !== 'failed' && tasks.tasks.find(t => t.id === g.taskId)?.status === 'failed') {
@@ -773,6 +1173,14 @@ async function refresh($: EngineInterface): Promise<void> {
     })
     return { ...x, groups, checkedAt: now }
   })
+  // A worker that exits with no worker_done holds its batch until its Task ends, so the coordinator hears of it once.
+  for (const g of (await read($, view)).groups) {
+    if (!isInFlight(g) || g.liveness !== 'exited' || wasExited.has(g.dispatchId)) continue
+    const pr = g.pr ? `PR #${g.pr} (${pullUrl(v.repo, g.pr)}) ${g.prClosed === g.pr ? 'is merged or closed' : 'is open'}` : 'it recorded no pull request'
+    await note($, `#${g.lead}: worker ${g.dispatchId} exited without worker_done; ${pr}`)
+    askToDecide($, `the exited worker of #${g.lead}`, `Triage: the worker ${g.dispatchId} of #${g.lead} (${g.title}) exited without worker_done; ${pr}. Its Task ${g.taskId} is ${g.task ?? 'in an unknown state'}, so the groups after it wait.`,
+      `When its work is done: \`orca orchestration task-update --id ${g.taskId} --status completed --run ${v.runId} --json\`. The next refresh reads the Task back and starts the next groups.`, g, v.runId)
+  }
   await settle($)
 }
 
@@ -790,7 +1198,8 @@ function unready(r: PrRow): string[] {
 
 // Every PR_CHECK_MS while the triage runs (its inbox wait hears the answers only then): reads the open pull request of
 // each group, and prods the worker of one that is not mergeable and green. A send to a worker that has ended opens a
-// follow-up turn for it in Orca, so a finished worker hears it too.
+// follow-up turn for it in Orca, so a finished worker hears it too; but a paired server refuses mail to a finished
+// worker (dispatch_inactive), so with --remote a new worker starts in the group's workspace with the prod.
 async function watchPrs($: EngineInterface): Promise<void> {
   if (isWatchingPrs) return
   isWatchingPrs = true
@@ -830,17 +1239,44 @@ async function watchPrs($: EngineInterface): Promise<void> {
         'Fix it now: merge the base branch and resolve the conflicts, fix the cause of each failing check (never weaken or skip a check), and push the fix through the workflow (mcp__ndev__checkpoint, or by hand when you have no ndev tools). Then wait for the checks.',
         'If you cannot fix it, send an escalation that says why and what you need.',
       ].join('\n')
-      await orca(runner($, 60_000), ['orchestration', 'send', '--to', `dispatch:${g.dispatchId}`, '--run', v.runId, '--subject', `PR #${g.pr} is not mergeable and green`, '--body', body])
-        .then(() => note($, `#${g.lead}: PR #${g.pr} cannot merge (${problems.join('; ')}); prodded its worker`))
-        .catch((err: unknown) => note($, `#${g.lead}: PR #${g.pr} cannot merge, and the prod to its worker failed: ${message(err)}`))
+      const sent = await orca(runner($, 60_000), ['orchestration', 'send', '--to', `dispatch:${g.dispatchId}`, '--run', v.runId, '--subject', `PR #${g.pr} is not mergeable and green`, '--body', body])
+        .then(() => note($, `#${g.lead}: PR #${g.pr} cannot merge (${problems.join('; ')}); prodded its worker`).then(() => true))
+        .catch(async (err: unknown) => {
+          if (v.remote && g.worktree && /dispatch_inactive/.test(message(err))) return false
+          await note($, `#${g.lead}: PR #${g.pr} cannot merge, and the prod to its worker failed: ${message(err)}`)
+          return true
+        })
+      if (!sent) await reprod($, v, g, body)
     }
   } finally {
     isWatchingPrs = false
   }
 }
 
+// A finished worker on a paired server takes no mail, and its completed Task cannot start again: a new worker, with a
+// new Task that holds the group's brief and the prod, starts in the group's workspace on that server, and the group
+// follows it.
+async function reprod($: EngineInterface, v: TriageView, g: TriageGroup & { pr: number }, body: string): Promise<void> {
+  const remote = v.remote!
+  const brief = `${spec(v.repo!, g, v.issues, agentOf(v), $.plugin.root)}\n\n## Why you start now\n\nThe worker before you finished this Task. ${body}`
+  const args = ['orchestration', 'worker-start', '--spec', brief, '--task-title', `${g.title}: PR #${g.pr}`, '--run', v.runId!, '--on', remote.id,
+    '--worktree', `id:${g.worktree}`, '--agent', agentOf(v), '--model', g.model, '--effort', g.effort, '--timeout-ms', '120000']
+  try {
+    const r = (await orca(runner($, 180_000), args)) as StartReceipt & { taskId?: string }
+    if (r.state !== 'ready' || !r.dispatchId || !r.taskId) throw new Error(`the new worker did not start: ${r.lastError ?? r.state} at ${r.failedStage ?? 'an unknown stage'}\n${r.recovery ?? 'Orca gave no recovery.'}`)
+    const terminal = r.effects?.find(x => x.kind === 'terminal' && x.role === 'agent')?.id
+    await setGroup($, g.lead, { taskId: r.taskId, task: 'dispatched', dispatchId: r.dispatchId, terminal })
+    await note($, `#${g.lead}: its worker ${g.dispatchId} had finished on ${remote.name}, so worker ${r.dispatchId} started there to fix PR #${g.pr}`)
+  } catch (err) {
+    await note($, `#${g.lead}: PR #${g.pr} cannot merge, its worker ${g.dispatchId} had finished on ${remote.name}, and a new worker did not start: ${message(err)}`)
+    askToDecide($, `the stuck PR of #${g.lead}`, `Triage: PR #${g.pr} (${pullUrl(v.repo!, g.pr)}) of #${g.lead} (${g.title}) cannot merge. Its worker finished on ${remote.name}, which takes no mail for it, and a new worker did not start:`,
+      `${message(err)}\nRepair: \`orca orchestration worker-start --spec "<the fix>" --run ${v.runId} --on ${remote.id} --worktree id:${g.worktree} --agent ${agentOf(v)} --json\``, g, v.runId)
+  }
+}
+
 async function prTick($: EngineInterface): Promise<void> {
   await watchPrs($).catch((err: unknown) => note($, `the pull request check stopped: ${message(err)}`))
+  await flush($)
 }
 
 async function tick($: EngineInterface): Promise<void> {
@@ -849,6 +1285,7 @@ async function tick($: EngineInterface): Promise<void> {
   if (v.phase !== 'running' && !(v.phase === 'done' && v.runId)) return
   await refresh($).catch((err: unknown) => update($, view, v => ({ ...v, error: `Orca not read: ${message(err)}` })))
   await startReady($)
+  await flush($)
   waitLater($)
 }
 
@@ -863,24 +1300,25 @@ async function jump($: EngineInterface, g: TriageGroup): Promise<void> {
     { worker?: { agentTerminalHandle?: string | null }; terminal?: { handle?: string | null } }
   const handle = shown.worker?.agentTerminalHandle ?? shown.terminal?.handle ?? g.terminal
   if (!handle) { $.ui.toast(`#${g.lead}: the worker ${g.dispatchId} has no terminal (a chat worker); open its workspace for #${g.lead} in Orca.`); return }
-  await orca(runner($, 60_000), ['terminal', 'switch', '--terminal', handle])
+  // A terminal handle belongs to the server that issued it: a remote worker's is stale without its server.
+  const remote = (await read($, view)).remote
+  await orca(runner($, 60_000), ['terminal', 'switch', '--terminal', handle, ...(remote ? ['--environment', remote.id] : [])])
 }
 
-const fail = ($: EngineInterface, what: string) => (err: unknown) => {
-  $.ui.toast(`/orca-triage ${what} failed: ${message(err)}`)
-  return update($, view, v => ({ ...v, error: message(err) }))
+// A function declaration, not an arrow: /dev triage reaches triageCommand from register.ts, and the engine follows $
+// across an import only into a function declaration.
+function fail($: EngineInterface, what: string) {
+  return async (err: unknown) => {
+    await update($, view, v => ({ ...v, error: `/dev triage ${what} failed: ${message(err)}` }))
+    await tell($, `/dev triage ${what} failed: ${message(err)}`)
+  }
 }
 
 export async function startTriage($: EngineInterface) {
-  await $.command.register({
-    name: 'orca-triage',
-    description: 'Group the open issues with this session\'s model, then coordinate an Orca worker on each group, one pull request per group. Same as /dev triage',
-    argumentHint: '[start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--since <n>] [--reverse] [--bugs-only] [--hint "<text>"]|clean [--since <n>] [--reverse] [--hint "<text>"]|launch|refresh|reset]',
-  })
   await $.tool.register({
     name: 'triage_groups',
     description:
-      'Report the /orca-triage groups: each open issue in exactly one group, with its complexity, a hint for the worker and, ' +
+      'Report the /dev triage groups: each open issue in exactly one group, with its complexity, a hint for the worker and, ' +
       'when needed, the leads of the groups it must follow. The mod then starts one Orca worker per group.',
     inputSchema: {
       type: 'object',
@@ -907,9 +1345,14 @@ export async function startTriage($: EngineInterface) {
           description: 'Each issue whose open pull request is the unfinished work; the mod hands the pull request to the /fix-prs loop, and the issue is in no group',
           items: { type: 'object', properties: { issue: { type: 'number' }, pr: { type: 'number' } }, required: ['issue', 'pr'] },
         },
+        skipped: {
+          type: 'array',
+          description: 'Each issue the human asked to leave out, in --hint or in the conversation, with the reason; it stays open and is in no group. Never an issue the human did not name',
+          items: { type: 'object', properties: { issue: { type: 'number' }, reason: { type: 'string' } }, required: ['issue', 'reason'] },
+        },
         screened: {
           type: 'array',
-          description: 'Only with /orca-triage start --bugs-only: each issue that is not a bug, with its kind; they are in no group',
+          description: 'Only with /dev triage start --bugs-only: each issue that is not a bug, with its kind; they are in no group',
           items: {
             type: 'object',
             properties: { issue: { type: 'number' }, kind: { type: 'string', enum: Object.keys(SCREEN_KINDS) }, reason: { type: 'string' } },
@@ -921,15 +1364,78 @@ export async function startTriage($: EngineInterface) {
     },
     isDeferred: false,
   })
+  await $.tool.register({
+    name: 'clean_verdicts',
+    description:
+      'Report the /dev triage clean verdicts, one chunk at a time: a verdict for each issue of the chunk, with evidence for each close. ' +
+      'Once every issue has one, call it again with the issues closed and the closes that failed, for the end report.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verdicts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              issue: { type: 'number' },
+              verdict: { type: 'string', enum: [...VERDICTS] },
+              confidence: { type: 'string', enum: [...CONFIDENCES] },
+              evidence: { type: 'string', description: 'For every verdict but needs_work: a PR or issue number (#n), a commit sha or a file:line' },
+              by: { type: 'number', description: 'superseded or duplicate: the issue or pull request that covers it' },
+            },
+            required: ['issue', 'verdict', 'confidence', 'evidence'],
+          },
+        },
+        closed: { type: 'array', items: { type: 'number' }, description: 'After every verdict: the issues closed on the user\'s pick' },
+        failed: {
+          type: 'array',
+          description: 'After every verdict: each close that failed, with its error',
+          items: { type: 'object', properties: { issue: { type: 'number' }, error: { type: 'string' } }, required: ['issue', 'error'] },
+        },
+      },
+    },
+    isDeferred: false,
+  })
   $.clock.every(TICK_MS, () => { detach(tick($)) })
   $.clock.every(PR_CHECK_MS, () => { detach(prTick($)) })
 }
 
-// /orca-triage <args> and /dev triage <args>. Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
-const START_OPTIONS = ['--dry-run', '--codex', '--open', '--sequential', '--batch', '--since', '--reverse', '--bugs-only', '--hint']
-const CLEAN_OPTIONS = ['--since', '--reverse', '--hint']
-// The options that take the next word as their value.
-const VALUED = ['--batch', '--since']
+// /dev triage <args> (register.ts dispatches it). Answers at once: the work runs detached, since gh and Orca can outlast the hook's budget.
+const START_OPTIONS = ['--dry-run', '--codex', '--open', '--batch', '--sequential', '--since', '--reverse', '--bugs-only', '--mine', '--remote', '--hint'] as const
+const CLEAN_OPTIONS = ['--since', '--reverse', '--mine', '--hint'] as const
+// Workers at once when start names no size: enough to make progress, few enough for one machine.
+const DEFAULT_BATCH = 5
+// What each option does, and the value it takes. The refusal, /dev help and the /dev argument hint are all built from
+// this, so a new option shows in each of them or fails to compile.
+const OPTIONS: Record<(typeof START_OPTIONS)[number], { value?: string; text: string }> = {
+  '--dry-run': { text: 'plans and starts nothing' },
+  '--codex': { text: 'runs the fixes in Codex workers' },
+  '--open': { text: 'takes every open issue and not only the board\'s' },
+  '--batch': { value: '<size>', text: `runs that many workers at once, batch after batch (${DEFAULT_BATCH} by default)` },
+  '--sequential': { text: 'is --batch 1' },
+  '--since': { value: '<n>', text: 'takes only the issues above #n' },
+  '--reverse': { text: 'works the newest issues first' },
+  '--bugs-only': { text: 'groups only the bugs and labels each issue by its kind' },
+  '--mine': { text: 'takes only the issues you opened' },
+  '--remote': { value: '[<server>]', text: 'makes each workspace and runs each worker on a saved Orca server: the one named, else the one /dev remote set, else the only one' },
+  '--hint': { value: '"<text>"', text: 'gives the model your own steer' },
+}
+const named = (o: keyof typeof OPTIONS) => (OPTIONS[o].value ? `${o} ${OPTIONS[o].value}` : o)
+const usage = (options: readonly (keyof typeof OPTIONS)[]) => options.map(o => `[${named(o)}]`).join(' ')
+const OPTION_TEXT = START_OPTIONS.map(o => `${named(o)} ${OPTIONS[o].text}`).join(', ')
+const VERBS = `start ${usage(START_OPTIONS)}, clean ${usage(CLEAN_OPTIONS)}, launch, refresh or reset`
+// The triage part of the /dev argument hint and of /dev help.
+export const TRIAGE_ARGUMENT_HINT = `triage [start ${usage(START_OPTIONS)}|clean ${usage(CLEAN_OPTIONS)}|launch|refresh|reset]`
+export const TRIAGE_HELP = [
+  '  /dev triage start [options]         group the open issues and coordinate an Orca worker on each group (Triage pane)',
+  '  /dev triage clean [options]         close the open issues that are done, outdated or superseded, after you confirm each',
+  `    start: ${usage(START_OPTIONS)}`,
+  `    clean: ${usage(CLEAN_OPTIONS)}`,
+  `    ${OPTION_TEXT}`,
+  '  /dev triage [launch|refresh|reset]  launch a dry run, read the triage back from Orca, or clear it; with no word, show its state',
+]
+// The options that take the next word as their value; --remote takes it only when it is not an option.
+const VALUED = ['--batch', '--since', '--remote']
 const SINCE_USAGE = '--since <n> takes an issue number above 0: only the issues with a higher number, as in --since 120.'
 
 // The value of --since <n>; 0 when it is not given. A bad number returns the refusal.
@@ -937,7 +1443,7 @@ function sinceOption(verb: string, words: string[]): number | string {
   const at = words.indexOf('--since')
   if (at < 0) return 0
   const raw = words[at + 1]
-  if (!raw || !/^[1-9]\d*$/.test(raw)) return `/orca-triage ${verb} --since ${raw ?? ''}`.trimEnd() + ` is not an issue number. ${SINCE_USAGE}`
+  if (!raw || !/^[1-9]\d*$/.test(raw)) return `/dev triage ${verb} --since ${raw ?? ''}`.trimEnd() + ` is not an issue number. ${SINCE_USAGE}`
   return Number(raw)
 }
 const HINT_USAGE = '--hint takes a text for the model, in quotes when it holds a word that starts with --, as in --hint "close outdated issues".'
@@ -948,20 +1454,20 @@ function hintOption(args: string): { rest: string; hint: string } | string {
   const m = /(^|\s)--hint(?:\s+(?:"([^"]*)"|'([^']*)'|((?:(?!\s--)[^])*)))?/.exec(args)
   if (!m) return { rest: args, hint: '' }
   const hint = (m[2] ?? m[3] ?? m[4] ?? '').trim()
-  if (!hint) return `/orca-triage --hint has no text. ${HINT_USAGE}`
+  if (!hint) return `/dev triage --hint has no text. ${HINT_USAGE}`
   return { rest: `${args.slice(0, m.index)} ${args.slice(m.index + m[0].length)}`, hint }
 }
-const BATCH_USAGE = '--batch <size> takes a whole number above 0: how many workers run at once, each batch after the last has ended. --sequential is --batch 1.'
+const BATCH_USAGE = `--batch <size> takes a whole number above 0: how many workers run at once, each batch after the last has ended (${DEFAULT_BATCH} when not given). --sequential is --batch 1.`
 
-// The value of --batch <size>, with --sequential as 1; 0 when neither is given. A bad size returns the refusal.
+// The value of --batch <size>, with --sequential as 1; DEFAULT_BATCH when neither is given. A bad size returns the refusal.
 function batchOption(words: string[]): number | string {
   const at = words.indexOf('--batch')
   const isSequential = words.includes('--sequential')
-  if (at < 0) return isSequential ? 1 : 0
+  if (at < 0) return isSequential ? 1 : DEFAULT_BATCH
   const raw = words[at + 1]
-  if (!raw || !/^[1-9]\d*$/.test(raw)) return `/orca-triage start --batch ${raw ?? ''}`.trimEnd() + ` is not a size. ${BATCH_USAGE}`
+  if (!raw || !/^[1-9]\d*$/.test(raw)) return `/dev triage start --batch ${raw ?? ''}`.trimEnd() + ` is not a size. ${BATCH_USAGE}`
   const size = Number(raw)
-  if (isSequential && size !== 1) return `/orca-triage start --sequential --batch ${size} asks for two sizes. ${BATCH_USAGE}`
+  if (isSequential && size !== 1) return `/dev triage start --sequential --batch ${size} asks for two sizes. ${BATCH_USAGE}`
   return size
 }
 
@@ -970,24 +1476,36 @@ export async function triageCommand($: EngineInterface, args: string, project: (
   if (typeof hinted === 'string') return { text: hinted }
   const { hint } = hinted
   const words = hinted.rest.trim().split(/\s+/).filter(Boolean)
-  const [verb = 'status'] = words.filter((w, i) => !w.startsWith('--') && !(i > 0 && VALUED.includes(words[i - 1]!)))
-  const allowed = verb === 'start' ? START_OPTIONS : verb === 'clean' ? CLEAN_OPTIONS : []
-  const unknown = [...words, ...(hint ? ['--hint'] : [])].find(w => w.startsWith('--') && !allowed.includes(w))
-  if (unknown) return { text: `/orca-triage ${verb} does not know "${unknown}". The options are /orca-triage start ${START_OPTIONS.join(' ')} and /orca-triage clean ${CLEAN_OPTIONS.join(' ')}: --dry-run plans and starts nothing, --codex runs the fixes in Codex workers, --open takes every open issue and not only the board's, --batch <size> runs that many workers at once, batch after batch, --sequential is --batch 1, --since <n> takes only the issues above #n, --reverse works the newest issues first, --bugs-only groups only the bugs and labels each issue by its kind, and --hint "<text>" gives the model your own steer.` }
+  const [named] = words.filter((w, i) => !w.startsWith('--') && !(i > 0 && VALUED.includes(words[i - 1]!)))
+  const verb = named ?? 'status'
+  const options = [...words, ...(hint ? ['--hint'] : [])].filter(w => w.startsWith('--'))
+  // Options with no verb, such as /dev triage --batch 2: start nothing, and name the start command they belong to.
+  if (!named && options.length && options.every(w => (START_OPTIONS as readonly string[]).includes(w))) {
+    return { text: `/dev triage ${args.trim()} names no verb, so nothing started. Did you mean /dev triage start ${args.trim()}? /dev help lists every option.` }
+  }
+  const allowed: readonly string[] = verb === 'start' ? START_OPTIONS : verb === 'clean' ? CLEAN_OPTIONS : []
+  const unknown = options.find(w => !allowed.includes(w))
+  if (unknown) return { text: `/dev triage ${verb} does not know "${unknown}". Use /dev triage ${VERBS}: ${OPTION_TEXT}.` }
   const since = sinceOption(verb, words)
   if (typeof since === 'string') return { text: since }
   const isReverse = words.includes('--reverse')
+  const isMine = words.includes('--mine')
   if (verb === 'clean') {
-    detach(clean($, project(), { hint, since, isReverse }).then(text => $.ui.toast(text), fail($, 'clean')))
+    detach(clean($, project(), { hint, since, isReverse, isMine }).then(text => tell($, text), fail($, 'clean')))
     return { text: 'Clean started: reading the open issues. The model checks each one and asks you before it closes any.' }
   }
   detach(openPane($))
   if (verb === 'start') {
     const batch = batchOption(words)
     if (typeof batch === 'string') return { text: batch }
-    detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch, hint, since, isReverse, isBugsOnly: words.includes('--bugs-only') })
-      .then(text => $.ui.toast(text), fail($, 'start')))
-    return { text: 'Triage started: reading the issues. The Triage pane shows progress.' }
+    const at = words.indexOf('--remote')
+    const remote = at < 0 ? undefined : words[at + 1] && !words[at + 1]!.startsWith('--') ? words[at + 1]! : ''
+    if (remote !== undefined && words.includes('--codex')) {
+      return { text: `/dev triage start --remote does not work with --codex: a Codex worker's Task names the workflow file in this machine's copy of the plugin, which the server does not have. Use --remote with Claude workers, or --codex without --remote.` }
+    }
+    detach(collect($, project(), { isDryRun: words.includes('--dry-run'), agent: words.includes('--codex') ? 'codex' : 'claude', isOpen: words.includes('--open'), batch, hint, since, isReverse, isBugsOnly: words.includes('--bugs-only'), isMine, remote })
+      .then(text => tell($, text), fail($, 'start')))
+    return { text: `Triage started: reading the issues. ${(await isOrcaChat($)) ? 'Progress comes here in the chat, and /dev triage status shows every group.' : 'The Triage pane shows progress.'}` }
   }
   if (verb === 'launch') { detach(launch($).catch(fail($, 'launch'))); return { text: 'Launching the planned groups in Orca.' } }
   if (verb === 'refresh') { detach(tick($).catch(fail($, 'refresh'))); return { text: 'Reading the triage back from Orca.' } }
@@ -996,21 +1514,18 @@ export async function triageCommand($: EngineInterface, args: string, project: (
     await update($, view, () => EMPTY)
     return { text: v.runId ? `Triage cleared. Orca Run ${v.runId} and its workspaces stay in Orca.` : 'Triage cleared.' }
   }
-  if (verb !== 'status') return { text: `/orca-triage does not know "${verb}". Use start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--since <n>] [--reverse] [--bugs-only] [--hint "<text>"], clean [--since <n>] [--reverse] [--hint "<text>"], launch, refresh or reset.` }
-  const v = await read($, view)
-  return { text: v.repo ? `Triage of ${v.repo}: ${v.phase}, ${v.groups.length} groups, ${AGENT_NAME[agentOf(v)]} workers.` : 'No triage yet. /orca-triage start reads the issues.' }
+  if (verb !== 'status') return { text: `/dev triage does not know "${verb}". Use /dev triage ${VERBS}.` }
+  return { text: statusText(await read($, view)) }
 }
 
 export const triage = (on: On, project: () => LoadedConfig | undefined) => {
-  on('command.run', { command: 'orca-triage' }, ($, e) => triageCommand($, e.args, project)).catch(($, e, next) => ({
-    text: `/orca-triage ${e.args} failed (${next.error.kind} after ${next.error.budget} ms): ${next.error.message ?? 'no message'}`,
-  }))
-
+  // The engine passes the tool's arguments on the event itself, beside `tool`.
+  on('tool.call', { tool: CLEAN_TOOL }, async (_$, e) => cleanVerdicts(e as unknown as { verdicts?: unknown; closed?: unknown; failed?: unknown }))
   on('tool.call', { tool: TOOL }, async ($, e) => {
     // The engine passes the tool's arguments on the event itself, beside `tool`.
-    const input = e as unknown as { groups?: Proposed[]; closed?: unknown; screened?: unknown; unfinished?: unknown }
+    const input = e as unknown as { groups?: Proposed[]; closed?: unknown; screened?: unknown; skipped?: unknown; unfinished?: unknown }
     const v = await read($, view)
-    if (v.phase !== 'grouping') return { result: `Refused: /orca-triage is not waiting for groups (it is ${v.phase}). /orca-triage start begins one.`, isError: true as const }
+    if (v.phase !== 'grouping') return { result: `Refused: /dev triage is not waiting for groups (it is ${v.phase}). /dev triage start begins one.`, isError: true as const }
     const groups = Array.isArray(input.groups) ? input.groups : []
     // The issues the coordinator closed on the human's hint, with the human's yes: they are in no group.
     const closed = Array.isArray(input.closed) ? input.closed : []
@@ -1024,7 +1539,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     const twice = [...new Set(named.filter((n, i) => named.indexOf(n) !== i))].map(n => `screened names #${String(n)} twice; give each issue one kind`)
     const inGroups = new Set(groups.flatMap(g => (Array.isArray(g.issues) ? g.issues : [])))
     const badScreened = input.screened !== undefined && !v.isBugsOnly
-      ? ['screened needs /orca-triage start --bugs-only; put every issue in a group']
+      ? ['screened needs /dev triage start --bugs-only; put every issue in a group']
       : [...notObjects, ...twice, ...screened.flatMap(x => [
         ...(!Number.isInteger(x?.issue) || !known.has(x.issue as number) ? [`screened names ${JSON.stringify(x?.issue)}, which is not one of the issues to group`] : []),
         ...(typeof x?.kind !== 'string' || !Object.hasOwn(SCREEN_KINDS, x.kind) ? [`"${String(x?.kind)}" is not a kind; use one of ${Object.keys(SCREEN_KINDS).join(', ')}`] : []),
@@ -1032,6 +1547,22 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         ...(inGroups.has(x?.issue) ? [`#${String(x?.issue)} is in a group and in screened`] : []),
         ...(closed.includes(x?.issue) ? [`#${String(x?.issue)} is in closed and in screened`] : []),
       ])]
+    // The issues the human asked to leave out, in --hint or in the conversation: they stay open and are in no group.
+    const skipItems = Array.isArray(input.skipped) ? (input.skipped as unknown[]) : []
+    const skipped = skipItems.filter((x): x is { issue?: unknown; reason?: unknown } => x !== null && typeof x === 'object')
+    const skipNamed = skipped.map(x => x.issue)
+    const screenedNamed = new Set(named)
+    const badSkipped = [
+        ...skipItems.flatMap((x, i) => (x !== null && typeof x === 'object' ? [] : [`skipped item ${i + 1} is not an object; give { issue, reason }`])),
+        ...[...new Set(skipNamed.filter((n, i) => skipNamed.indexOf(n) !== i))].map(n => `skipped names #${String(n)} twice; give each issue once`),
+        ...skipped.flatMap(x => [
+          ...(!Number.isInteger(x.issue) || !known.has(x.issue as number) ? [`skipped names ${JSON.stringify(x.issue)}, which is not one of the issues to group`] : []),
+          ...(typeof x.reason !== 'string' || !x.reason.trim() ? [`skipped #${String(x.issue)} gives no reason`] : []),
+          ...(inGroups.has(x.issue) ? [`#${String(x.issue)} is in a group and in skipped`] : []),
+          ...(closed.includes(x.issue) ? [`#${String(x.issue)} is in closed and in skipped`] : []),
+          ...(screenedNamed.has(x.issue) ? [`#${String(x.issue)} is in screened and in skipped`] : []),
+        ]),
+    ]
     // The issues whose open pull request is the unfinished work: the /fix-prs loop takes the pull request.
     const open = Array.isArray(input.unfinished) ? (input.unfinished as unknown[]) : []
     const unfinished = open.filter((x): x is { issue?: unknown; pr?: unknown } => x !== null && typeof x === 'object')
@@ -1044,6 +1575,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         ...(inGroups.has(x.issue) ? [`#${String(x.issue)} is in a group and in unfinished`] : []),
         ...(closed.includes(x.issue) ? [`#${String(x.issue)} is in closed and in unfinished`] : []),
         ...(screenedIssues.has(x.issue) ? [`#${String(x.issue)} is in screened and in unfinished`] : []),
+        ...(skipNamed.includes(x.issue) ? [`#${String(x.issue)} is in skipped and in unfinished`] : []),
       ]),
       ...[...new Set(unfinished.map(x => x.issue))].filter(n => unfinished.filter(x => x.issue === n).length > 1).map(n => `unfinished names #${String(n)} twice`),
     ]
@@ -1053,9 +1585,9 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
       const shut = await closedPulls(makeRun($, 60_000), [...new Set(handed.map(x => x.pr))])
       badUnfinished.push(...handed.flatMap(x => shut.filter(b => b.pr === x.pr).map(b => `unfinished #${x.issue}: ${b.problem}. Group the issue, or close it when its work is done.`)))
     }
-    const out = new Set<unknown>([...closed, ...screened.map(x => x.issue), ...handed.map(x => x.issue)])
+    const out = new Set<unknown>([...closed, ...screened.map(x => x.issue), ...skipNamed, ...handed.map(x => x.issue)])
     const rest = v.issues.filter(i => !out.has(i.number))
-    const early = [...badClosed, ...badScreened, ...badUnfinished]
+    const early = [...badClosed, ...badScreened, ...badSkipped, ...badUnfinished]
     const wrong = [...early, ...(early.length ? [] : problems(rest, groups))]
     if (wrong.length) return { result: `Refused, nothing recorded:\n- ${wrong.join('\n- ')}\nFix these and call ${TOOL} again.`, isError: true as const }
     const kinds = screened as { issue: number; kind: string; reason: string }[]
@@ -1068,7 +1600,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
       const changed = (v.labelled ?? []).filter(([n, l]) => !want.has(`${n} ${l}`))
         .map(([n, l]) => `#${n} has the label ${l} from an earlier call, and this call gives it another kind. Keep its kind, or remove the label first: gh issue edit ${n} --repo ${v.repo} --remove-label ${l}`)
       if (changed.length) return { result: `Refused, nothing recorded:\n- ${changed.join('\n- ')}\nThen call ${TOOL} again.`, isError: true as const }
-      if (v.isDryRun) labelled = ' This is a dry run: no label written. /orca-triage launch writes the labels.'
+      if (v.isDryRun) labelled = ' This is a dry run: no label written. /dev triage launch writes the labels.'
       else {
         // Adding a label that an issue has is no change, so the next call labels again after a refusal.
         const failed = await writeLabels($, v.repo ?? '', wanted)
@@ -1077,11 +1609,18 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
       }
       if (kinds.length) await note($, `the model screened out ${kinds.map(x => `#${x.issue} (${x.kind})`).join(' ')}`)
     }
-    const screenedText = kinds.length ? ` It screened out ${kinds.length} issues that are not bugs: ${kinds.map(x => `#${x.issue} ${x.kind}`).join(', ')}.${labelled}` : labelled
+    const skips = skipped as { issue: number; reason: string }[]
+    const asked = v.hint ? 'on the hint' : 'as the human asked'
+    const skippedText = skips.length ? ` It skipped ${skips.length} issues ${asked}: ${skips.map(x => `#${x.issue}`).join(', ')}; they stay open with no worker.` : ''
+    const screenedText = (kinds.length ? ` It screened out ${kinds.length} issues that are not bugs: ${kinds.map(x => `#${x.issue} ${x.kind}`).join(', ')}.${labelled}` : labelled) + skippedText
     if (closed.length) await note($, `the model closed ${closed.map(n => `#${String(n)}`).join(' ')}`)
+    // One line on the pane for each reason, so the human sees why each issue was left out.
+    const reasons = new Map<string, number[]>()
+    for (const x of skips) reasons.set(x.reason.trim(), [...(reasons.get(x.reason.trim()) ?? []), x.issue])
+    for (const [reason, ns] of reasons) await note($, `skipped ${ns.map(n => `#${n}`).join(' ')} ${asked}: ${reason}`)
     const prs = [...new Set(handed.map(x => x.pr))]
     const prText = prs.map(n => `PR #${n}`).join(', ')
-    let handText = !prs.length ? '' : ` /orca-triage launch hands ${prText} to the /fix-prs loop.`
+    let handText = !prs.length ? '' : ` /dev triage launch hands ${prText} to the /fix-prs loop.`
     if (prs.length && !v.isDryRun) {
       const said = await startFixPrs($, false, prs)
       await note($, `handed ${prText} to the /fix-prs loop`)
@@ -1092,13 +1631,13 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
       const kept = v.isDryRun && (prs.length || wanted.length)
       await update($, view, () => (kept ? { ...EMPTY, repo: v.repo, phase: 'planned', isDryRun: true,
         labels: wanted.length ? wanted : undefined, unfinished: prs.length ? handed.map((x): [number, number] => [x.issue, x.pr]) : undefined } : EMPTY))
-      return { result: `Recorded: no issue is left in a group, so no worker starts.${screenedText}${handText} Report the closed, screened and unfinished issues to the user.` }
+      return { result: `Recorded: no issue is left in a group, so there is nothing to start.${screenedText}${handText} Report the closed, screened, skipped and unfinished issues to the user.` }
     }
     const planned = groups.map(g => toGroup(g, agentOf(v)))
     await update($, view, (x): TriageView => ({ ...x, phase: 'planned', issues: rest, groups: planned, labels: v.isDryRun && wanted.length ? wanted : undefined,
       unfinished: v.isDryRun && handed.length ? handed.map((x): [number, number] => [x.issue, x.pr]) : undefined }))
     await note($, `the model made ${planned.length} groups`)
-    if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /orca-triage launch starts them.${screenedText}${handText}` }
+    if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /dev triage launch starts them.${screenedText}${handText}` }
     detach(launch($).catch(fail($, 'launch')))
     return { result: `Recorded ${planned.length} groups.${screenedText}${handText} The mod creates the Orca Run and starts the workers; the Triage pane shows them. You are the coordinator now: start no work on these issues, and wait for what the mod sends you.` }
   })
@@ -1128,15 +1667,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     const pad = '             '
     const under = Math.max(20, columns - 4 - pad.length - 1)
     const done = v.groups.filter(g => g.task === 'completed').length
-    const word = (g: TriageGroup): { word: string; color: string } =>
-      g.error ? { word: 'failed', color: 'error' }
-        : g.blockedBy !== undefined ? { word: 'blocked', color: 'warning' }
-        : g.question ? { word: 'question', color: 'warning' }
-          : g.task === 'completed' ? { word: 'done', color: 'success' }
-            : g.task === 'failed' ? { word: 'failed', color: 'error' }
-              : g.dispatchId ? { word: 'working', color: 'claude' }
-                : g.taskId ? { word: 'waiting', color: 'subtle' } : { word: 'planned', color: 'subtle' }
-    const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.isOpen ? ' · every open issue' : ''}${v.since ? ` · above #${v.since}` : ''}${v.isReverse ? ' · newest first' : ''}${v.isBugsOnly ? ' · bugs only' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
+    const workers = v.repo ? ` · ${AGENT_NAME[agentOf(v)]} workers${v.remote ? ` on ${v.remote.name}` : ''}${v.isOpen ? ' · every open issue' : ''}${v.since ? ` · above #${v.since}` : ''}${v.isReverse ? ' · newest first' : ''}${v.isBugsOnly ? ' · bugs only' : ''}${v.isMine ? ' · opened by me' : ''}${batchOf(v) === 1 ? ' · one at a time' : batchOf(v) > 1 ? ` · batches of ${batchOf(v)}` : ''}` : ''
     const phase = v.phase === 'grouping' ? `the model is grouping ${v.issues.length} issues`
       : v.phase === 'planned' ? `${v.groups.length} groups planned, nothing started${v.isDryRun ? ' (dry run)' : ''}`
         : v.phase === 'running' ? `Orca Run ${v.runId ?? 'not made yet'}` : v.phase === 'done' ? (v.runId ? `done · Orca Run ${v.runId}` : 'stopped: no Orca Run was made') : 'not started'
@@ -1157,7 +1688,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         </Box>
         <Box gap={2}>
           {v.phase !== 'running' && v.phase !== 'grouping' &&
-            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly }).then(t => $.ui.toast(t), fail($, 'start'))) }} />}
+            <Button key="start" label="Start" hotkey="s" plain onPress={() => { detach(collect($, project(), { isDryRun: false, agent: agentOf(v), isOpen: !!v.isOpen, batch: batchOf(v), hint: v.hint ?? '', since: v.since ?? 0, isReverse: !!v.isReverse, isBugsOnly: !!v.isBugsOnly, isMine: !!v.isMine, remote: v.remote?.id }).then(t => tell($, t), fail($, 'start'))) }} />}
           {v.phase === 'planned' && <Button key="launch" label="Launch" hotkey="l" plain onPress={() => { detach(launch($).catch(fail($, 'launch'))) }} />}
           {v.runId && <Button key="refresh" label="Refresh" hotkey="r" plain onPress={() => { detach(tick($).catch(fail($, 'refresh'))) }} />}
         </Box>
@@ -1165,7 +1696,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         {v.phase === 'idle' && !v.error && <Text color="subtle">Start reads the open issues, has this session group them, and works each group in its own Orca workspace.</Text>}
         <Box flexDirection="column">
           {v.groups.map(g => {
-            const m = word(g)
+            const m = stateOf(g)
             const facts = [g.effective ?? `${g.model} · ${g.effort}`, g.workspaceStatus].filter(Boolean).join(' · ')
             const after = g.liveness ? ` · ${g.liveness}` : ''
             return (

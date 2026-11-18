@@ -1,0 +1,7 @@
+{
+  "name": "claude",
+  "skillsDir": "~/.claude/skills",
+  "agentsDir": "~/.claude/agents",
+  "agentFormat": "claude-md",
+  "instructionsFile": "~/.claude/CLAUDE.md"
+}

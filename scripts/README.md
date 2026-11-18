@@ -68,7 +68,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
-| `orca-shot.sh` | Opens a URL in Orca's built-in browser (new tab, or `--page <id>`), sets and checks the viewport, and saves a PNG screenshot. It names the repair when Orca is not running or the page is missing. | kb `testing.md`, finish, responsive-check, mobile-testing, motion, command-reuse |
+| `orca-shot.sh` | Opens a URL in Orca's built-in browser, sets and checks the viewport, and saves a PNG screenshot. A new tab closes after the screenshot (or stays with `--keep-tab`); a `--page <id>` tab stays open. It names the repair when Orca is not running or the page is missing. | kb `testing.md`, finish, responsive-check, mobile-testing, motion, command-reuse |
 | `tests/test_orca_shot.sh` | Proves `orca-shot.sh` with a fake `orca`. | |
 
 ## walk-doc/
@@ -87,6 +87,21 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
-| `notify.sh` | Raises and withdraws the notification of a blocked workflow, with `alerter`, and flags the Orca worktree. A click opens the Orca terminal. Tests: `tests/workflow_scripts.test.mjs`. | `hooks/workflow/` |
-| `merge.sh` | Merges a PR through REST and prints its base and migrations as JSON. A stacked PR goes through merge-async, and one above the bottom of its stack needs `--stack`. It is safe to run twice. Tests: `tests/workflow_scripts.test.mjs`. | `merge` skill, `done` |
+| `notify.sh` | Shows the macOS notification of a blocked workflow with `osascript`, and leaves no process running. `withdraw` stops watchers that the older `alerter` version left. Tests: `tests/workflow_scripts.test.mjs`. | `hooks/workflow/` |
+| `merge.sh` | Merges a PR through REST and prints its base and migrations as JSON, with `unlisted` and a warning for each migration file that the PR adds but does not list. A stacked PR goes through merge-async, and one with an open PR below it in its stack needs `--stack`. It is safe to run twice. Tests: `tests/workflow_scripts.test.mjs`. | `merge` skill, `done` |
 | `fast-checks-template.sh` | The template for a project's `fast-checks.sh`: ruff, ty, oxlint and ast-grep on the named files. Tests: `tests/workflow_scripts.test.mjs`. | Copied to `scripts/ndev/workflow/` |
+
+## remote/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `root-setup.sh` | The first build of a server that `/dev remote create` made from the base image: packages, Docker, key-only SSH, host keys that a snapshot restore keeps, and the workspace user. It runs on the server as root (`u=<user> bash -s` over SSH), never on a desktop, and prints the server's new host key. A server that `/dev remote import <hetzner-id>` handed over was not built by it, and `import` runs no script on the server. | `hooks/remote-host.ts` |
+| `floating-ip.sh` | Puts a floating IPv4 on `eth0` of the server (`ip addr add <floating ip> dev eth0`) and writes Hetzner's netplan file so it survives a restart. It checks first, so a second run changes nothing. It runs on the server as root (`floating=<ip> bash -s` over SSH). | `hooks/remote-host.ts` |
+
+## export/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `export.mjs` | Copies the skills, agents, scripts and `kb/` for another agent harness, with a generated stamp on each file. It rewrites the Claude-only paths and tool calls, writes `manifest.json` and `leftovers.json`, and refuses to overwrite a file that it did not generate (exit 3). Prints a JSON summary. Tests: `node --test scripts/export/tests/export.test.mjs`. | `hooks/export.ts` (`/dev export`) |
+| `harnesses/*.json` | One profile for each known harness: its skills and agents folders, agent format, review command, verify command and notes. | `export.mjs` |
+| `flow/cli.ts` | The source of `ndev-flow`, the workflow CLI of an export. It imports the copied `machine.ts` and `change-types.ts`. Tests: `node --test scripts/export/tests/flow.test.mjs`. | `export.mjs` (copied to `<home>/flow/`) |

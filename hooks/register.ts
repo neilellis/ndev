@@ -13,6 +13,7 @@ import { startWalkDoc, walkDoc, walkDocEnd, walkDocTurn } from './walk-doc/index
 import { endDeadWaits, noteSessionHuman, releaseWorkflow, startWorkflow, workflowGitGuard, workflowLine, workflowSkillReset, workflowTools } from './workflow/tools'
 import { startWatchdog, workflowTurn, workflowWatchdog } from './workflow/watchdog'
 import { startWorkflowCommand, workflowCommand } from './workflow/command'
+import { epicLine, epicTools, startEpic } from './workflow/epic'
 import { askForIssue } from './workflow/ask-issue'
 import { reportFault } from './workflow/bug-report'
 import { startWorktreeStacks, stopWorktreeStacks, worktreeStacksSection } from './worktree-stacks'
@@ -20,7 +21,9 @@ import { learnAfterPush } from './learn'
 import { componentCheck, startComponentCheck } from './component-check'
 import { responsiveCheck, startResponsiveCheck } from './responsive-check'
 import { interviewPane } from './workflow/interview'
-import { startTriage, triage, triageCommand } from './triage'
+import { exportCommand, EXPORT_ARGUMENT_HINT, EXPORT_HELP } from './export'
+import { remoteCommand, REMOTE_ARGUMENT_HINT, REMOTE_HELP } from './remote'
+import { startTriage, triage, triageCommand, TRIAGE_ARGUMENT_HINT, TRIAGE_HELP } from './triage'
 import { showIdleStatus } from './workflow/progress'
 import { resourceView, startView } from './view'
 import { ensureRecord, readSettings, saveWorktreeSetting } from './worktree-settings'
@@ -41,7 +44,7 @@ let worktree: { root: string; settings: WorktreeSettings } | undefined
 // Set while an agent fills in the github key: the next prompt reads the file again.
 let reloadPending = false
 
-const MODES: readonly Mode[] = ['light', 'heavy']
+const MODES: readonly Mode[] = ['light', 'heavy', 'hack']
 const STEERINGS: readonly Steering[] = ['interactive', 'auto']
 
 // The development skill for each mode and steering. Auto steering uses the board-driven
@@ -49,6 +52,8 @@ const STEERINGS: readonly Steering[] = ['interactive', 'auto']
 const SKILL: Record<Mode, Record<Steering, string>> = {
   light: { interactive: 'work-light', auto: 'work-light-auto' },
   heavy: { interactive: 'work-heavy', auto: 'work-heavy-auto' },
+  // Hack mode is interactive only, so its auto entry is never shown: /dev refuses that pair.
+  hack: { interactive: 'work-hack', auto: 'work-light-auto' },
 }
 
 const MODE_TEXT: Record<Mode, string> = {
@@ -56,7 +61,12 @@ const MODE_TEXT: Record<Mode, string> = {
     'Development mode: LIGHT. One owner from diagnosis to PR, test first, a worktree, one PR, small helpers only for bounded tool-heavy subtasks. Do not chain planning, review and board skills automatically. If the change turns out to be multi-step, cross-cutting or high-risk, say so and suggest `/dev mode heavy`; do not switch by yourself.',
   heavy:
     'Development mode: HEAVY. A written plan, test-first implementation in stages, an independent review and staged verification before the PR leaves draft. Use it for multi-step features and cross-cutting or high-risk changes.',
+  hack:
+    'Development mode: HACK. Interactive only. First hack at a solution with the human by trial and error: no interview, no plan, no test first, and commits stay on this computer. Then harden it before anything is pushed: tests that pin each behaviour and fail on the base, a clean diff, every check, a two-axis review, an adversarial review and a smoke test.',
 }
+
+// A human steers each step of a hack, so hack mode is interactive only.
+const HACK_AUTO = 'hack mode is interactive only, because a human steers each step of the hack'
 
 const skillText = (m: Mode, s: Steering) =>
   s === 'interactive'
@@ -192,9 +202,13 @@ async function setup($: EngineInterface, all: boolean) {
 }
 
 async function switchMode($: EngineInterface, args: string) {
-  const next = choose(args, MODES, await read($, mode))
+  const auto = (await read($, steering)) === 'auto'
+  // With no value, the mode toggles between light and heavy: hack is chosen by name only.
+  const now = await read($, mode)
+  const next = args.trim() === '' ? (now === 'light' ? 'heavy' : 'light') : choose(args, MODES, now)
+  if (next === 'hack' && auto) return { text: `dev mode: ${HACK_AUTO}, and steering is auto. Nothing changed. Run /dev steering interactive first.` }
   if (next === undefined) {
-    return { text: `dev mode: "${args.trim()}" is not a mode. Use /dev mode light or /dev mode heavy.` }
+    return { text: `dev mode: "${args.trim()}" is not a mode. Use /dev mode light, /dev mode heavy or /dev mode hack.` }
   }
   await update($, mode, () => next)
   await showStatus($)
@@ -210,6 +224,7 @@ async function switchSteering($: EngineInterface, args: string) {
   if (next === undefined) {
     return { text: `dev steering: "${args.trim()}" is not a steering. Use /dev steering interactive or /dev steering auto.` }
   }
+  if (next === 'auto' && (await read($, mode)) === 'hack') return { text: `dev steering: ${HACK_AUTO}, and the mode is hack. Nothing changed. Run /dev mode light or /dev mode heavy first.` }
   await update($, steering, () => next)
   await showStatus($)
 
@@ -233,14 +248,13 @@ async function helpText($: EngineInterface) {
     '  /dev                 show this help; run the set-up first if this project is not set up',
     '  /dev help            show this help',
     `  /dev setup           answer the set-up questions (GitHub repository and board) again; saved in ${CONFIG_FILE}`,
-    '  /dev mode [light|heavy]             switch development mode (no value toggles)',
+    '  /dev mode [light|heavy|hack]        switch development mode (no value toggles light and heavy; hack is interactive only)',
     '  /dev steering [interactive|auto]    switch steering (no value toggles)',
     '  /learn               review this session for lessons and record them in ~/dev-wiki',
-    '  /dev triage start [--dry-run]       group the open issues and coordinate an Orca worker on each group (Triage pane); --hint "<text>" steers the model',
-    '  /dev triage clean [--hint "<text>"] close the open issues that are done, outdated or superseded, after you confirm each',
-    '    --codex: the workers are Codex (sol, terra, luna); --open: every open issue, not only the board\'s; --batch <size>: that many workers at once, batch after batch, in the order the coordinator chooses; --sequential: --batch 1',
-    '  /dev triage [launch|refresh|reset]  launch a dry run, read the triage back from Orca, or clear it; with no word, show its state',
-    '  /dev-mode, /dev-steering, /dev-setup and /orca-triage still work as before.',
+    ...TRIAGE_HELP,
+    ...REMOTE_HELP,
+    ...EXPORT_HELP,
+    '  /dev-mode, /dev-steering and /dev-setup are the same as /dev mode, /dev steering and /dev setup.',
     '',
     `Now: ${label(await read($, mode), await read($, steering))}. GitHub: ${github}.`,
   ].join('\n')
@@ -281,7 +295,8 @@ export const register: Register = (on, options) => {
   resourceView(on)
   triage(on, () => project)
   workflowTools(on, () => project)
-  workflowWatchdog(on)
+  epicTools(on, () => project)
+  workflowWatchdog(on, () => project)
   workflowCommand(on, () => project, next => { project = next })
   // The engine takes one unmatched hook per event, so each feature's turn handler runs from here.
   on('turn.complete', async ($, e, next) => {
@@ -320,13 +335,13 @@ export const register: Register = (on, options) => {
     startComponentCheck()
     await $.command.register({
       name: 'dev',
-      description: 'ndev: help, setup, mode, steering and triage (runs the set-up first if this project is not set up)',
-      argumentHint: '[help|setup|mode [light|heavy]|steering [interactive|auto]|triage [start [--dry-run] [--codex] [--open] [--batch <size>|--sequential] [--hint "<text>"]|clean [--hint "<text>"]|launch|refresh|reset]]',
+      description: 'ndev: help, setup, mode, steering, triage, remote and export (runs the set-up first if this project is not set up)',
+      argumentHint: `[help|setup|mode [light|heavy|hack]|steering [interactive|auto]|${TRIAGE_ARGUMENT_HINT}|${REMOTE_ARGUMENT_HINT}|${EXPORT_ARGUMENT_HINT}]`,
     })
     await $.command.register({
       name: 'dev-mode',
-      description: 'Switch development mode: light (work-light) or heavy (work-heavy). Same as /dev mode',
-      argumentHint: '[light|heavy]',
+      description: 'Switch development mode: light (work-light), heavy (work-heavy) or hack (work-hack, interactive only). Same as /dev mode',
+      argumentHint: '[light|heavy|hack]',
     })
     await $.command.register({
       name: 'dev-steering',
@@ -345,7 +360,7 @@ export const register: Register = (on, options) => {
     // project set-up below: the toast names it and the reason.
     await startFeature($, 'fix-all-prs', () => startFixAllPrs($))
     await startFeature($, 'responsive-check', () => startResponsiveCheck($))
-    await startFeature($, 'orca-triage', () => startTriage($))
+    await startFeature($, 'triage', () => startTriage($))
     await startFeature($, 'view', () => startView($, e.cwd))
     // A walk-doc fault must not stop ndev's own start: the toast names it, and ndev goes on.
     try {
@@ -368,6 +383,7 @@ export const register: Register = (on, options) => {
     const began = await $.clock.now()
     // Each part starts alone: another plugin can own the command's name, and that must not stop the watcher.
     await startFeature($, 'workflow tools', () => startWorkflow($, e.cwd))
+    await startFeature($, 'epic tools', () => startEpic($))
     await startFeature($, '/flow', () => startWorkflowCommand($))
     await startFeature($, 'workflow watcher', () => startWatchdog($, () => project))
     await startInitProject($, e.cwd)
@@ -413,10 +429,14 @@ export const register: Register = (on, options) => {
     if (word === 'setup') return { text: await setup($, true) }
     if (word === 'help') return { text: await helpText($) }
     if (word === 'triage') return triageCommand($, args, () => project)
-    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering or /dev triage.` }
+    if (word === 'remote') return remoteCommand($, args, project)
+    if (word === 'export') return exportCommand($, args)
+    if (word !== '') return { text: `dev: "${e.args.trim()}" is not a choice. Use /dev, /dev help, /dev setup, /dev mode, /dev steering, /dev triage, /dev remote or /dev export.` }
     if (project !== undefined && !project.error && missingGitHub(project.config).length > 0) return { text: await setup($, false) }
     return { text: await helpText($) }
-  })
+  }).catch(($, e, next) => ({
+    text: `/dev ${e.args} failed (${next.error.kind} after ${next.error.budget} ms): ${next.error.message ?? 'no message'}`,
+  }))
 
   on('command.run', { command: 'dev-setup' }, async $ => ({ text: await setup($, true) }))
 
@@ -448,18 +468,20 @@ export const register: Register = (on, options) => {
       githubText(project?.config.github),
       WIKI_TEXT,
       REPORT_TEXT,
-      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /dev triage start.',
+      'The human lists the plugin commands with /dev, switches these with /dev mode and /dev steering (or /dev-mode and /dev-steering), sets the GitHub repository and board with /dev setup (or /dev-setup), asks for a lesson review with /learn, and groups the open issues into Orca workers with /dev triage start, and exports the workflow to another agent harness with /dev export <harness>.',
     ]
       .filter(Boolean)
       .join('\n\n')
 
     const line = await workflowLine($, project).catch(error => `Workflow: the state was not read: ${String(error instanceof Error ? error.message : error).slice(0, 200)}`)
+    const epic = await epicLine($).catch(error => `Epic: the state was not read: ${String(error instanceof Error ? error.message : error).slice(0, 200)}`)
     return {
       sections: [
         ...composed.sections,
         { id: `${PLUGIN}:dev-mode`, text, scope: 'session' },
         ...[initProjectSection(), credentialsSection(), worktreeStacksSection()].filter(s => s !== undefined),
         ...(line ? [{ id: `${PLUGIN}:workflow`, text: line, scope: 'session' as const }] : []),
+        ...(epic ? [{ id: `${PLUGIN}:epic`, text: epic, scope: 'session' as const }] : []),
       ],
     }
   })

@@ -53,31 +53,22 @@ the change can move it. "Not scored" is a fact to state, never to hide.
 
 ### F3b — Code comments
 
-**A comment must say something that the code and `git log` cannot.** Usually there is nothing. The
-default is no comment.
+**Do not write comments in code.** In 99 changes out of 100 the right number of new comments is
+zero. Names, structure and tests carry the meaning; the PR, the issue and git hold the reasoning and
+the history.
 
-**Write a comment only for:**
+**The one exception:** a fact that took a lot of research or trial and error to find, and that the
+next editor would otherwise have to find again (a vendor behaviour found by experiment, a measured
+constant, a trap that took a long debug). Write it in one sentence, with a bare issue number if there
+is one. If you are not sure it meets this bar, leave it out.
 
-- **Why the code exists**: the constraint, failure mode or external fact that is not obvious.
-- **A trap in the system around it**: a foreign API's behaviour, an order requirement, a value that
-  must not change and why.
+**Never write:** commentary that repeats the code, design reasoning or rejected alternatives,
+history of any form, section banners, or a to-do with no issue number. The same rule applies to
+docstrings: write one only when the project requires it, for example for a published API.
 
-**Leave out:**
-
-- **Commentary**: the reasoning for a choice, rejected alternatives, arguments for the design. Those
-  go in the PR, the issue or the wiki.
-- **History, in any form**: what the code did before, what was deleted, what changed and when. Git
-  holds that.
-
-**Issue and PR numbers are markers, not narrative.** A bare `(#123)` after a constraint is
-acceptable. A sentence that explains what #123 changed is history: remove it.
-
-The same rules apply to docstrings. A module docstring says what the module is for and what a caller
-must know. It is not a design record or a changelog.
-
-**The test:** delete the comment. If the code is still correct and the next editor cannot break
-something they could not see, the comment was commentary. If a fact was lost (usually a *why*), keep
-it in one sentence. Apply this to code you touch, not only code you add.
+**The test:** delete the comment. Keep it only if the fact cost real research and the next editor
+would break something without it. In the lines you change, delete comments that fail this test.
+The full rule is `${CLAUDE_PLUGIN_ROOT}/kb/comments.md`.
 
 ### F3b1 — Naming
 

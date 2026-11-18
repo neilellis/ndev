@@ -8,32 +8,33 @@ import { iNeedA, NEED_KINDS } from './i-need-a'
 
 import { loadConfigAt } from '../config'
 import type { LoadedConfig, ProjectLevel } from '../config'
-import type { WorkflowLive } from '../../types'
+import type { Mode, WorkflowLive } from '../../types'
 import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
-import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
+import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, isOrcaChat, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check, PrHealth, Ran } from './effects'
-import { withStep, withToolProgress } from './progress'
+import { runningNow, withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
+import { gitCode, gitFolder, OWN_WAIT, pushNames, pushesOnly, RAW_GIT } from './git-guard.ts'
 import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
-import { ATTEMPT_LIMIT, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
+import { ATTEMPT_LIMIT, BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
-import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseRound, resultOf, startingAnswers } from './interview-model'
+import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseChatAnswers, parseRound, resultOf, roundMarkdown, startingAnswers } from './interview-model'
 import type { InterviewFile, InterviewRound } from './interview-model'
 import { clearInterview, closeInterviewPane, interviewCall, openInterviewPane, showInterview } from './interview'
 import type { EarlierQuestion } from './interview'
 import { SECRET_NAME, findInText, secretFiles } from './secrets'
 
-async function checked($: EngineInterface, wf: Workflow, check: Check, args: string[] = []): Promise<string | undefined> {
+async function checked($: EngineInterface, wf: Workflow, check: Check, args: string[] = [], declared: readonly ChangeType[] = []): Promise<string | undefined> {
   if (wf.noChecks && !(await $.fs.exists(`${wf.root}/${CHECK_DIR}/${check}`))) return `${CHECK_DIR}/${check} did not run: the human skipped the set-up.`
-  return runCheck($, wf.root, wf.base, check, args)
+  return runCheck($, wf.root, wf.base, check, args, [...(wf.changeTypes ?? []), ...declared])
 }
 
 export type Evidence = { sha: string; text: string }
-export type IssueSettings = { mode?: 'light' | 'heavy'; steering?: 'interactive' | 'auto' }
+export type IssueSettings = { mode?: Mode; steering?: 'interactive' | 'auto' }
 
 export type Workflow = {
   // The interview tool call holds, and its notification. Gone when the human has answered.
@@ -50,7 +51,7 @@ export type Workflow = {
   branch: string
   direct?: boolean
   prs: number[]
-  // Two to five lower-case words from the agent. The Orca workspace is <issue>-<shortName>.
+  // Two to five lower-case words from the agent. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.
   shortName?: string
   // What Orca shows now, so that a save sends only a change.
   orca?: OrcaView
@@ -77,6 +78,8 @@ export type Workflow = {
   noChecks?: boolean
   // The heartbeat saw every PR merged or closed, so it reads GitHub no more.
   prsClosed?: boolean
+  // done ended the issue before its review: it was closed with no change, so nothing waits for a human.
+  closedNoChange?: boolean
   attempts: number
   nudges: { count: number; fingerprint?: string }
   // issues and dispatchId belong to the mode worktree: the existing issues its worker carries, lead first,
@@ -92,7 +95,7 @@ export type Workflow = {
   feedbackAt?: number
   blocked?: { message: string; at: number; group: string; pid?: number }
   // This issue only. With no value, it follows the worktree and then the project.
-  mode?: 'light' | 'heavy'
+  mode?: Mode
   steering?: 'interactive' | 'auto'
   waiting?: { id: string; tool: string; what: string; at: number; period?: number; most?: number; timeoutS?: number; args?: Record<string, string>; alert?: { group: string; pid?: number } }
   waitAnswer?: { id: string; message: string }
@@ -119,7 +122,7 @@ export type Workflow = {
 }
 
 const OWNER_LIVE_MS = 10 * 60_000
-const SECTION = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->\n?/
+export const SECTION = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->\n?/
 
 const workflowRoot = atom({ plugin: 'ndev', key: 'workflowRoot' } as const, null as string | null, { shape: 'workflow-root-1' })
 // The issue that this agent works on now. A worktree can hold several; each agent has its own.
@@ -347,9 +350,10 @@ export async function saveWorkflow($: EngineInterface, wf: Workflow): Promise<vo
 
 // A PR that carries several issues follows the strictest of them.
 export const strictest = (records: IssueSettings[]): IssueSettings => {
-  const pick = <T extends string>(values: (T | undefined)[], strict: T) => (values.includes(strict) ? strict : values.find(Boolean))
-  const mode = pick(records.map(r => r.mode), 'heavy')
-  const steering = pick(records.map(r => r.steering), 'interactive')
+  // From the strictest down: the first that an issue holds wins.
+  const pick = <T extends string>(values: (T | undefined)[], strict: T[]) => strict.find(v => values.includes(v)) ?? values.find(Boolean)
+  const mode = pick(records.map(r => r.mode), ['heavy', 'hack'])
+  const steering = pick(records.map(r => r.steering), ['interactive'])
   return { ...(mode ? { mode } : {}), ...(steering ? { steering } : {}) }
 }
 
@@ -391,13 +395,13 @@ export function moved(wf: Workflow, tool: string, to: Position, at: number) {
   if (to.state !== 'wait') wf.waiting = undefined
 }
 
-// An agent that followUp started has no interview: it goes on from its brief.
-const isBaseChecked = (wf: Workflow) => !!wf.baseCheck || !!wf.followUpOf || !!wf.noInterview
+// An agent that followUp started has no interview: it goes on from its brief. A mode with no base check (hack) starts on the code at once.
+const isBaseChecked = (wf: Workflow, mode: Mode) => !MACHINES[mode].baseCheck || !!wf.baseCheck || !!wf.followUpOf || !!wf.noInterview
 
 // A declaration of docs proves nothing when the diff could not be read.
 const reviewTypes = (wf: Workflow): ChangeType[] => (wf.changeTypes ?? []).filter(type => !wf.typesUnread || type !== 'docs')
 
-export const stepOf = (wf: Workflow, facts: Facts) => nextStep(wf.state, { ...facts, merged: wf.merged, remembered: !!wf.hooks?.remember?.result, changeTypes: reviewTypes(wf), webFiles: wf.webFiles, baseChecked: isBaseChecked(wf) })
+export const stepOf = (wf: Workflow, facts: Facts) => nextStep(wf.state, { ...facts, merged: wf.merged, remembered: !!wf.hooks?.remember?.result, changeTypes: reviewTypes(wf), webFiles: wf.webFiles, baseChecked: isBaseChecked(wf, facts.mode) })
 
 async function answer($: EngineInterface, wf: Workflow, facts: Facts, detail: string[] = [], next?: string): Promise<string> {
   const lines = [`State: ${wf.state}. ${whoOf(wf)}. Worktree: ${wf.root}.`, ...detail.filter(Boolean)]
@@ -426,7 +430,8 @@ export async function blockWorkflow($: EngineInterface, wf: Workflow, message: s
   await saveWorkflow($, wf)
 }
 
-async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, message: string, files: string[], push = true, declared: readonly ChangeType[] = []): Promise<string[]> {
+// advisory: the hack's commits, where fast-checks.sh only advises and pre-commit-check.sh waits for hardening.
+async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, message: string, files: string[], push = true, declared: readonly ChangeType[] = [], advisory = false): Promise<string[]> {
   const { root, base, branch } = wf
   const current = await gitOut(root, $, 'rev-parse', '--abbrev-ref', 'HEAD')
   if (current !== wf.branch) throw new Refuse(`The worktree ${root} is on ${current}, and this workflow is on ${branch}. Nothing was committed. Repair: git switch ${branch}.`)
@@ -440,7 +445,8 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   // A retry can carry a fix for what stopped the last try, so what is named is always committed.
   // A deletion that git rm staged is in neither the tree nor the index, so git add of its path exits 128.
   // It is already staged: leave it out of git add, and the commit still carries it.
-  const removed = files.length ? (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=D')).split('\n').filter(Boolean) : []
+  // The old path of a staged rename is such a deletion too, but rename detection lists it as R, so --no-renames.
+  const removed = files.length ? (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=D', '--no-renames')).split('\n').filter(Boolean) : []
   // A named folder whose files were all removed is gone from the tree too.
   const toAdd: string[] = []
   for (const f of files) {
@@ -449,21 +455,33 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   }
   if (toAdd.length) await must($, ['git', 'add', '--', ...toAdd], { cwd: root })
   const staged = (await git(root, $, 'diff', '--cached', '--quiet')).exitCode !== 0
-  if (staged) {
+  // A merge that changes no file still has a commit to make: the merge, with its second parent.
+  const merging = (await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0
+  if (staged || merging) {
     try {
       // The fast tools first: they name the line in seconds, before the slower script starts.
       let stagedFiles = (await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=d')).split('\n').filter(Boolean)
       // A merge stages all that the base brought in. A file whose staged version is the base's version
       // is not this branch's change: its faults are the base's, so the fast checks leave it out.
-      if ((await git(root, $, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).exitCode === 0) {
+      if (merging) {
         const differs = new Set((await gitOut(root, $, 'diff', '--cached', '--name-only', '--diff-filter=d', 'MERGE_HEAD')).split('\n').filter(Boolean))
         const fromBase = stagedFiles.filter(f => !differs.has(f))
         stagedFiles = stagedFiles.filter(f => differs.has(f))
         if (fromBase.length) notes.push(`A merge is in progress: ${fromBase.length} staged files came from the base unchanged, so fast-checks.sh did not check them, and a fault in them is the base's (baseline), not this branch's: ${fromBase.slice(0, 10).join(', ')}${fromBase.length > 10 ? ', …' : ''}.`)
       }
-      const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles) : undefined
-      for (const note of [fast, await checked($, wf, 'pre-commit-check.sh')]) {
-        if (note) notes.push(note)
+      if (advisory) {
+        try {
+          const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles, declared) : undefined
+          if (fast) notes.push(fast)
+        } catch (error) {
+          if (!(error instanceof CheckFailed)) throw error
+          notes.push(`Advice only, because this is the hack: the commit was made. ${error.message.replace(' Nothing was pushed.', '')} Hardening runs the full checks, and there a failure stops the commit.`)
+        }
+      } else {
+        const fast = stagedFiles.length ? await checked($, wf, 'fast-checks.sh', stagedFiles, declared) : undefined
+        for (const note of [fast, await checked($, wf, 'pre-commit-check.sh', [], declared)]) {
+          if (note) notes.push(note)
+        }
       }
     } catch (error) {
       // A refused commit leaves nothing staged, or a later commit of other files would carry these.
@@ -480,15 +498,44 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
   }
   const upstream = await git(root, $, 'rev-parse', `origin/${branch}`)
   if (push && upstream.stdout.trim() !== (await head(root, $))) {
-    const note = await checked($, wf, 'pre-push-check.sh')
+    const note = await checked($, wf, 'pre-push-check.sh', [], declared)
     if (note) notes.push(note)
     const mapNote = await writeChangeMap($, wf, declared)
     if (mapNote) notes.push(mapNote)
     const pushed = await withStep($, 'git push', 300_000, () => run($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 }))
-    if (pushed.exitCode !== 0) throw new Refuse(`git push of ${branch} exited ${pushed.exitCode}: ${said(pushed)}\nThe commit is local. Fix the cause (git pull --rebase for a rejected push) and call the tool again.`)
+    if (pushed.exitCode !== 0) {
+      if (!/\[rejected\]|non-fast-forward|fetch first/.test(`${pushed.stdout}\n${pushed.stderr}`)) throw new Refuse(`git push of ${branch} exited ${pushed.exitCode}: ${said(pushed)}\nThe commit is local. Fix the cause and call the tool again.`)
+      notes.push(await pushRebased($, root, branch, said(pushed)))
+    }
   }
   wf.op = undefined
   return notes
+}
+
+// A push that the remote rejected as behind. After a rebase, such as onto a new stack base, the remote
+// branch holds the old copies of this branch's commits and the old base. A force push with a lease
+// loses nothing when each commit that only this remote branch holds has its change in HEAD (git cherry
+// marks it -): the old base stays on its own remote branch. Any other commit is real work: refuse and name it.
+async function pushRebased($: EngineInterface, root: string, branch: string, rejected: string): Promise<string> {
+  const read = async (...args: string[]) => {
+    const r = await run($, ['git', ...args], { cwd: root })
+    if (r.exitCode !== 0) throw new Refuse(`git push of ${branch} was rejected (${rejected}), and git ${args.join(' ')} exited ${r.exitCode}: ${said(r)}. The commit is local.`)
+    return r.stdout
+  }
+  await read('fetch', 'origin', branch)
+  const remote = `origin/${branch}`
+  const lease = (await read('rev-parse', remote)).trim()
+  // The commits that HEAD lacks and that no other remote branch holds.
+  const only = (await read('rev-list', remote, '--not', 'HEAD', `--exclude=refs/remotes/${remote}`, '--remotes=origin')).split('\n').filter(Boolean)
+  const replaced = new Set((await read('cherry', 'HEAD', remote)).split('\n').filter(l => l.startsWith('- ')).map(l => l.slice(2).trim()))
+  const kept = only.filter(c => !replaced.has(c))
+  if (kept.length) {
+    const subjects = (await read('log', '--no-walk', '--format=%H %s', ...kept)).trim()
+    throw new Refuse(`git push of ${branch} was rejected: the remote branch is at ${lease.slice(0, 8)} and holds ${kept.length} commit(s) that HEAD lacks, whose change is not in HEAD and that no other remote branch holds:\n${subjects}\nThe commit is local, and nothing was forced. Repair: git -C ${root} pull --rebase origin ${branch} to take them, then call the tool again. If they are meant to go, ask the human.`)
+  }
+  const forced = await withStep($, 'git push', 300_000, () => run($, ['git', 'push', '-u', `--force-with-lease=refs/heads/${branch}:${lease}`, 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 }))
+  if (forced.exitCode !== 0) throw new Refuse(`git push --force-with-lease of ${branch} (expected remote ${lease.slice(0, 8)}) exited ${forced.exitCode}: ${said(forced)}\nThe commit is local. The remote branch may have moved since the fetch: call the tool again.`)
+  return `The remote branch ${branch} was behind a rebase: each of its ${only.length} commit(s) that HEAD lacks (${only.map(c => c.slice(0, 8)).join(', ') || 'none'}) has its change in HEAD or stays on another remote branch, so the push replaced ${lease.slice(0, 8)} with --force-with-lease.`
 }
 
 async function flagForHuman($: EngineInterface, wf: Workflow, notes: string[]) {
@@ -652,6 +699,9 @@ const addTypes = (wf: Workflow, types: readonly ChangeType[]) => {
 
 const OFF_PROJECT = (path: string) => `Refused: the workflow is off for this project (${path} sets "workflow": false). Do the work without these tools, or ask the human to run /flow on project.`
 const OFF_HERE = (wf: Workflow) => `Refused: the human turned this workflow off (${wf.off?.reason}). Do the work without these tools, or ask the human to run /flow on.`
+const OFF_SESSION = 'Refused: the human turned the workflow off for this session. Nothing changed. Do the work without these tools, or ask the human to type /flow on.'
+// While the workflow is off for the session, these still work: they record a fact and do not move a state.
+const KEEP_STATE_TOOLS = ['addMigration', 'finishedInterview']
 
 // From the merge point on, these act on the PR and not on one issue.
 const PR_TOOLS = ['finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'done']
@@ -672,6 +722,8 @@ async function continuedInto($: EngineInterface, root: string, owner: string, se
 
 async function current($: EngineInterface, { project, args, tool }: Ctx): Promise<Workflow> {
   if (project?.config.workflow === false) throw new Refuse(OFF_PROJECT(project.path))
+  // A session-wide /flow off stops the tools that move a state, also on a record that the call names.
+  if (!KEEP_STATE_TOOLS.includes(tool ?? '') && (await read($, workflowDeclined))) throw new Refuse(OFF_SESSION)
   const root = (await read($, workflowRoot)) ?? project?.root
   // The pr of waitForPR is what it waits on, and not who is calling.
   const pr = args.pr !== undefined && tool !== 'waitForPR' ? Number(args.pr) : undefined
@@ -755,7 +807,7 @@ export async function setDeclined($: EngineInterface, value: boolean): Promise<v
 // dispatch other agents, and an agent on one issue does not, so steering does not change the choice.
 // A skill that cannot be read does not stop the work: the workflow has already moved, and the note names the repair.
 async function workSkill($: EngineInterface, mode: Facts['mode']): Promise<string> {
-  const name = mode === 'heavy' ? 'work-heavy' : 'work-light'
+  const name = mode === 'heavy' ? 'work-heavy' : mode === 'hack' ? 'work-hack' : 'work-light'
   if ((await read($, workSkillsLoaded)).includes(name)) return ''
   const folder = `${$.plugin.root}/skills/${name}`
   const path = `${folder}/SKILL.md`
@@ -781,6 +833,24 @@ async function refuseMergedBranch($: EngineInterface, root: string, repo: string
   throw new Refuse(`Refused: the branch ${branch} of ${root} has merged in PR #${merged.number} and has no open PR, so issue #${issue} cannot start on it. Nothing changed. Repair: git -C ${root} fetch origin ${base} && git -C ${root} switch -c issue-${issue} origin/${base}, then call started again. Or start #${issue} from the main checkout, which claims a new worktree.`)
 }
 
+// GitHub marks a PR merged when another PR lands its head commit, and a human can close one, while the issue
+// goes on. A record before the merge point that names such a PR would send each later tool to a dead PR.
+// A merged PR cannot open again, so the record drops it and setUpPr opens a new draft PR. A closed one can.
+const BEFORE_PR = ['setup', 'interviewing', 'planning', 'developing', 'hardening']
+async function replaceDeadPr($: EngineInterface, wf: Workflow, issueState: string): Promise<string | undefined> {
+  const n = wf.prs[0]
+  const stage = wf.state === 'blocked' || wf.state === 'wait' ? wf.previous : wf.state
+  if (wf.direct || wf.merged || n === undefined || !BEFORE_PR.includes(stage ?? '') || issueState !== 'open') return undefined
+  const pr = await readPr($, wf.root, wf.repo, n)
+  if (pr.state === 'open') return undefined
+  if (!pr.merged) throw new Refuse(`Refused: PR #${n} is closed with no merge, and issue #${wf.issue} is open in the state "${wf.state}", so its work has no PR. Nothing changed. Repair: gh pr reopen ${n} --repo ${wf.repo}, then call started again. If the PR was closed on purpose, ask the human.`)
+  // A stale origin base counts commits that the merge put on the base, and the new PR needs one of its own.
+  await must($, ['git', 'fetch', 'origin', wf.base], { cwd: wf.root, timeoutMs: 120_000 })
+  wf.prs = []
+  wf.prsClosed = undefined
+  return `PR #${n} is merged (head ${pr.head.sha.slice(0, 8)}), but issue #${wf.issue} is open in the state "${wf.state}". The record no longer names #${n}: this call opens a new draft PR for the branch ${wf.branch}.`
+}
+
 async function started($: EngineInterface, c: Ctx): Promise<string> {
   if (await read($, workflowDeclined)) throw new Refuse('Refused: the human chose to work without the workflow in this session. Do the work without these tools, or ask the human to type /flow on.')
   const { args, project } = c
@@ -789,7 +859,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   const shortName = text(args, 'shortName') || undefined
   if (shortName) refuseShortName(shortName, issue)
   const chosen = text(args, 'mode') || undefined
-  if (chosen && chosen !== 'light' && chosen !== 'heavy') throw new Refuse(`Refused: mode is ${JSON.stringify(chosen)}. Use "light" or "heavy".`)
+  if (chosen && chosen !== 'light' && chosen !== 'heavy' && chosen !== 'hack') throw new Refuse(`Refused: mode is ${JSON.stringify(chosen)}. Use "light", "heavy" or "hack".`)
   if (!project) throw new Refuse('Refused: the project settings were not read. Start a new session in the project.')
   if (project.config.workflow === false) throw new Refuse(OFF_PROJECT(project.path))
   const level = project.config.projectLevel
@@ -880,7 +950,9 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     throw new Refuse(`Refused: the mode of issue #${issue} is set when its workflow starts, and it is in the state "${wf.state}". The human can change it with /flow mode ${chosen} ${issue}.`)
   }
   const facts = await factsFor($, root, project, chosen ? { ...wf, mode: chosen as IssueSettings['mode'] } : wf)
+  if (facts.mode === 'hack' && facts.steering === 'auto') throw new Refuse(HACK_AUTO(`issue #${issue}`, issue))
   if (!wf) mayOpen()
+  const deadPr = wf ? await replaceDeadPr($, wf, issueInfo.state) : undefined
   const blockers = (await ghLines<{ number: number; state: string }>($, root, repo, ['blocked-by', 'list', String(issue)])).filter(b => b.state === 'open')
   const missing = await missingChecks($, root)
   const branch = wf?.branch ?? joined?.branch ?? (await gitOut(root, $, 'rev-parse', '--abbrev-ref', 'HEAD'))
@@ -910,7 +982,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     if (pr.state === 'open') feedback = await newFeedback($, root, repo, issue, pr, record.feedbackAt ?? 0)
   }
   const to = afterStarted(isNew ? undefined : { state: record.state, previous: record.previous }, { mode: facts.mode, steering: facts.steering, scriptsMissing: missing.length > 0, blockerOpen: blockers.length > 0, feedback: feedback.length > 0 })
-  const notes: string[] = [...(claimFromMain ? [claimFromMain] : []), ...(claimNote ? [claimNote] : []), ...claimNotes]
+  const notes: string[] = [...(claimFromMain ? [claimFromMain] : []), ...(claimNote ? [claimNote] : []), ...(deadPr ? [deadPr] : []), ...claimNotes]
   notes.push(`Mode: ${facts.mode}, steering: ${facts.steering}, for issue #${issue}.`)
   notes.push('If this issue has the label "incomprehensible", a human could not understand it: rewrite it for clarity before any other work (work-heavy F0c).')
   if (active && !sameRecord(active, record)) {
@@ -926,7 +998,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   }
   if (!record.shortName) notes.push(`This workflow has no shortName, so its Orca workspace keeps its name. Call started again with a shortName: two to five lower-case words from the issue "${issueInfo.title}".`)
   if (to.state === 'setup') {
-    notes.push(`These check scripts are missing or not executable: ${missing.join(', ')}. fast-checks.sh takes the changed files as arguments and runs only very fast tools on them, such as ruff, ty, oxlint and ast-grep; start from ${$.plugin.root}/scripts/workflow/fast-checks-template.sh. pre-commit-check.sh runs the full lint and typecheck. pre-push-check.sh runs the unit tests. pre-ready-check.sh runs the full suite and E2E. Each exits non-zero on failure. A check that compares with the base reads NDEV_MERGE_BASE, not git merge-base HEAD, which is the old base while a merge commit is made. Take the commands from the project's CLAUDE.md.`)
+    notes.push(`These check scripts are missing or not executable: ${missing.join(', ')}. fast-checks.sh takes the changed files as arguments and runs only very fast tools on them, such as ruff, ty, oxlint and ast-grep; start from ${$.plugin.root}/scripts/workflow/fast-checks-template.sh. pre-commit-check.sh runs the full lint and typecheck. pre-push-check.sh runs the unit tests. pre-ready-check.sh runs the full suite and E2E. Each exits non-zero on failure. A check that compares with the base reads NDEV_MERGE_BASE, not git merge-base HEAD, which is the old base while a merge commit is made. A check that chooses its tests reads NDEV_CHANGE_TYPES (comma-separated web, backend, database, docs, tests, config), and reads its own diff when it is unset. Take the commands from the project's CLAUDE.md.`)
   }
   if (to.state === 'blocked' && record.state !== 'blocked') {
     const message = `Issue #${issue} waits for ${blockers.map(b => `#${b.number}`).join(', ')}.`
@@ -952,7 +1024,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
     const carrier = joined?.pr === record.prs[0] ? joined : await loadPrRecord($, root, record.prs[0])
     if (carrier && !carrier.issues?.includes(issue)) {
       Object.assign(carrier, await settingsOfAll($, root, project, [carrier, record]))
-      notes.push(await backToDevelopers($, carrier, issue, 'started'))
+      notes.push(await backToDevelopers($, project, carrier, issue, 'started'))
     }
   }
   if (root !== home) notes.push(`The work is in ${root}, not this session's folder. Change to it before you edit.`)
@@ -1026,6 +1098,7 @@ async function finishedPlan($: EngineInterface, c: Ctx): Promise<string> {
 // attention later. A failure is recorded and does not stop the tool: the agent decides what to do with it.
 async function runBaseCheck($: EngineInterface, wf: Workflow, facts: Facts): Promise<{ notes: string[]; failed?: string }> {
   const script = baseCheckScript(facts.mode)
+  if (!script) return { notes: [`${facts.mode} mode has no base check, so none ran.`] }
   const sha = await head(wf.root, $)
   const at = await $.clock.now()
   // A record from before this check, or a second call, can already hold commits.
@@ -1058,8 +1131,8 @@ async function finishedInterview($: EngineInterface, c: Ctx): Promise<string> {
 }
 
 // Development starts with the base check. The refusal comes before any commit.
-function refuseBeforeBaseCheck(wf: Workflow, tool: string) {
-  if (wf.state === 'developing' && !isBaseChecked(wf)) throw new Refuse(`Refused: the interview of ${labelOf(wf)} has not ended, so ${tool} did nothing. Repair: after the last question, call finishedInterview. It runs the base check, and then ${tool} works.`)
+function refuseBeforeBaseCheck(wf: Workflow, tool: string, mode: Mode) {
+  if (wf.state === 'developing' && !isBaseChecked(wf, mode)) throw new Refuse(`Refused: the interview of ${labelOf(wf)} has not ended, so ${tool} did nothing. Repair: after the last question, call finishedInterview. It runs the base check, and then ${tool} works.`)
 }
 
 // False when the range cannot be read, such as after a rebase: then the evidence is stale.
@@ -1073,6 +1146,17 @@ function havePr(wf: Workflow) {
   if (!wf.direct && !wf.prs.length) throw new Refuse(`Refused: the workflow of #${wf.issue} has no PR. Nothing changed. Call started with issue ${wf.issue}: it opens the draft PR.`)
 }
 
+// A human can merge the PR while the workflow is still in review, ci, smoke or revising. Its branch then takes no
+// commit that the PR would carry, and only done is left: it ends the record as after a merge in finishing.
+async function mergedBeforeDone($: EngineInterface, wf: Workflow): Promise<Pr | undefined> {
+  const n = wf.prs[0]
+  if (wf.direct || !n || !MERGEABLE_BEFORE_DONE.includes(wf.state)) return undefined
+  const pr = await readPr($, wf.root, wf.repo, n)
+  return pr.merged ? pr : undefined
+}
+const mergedRefusal = (pr: Pr, tool: string, sha: string) =>
+  `Refused: PR #${pr.number} is merged, at ${pr.head.sha.slice(0, 8)}${pr.head.sha === sha ? '' : `, and HEAD is ${sha.slice(0, 8)}`}, so ${tool === 'checkpoint' ? 'its branch takes no commit that the PR would carry' : 'there are no checks left for it'}. Nothing changed. Repair: call done with a message and remembered: it ends the workflow of a merged PR. File other work with followUp and the mode issue_only.`
+
 // A finished PR can still take a commit, such as a conflict fix, until it merges or closes.
 async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolean> {
   const n = wf.prs[0]
@@ -1082,7 +1166,31 @@ async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolea
   throw new Refuse(`Refused: PR #${n} is ${wf.merged || pr?.merged ? 'merged' : 'closed with no merge'}, so it cannot carry a new commit. Nothing changed. Repair: file the work with followUp and the mode issue_only.`)
 }
 
+// The checks between the read and the save can take minutes, and another session or hook can save the record
+// meanwhile. The save then refuses, so checkpoint reads the record again and redoes the call: the Ndev-Op
+// trailer finds a commit that the last try made, so the redo neither commits nor pushes twice.
+const CHECKPOINT_TRIES = 3
+// In these states the last commit waits for the review, so only finishedReview, or a human's skip of the review, pushes it.
+const holdsForReview = (state: string) => state === 'reviewing' || state === 'developed'
+// A hack keeps its commits on this computer until the review: in the hack, and in hardening.
+const holdsLocally = (state: State, mode: Mode) => state === 'hardening' || !!MACHINES[mode].localOnly?.includes(state)
+const LOCAL_PUSH_ROUTES = (state: State) => `${state === 'hardening' ? '' : 'call finishedHacking, harden the change, then '}call finishedDevelopment with the hardening evidence. finishedReview makes the first push.`
+const REVIEW_PUSH_ROUTES = 'finishedReview runs pre-ready-check.sh and pushes it. When that cannot pass, a human skips the review with /flow skip <reason>, and then checkpoint with no files pushes the held commit.'
+// "developed" has no phase to skip: the review starts when each issue on the PR has called finishedDevelopment.
+const reviewPushRoutes = (state: string) => (state === 'reviewing' ? REVIEW_PUSH_ROUTES : `the review starts once each issue on the PR has called finishedDevelopment, and then ${REVIEW_PUSH_ROUTES}`)
+
 async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
+  for (let tries = 1; ; tries += 1) {
+    try {
+      return await checkpointOnce($, c)
+    } catch (error) {
+      if (!isStaleWrite(error)) throw error
+      if (tries >= CHECKPOINT_TRIES) throw new Error(`${(error as Error).message} checkpoint read the record again ${tries} times, and each time another writer saved it first. A commit that a try made carries its Ndev-Op trailer, so a new call of checkpoint does not commit it twice. Repair: call status, then checkpoint again with the same files.`)
+    }
+  }
+}
+
+async function checkpointOnce($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const wf = await current($, c)
   const files = list(args, 'files')
@@ -1091,18 +1199,29 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   const declared = declaredTypes(args)
   const facts = await factsFor($, wf.root, project, wf)
   const prOpen = await isOpenAfterDone($, wf)
+  const mergedPr = await mergedBeforeDone($, wf)
+  if (mergedPr) throw new Refuse(mergedRefusal(mergedPr, 'checkpoint', await head(wf.root, $)))
   legal(wf, 'checkpoint', { ...facts, prOpen })
-  refuseBeforeBaseCheck(wf, 'checkpoint')
+  refuseBeforeBaseCheck(wf, 'checkpoint', facts.mode)
   havePr(wf)
   const before = await head(wf.root, $)
   // An issue that finished development holds its commit for the review of the PR, so this one must not push it.
-  const holders = wf.pr ? [] : (await prSiblings($, wf)).filter(o => !o.pr && o.state === 'developed')
-  const hold = wf.state === 'reviewing' || wf.state === 'developed' || holders.length > 0
+  const holders: Workflow[] = []
+  if (!wf.pr) for (const o of await prSiblings($, wf)) if (!o.pr && (o.state === 'developed' || holdsLocally(o.state, (await factsFor($, o.root, project, o)).mode))) holders.push(o)
+  const local = holdsLocally(wf.state, facts.mode)
+  const hold = holdsForReview(wf.state) || local || holders.length > 0
   // With no files, a checkpoint only pushes a held commit, such as after a human skips the review.
   const held = (await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)).stdout.trim() !== before
-  if (!files.length && (!held || hold)) throw new Refuse('Refused: checkpoint needs the files to commit, each by name.')
-  const notes = await commitAndPush($, wf, 'checkpoint', message, files, !hold, declared)
-  if (holders.length) notes.push(`This commit is held and not pushed, because ${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review.`)
+  if (!files.length && !held) throw new Refuse(`Refused: checkpoint needs the files to commit, each by name.${wf.state === 'reviewing' ? ' With nothing more to commit, finishedReview goes on.' : ''}`)
+  if (!files.length && local) throw new Refuse(`Refused: ${labelOf(wf)} is ${wf.state === 'hardening' ? 'in hardening' : 'in the hack'}, so its commits stay on this computer until the review, and checkpoint with no files does not push commit ${before.slice(0, 8)}. Nothing was pushed. Repair: ${LOCAL_PUSH_ROUTES(wf.state)}`)
+  if (!files.length && hold) {
+    const why = holdsForReview(wf.state) ? `issue #${wf.issue} is in the state "${wf.state}"` : `${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review`
+    throw new Refuse(`Refused: ${why}, so commit ${before.slice(0, 8)} is held for the review, and checkpoint with no files does not push it. Nothing was pushed. Repair: ${reviewPushRoutes(holdsForReview(wf.state) ? wf.state : 'developed')}`)
+  }
+  const advisory = !!MACHINES[facts.mode].localOnly?.includes(wf.state)
+  const notes = await commitAndPush($, wf, 'checkpoint', message, files, !hold, declared, advisory)
+  if (local) notes.push(`Committed ${(await head(wf.root, $)).slice(0, 8)} on this computer only: ${wf.state === 'hardening' ? 'hardening' : 'the hack'} pushes nothing, and no CI runs.`)
+  if (holders.length) notes.push(`This commit is held and not pushed, because ${holders.map(o => `#${o.issue}`).join(', ')} on this PR ${holders.some(o => o.state !== 'developed') ? 'holds its commits for the review' : 'finished development and holds a commit for the review'}.`)
   addTypes(wf, declared)
   const unread = await readChangeTypes($, wf)
   if (unread) notes.push(unread)
@@ -1111,7 +1230,7 @@ async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
   // this, not the names in the call, and it also holds on a retry, when HEAD did not move this time.
   for (const e of [wf.evidence.review, wf.evidence.checks, wf.evidence.smoke]) if (e && e.sha !== sha && (await onlyDocsBetween($, wf, e.sha, sha))) e.sha = sha
   // A human who skipped the checks or the smoke test has decided: a commit of documents does not undo that.
-  const smokeDue = requiredSmokeTypes(wf.changeTypes ?? []).length > 0 && !wf.evidence.smoke && !wf.evidence.checks?.byHuman
+  const smokeDue = (requiredSmokeTypes(wf.changeTypes ?? []).length > 0 || !!MACHINES[facts.mode].alwaysSmoke) && !wf.evidence.smoke && !wf.evidence.checks?.byHuman
   await move($, c, wf, 'checkpoint', { ...facts, prOpen, docsOnly: wf.evidence.checks?.sha === sha, smoke: smokeDue })
   await flagForHuman($, wf, notes)
   await saveWorkflow($, wf)
@@ -1157,7 +1276,8 @@ async function followUpCheckpoint($: EngineInterface, { args, project }: Ctx): P
 }
 
 // An issue that is still before the merge point, also when a block or a wait holds it.
-const isBeforeMerge = (o: Workflow) => ['setup', 'interviewing', 'planning', 'developing'].includes(o.state) || (['blocked', 'wait'].includes(o.state) && ['setup', 'interviewing', 'planning', 'developing'].includes(o.previous ?? ''))
+const BEFORE_MERGE: State[] = ['setup', 'interviewing', 'planning', 'developing', 'hardening']
+const isBeforeMerge = (o: Workflow) => BEFORE_MERGE.includes(o.state) || (['blocked', 'wait'].includes(o.state) && BEFORE_MERGE.includes(o.previous ?? 'done'))
 
 // The record goes into review: the code review starts at once, and the stage hooks fire.
 const sweepText = (deadcode: NonNullable<Workflow['deadcode']>) => (deadcode.results.length
@@ -1215,6 +1335,23 @@ async function intoReview($: EngineInterface, c: Ctx, wf: Workflow, facts: Facts
   return answer($, wf, facts, notes)
 }
 
+// Hack mode: the human agrees that the hack works, and hardening starts. Nothing is pushed.
+async function finishedHacking($: EngineInterface, c: Ctx): Promise<string> {
+  const wf = await current($, c)
+  const facts = await factsFor($, wf.root, c.project, wf)
+  await move($, c, wf, 'finishedHacking', facts)
+  const ahead = await git(wf.root, $, 'rev-list', '--count', `origin/${wf.base}..HEAD`)
+  const notes = [ahead.exitCode === 0 ? `The hack holds ${ahead.stdout.trim()} commits on ${wf.branch} that are not on ${wf.base}, all on this computer.` : `git rev-list of origin/${wf.base}..HEAD exited ${ahead.exitCode}: ${said(ahead)}`]
+  await saveWorkflow($, wf)
+  return answer($, wf, facts, notes)
+}
+
+// Hardening ends with the checks that a push would run, so the first push in the review finds nothing new.
+async function prePushForHardening($: EngineInterface, wf: Workflow, declared: readonly ChangeType[]): Promise<string[]> {
+  const note = await checked($, wf, 'pre-push-check.sh', [], declared)
+  return [note ?? `pre-push-check.sh passed on ${(await head(wf.root, $)).slice(0, 8)}.`]
+}
+
 // The merge point. Each named issue finishes here. When no issue on the PR is still in development, the
 // PR record takes over: from here on the PR, and not one issue, goes through review, the checks and done.
 async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> {
@@ -1228,7 +1365,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   // A retry after a crash finds this issue finished, and goes on from there.
   if (wf.state !== 'developed') {
     legal(wf, 'finishedDevelopment', facts)
-    refuseBeforeBaseCheck(wf, 'finishedDevelopment')
+    refuseBeforeBaseCheck(wf, 'finishedDevelopment', facts.mode)
   }
   await noAgentsRunning($)
   // Before any commit, so that a wrong name leaves the commit undone.
@@ -1241,10 +1378,15 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   const unnamed = changedPaths(await porcelain($, wf.root)).filter(p => !files.some(f => p === f || p.startsWith(`${f.replace(/\/$/, '')}/`)))
   if (unnamed.length) throw new Refuse(`Refused: these changed files are not named: ${unnamed.join(', ')}. Name each one, or remove it. Nothing was committed.`)
   const message = text(args, 'message') || `Finish work on ${named.map(n => `#${n}`).join(', ')}`
+  // A hack proves in hardening what test first would have proved, and the evidence goes on the PR.
+  const hardening = text(args, 'hardening')
+  const hardenRefusal = (who: string) => `Refused: ${who} is a hack, so finishedDevelopment needs hardening: each test that pins the change, the command and the failing line on the base, and its pass on HEAD. Nothing was committed. Repair: follow "Harden" in the ndev:work-hack skill, then call finishedDevelopment again with hardening.`
+  if (wf.state !== 'developed' && MACHINES[facts.mode].hardens && !hardening) throw new Refuse(hardenRefusal(labelOf(wf)))
 
   if (wf.direct) {
     if (named.length > 1) throw new Refuse(`Refused: a project that commits directly to the base branch has one issue at a time, and this call names ${named.map(n => `#${n}`).join(', ')}. Nothing was committed.`)
-    const notes = await commitAndPush($, wf, 'finishedDevelopment', message, files, false)
+    const notes = await commitAndPush($, wf, 'finishedDevelopment', message, files, false, declared)
+    if (hardening) notes.push(...(await prePushForHardening($, wf, declared)), `Hardening: ${hardening}`)
     if (prBody !== undefined) notes.push(`This project commits directly to the base branch, so it has no PR and ${bodyPath} was not used.`)
     addTypes(wf, declared)
     return intoReview($, c, wf, facts, notes)
@@ -1261,23 +1403,34 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   const now = await $.clock.now()
   const held = await readHeld($, wf.root)
   const listed = named.map(i => (i === wf.issue ? wf : held.issues.find(o => o.issue === i)))
+  const modes: Mode[] = []
+  for (const o of listed) modes.push(o ? (await factsFor($, wf.root, project, o)).mode : facts.mode)
   const problems = named.flatMap((i, at) => {
     const o = listed[at]
+    const mode = modes[at]!
     if (!o) return [`#${i} has no workflow in ${wf.root}. Repair: call started with issue ${i}.`]
     if (o.prs[0] !== n) return [`#${i} is not on PR #${n}${o.prs[0] ? `: it is on PR #${o.prs[0]}` : ''}.`]
-    if (o.state !== 'developing' && o.state !== 'developed') return [`#${i} is in the state "${o.state}".`]
-    if (o.state === 'developing' && !isBaseChecked(o)) return [`#${i} has no base check. Repair: call finishedInterview with issue ${i}.`]
+    if (o.state !== 'developing' && o.state !== 'hardening' && o.state !== 'developed') return [`#${i} is in the state "${o.state}".`]
+    if (o.state !== 'developed' && 'refused' in afterTool({ state: o.state }, 'finishedDevelopment', { ...facts, mode })) return [`#${i} is still in the hack. Repair: call finishedHacking with issue ${i}, and harden it.`]
+    if (o.state === 'developing' && !isBaseChecked(o, mode)) return [`#${i} has no base check. Repair: call finishedInterview with issue ${i}.`]
+    if (o.state !== 'developed' && MACHINES[mode].hardens && !hardening) return [hardenRefusal(`#${i}`).replace('Refused: ', '').replace(' Nothing was committed.', '')]
     if (o.owner && o.owner.session !== session && now - o.owner.at < OWNER_LIVE_MS) return [`The session ${o.owner.session} owns #${i}. Leave it to that session.`]
     return []
   })
   if (problems.length) throw new Refuse(`Refused: finishedDevelopment cannot take these issues. Nothing was committed.\n- ${problems.join('\n- ')}`)
   const finishing = listed as Workflow[]
 
-  const notes = finishing.every(o => o.state === 'developed') && !files.length ? [] : await commitAndPush($, wf, 'finishedDevelopment', message, files, false)
+  const notes = finishing.every(o => o.state === 'developed') && !files.length ? [] : await commitAndPush($, wf, 'finishedDevelopment', message, files, false, declared)
+  const hardened = finishing.filter((o, at) => o.state !== 'developed' && MACHINES[modes[at]!].hardens)
+  if (hardened.length) {
+    notes.push(...(await prePushForHardening($, wf, declared)))
+    await comment($, wf.root, wf.repo, n, `${MARKER}\n**Hardening** of ${hardened.map(o => `#${o.issue}`).join(', ')} at ${await head(wf.root, $)}\n\n${hardening}`)
+    notes.push(`The hardening evidence is on PR #${n}.`)
+  }
   if (prBody !== undefined) await editBody($, wf, old => withBodySection(old, wf.issue, prBody))
   addTypes(wf, declared)
   for (const o of finishing.filter(x => x.state !== 'developed')) {
-    if ((await factsFor($, wf.root, project, o)).mode === 'heavy') {
+    if (MACHINES[(await factsFor($, wf.root, project, o)).mode].gates) {
       const gates = await run($, ['bash', `${$.plugin.root}/scripts/work/gates.sh`, String(o.issue), 'HEAD', String(n)], { cwd: wf.root, env: { GH_REPO: wf.repo } })
       if (gates.exitCode !== 0) {
         await saveWorkflow($, wf)
@@ -1305,16 +1458,18 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
     return [...seen.values()]
   }
   const issues = [...new Set([...(prior?.issues ?? []), ...all.map(o => o.issue)])].sort((a, b) => a - b)
+  const settings = await settingsOfAll($, wf.root, project, [...(prior ? [prior] : []), ...all])
   const changeTypes = union(o => o.changeTypes)
   const webFiles = union(o => o.webFiles)
   const record: Workflow = {
     ...(prior ?? { ...wf, rev: undefined, op: undefined, previous: undefined, waiting: undefined, blocked: undefined }),
-    ...(await settingsOfAll($, wf.root, project, [...(prior ? [prior] : []), ...all])),
+    ...settings,
     pr: n,
     prs: [n],
     issue: issues[0]!,
     issues,
-    state: 'developing',
+    // The PR record enters the review by its mode's last step before it: a hack PR by hardening.
+    state: MACHINES[(await factsFor($, wf.root, project, settings)).mode].reopen,
     previous: undefined,
     owner: { session, at: now },
     evidence: {},
@@ -1334,12 +1489,14 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
 
 // An issue joins a PR, which goes back to its developers, because what was reviewed and tested is no
 // longer the whole change. Issues can join until the PR merges.
-async function backToDevelopers($: EngineInterface, carrier: Workflow, issue: number, tool: string): Promise<string> {
+async function backToDevelopers($: EngineInterface, project: LoadedConfig | undefined, carrier: Workflow, issue: number, tool: string): Promise<string> {
   carrier.issues = [...new Set([...issuesOf(carrier), issue])].sort((a, b) => a - b)
   carrier.issue = carrier.issues[0]!
-  const wasBack = carrier.state === 'developing'
-  if (carrier.state === 'blocked' || carrier.state === 'wait') carrier.previous = 'developing'
-  else if (!wasBack) moved(carrier, tool, { state: 'developing' }, await $.clock.now())
+  // A hack PR goes back to hardening: the new work must be pinned like the rest before it is pushed.
+  const reopen = MACHINES[(await factsFor($, carrier.root, project, carrier)).mode].reopen
+  const wasBack = carrier.state === reopen
+  if (carrier.state === 'blocked' || carrier.state === 'wait') carrier.previous = reopen
+  else if (!wasBack) moved(carrier, tool, { state: reopen }, await $.clock.now())
   carrier.evidence = {}
   carrier.hooks = carrier.hooks ? { ...carrier.hooks, review: undefined } : undefined
   carrier.reviewSpec = undefined
@@ -1393,13 +1550,13 @@ async function startCodeReview($: EngineInterface, wf: Workflow, facts: Facts, u
     issuesOf(wf).length > 1
       ? `Review the diff origin/${wf.base}...HEAD in ${wf.root}. It is the work on the issues ${issuesOf(wf).map(n => `#${n}`).join(', ')} of ${wf.repo}, on one PR. Read each issue with ${$.plugin.root}/scripts/github/gh.sh issue-read and its number. The base branch is ${wf.base}: do not look it up.`
       : `Review the diff origin/${wf.base}...HEAD in ${wf.root}. It is the work on issue #${wf.issue} of ${wf.repo}. Read the issue with ${$.plugin.root}/scripts/github/gh.sh issue-read ${wf.issue}. The base branch is ${wf.base}: do not look it up.`,
-    facts.mode === 'heavy' ? 'The change follows the work-heavy skill, so check what a finished change of that skill must include.' : '',
+    MACHINES[facts.mode].reviewBrief ?? '',
     ui ?? '',
     ...reviewerBrief(reviewTypes(wf)),
     'Report only. Do not edit, commit or push. Give each finding with its file and line, Critical and Important first.',
   ].filter(Boolean).join('\n')
   // A heavy change gets two reviewers, because one who holds both questions lets each hide the other (work-heavy F3c).
-  const twoAxes = facts.mode === 'heavy' && !isDocsOnly(reviewTypes(wf))
+  const twoAxes = MACHINES[facts.mode].twoAxisReview && !isDocsOnly(reviewTypes(wf))
   wf.reviewSpec = undefined
   try {
     const first = await $.agent.spawn({ subagentType: 'ndev:diff-reviewer', description: `Review ${wf.pr ? `PR #${wf.pr}` : `#${wf.issue}`}${twoAxes ? ': standards' : ''}`, prompt: twoAxes ? `${prompt}\n${AXIS_STANDARDS}` : prompt, cwd: wf.root })
@@ -1578,6 +1735,7 @@ async function finishedChecks($: EngineInterface, c: Ctx): Promise<string> {
   const sha = await head(wf.root, $)
   if (wf.prs[0]) {
     const pr = await readPr($, wf.root, wf.repo, wf.prs[0])
+    if (pr.merged) throw new Refuse(mergedRefusal(pr, 'finishedChecks', sha))
     if (pr.head.sha !== sha) throw new Refuse(`Refused: PR #${pr.number} is at ${pr.head.sha.slice(0, 8)}, and HEAD is ${sha.slice(0, 8)}. Push it: call checkpoint with no files, which pushes a held commit.`)
   }
   const checks = await readChecks($, wf.root, wf.repo, sha, wf.prs[0])
@@ -1613,6 +1771,7 @@ async function finishedSmoke($: EngineInterface, c: Ctx): Promise<string> {
   if (!report && !skipped) throw new Refuse('Refused: finishedSmoke needs a report, or skipped with the reason.')
   const required = requiredSmokeTypes(wf.changeTypes ?? [])
   if (skipped && required.length) throw new Refuse(`Refused: the change types of #${wf.issue} hold ${required.join(', ')}, so finishedSmoke does not take skipped ("${skipped}"). Repair: smoke test HEAD (${sha.slice(0, 7)}) and give the report. Only a human can skip it, with /flow skip <reason>.`)
+  if (skipped && MACHINES[facts.mode].alwaysSmoke) throw new Refuse(`Refused: ${labelOf(wf)} is a hack, and hack mode requires a smoke test of each change, so finishedSmoke does not take skipped ("${skipped}"). Repair: smoke test HEAD (${sha.slice(0, 7)}) and give the report. Only a human can skip it, with /flow skip <reason>.`)
   if (skipped && !maySkipReview(facts.level)) throw new Refuse('Refused: a formal_project does not skip the smoke test. Run it and give the report.')
   if (report) {
     if (!report.includes(sha.slice(0, 7))) throw new Refuse(`Refused: the report does not name HEAD (${sha.slice(0, 7)}). Smoke test HEAD and name its sha.`)
@@ -1678,16 +1837,32 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, project, wf)
-  legal(wf, 'done', facts)
+  const noChange = BEFORE_REVIEW.includes(wf.state)
+  const mergedEarly = noChange ? undefined : await mergedBeforeDone($, wf)
+  if (!noChange) legal(wf, 'done', { ...facts, prMerged: !!mergedEarly })
   await noAgentsRunning($)
   const message = text(args, 'message')
   if (!message) throw new Refuse('Refused: done needs a message that says what was finished.')
   const remembered = text(args, 'remembered') || wf.hooks?.remember?.result || ''
   if (!remembered) throw new Refuse('Refused: the remember hook has no result. Update the docs and the wiki, then call done with remembered: what you recorded, or "nothing: <reason>".')
   if (!maySkipReview(facts.level) && /^skipped\b/i.test(remembered)) throw new Refuse('Refused: a formal_project does not skip the remember hook. Do the step and call done again.')
+  if (noChange) {
+    const { problems, merged } = await noChangeProblems($, wf)
+    if (problems.length) throw new Refuse(`Not done: in the state "${wf.state}", done only ends an issue that was closed with no change, such as one that another change fixed, or one whose PR has merged. Nothing changed. Fix each of these and call done again, or go on with finishedDevelopment:\n- ${problems.join('\n- ')}`)
+    wf.doneMessage = message
+    wf.hooks = { ...wf.hooks, remember: { firedAt: wf.hooks?.remember?.firedAt ?? (await $.clock.now()), result: remembered.slice(0, 2000) } }
+    // The PR is closed, so the watchdog has nothing to watch.
+    if (wf.prs.length) wf.prsClosed = true
+    if (!merged) wf.closedNoChange = true
+    // A PR merged outside the workflow, such as by gh pr merge, ends the work as a merge by done would.
+    const ended = merged ? await afterHumanMerge($, wf, merged, await head(wf.root, $)) : [`Issue ${issuesOf(wf).map(n => `#${n}`).join(', ')} was closed with no change, so the workflow ended with no review and no merge.`]
+    await move($, c, wf, 'done', { ...facts, noChange: true })
+    await saveWorkflow($, wf)
+    return answer($, wf, facts, [...ended, ...(await stopResources($, wf, project))])
+  }
   const sha = await head(wf.root, $)
   havePr(wf)
-  const pr = !wf.direct && wf.prs[0] ? await readPr($, wf.root, wf.repo, wf.prs[0]) : undefined
+  const pr = mergedEarly ?? (!wf.direct && wf.prs[0] ? await readPr($, wf.root, wf.repo, wf.prs[0]) : undefined)
   const { problems, feedback } = pr?.merged ? { problems: [], feedback: [] } : await doneProblems($, wf, sha, pr)
   if (feedback.length) {
     await move($, c, wf, 'done', { ...facts, feedback: true })
@@ -1727,10 +1902,35 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
   if (followUps.length) notes.push(`Follow-ups elsewhere: ${followUps.map(f => `${(f.issues ?? [f.issue]).map(i => `#${i}`).join(', ')} (${f.mode})`).join(', ')}.`)
   wf.doneMessage = message
   wf.hooks = { ...wf.hooks, remember: { firedAt: wf.hooks?.remember?.firedAt ?? (await $.clock.now()), result: remembered.slice(0, 2000) } }
-  await move($, c, wf, 'done', facts)
+  await move($, c, wf, 'done', { ...facts, prMerged: !!mergedEarly })
   await saveWorkflow($, wf)
   if (wf.state === 'done') notes.push(...(await stopResources($, wf, project)))
   return answer($, wf, facts, notes)
+}
+
+// Each reason that done cannot end an issue before its review: the issue must be closed, the branch must hold
+// no change from its base, and no PR may stay open. All of them are named, so that one pass fixes them.
+// A merged PR carried the branch's change already: a squash merge leaves the branch different from its base.
+async function noChangeProblems($: EngineInterface, wf: Workflow): Promise<{ problems: string[]; merged?: Pr }> {
+  const problems: string[] = []
+  const n = wf.direct ? undefined : wf.prs[0]
+  const pr = n === undefined ? undefined : await readPr($, wf.root, wf.repo, n)
+  const merged = pr?.merged ? pr : undefined
+  for (const issue of issuesOf(wf)) {
+    const { state } = await ghOne<{ state: string }>($, wf.root, wf.repo, ['issue-read', String(issue)])
+    if (state !== 'closed') problems.push(`issue #${issue} is ${state}. If it needs no change, close it on GitHub with the reason. If it needs one, make it and call finishedDevelopment.`)
+  }
+  if (!merged) {
+    const range = `origin/${wf.base}...HEAD`
+    const diff = await git(wf.root, $, 'diff', '--name-only', range)
+    if (diff.exitCode !== 0) throw new Error(`git diff --name-only ${range} exited ${diff.exitCode} in ${wf.root}: ${said(diff)}`)
+    const changed = diff.stdout.split('\n').filter(Boolean)
+    if (changed.length) problems.push(`the branch ${wf.branch} changes ${changed.join(', ')} from origin/${wf.base}, and ${n === undefined ? 'it has no PR' : `PR #${n} is ${pr!.state} with no merge`}. A change goes through the review: call finishedDevelopment.`)
+  }
+  const dirty = await porcelain($, wf.root)
+  if (dirty.length) problems.push(`the tree is not clean: ${changedPaths(dirty).join(', ')}. ${merged ? `That work is not in the merged PR #${n}: commit it on a new issue, or remove it.` : 'Commit the work with finishedDevelopment, or remove it.'}`)
+  if (pr?.state === 'open') problems.push(`PR #${n} is open. Repair: gh pr close ${n} --repo ${wf.repo} --comment "<why no change is needed>".`)
+  return { problems, merged }
 }
 
 // The local stacks and dev servers of a finished worktree. Orca removes the worktree itself, so this does not.
@@ -1753,11 +1953,14 @@ function refuseShortName(shortName: string, issue?: number): void {
 
 const hashOf = (s: string) => [...s].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7).toString(16)
 
+// A human steers each step of a hack, so hack mode is interactive only.
+const HACK_AUTO = (who: string, issue?: number) => `Refused: hack mode is interactive only, because a human steers each step of the hack, and the steering of ${who} is auto. Nothing changed. Repair: the human sets the steering to interactive (/flow steering interactive${issue ? ` ${issue}` : ''} for one issue, or /dev steering interactive), or start in light or heavy mode.`
+
 // A new issue, and its workflow. Once the issue exists, each failure names it, so that a retry does not file it twice.
 async function create($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const shortName = text(args, 'shortName')
-  if (args.mode !== undefined && args.mode !== 'light' && args.mode !== 'heavy') throw new Refuse(`Refused: mode is ${JSON.stringify(args.mode)}. Use "light" or "heavy".`)
+  if (args.mode !== undefined && args.mode !== 'light' && args.mode !== 'heavy' && args.mode !== 'hack') throw new Refuse(`Refused: mode is ${JSON.stringify(args.mode)}. Use "light", "heavy" or "hack".`)
   const [title, ...rest] = text(args, 'description').split('\n')
   if (!shortName) throw new Refuse('Refused: create needs a shortName. Nothing was filed.')
   refuseShortName(shortName)
@@ -1767,6 +1970,7 @@ async function create($: EngineInterface, c: Ctx): Promise<string> {
   const root = (await read($, workflowRoot)) ?? project.root
   const active = await loadWorkflow($, root)
   if (active?.off) throw new Refuse(OFF_HERE(active))
+  if (args.mode === 'hack' && (await factsFor($, root, project, { mode: 'hack' })).steering === 'auto') throw new Refuse(`${HACK_AUTO('this worktree')} Nothing was filed.`)
   const repo = project.config.github?.repo ?? (await repoFromOrigin($, project.root))
   const { gitDir } = await paths($, root)
   const bodyFile = `${gitDir}/ndev-new-issue.md`
@@ -1989,7 +2193,7 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
       await saveWorkflow($, child)
     }
     const carrier = wf.pr ? wf : await loadPrRecord($, wf.root, pr)
-    if (carrier && !carrier.issues?.includes(n)) notes.push(await backToDevelopers($, carrier, n, 'followUp:this_agent'))
+    if (carrier && !carrier.issues?.includes(n)) notes.push(await backToDevelopers($, project, carrier, n, 'followUp:this_agent'))
     if (wf.pr) {
       // The PR is back with its developers, and this agent goes on the new issue.
       await bind($, wf.root, n)
@@ -2161,16 +2365,17 @@ const WAIT_LIMITS = { attempts: { type: 'integer', description: 'The most checks
 const ISSUE_ARG = { type: 'number', description: 'The issue this call is for: the one that this agent is on. A worktree can hold several issues.' }
 const PR_ARG = { type: 'number', description: 'The PR this call is for. From finishedDevelopment on, the PR goes through the review, the checks and done. Give issue or pr.' }
 const SPEC_LIST: Spec[] = [
-  { name: 'create', description: 'File a new issue and start its workflow, as started does. The answer gives the issue number.', properties: { mode: { type: 'string', enum: ['light', 'heavy'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens. The Orca workspace is <issue>-<shortName>.' }, description: { ...STR, description: 'The first line is the issue title, and the rest is its body' } }, required: ['shortName', 'description'] },
+  { name: 'create', description: 'File a new issue and start its workflow, as started does. The answer gives the issue number.', properties: { mode: { type: 'string', enum: ['light', 'heavy', 'hack'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, hack when the human wants to find the solution by trial and error first (interactive only), and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, description: { ...STR, description: 'The first line is the issue title, and the rest is its body' } }, required: ['shortName', 'description'] },
   { name: 'comment', description: 'Add a comment to an issue or a PR. Give issue or pr, not both. It works with or without a workflow.', properties: { issue: { type: 'number' }, pr: { type: 'number' }, message: STR }, required: ['message'] },
-  { name: 'started', description: 'Start or resume the workflow of an issue. Call it first in each work session. It records the state, claims the worktree, opens the draft PR and answers with the next step.', properties: { mode: { type: 'string', enum: ['light', 'heavy'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens, chosen from the issue. A new workflow needs it. The Orca workspace is <issue>-<shortName>.' }, issue: { type: 'number' }, takeOver: { type: 'boolean', description: 'Only when the session that owns the workflow is dead' } }, required: ['issue'] },
-  { name: 'interview', description: 'With interviewJson: show one round of questions to the human in the interview pane, hold until the human answers, and return the answers and notes. With no arguments: the interview is over, so go on to the next state. Only that call leaves the state "interviewing". Load the ndev:interview skill for the method.', properties: { interviewJson: { description: 'One round: { title, intro?, questions: [{ id, header, question, context?, multiSelect?, followUpTo?, options?: [{ label, description?, preview?, recommended? }], suggested? }] }. Markdown works in question, context, description and preview. Each question needs a recommendation: an option with recommended true, or suggested when it has no options. Ids are unique across all rounds of the issue. followUpTo names the earlier question that this one follows.' } }, required: [] },
+  { name: 'started', description: 'Start or resume the workflow of an issue. Call it first in each work session. It records the state, claims the worktree, opens the draft PR and answers with the next step.', properties: { mode: { type: 'string', enum: ['light', 'heavy', 'hack'], description: 'Optional, and only at the start: heavy for a multi-step, cross-cutting or high-risk change, hack when the human wants to find the solution by trial and error first (interactive only), and light for the others. With no value, the issue follows the worktree.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens, chosen from the issue. A new workflow needs it. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.' }, issue: { type: 'number' }, takeOver: { type: 'boolean', description: 'Only when the session that owns the workflow is dead' } }, required: ['issue'] },
+  { name: 'interview', description: 'With interviewJson: show one round of questions to the human in the interview pane, hold until the human answers, and return the answers and notes. In Orca Chat, which has no pane, it returns the round as Markdown to post in the chat, and answersJson then records the human\'s answers. With no arguments: the interview is over, so go on to the next state. Only that call leaves the state "interviewing". Load the ndev:interview skill for the method.', properties: { interviewJson: { description: 'One round: { title, intro?, questions: [{ id, header, question, context?, multiSelect?, followUpTo?, options?: [{ label, description?, preview?, recommended? }], suggested? }] }. Markdown works in question, context, description and preview. Each question needs a recommendation: an option with recommended true, or suggested when it has no options. Ids are unique across all rounds of the issue. followUpTo names the earlier question that this one follows.' }, answersJson: { description: 'Only in Orca Chat, after interviewJson: the human\'s chat answers to that round, as { "<question id>": { selected?: [option labels], other?: "the human\'s own words", notes? } }, with an entry for each question.' } }, required: [] },
   { name: 'setSteering', description: 'No human can answer in this session, such as with -p or an unattended prompt: set this issue to auto. Only a human can set it back. In the state "interviewing" this goes on to the next state. The reason goes on the issue and the PR. A preference is not a reason.', properties: { steering: { type: 'string', enum: ['auto'] }, reason: { ...STR, description: 'Why no human can answer' } }, required: ['steering', 'reason'] },
   { name: 'finishedPlan', description: 'The plan is written: put it in the PR body and go on to development.', properties: { markdown_file: { ...STR, description: 'The plan file' } }, required: ['markdown_file'] },
   { name: 'checkpoint', description: 'Commit the named files and push, after the check scripts. Use this and not git commit or git push.', properties: { message: STR, files: FILES, changeTypes: CHANGE_TYPES_ARG, worktree: { ...STR, description: 'Only for an agent that followUp started: its own worktree' } }, required: ['message', 'files'] },
-  { name: 'finishedInterview', description: 'The interview with the human has ended, and development can start. This runs the base check: pre-commit-check.sh in light mode and pre-push-check.sh in heavy mode. Call it after the last question and before any code. It answers with a failure and does not block, and it can run again.', properties: {}, required: [] },
+  { name: 'finishedInterview', description: 'The interview with the human has ended, and development can start. This runs the base check: pre-commit-check.sh in light mode and pre-push-check.sh in heavy mode. Hack mode has none. Call it after the last question and before any code. It answers with a failure and does not block, and it can run again.', properties: {}, required: [] },
   { name: 'hotfix', description: 'An urgent fix that must not wait for the workflow. This files an issue, and gives it its own worktree and draft PR with the workflow off there. The answer gives the hotfix instructions. This session stays on its own issue. Use it only for an urgent fix.', properties: { issue: { type: 'number', description: 'Only for a retry after a failed set-up: the issue that the earlier call filed. Nothing new is filed.' }, shortName: { ...STR, description: 'Two to five lower-case words joined by hyphens, such as fix-login-redirect.' }, description: { ...STR, description: 'Optional. The first line is the issue title, and the rest is its body. With no value, the title comes from shortName.' } }, required: ['shortName'] },
-  { name: 'finishedDevelopment', description: 'Development is complete: commit the named files and go on to review. This runs the dead-code sweep, starts the code review and fires the remember hook. This commit is not pushed until finishedReview.', properties: { issues: { type: 'array', items: { type: 'number' }, description: 'Each issue that this call finishes. An issue on the same PR that is still in development makes the PR wait for it, and the last one to finish starts the review.' }, prs: { type: 'array', items: { type: 'number' } }, message: STR, files: FILES, changeTypes: CHANGE_TYPES_ARG, body_file: { ...STR, description: 'Optional. A markdown file for the PR body: the problem, the result, the test evidence and the limits. The tool adds the closing reference. Keep it outside the worktree, or name it in files.' } }, required: ['issues', 'prs'] },
+  { name: 'finishedHacking', description: 'Hack mode: the human agrees that the hack works. Go on to hardening, where the change is pinned with tests and checked before anything is pushed.', properties: {}, required: [] },
+  { name: 'finishedDevelopment', description: 'Development is complete: commit the named files and go on to review. This runs the dead-code sweep, starts the code review and fires the remember hook. This commit is not pushed until finishedReview.', properties: { issues: { type: 'array', items: { type: 'number' }, description: 'Each issue that this call finishes. An issue on the same PR that is still in development makes the PR wait for it, and the last one to finish starts the review.' }, prs: { type: 'array', items: { type: 'number' } }, message: STR, files: FILES, changeTypes: CHANGE_TYPES_ARG, body_file: { ...STR, description: 'Optional. A markdown file for the PR body: the problem, the result, the test evidence and the limits. The tool adds the closing reference. Keep it outside the worktree, or name it in files.' }, hardening: { ...STR, description: 'Needed for a hack issue: each test that pins the change, the command and the failing line on the base, and its pass on HEAD. It goes on the PR.' } }, required: ['issues', 'prs'] },
   { name: 'finishedReview', description: 'Reviews are complete: run pre-ready-check.sh, push, mark the PR ready and go on to the checks. Each field is the result or "skipped: <reason>". remembered is what the remember hook recorded in the docs and the wiki, or "nothing: <reason>".', properties: { review: STR, deadcode: STR, remembered: STR }, required: ['review', 'deadcode', 'remembered'] },
   { name: 'finishedChecks', description: 'The checks have ended: the tool reads them for HEAD and goes on, or refuses and names them.', properties: {}, required: [] },
   { name: 'finishedSmoke', description: 'The smoke test is complete: post the report, which names the HEAD sha. Or give skipped with the reason.', properties: { report: STR, skipped: STR }, required: [] },
@@ -2196,7 +2401,7 @@ const SPEC_LIST: Spec[] = [
 ]
 
 // Each of these acts on one workflow, so each names its issue.
-const STATE_TOOLS = new Set(['interview', 'setSteering', 'finishedPlan', 'finishedInterview', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', ...SPEC_LIST.filter(s => s.name.startsWith('wait')).map(s => s.name)])
+const STATE_TOOLS = new Set(['interview', 'setSteering', 'finishedPlan', 'finishedInterview', 'finishedHacking', 'checkpoint', 'finishedDevelopment', 'finishedReview', 'finishedChecks', 'finishedSmoke', 'finishedRevision', 'blocked', 'unblocked', 'done', 'followUp', 'addMigration', ...SPEC_LIST.filter(s => s.name.startsWith('wait')).map(s => s.name)])
 // These name an issue only. finishedDevelopment names its issues, and each other state tool takes issue or pr.
 const ISSUE_ONLY = new Set(['finishedPlan', 'waitForPR'])
 const SPECS: Spec[] = SPEC_LIST.map(s => {
@@ -2254,7 +2459,7 @@ export async function workflowListsComponents($: EngineInterface, project: Loade
   if (!(await workflowOwnsChecks($, project))) return false
   const root = (await read($, workflowRoot)) ?? project?.root
   const wf = root ? await loadWorkflow($, root) : undefined
-  return wf?.state === 'planning' || wf?.state === 'developing'
+  return wf?.state === 'planning' || wf?.state === 'developing' || wf?.state === 'hardening'
 }
 
 // A worktree of several records, in a session that owns none: the guards still count, by the first open record.
@@ -2276,48 +2481,45 @@ export async function workflowOwnsChecks($: EngineInterface, project: LoadedConf
 
 // A raw commit runs no check script, and a raw push gets past the review. Each comes through
 // checkpoint while the workflow owns the checks, which is not so in setup, off, done or with checks skipped.
-const RAW_GIT = /(?:^|[;&|(\n]\s*|\s)git((?:\s+-[cC]\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--\S+)*)\s+(?:commit|push)(?=\s|$)/g
-// The text of a commit message can name a git command. The message is no command, so it is taken out first.
-const COMMIT_MESSAGE = /(\s-[a-zA-Z]*m\s*)(?:"(?:[^"\\]|\\.)*"|'[^']*')/g
-// A wait of the agent's own. A single read of the checks is not one, and stays allowed.
-const OWN_WAIT = /wait-for-pr-change\.sh|wait-for-run\.sh|\bgh\s+run\s+watch\b|\bgh\s+pr\s+checks\b[^\n;&|]*--watch/
-// Each worktree of a repository has the same common directory. Undefined when git cannot read the folder.
-async function commonDir($: EngineInterface, cwd: string, dir: string): Promise<string | undefined> {
+// A worktree's own git folder, and the one that each worktree of the repository shares. Undefined when git cannot read the folder.
+async function gitDirs($: EngineInterface, cwd: string, dir: string): Promise<{ own: string; common: string } | undefined> {
   const out = await git(cwd, $, '-C', dir, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir')
-  return out.exitCode === 0 ? out.stdout.trim().split('\n').at(-1) : undefined
+  if (out.exitCode !== 0) return undefined
+  const [own, common] = out.stdout.trim().split('\n')
+  return own && common ? { own, common } : undefined
 }
 
-// The guard is for the workflow's own repository: the wiki and each other repository have no checks here.
-// Only a single -C with a full path can show another repository. Anything else counts as the workflow's.
-// A redirection such as 2>&1 or 2>/dev/null is no argument of git, and its & does not end the command.
-const REDIRECTION = /\s(?:\d*>>?&?|&>>?|<)\s*[^\s;&|)]+/g
-function pushesOnly(tail: string, branch: string): boolean {
-  const words = (tail.replace(REDIRECTION, ' ').split(/[;&|\n)]/)[0] ?? '').trim().split(/\s+/).filter(Boolean)
-  const [remote, ...refs] = words.filter(word => word !== '-u' && word !== '--set-upstream')
-  if (remote !== undefined && remote !== 'origin') return false
-  return refs.every(ref => [branch, 'HEAD', `HEAD:${branch}`, `HEAD:refs/heads/${branch}`, `${branch}:${branch}`].includes(ref))
+async function commonDir($: EngineInterface, cwd: string, dir: string): Promise<string | undefined> {
+  return (await gitDirs($, cwd, dir))?.common
 }
 
-async function reachesWorkflowRepo($: EngineInterface, wf: Workflow, command: string): Promise<boolean> {
-  const own = await commonDir($, wf.root, wf.root)
+// Git's environment wins over its folder.
+// The guard is for the workflow's own worktree, and for the worktrees that followUp started, which have the
+// checkpoint tool. A helper's own worktree and each other repository have no checks here, so they pass.
+// The main checkout of the repository does not pass. A command that does not show its folder for sure counts as the workflow's.
+async function reachesWorkflowRepo($: EngineInterface, wf: Workflow, command: string, agentId: string | undefined): Promise<boolean> {
+  const own = await gitDirs($, wf.root, wf.root)
   if (!own) return true
   const home = await $.env.get('HOME')
   const hotfixes = await read($, hotfixWorktrees)
-  const cleaned = command.replace(COMMIT_MESSAGE, '$1""')
-  for (const match of cleaned.matchAll(RAW_GIT)) {
-    const options = match[1]!
-    const parts = [...options.matchAll(/\s+(-C\s+|--\S+)("[^"]*"|'[^']*'|\S+)?/g)]
-    if (parts.length !== 1 || !parts[0][1].startsWith('-C')) return true
-    const dir = (parts[0][2] ?? '').replace(/^["']|["']$/g, '').replace(/^(~|\$HOME|\$\{HOME\})(?=\/|$)/, home ?? '$&')
-    if (!dir.startsWith('/')) return true
+  const code = gitCode(command)
+  for (const match of code.matchAll(RAW_GIT)) {
+    const dir = gitFolder(code, code.slice(0, match.index), match[1] ?? '', agentId ? await $.session.cwd() : undefined, home)
+    if (!dir) return true
     const hotfixEntry = hotfixes.find(h => h.dir === dir.replace(/\/$/, ''))
     if (hotfixEntry) {
       // Refs are shared between worktrees, so this worktree can reach the held commits of the session's own branch.
-      if (match[0].endsWith('push') && !pushesOnly(cleaned.slice(match.index + match[0].length), hotfixEntry.branch)) return true
+      if (match[2] === 'push' && !pushesOnly(code.slice(match.index + match[0].length), hotfixEntry.branch)) return true
       continue
     }
-    const common = await commonDir($, wf.root, dir)
-    if (!common || common === own) return true
+    const there = await gitDirs($, wf.root, dir)
+    if (!there) return true
+    if (there.common !== own.common) continue
+    if (match[2] === 'push' && pushNames(code.slice(match.index + match[0].length).split(/[;&|)\n]/)[0] ?? '', wf)) return true
+    if (there.own === own.own || there.own === there.common) return true
+    for (const f of wf.followUps) {
+      if (f.worktree && (await gitDirs($, wf.root, f.worktree))?.own === there.own) return true
+    }
   }
   return false
 }
@@ -2339,22 +2541,22 @@ export const workflowGitGuard = (on: Parameters<Register>[0], getProject: () => 
       if (project?.config.workflow === false) return next(e)
       const root = (await read($, workflowRoot)) ?? project?.root
       const wf = root ? await loadWorkflow($, root) : undefined
-      if (!wf || !(await watchesChecks($, wf))) return next(e)
-      // The watchdog does not watch a hotfix PR, so the agent's own wait is the only one.
-      const named = /wait-for-pr-change\.sh\s+(\d+)/.exec(command)?.[1]
-      if (named && (await read($, hotfixPrs)).includes(Number(named))) return next(e)
-      return { deny: `workflow: The workflow watches the checks and merge conflicts of issue #${wf.issue} and prompts you when they end or when one fails, so this wait only spends GitHub calls. If nothing else is open, end your turn. A human can stop this with /flow off.` }
+      if (wf && (await watchesChecks($, wf))) {
+        // The watchdog does not watch a hotfix PR, so the agent's own wait is the only one.
+        const named = /wait-for-pr-change\.sh\s+(\d+)/.exec(command)?.[1]
+        if (!named || !(await read($, hotfixPrs)).includes(Number(named))) return { deny: `workflow: The workflow watches the checks and merge conflicts of issue #${wf.issue} and prompts you when they end or when one fails, so this wait only spends GitHub calls. If nothing else is open, end your turn. A human can stop this with /flow off.` }
+      }
     }
-    if (!command.match(RAW_GIT)) return next(e)
+    if (!gitCode(command).match(RAW_GIT)) return next(e)
     const project = getProject()
     if (!(await workflowOwnsChecks($, project))) return next(e)
     const root = (await read($, workflowRoot)) ?? project?.root
     const wf = root ? await guardedRecord($, root) : undefined
-    if (!wf || !(await reachesWorkflowRepo($, wf, command))) return next(e)
+    if (!wf || !(await reachesWorkflowRepo($, wf, command, (e as { agentId?: string }).agentId))) return next(e)
     const own = wf.followUps.filter(f => f.worktree)
     if ((e as { agentId?: string }).agentId && own.length) return { deny: `workflow: a commit or push here runs no check script. An agent that followUp started calls mcp__ndev__checkpoint with its own issue and worktree: ${own.map(f => `#${f.issue} in ${f.worktree}`).join(', ')}. Any other helper reports to the agent that started it.` }
     const hotfixes = (await read($, hotfixWorktrees)).map(h => `git -C ${h.dir} push origin ${h.branch}`)
-    return { deny: `workflow: issue #${wf.issue} is in the state "${wf.state}", so this commit or push goes through the checkpoint tool, which runs the check scripts. From a hotfix worktree, a push goes only to the branch of the hotfix${hotfixes.length ? `, such as ${hotfixes.join(' or ')}` : ''}. It also ends a merge. With no files it pushes a held commit. A commit in another repository, such as ~/dev-wiki, passes when each git in the command names it with -C and a full path. A human can turn this off with /flow off.` }
+    return { deny: `workflow: issue #${wf.issue} is in the state "${wf.state}", so this commit or push goes through the checkpoint tool, which runs the check scripts. From a hotfix worktree, a push goes only to the branch of the hotfix${hotfixes.length ? `, such as ${hotfixes.join(' or ')}` : ''}. It also ends a merge. ${holdsForReview(wf.state) ? `In this state the last commit is held for the review: ${reviewPushRoutes(wf.state)}` : 'With no files it pushes a held commit.'} A commit in another repository, such as ~/dev-wiki, passes when each git in the command names it with -C and a full path. A human can turn this off with /flow off.` }
   })
 }
 
@@ -2390,8 +2592,9 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
     case 'create': return create($, c)
     case 'hotfix': return hotfix($, c)
     case 'finishedInterview': return finishedInterview($, c)
+    case 'finishedHacking': return finishedHacking($, c)
     case 'comment': return addComment($, c)
-    case 'interview': return leaveInterview($, c)
+    case 'interview': return c.args.answersJson !== undefined ? recordChatAnswers($, c) : leaveInterview($, c)
     case 'setSteering': return setSteering($, c)
     case 'finishedPlan': return finishedPlan($, c)
     case 'checkpoint': return text(c.args, 'worktree') ? followUpCheckpoint($, c) : checkpoint($, c)
@@ -2419,6 +2622,10 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
 // inTurn queue, or /unblock could not get in. A hook's budget of ten seconds runs on through
 // $.clock.sleep and not through a $ call in flight, so the pause is a short process.
 const WAIT_SLICE_S = 2
+// On a busy computer each wake of the loop costs the hook far more of its own time (fcc-proto, load 150 on 10
+// cores: 100-230 ms a slice, so a 1200 s wait stopped after 1-4 checks). The pauses then grow, and the checks
+// space out, so that the time left lasts to the end of the wait. At most this long, so the owner stays live.
+const WAIT_PAUSE_MAX_S = 240
 
 // One pause of a waiting loop. The host aborts a pause that outran its limit, as when the computer
 // slept through it. Its time has passed, so it did its work, and the loop reads the clock again.
@@ -2506,8 +2713,8 @@ function waitSpec(name: string, a: Args): WaitSpec {
 
 const isState = (value: string): value is State => (STATES as readonly string[]).includes(value)
 
-// Where a state stands on the main line. developed comes between FLOW's developing and reviewing, and a side state has no place.
-const LINE: State[] = FLOW.flatMap(state => (state === 'developing' ? [state, 'developed' as const] : [state]))
+// Where a state stands on the main line. developed comes between FLOW's hardening and reviewing, and a side state has no place.
+const LINE: State[] = FLOW.flatMap(state => (state === 'hardening' ? [state, 'developed' as const] : [state]))
 
 // A wait can sleep through a state, and an issue can be past it before the wait starts, so the current state alone would hold a wait that can never end.
 function reachedState(wf: Workflow, wanted: State, startedAt: number): string | undefined {
@@ -2780,22 +2987,42 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
   try {
     let tries = 0
     let last = ''
-    const gaveUp = async () => new Refuse(`${name} gave up on ${spec.what} within its timeout of ${timeoutS} s, after ${tries} attempts. ${tries ? `The last check: ${last}` : 'No check ran, because starting the wait used up the time'}. Repair: call it again, for at most ${WAIT_MAX_S} s more, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
+    const gaveUp = async () => new Refuse(`${name} gave up on ${spec.what} within its timeout of ${timeoutS} s, after ${tries} attempts. ${tries ? `The last check: ${last}` : 'No check ran, because starting the wait used up the time'}.${paceNote()} Repair: call it again, for at most ${WAIT_MAX_S} s more, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
     const pastHalf = async () => name !== 'waitForSeconds' && (tries * 2 > most || ((await $.clock.now()) - startedAt) * 2 > timeoutS * 1000)
+    // The hook's own time that one wake of the loop costs, from the first pause on, sets how far apart the wakes
+    // must be for the time left to last until the deadline. On a calm computer that is less than WAIT_SLICE_S.
+    let wakes = 0
+    let budgetAtFirstPause: number | undefined
+    let longestPauseS = 0
+    let widestGapS = 0
+    const pacedMs = async () => {
+      const left = limits.budget.remainingMs
+      if (!Number.isFinite(left)) return 0
+      budgetAtFirstPause ??= left
+      const perWake = wakes ? (budgetAtFirstPause - left) / wakes : 0
+      if (perWake <= 0) return 0
+      // One wake more is kept back for the answer.
+      const wakesLeft = Math.max(1, (left - WAIT_BUDGET_LOW_MS) / perWake - 1)
+      return Math.min(WAIT_PAUSE_MAX_S * 1000, (deadline - (await $.clock.now())) / wakesLeft)
+    }
+    const paceNote = () => (longestPauseS > WAIT_SLICE_S
+      ? `\nThe computer was busy, so each wake cost the hook more of its own ${HOOK_BUDGET_S} s time budget. To make it last, the wait paused for up to ${Math.round(longestPauseS)} s at a time${widestGapS > spec.period ? ` and checked every ${Math.round(widestGapS)} s, not every ${spec.period} s` : ''}, so /unblock could take that long to end it.`
+      : '')
     for (;;) {
       if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name, deadline))
       if (limits.signal.aborted) throw new Refuse(`Refused: ${name} for ${spec.what} was interrupted.\n${await waitEnds($, c, root, who, id, 'waitInterrupted', deadline)}`)
-      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts, because the host's time budget for one hook is nearly spent. Repair: call it again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
+      if (limits.budget.remainingMs < WAIT_BUDGET_LOW_MS) throw new Refuse(`${name} stopped its wait for ${spec.what} after ${tries} attempts and ${Math.round(((await $.clock.now()) - startedAt) / 1000)} s, because the host's time budget for one hook is nearly spent: ${Math.round(limits.budget.remainingMs)} ms are left of ${limits.budget.ms} ms. That budget is the hook's own running time, and a busy computer spends it sooner.${paceNote()} Repair: call ${name} again.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
       // The time includes the checks, so none starts or runs past checksEndAt. waitForSeconds runs no process: its last check reads the clock.
       if (name !== 'waitForSeconds' && (await $.clock.now()) >= checksEndAt) throw await gaveUp()
       const check = await waitCheck($, name, c.args, root, startedAt, checksEndAt)
       tries += 1
       last = check.detail
       const checkedAt = await $.clock.now()
-      await writeLive($, root, live, l => ({ ...l, wait: { id, tries, checkedAt, nextAt: Math.min(lastCheckAt, checkedAt + spec.period * 1000), detail: shownValue('detail', check.detail), seen: check.seen } }))
+      const gapMs = Math.max(spec.period * 1000, await pacedMs())
+      await writeLive($, root, live, l => ({ ...l, wait: { id, tries, checkedAt, nextAt: Math.min(lastCheckAt, checkedAt + gapMs), detail: shownValue('detail', check.detail), seen: check.seen } }))
       // A human can come during a check, which can last a minute. The answer goes first.
       if (!(await waitGoesOn($, root, who, id))) return told(await waitEnds($, c, root, who, id, name, deadline))
-      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}\n${await waitEnds($, c, root, who, id, 'waitEnded', deadline)}`)
+      if (check.isOver) return told(`The wait for ${spec.what} ended after ${tries} checks. ${check.detail}${paceNote()}\n${await waitEnds($, c, root, who, id, 'waitEnded', deadline)}`)
       if (tries < attempts && (await $.clock.now()) >= lastCheckAt) throw await gaveUp()
       if (tries < attempts && !alert && (await pastHalf())) {
         const raised = await waitAlert($, root, who, id, name, spec.what, tries, most, check.detail, checksEndAt)
@@ -2803,11 +3030,17 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
         problem = raised.problem
       }
       if (tries >= attempts) throw new Refuse(`${name} gave up on ${spec.what} after ${tries} attempts. The last check: ${check.detail}. Repair: call it again with more attempts, or call blocked if only the human can go on.\n${await waitEnds($, c, root, who, id, 'waitGaveUp', deadline)}`)
-      const nextAt = Math.min(lastCheckAt, (await $.clock.now()) + spec.period * 1000)
+      const nextAt = Math.min(lastCheckAt, (await $.clock.now()) + gapMs)
+      widestGapS = Math.max(widestGapS, gapMs / 1000)
       for (let now = await $.clock.now(); now < nextAt; now = await $.clock.now()) {
-        const secs = Math.min(WAIT_SLICE_S, (nextAt - now) / 1000)
+        const secs = Math.min(Math.max(WAIT_SLICE_S * 1000, await pacedMs()), nextAt - now) / 1000
+        longestPauseS = Math.max(longestPauseS, secs)
         await pause($, root, secs)
-        if (limits.signal.aborted || !(await waitGoesOn($, root, who, id))) break
+        wakes += 1
+        // Each slice costs the hook some of its own time, and more on a busy computer. Past its budget the host
+        // drops the hook, and the agent reads only "no tool.call hook answered this call". So the pause ends here,
+        // and the top of the loop gives the answer.
+        if (limits.signal.aborted || limits.budget.remainingMs < WAIT_BUDGET_LOW_MS || !(await waitGoesOn($, root, who, id))) break
       }
     }
   } catch (error) {
@@ -2846,6 +3079,11 @@ async function waitAlert($: EngineInterface, root: string, who: WaitWho, id: str
 
 export async function noteSessionHuman($: EngineInterface, isInteractive: boolean) {
   await update($, sessionHasHuman, () => isInteractive)
+}
+
+// Whether the session started with a person at it, as noteSessionHuman recorded.
+export async function sessionHuman($: EngineInterface): Promise<boolean> {
+  return read($, sessionHasHuman)
 }
 
 // ---- The interview ----
@@ -2988,6 +3226,7 @@ async function closeInterviewFile($: EngineInterface, wf: Workflow, file: Interv
     if (failed.length) throw new Refuse(`Refused: the interview is not on GitHub, so this issue stays in "interviewing". ${failed.join(' ')} Repair: fix the cause, then call this tool again.`)
   }
   file.draft = undefined
+  file.chatRound = undefined
   file.closed = { at: await $.clock.now(), asked: answeredRounds(file) > 0 }
   await writeInterview($, wf.root, file)
 }
@@ -2999,12 +3238,14 @@ async function leaveInterview($: EngineInterface, c: Ctx): Promise<string> {
   const file = await readInterview($, wf.root, wf.issue)
   const problem = exitProblem(file, facts)
   if (problem) throw new Refuse(`Refused: ${problem} Nothing changed.`)
+  const dropped = file.chatRound
   await closeInterviewFile($, wf, file)
   const notes = await endAsking($, wf)
+  if (dropped) notes.push(`The chat round "${dropped.title}" had no answers, and it is dropped. Tell the human that its questions are no longer open.`)
   const asked = !!file.closed?.asked
   await move($, c, wf, 'interview', facts, asked ? 'interview' : 'interview: no questions asked')
   // Light goes straight to development, so the base check runs here. Heavy runs it in finishedPlan.
-  if (wf.state === 'developing' && !isBaseChecked(wf)) notes.push(...(await runBaseCheck($, wf, facts)).notes)
+  if (wf.state === 'developing' && !isBaseChecked(wf, facts.mode)) notes.push(...(await runBaseCheck($, wf, facts)).notes)
   await saveWorkflow($, wf)
   return answer($, wf, facts, [asked ? `The answers are in ${interviewPath(wf.root, wf.issue)}.` : 'No questions asked.', ...notes])
 }
@@ -3012,6 +3253,7 @@ async function leaveInterview($: EngineInterface, c: Ctx): Promise<string> {
 async function setSteering($: EngineInterface, c: Ctx): Promise<string> {
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, c.project, wf)
+  if (facts.mode === 'hack') throw new Refuse(`Refused: ${labelOf(wf)} is in hack mode, which is interactive only, because a human steers each step of the hack. The steering stays interactive. Nothing changed. Repair: if no human can answer, call blocked; the human can set /flow mode light ${wf.issue} and then steering can go to auto.`)
   if (text(c.args, 'steering') !== 'auto') throw new Refuse(`Refused: an agent can only set steering to auto, and it got ${JSON.stringify(c.args.steering)}. Only a human sets it back, with /flow steering interactive. Nothing changed.`)
   const reason = text(c.args, 'reason')
   if (!reason) throw new Refuse('Refused: setSteering needs a reason: why no human can answer in this session. A preference is not a reason. Nothing changed.')
@@ -3037,8 +3279,51 @@ async function setSteering($: EngineInterface, c: Ctx): Promise<string> {
   return answer($, wf, after, notes)
 }
 
+// Orca Chat shows no pane, and a human answers there in the chat. So the round goes back to the agent as Markdown
+// to post, and the file keeps it until interview(answersJson) records the human's answers.
+async function askInChat($: EngineInterface, c: Ctx): Promise<string> {
+  const wf = await current($, c)
+  const facts = await factsFor($, wf.root, c.project, wf)
+  legal(wf, 'interview', facts)
+  if (facts.steering === 'auto') throw new Refuse('Refused: this issue is on auto steering, so no human answers an interview. Nothing changed. Call interview with no arguments to go on.')
+  const file = await readInterview($, wf.root, wf.issue)
+  const parsed = parseRound(c.args.interviewJson, file, facts.mode)
+  if ('problems' in parsed) throw new Refuse(`Refused: this round cannot be asked. Nothing changed.\n${parsed.problems.map(p => `- ${p}`).join('\n')}`)
+  const replaced = file.chatRound
+  await writeInterview($, wf.root, { ...file, chatRound: parsed.round })
+  return [
+    `This session is in Orca Chat, which shows no interview pane. Post the round below to the human in the chat as it is, in Markdown, and end your turn to wait for the reply. Then call interview with answersJson: one entry for each question id, as { "<id>": { "selected": ["<option label>"], "other": "<the human's own words>", "notes": "<notes>" } }. Record only what the human said. If the human leaves a question to you, record your recommendation only when the human accepts it.${replaced ? ` The open round "${replaced.title}" had no answers, and this one replaces it.` : ''}`,
+    '',
+    roundMarkdown(parsed.round, file),
+  ].join('\n')
+}
+
+// interview(answersJson): the human's chat answers to the open chat round go into the file and both comments.
+async function recordChatAnswers($: EngineInterface, c: Ctx): Promise<string> {
+  const wf = await current($, c)
+  const facts = await factsFor($, wf.root, c.project, wf)
+  legal(wf, 'interview', facts)
+  const path = interviewPath(wf.root, wf.issue)
+  const file = await readInterview($, wf.root, wf.issue)
+  const round = file.chatRound
+  if (!round) throw new Refuse(`Refused: #${wf.issue} has no chat round open (no chatRound in ${path}), so answersJson has nothing to answer. Nothing changed. Repair: call interview with interviewJson in an Orca Chat session, post the round to the human, then call interview with answersJson.`)
+  const parsed = parseChatAnswers(c.args.answersJson, round)
+  if ('problems' in parsed) throw new Refuse(`Refused: these answers to the round "${round.title}" cannot be recorded. Nothing changed, and the round stays open.\n${parsed.problems.map(p => `- ${p}`).join('\n')}`)
+  const done = finishRound(round, parsed.answers, 'submitted', await $.clock.now())
+  const next: InterviewFile = { ...file, rounds: [...file.rounds, done], chatRound: undefined, posted: false }
+  try {
+    await writeInterview($, wf.root, next)
+  } catch (error) {
+    throw new Refuse(`Refused: the answers did not reach ${path}: ${error instanceof Error ? error.message : String(error)}. The round stays open. Repair: fix the cause, then call interview again with the same answersJson.`)
+  }
+  const failed = await postInterview($, wf, next)
+  return [JSON.stringify(resultOf(done, round)), ...failed, ...(failed.length ? ['The answers are safe in the file, and the exit call refuses until both comments are posted.'] : []), 'Ask the next round, or call interview with no arguments when no decision is open.', await answer($, wf, facts)].join('\n')
+}
+
 async function askInterview($: EngineInterface, c: Ctx, limits: WaitLimits): Promise<string> {
+  if (c.args.answersJson !== undefined) throw new Refuse('Refused: interview takes interviewJson or answersJson, not both. Nothing changed. Repair: record the answers of the open round with answersJson first, then ask the next round with interviewJson.')
   await whenTurnsFree($)
+  if (await isOrcaChat($)) return inTurn(() => askInChat($, c))
   const at = await $.clock.now()
   const id = `interview-${at}`
   const { root, issue, round, warnings } = await inTurn(async () => {
@@ -3046,7 +3331,7 @@ async function askInterview($: EngineInterface, c: Ctx, limits: WaitLimits): Pro
     const facts = await factsFor($, wf.root, c.project, wf)
     legal(wf, 'interview', facts)
     if (facts.steering === 'auto') throw new Refuse('Refused: this issue is on auto steering, so no human answers an interview. Nothing changed. Call interview with no arguments to go on.')
-    if (!(await read($, sessionHasHuman))) throw new Refuse('Refused: this session has no human to answer, so no pane can show. Nothing changed. Repair: call setSteering with steering "auto" and the reason.')
+    if (!(await read($, sessionHasHuman))) throw new Refuse('Refused: this session has no human to answer: it started as not interactive (claude -p or an SDK session), and it is not Orca Chat (ORCA_STRUCTURED_SESSION and ORCA_CHAT_SCRATCH_DIR are not set), so neither a pane nor the chat can show the round. Nothing changed. Repair: if no human is there, call setSteering with steering "auto" and the reason. If a human does answer in this session, call reportWorkflowBug and say how the session runs.')
     const showing = interviewCall()
     if (showing) throw new Refuse(`Refused: an interview round for #${showing.issue} is already open, and the pane shows one round at a time. Wait for its answers, then call interview again. Nothing changed.`)
     const file = await readInterview($, wf.root, wf.issue)
@@ -3208,6 +3493,27 @@ async function liveEnd($: EngineInterface, logged: { root: string; name: string;
   if (logged) await liveCallEnd($, logged.root, logged.name, tool, logged.at, outcome, result)
 }
 
+// The host drops a hook that throws or that runs past its budget. The failure goes to the handler of the
+// outer tool.call hook, the walk-doc guard, which passes a call of the main agent on. Nothing beneath the plugin
+// answers a workflow tool, so the agent then reads only "no tool.call hook answered this call". The guard asks
+// here first: for a workflow tool, the answer names the tool, the cause and the repair.
+const HOOK_BUDGET_S = 10
+// What each workflow tool call in flight does now, so that the answer for a lost hook can say it. An entry goes
+// when its call answers.
+const callsNow = new Map<string, 'waiting' | 'running'>()
+export function workflowToolLost(tool: string, error: { kind: 'throw' | 'timeout'; message?: string }): { result: string; isError: true } | undefined {
+  const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
+  if (!SPECS.some(s => s.name === name)) return undefined
+  const cause = error.kind === 'timeout'
+    ? `its hook ran past the host's time budget for one hook (${HOOK_BUDGET_S} s of its own running time, which a busy computer spends sooner)${error.message ? `: ${error.message}` : ''}`
+    : `its hook failed outside its own error handling: ${error.message ?? 'no message'}`
+  const now = callsNow.get(name)
+  callsNow.delete(name)
+  const holder = runningNow()
+  const doing = now === 'waiting' ? ` It was waiting for its turn${holder ? ` behind ${holder}` : ''}: workflow tool calls run one at a time.` : now === 'running' ? ` It had its turn and was running${holder ? ` (${holder})` : ''}.` : ''
+  return { result: `workflow ${name} gave no answer, because ${cause}.${doing} The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call status and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
+}
+
 export const workflowTools = (on: Parameters<Register>[0], project: () => LoadedConfig | undefined) => {
   for (const s of SPECS) {
     on('tool.call', { tool: `mcp__ndev__${s.name}` }, async ($, e, next): Promise<{ result: string; isError?: true }> => {
@@ -3222,18 +3528,31 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
         if (!isNumber(args.issue) && (issueOnly || !isNumber(args.pr))) return { result: `Refused: ${s.name} needs ${issueOnly ? 'issue, the number of the issue this call is for' : 'issue or pr, the number that this call is for'}, and it got ${JSON.stringify(issueOnly ? args.issue : { issue: args.issue, pr: args.pr })}. Nothing changed.`, isError: true as const }
       }
       const logged = await liveStart($, s.name, args, project())
+      const name = s.name
+      const isHeld = WAIT_TOOLS.includes(name) || (name === 'interview' && args.interviewJson !== undefined)
+      // A hook's time runs on while it awaits the turn of another call, and a check script there can run for an
+      // hour: the host then dropped the call behind it after ten seconds (fcc-proto #876, checkpoint, twice).
+      // The pauses of whenTurnsFree are processes, which cost the hook nothing. The loop reads the count again,
+      // as another call can take the turn between the last pause and here.
+      if (!isHeld) {
+        callsNow.set(name, 'waiting')
+        while (turnsQueued) await whenTurnsFree($)
+        callsNow.set(name, 'running')
+      }
       try {
-        const name = s.name
-        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : name === 'interview' && args.interviewJson !== undefined ? await askInterview($, { args, project: project(), tool: name }, next) : await inTurn(() => withToolProgress($, name, () => dispatch($, name, { args, project: project(), tool: name })))
+        const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : isHeld ? await askInterview($, { args, project: project(), tool: name }, next) : await inTurn(() => withToolProgress($, name, () => dispatch($, name, { args, project: project(), tool: name })))
         await liveEnd($, logged, s.name, 'ok', result)
+        callsNow.delete(name)
         return { result }
       } catch (error) {
         if (error instanceof Refuse) {
           await liveEnd($, logged, s.name, 'refused', error.message)
+          callsNow.delete(name)
           return { result: error.message, isError: true as const }
         }
         const message = `workflow ${s.name} failed: ${error instanceof Error ? error.message : String(error)}`
         await liveEnd($, logged, s.name, 'failed', message)
+        callsNow.delete(name)
         return { result: message + (await reportFault($, `workflow tool ${s.name}`, message, `the project ${project()?.root ?? 'unknown'}`)), isError: true as const }
       }
     })
