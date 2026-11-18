@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CONFIG_FILE, missingGitHub, REPO, validate } from '../../hooks/config.ts'
@@ -48,6 +48,19 @@ function status(workspace) {
   const githubText = github?.repo ? `GitHub: ${github.repo}.` : 'GitHub repository is unset.'
   const text = [`dev: ${mode} · ${steering}`, githubText, missing.length ? `Run ndev project setup to set ${missing.join(' and ')}.` : undefined].filter(Boolean).join('\n')
   return { root, mode, steering, github, missing, location, text }
+}
+
+function setupStatus(workspace, { prompt = false } = {}) {
+  const result = status(workspace)
+  const path = join(workspace.root, 'NORTH_STAR.md')
+  const file = lstatSync(path, { throwIfNoEntry: false })
+  const exists = file?.isFile() ?? false
+  if (prompt && !exists) {
+    result.text += file
+      ? `\n${path} is not a regular file. Ask the project owner to replace it with a regular file.`
+      : `\n${path} is missing. Ask the project owner to create it with the project's purpose and guiding rules.`
+  }
+  return { ...result, northStar: { path, exists } }
 }
 
 function saveProject(root, key, value) {
@@ -103,7 +116,7 @@ function setup(workspace, argv, repair) {
       atomicJson(path, { ...config, github })
     })
   }
-  return status(workspace)
+  return setupStatus(workspace, { prompt: true })
 }
 
 function initialize({ root }) {
@@ -194,7 +207,7 @@ export function runProject([verb, ...argv]) {
     return { ...result, text: result.file ? `${result.file}\nKeys: ${result.keys.join(', ') || 'none'}` : 'No credentials file. Run ndev project credentials --init.' }
   }
   argsFor(argv, {}, repair)
-  if (verb === 'status') return status(workspace)
+  if (verb === 'status') return setupStatus(workspace)
   if (verb === 'init') return initialize(workspace)
   if (verb === 'learn') return { skill: 'ndev-dev-wiki', text: 'Load the ndev-dev-wiki skill. Review the session for reusable lessons and record each one. Use ndev-remember for project facts.' }
   throw new CliError(2, `Unknown project command ${JSON.stringify(verb)}.`, { repair: 'ndev project --help' })
