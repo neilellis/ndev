@@ -16,9 +16,10 @@ If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `
 ## Rules
 
 - Use sentence case, ordinary verbs and short sentences. Contractions are correct in interface text.
-- Front-load the meaning.
+- Front-load the meaning. Use a specific label ("Delete 3 reports", "Billing"), not an umbrella word ("Manage", "Settings", "Submit").
 - An error or an empty state gives a useful next action.
 - Keep database names, internal codes, raw errors and implementation jargon out of public copy. Operator tools can keep precise technical terms.
+- Format numbers, money, dates and plurals with `Intl` (`NumberFormat`, `DateTimeFormat`, `RelativeTimeFormat`, `PluralRules`) in the user's locale. "1 members", `1284` and a literal `null`, `undefined` or `NaN` are defects.
 - Expand an unfamiliar acronym. Explain a domain term that must stay.
 - When you simplify a claim, keep its thresholds, denominators, uncertainty and coverage. A simpler claim that says more than the data is an overclaim.
 - If the project keeps a corrections ledger, check it when you change the explanation of a published metric.

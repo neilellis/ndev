@@ -8,6 +8,8 @@
 | Claude in Chrome | no | Chrome | no | Not for layout checks. |
 | The ndev Playwright MCP (`browser_resize`, `browser_emulate_media`) | yes | Chromium | no | An interactive look at one state, for example a menu open in dark mode. |
 
+No tool in this table reproduces touch feel: a hover that sticks after a tap, the tap highlight, rubber-band scroll, the software keyboard and 120 Hz stutter. For a change that touch uses heavily (a sheet, a carousel, a gesture, a composer), check once on a real phone: run the dev server on `0.0.0.0`, open the computer's local IP address, and inspect with Safari Develop or `chrome://inspect`. If no phone is available, say so in the report.
+
 ## Playwright
 
 - A device descriptor sets the viewport, device pixel ratio, user agent, `isMobile` and `hasTouch`. The script uses one browser context for each viewport and scheme.

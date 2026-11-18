@@ -2,7 +2,7 @@
 
 > Source: [skills/modern-web-guidance/guides/visual-design/typography.md](https://github.com/GoogleChrome/modern-web-guidance/blob/4dd968349e54ca45a05dd5c818fb035c9054b022/skills/modern-web-guidance/guides/visual-design/typography.md), Apache-2.0. Changed for ndev: cross-references point to the local copies; the ndev note below comes first.
 
-> **ndev:** Use all of this guide. It changes one of our rules: the height tokens set `min-block-size`, not `height`, on controls that hold text (buttons, badges, tabs, chips), so text can grow under WCAG 1.4.12 text spacing. Font sizes are in `rem`. Our line length is 70ch where `responsive-check` checks it.
+> **ndev:** Use all of this guide. It changes one of our rules: the height tokens set `min-block-size`, not `height`, on controls that hold text (buttons, badges, tabs, chips), so text can grow under WCAG 1.4.12 text spacing. Font sizes are in `rem`. Our line length is 70ch where `responsive-check` checks it. Set letter spacing and line height for each step of the type scale: display sizes take negative tracking (about `-0.02em`) and a line height near 1.1; body text takes `0` and 1.5. The brand guide's values win. Use `tabular-nums` on numbers that change in place or line up in columns.
 
 ## Overall best practices
 
