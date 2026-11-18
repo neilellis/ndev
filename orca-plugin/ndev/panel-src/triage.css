@@ -1,0 +1,110 @@
+
+body[data-panel="triage"] {
+  --triage-line: var(--orca-border, light-dark(#dbe1ea, #414b5b));
+  --triage-card: var(--orca-card, Canvas);
+  --triage-blue: light-dark(#2055a4, #9bc1ff);
+  --triage-red: light-dark(#a5293c, #ffa3b0);
+  padding: 16px;
+}
+
+[data-panel="triage"] header h1 { font-size: 19px; letter-spacing: -.02em; }
+[data-panel="triage"] header button { min-height: 30px; }
+[data-panel="triage"] [data-state="queued"] { --state-ink: light-dark(#53617a, #b4bdd0); }
+[data-panel="triage"] [data-state="running"] { --state-ink: var(--triage-blue); }
+[data-panel="triage"] [data-state="done"] { --state-ink: light-dark(#18704d, #86d9ad); }
+[data-panel="triage"] [data-state="blocked"] { --state-ink: light-dark(#85520f, #f0bf69); }
+[data-panel="triage"] [data-state="failed"] { --state-ink: var(--triage-red); }
+
+.triage-summary {
+  margin: 14px 0 12px;
+  padding: 14px 16px;
+  border-color: var(--triage-line);
+  border-radius: 12px;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--triage-blue) 10%, var(--triage-card)), var(--triage-card));
+}
+.triage-summary-heading, .triage-group-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.triage-summary-heading h2 { font-size: 17px; margin: 0; letter-spacing: -.015em; }
+.triage-summary-heading span { overflow-wrap: anywhere; }
+.triage-summary p { margin: 4px 0 10px; }
+.triage-progress {
+  display: flex;
+  gap: 2px;
+  height: 7px;
+  margin: 12px 0 9px;
+  overflow: hidden;
+  border-radius: 5px;
+}
+.triage-progress > span { flex-basis: 0; min-width: 3px; background: var(--state-ink); }
+.triage-legend, .triage-issues, .triage-groups > ol { list-style: none; padding: 0; margin: 0; }
+.triage-legend, .triage-group-actions { display: flex; flex-wrap: wrap; gap: 5px 8px; align-items: center; }
+.triage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-ink, GrayText) 13%, transparent);
+  color: var(--state-ink, CanvasText);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.triage-mark { line-height: 1; }
+.triage-groups { padding: 0; border: 0; margin: 18px 0 12px; }
+.triage-groups > ol { display: grid; gap: 8px; }
+.triage-group {
+  padding: 12px 12px 10px 14px;
+  border: 1px solid var(--triage-line);
+  border-inline-start: 3px solid var(--state-ink, var(--triage-line));
+  border-radius: 9px;
+  background: var(--triage-card);
+  overflow-wrap: anywhere;
+}
+.triage-group:target { outline: 2px solid var(--triage-blue); outline-offset: 1px; }
+.triage-group-heading { margin-bottom: 8px; }
+.triage-group h3 { margin: 0; font-size: 14px; flex: 1 1 180px; }
+.triage-issues { display: grid; gap: 6px; }
+.triage-issues li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  justify-items: start;
+  gap: 2px 8px;
+  overflow-wrap: anywhere;
+}
+.triage-issues li small { grid-column: 2; }
+.triage-link, .triage-group-actions button {
+  display: inline-block;
+  padding: 3px 8px;
+  min-height: 25px;
+  border: 1px solid var(--triage-line);
+  border-radius: 5px;
+  color: var(--triage-blue);
+  font-weight: 600;
+  text-decoration: none;
+}
+.triage-link:hover, .triage-group-actions button:hover { background: color-mix(in srgb, var(--triage-blue) 10%, transparent); }
+.triage-group-actions { margin-top: 10px; }
+.triage-dependencies a { color: var(--triage-blue); }
+.triage-attention { color: var(--triage-red); white-space: pre-wrap; }
+.triage-disclosure, .triage-ungrouped { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--triage-line); border-radius: 8px; }
+.triage-disclosure summary { cursor: pointer; font-weight: 650; }
+.triage-disclosure .triage-issues { margin-top: 9px; }
+.triage-activity { font-size: 12px; overflow-wrap: anywhere; }
+[data-panel="triage"] #content > .actions button { min-height: 30px; font-weight: 600; }
+
+.triage-screen-reader {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

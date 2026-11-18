@@ -119,6 +119,7 @@ async function saveSnapshot(scope, panelId, data, { force = false } = {}) {
   const normalized = JSON.parse(serialized)
   return await withLock(scope, panelId, async () => {
     const previous = await readSnapshot(scope, panelId)
+    if (panelId === 'triage' && previous?.data.triage?.revision > normalized.triage?.revision) return previous
     if (!force && previous && isDeepStrictEqual(previous.data, normalized)) return previous
     const snapshot = {
       ...previous,
@@ -389,7 +390,14 @@ async function refresh(scope, panelId) {
   const title = panelName(panelId)
   const source = Object.hasOwn(LIVE_DATA, panelId) && LIVE_DATA[panelId]
   if (source) return await saveSnapshot(scope, panelId, await source(scope))
-  return await readSnapshot(scope, panelId) ?? await saveSnapshot(scope, panelId, { title, status: 'No run is recorded for this worktree.', sections: [] })
+  const previous = await readSnapshot(scope, panelId)
+  if (panelId === 'triage') {
+    const { readTriagePanel } = await import('./triage.mjs')
+    const data = readTriagePanel(scope.root, scope.env)
+    if (previous?.data.triage?.revision === data.triage.revision) return previous
+    return await saveSnapshot(scope, panelId, data)
+  }
+  return previous ?? await saveSnapshot(scope, panelId, { title, status: 'No run is recorded for this worktree.', sections: [] })
 }
 
 export async function refreshPanel(panelId, options = {}) {
@@ -453,6 +461,7 @@ const CLI_ACTIONS = {
   'walk.stop': { panel: 'walk-doc', fields: {}, args: () => ['walk-doc', 'stop'] },
   'triage.launch': { panel: 'triage', fields: {}, args: () => ['triage', 'launch'] },
   'triage.refresh': { panel: 'triage', fields: {}, args: () => ['triage', 'refresh'] },
+  'triage.workspace': { panel: 'triage', fields: { lead: positive } },
   'triage.confirm': {
     panel: 'triage',
     fields: { issue: positive, revision: positive, decision: choice('close', 'keep') },
@@ -576,6 +585,14 @@ async function bridgeAction(scope, panelId, payload, options) {
     const advertised = current.data.actions?.find(action => action.id === actionId &&
       Object.entries(action.input ?? {}).every(([name, value]) => isDeepStrictEqual(input[name], value)))
     if (!advertised) throw invalid(`Action "${actionId}" is not available for this target. Refresh the panel.`)
+    if (actionId === 'triage.workspace') {
+      const workspace = current.data.triage?.groups.find(group => group.lead === input.lead)?.workspace
+      if (!workspace) throw invalid(`Group #${input.lead} has no workspace. Refresh the panel.`)
+      const selector = workspace.id.startsWith('identity:') || workspace.id.startsWith('id:') ? workspace.id : 'id:' + workspace.id
+      const args = ['worktree', 'activate', '--worktree', selector]
+      if (workspace.host) args.push('--environment', workspace.host)
+      return { result: await orcaCommand(scope, args, options), snapshot: current }
+    }
     const result = await cliAction(scope, actionId, cli, input, options)
     let snapshot = await refresh(scope, panelId)
     if (snapshot.revision === current.revision) snapshot = await saveSnapshot(scope, panelId, snapshot.data, { force: true })

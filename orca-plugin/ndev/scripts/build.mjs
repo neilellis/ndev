@@ -17,9 +17,12 @@ const snapshotTemplate = src('snapshot.html')
 const snapshotStyle = src('snapshot.css')
 const snapshotScript = src('snapshot.js').replaceAll('</script', '<\\/script')
 for (const panel of manifest.contributes.panels.filter(panel => panel.id !== 'files')) {
+  const triage = panel.id === 'triage'
+  const style = triage ? snapshotStyle + src('triage.css') : snapshotStyle
+  const script = triage ? src('triage.js').replaceAll('</script', '<\\/script') + '\n' + snapshotScript : snapshotScript
   const frame = snapshotTemplate.replaceAll('{{id}}', panel.id).replaceAll('{{title}}', panel.title)
     .replace('<title>', `<meta http-equiv="Content-Security-Policy" content="${csp}" />\n    <title>`)
-    .replace('<link rel="stylesheet" href="snapshot.css" />', () => `<style>\n${snapshotStyle}</style>`)
-    .replace('<script type="module" src="snapshot.js"></script>', () => `<script type="module">\n${snapshotScript}</script>`)
+    .replace('<link rel="stylesheet" href="snapshot.css" />', () => `<style>\n${style}</style>`)
+    .replace('<script type="module" src="snapshot.js"></script>', () => `<script type="module">\n${script}</script>`)
   writeFileSync(new URL(`../${panel.entry}`, import.meta.url), frame)
 }
