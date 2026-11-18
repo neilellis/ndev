@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -110,4 +110,31 @@ test('the learning hook reacts to a landed push and leaves an unchanged ref alon
   call('pre-tool-use', 'landed')
   git('push', 'origin', 'HEAD:topic')
   assert.match(JSON.parse(call('post-tool-use', 'landed')).hookSpecificOutput.additionalContext, /origin\/topic.*ndev-dev-wiki/)
+})
+
+test('Codex SessionStart directs the first work turn to the linked GitHub issue', t => {
+  const root = fixture(t)
+  rmSync(join(root, '.neil-dev.issue-17.json'))
+  writeFileSync(join(root, '.neil-dev.json'), '{"github":{"repo":"neilellis/ndev"}}')
+  mkdirSync(join(root, 'dev-wiki'))
+  writeFileSync(join(root, 'dev-wiki/wiki.md'), '')
+  const orca = join(root, 'orca')
+  writeFileSync(orca, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"result":{"references":[{"provider":"github","type":"issue","url":"https://github.com/neilellis/ndev/issues/41"},{"provider":"github","type":"issue","url":"https://github.com/neilellis/ndev/issues/42","selected":true}]}}\'\n', { mode: 0o700 })
+  const start = source => {
+    const result = spawnSync(ndev, ['hook', 'session-start', '--harness', 'codex'], {
+      cwd: root, encoding: 'utf8',
+      env: { HOME: root, PATH: process.env.PATH, ORCA_AGENT_SESSION_ID: 'fixture', ORCA_CLI_COMMAND: orca },
+      input: JSON.stringify({ session_id: 'fixture', cwd: root, source }),
+    })
+    assert.equal(result.status, 0, result.stderr)
+    return JSON.parse(result.stdout)
+  }
+  assert.match(start('startup').hookSpecificOutput.additionalContext, /Before development work, run ndev flow start 42\./)
+  assert.doesNotMatch(start('compact').hookSpecificOutput.additionalContext, /ndev flow start 42/)
+  writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({
+    version: 1, issue: 17, workflow: { issue: 17, root, state: 'developing', branch: 'topic', base: 'main' },
+  }))
+  assert.match(start('startup').hookSpecificOutput.additionalContext, /Before development work, run ndev flow start 17\./)
+  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}')
+  assert.match(start('startup').systemMessage, /Workflow is disabled.*ndev flow on --project/)
 })

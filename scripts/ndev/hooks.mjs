@@ -157,7 +157,7 @@ function rawGitReason(command, workspace, workflow, helperCwd) {
 }
 
 function native(event, harness, result = {}) {
-  const { reason, context } = result
+  const { reason, context, systemMessage } = result
   if (reason) {
     if (harness === 'opencode') return { decision: 'deny', reason }
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }
@@ -165,7 +165,9 @@ function native(event, harness, result = {}) {
   if (!context) return null
   if (harness === 'opencode') return { additionalContext: context }
   const nativeEvent = { 'session-start': 'SessionStart', 'prompt-submit': 'UserPromptSubmit', 'prompt-context': 'UserPromptSubmit', 'pre-tool-use': 'PreToolUse', 'post-tool-use': 'PostToolUse' }[event]
-  return nativeEvent ? { hookSpecificOutput: { hookEventName: nativeEvent, additionalContext: context } } : { systemMessage: context }
+  return nativeEvent
+    ? { ...(systemMessage ? { systemMessage } : {}), hookSpecificOutput: { hookEventName: nativeEvent, additionalContext: context } }
+    : { systemMessage: context }
 }
 
 function guidance({ root, linked }, config, workflow) {
@@ -218,7 +220,51 @@ function qualityNotes(root, config, workflow, call, payload, event) {
   return notes.filter(Boolean)
 }
 
-function sessionStart(root, workspace, id, config, workflow) {
+function linkedIssueGuidance(root, repo) {
+  if (!repo || !process.env.ORCA_AGENT_SESSION_ID) return {}
+  const command = process.env.ORCA_CLI_COMMAND || 'orca'
+  const args = ['reference', 'list', '--worktree', `path:${root}`, '--json']
+  const result = run(command, args, { cwd: root, timeout: 3_000 })
+  const repair = `Run ${command} reference list --worktree path:${root} --json to check the link.`
+  if (result.status !== 0) {
+    return { systemMessage: `Orca issue lookup for ${root} exited ${result.status}: ${result.stderr.trim() || result.stdout.trim() || 'no output'}. ${repair}` }
+  }
+  let references
+  try {
+    const data = JSON.parse(result.stdout)
+    if (!data.ok || !Array.isArray(data.result?.references)) throw new Error('expected a reference list')
+    references = data.result.references
+  } catch (error) {
+    return { systemMessage: `Orca issue lookup for ${root}: ${error.message}. ${repair}` }
+  }
+  const prefix = `https://github.com/${repo.toLowerCase()}/issues/`
+  const issues = references.flatMap(reference => {
+    const url = typeof reference?.url === 'string' ? reference.url.toLowerCase() : ''
+    const number = url.startsWith(prefix) ? url.slice(prefix.length) : ''
+    return reference?.provider === 'github' && reference.type === 'issue' && /^[1-9]\d*$/.test(number)
+      ? [{ number, selected: reference.selected === true }]
+      : []
+  })
+  const selected = issues.filter(issue => issue.selected)
+  const numbers = [...new Set((selected.length ? selected : issues).map(issue => issue.number))]
+  return numbers.length === 1
+    ? { context: `Before development work, run ndev flow start ${numbers[0]}. Follow the next step it returns.` }
+    : {}
+}
+
+function workflowStartup(root, config, workflow, source) {
+  if (source && source !== 'startup') return {}
+  if (config.workflow === false) {
+    return { systemMessage: `Workflow is disabled in ${root}/.neil-dev.json. To enable it, run ndev flow on --project.` }
+  }
+  if (workflow) {
+    return { context: `Before development work, run ndev flow start ${workflow.issue}. Follow the next step it returns.` }
+  }
+  const linked = linkedIssueGuidance(root, config.github?.repo)
+  return { ...linked, context: linked.context ?? 'Ask which issue to work on when the human starts development work.' }
+}
+
+function sessionStart(root, workspace, id) {
   if (workspace.linked) checked('bash', [worktreeScript, 'init', '--worktree', root], { cwd: root, repair: 'Check the worktree and run ndev hook session-start again.' })
   changeSession(root, id, { startedAt: Date.now(), activityAt: Date.now(), endedAt: null })
   const home = process.env.HOME
@@ -230,7 +276,6 @@ function sessionStart(root, workspace, id, config, workflow) {
   if (existsSync(join(root, 'scripts/init-project.sh')) && !existsSync(join(root, '.ndev-inited'))) {
     return 'This worktree needs its project build. Run ndev project init.'
   }
-  return !workflow && config.workflow !== false ? 'Ask which issue to work on when the human starts development work.' : undefined
 }
 
 export async function runHook([event, ...argv], supplied) {
@@ -272,13 +317,19 @@ export async function runHook([event, ...argv], supplied) {
   const prompt = payload.prompt ?? payload.text ?? ''
   const notes = []
   let reason
+  let systemMessage
   if (event === 'pre-tool-use' && call.shell) {
     const helperCwd = payload.agent_id || payload.agentId ? cwd : undefined
     reason = rawGitReason(call.command, workspace, workflow, helperCwd)
   }
   if (event === 'session-start') {
-    const note = sessionStart(root, workspace, id, config, workflow)
+    const note = sessionStart(root, workspace, id)
     if (note) notes.push(note)
+    if (!epic) {
+      const startup = workflowStartup(root, config, workflow, payload.source)
+      if (startup.context) notes.push(startup.context)
+      systemMessage = startup.systemMessage
+    }
     if (id && process.env.ORCA_TERMINAL_HANDLE) {
       const { ensureWatcher } = await import('./watch.mjs')
       ensureWatcher(root, id, process.env.ORCA_TERMINAL_HANDLE)
@@ -323,5 +374,5 @@ export async function runHook([event, ...argv], supplied) {
     if (note) notes.push(note)
   }
   const context = notes.join('\n') || undefined
-  return { event, native: native(event, harness, { reason, context }), reason, context }
+  return { event, native: native(event, harness, { reason, context, systemMessage }), reason, context }
 }
