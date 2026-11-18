@@ -407,3 +407,48 @@ test('followUp this_agent files the issue and adds its Closes line to the PR bod
   assert.match(body, /Closes #12/)
   assert.match(body, /Closes #30/)
 })
+
+test('pushDraft checks the exact reviewed commit and leaves the PR draft and the readiness gate intact', () => {
+  const p = project({ config: { steering: 'auto', checkEnv: ['FAIL_CHECK'] } })
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  ok(p.flow(['finishedInterview']), 'finishedInterview')
+  const remote = git(p.work, 'rev-parse', 'origin/12-add-thing')
+  writeFileSync(join(p.work, 'README.md'), 'reviewable change\n')
+  ok(p.flow(['finishedDevelopment', '--message', 'Update README', '--files', 'README.md']), 'finishedDevelopment')
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  const record = p.record()
+  const args = ['pushDraft', '--sha', sha, '--review', 'Independent review found no blocking issues.']
+  const bin = join(dirname(p.origin), 'git-url-bin')
+  mkdirSync(bin)
+  const nativeGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim()
+  const shim = join(bin, 'git')
+  writeFileSync(shim, `#!/bin/sh
+if [ "\$1 \$2" = "remote get-url" ]; then
+  printf '%s\n' https://github.com/o/r.git
+  exit 0
+fi
+exec "${nativeGit}" "\$@"
+`, { mode: 0o755 })
+  const draft = (args, extra = {}) => p.flow(args, { PATH: bin + ':' + process.env.PATH, ...extra })
+  const setDraft = fields => p.setPr({ draft: true, head: { ref: '12-add-thing', sha: remote, crossRepository: false }, ...fields })
+  setDraft({ draft: false })
+  assert.match(draft(args).all, /open draft PR #7/)
+  setDraft({ head: { ref: '12-add-thing', sha: remote, crossRepository: true } })
+  assert.match(draft(args).all, /open draft PR #7/)
+  setDraft()
+  assert.match(draft(['pushDraft', '--sha', remote, '--review', 'Reviewed the prior commit.']).all, /reviewed commit/)
+  writeFileSync(join(p.work, 'untracked.txt'), 'local work\n')
+  assert.match(draft(args).all, /clean worktree/)
+  git(p.work, 'clean', '-f', '--', 'untracked.txt')
+  assert.match(draft(args, { FAIL_CHECK: 'pre-push-check.sh' }).all, /pre-push-check\.sh exited 1/)
+  assert.equal(git(p.work, 'rev-parse', 'origin/12-add-thing'), remote)
+  const ready = p.flow(['finishedReview', '--review', 'Reviewed.', '--deadcode', 'none', '--remembered', 'nothing: a test'], { FAIL_CHECK: 'pre-ready-check.sh' })
+  assert.equal(ready.status, 1)
+  assert.match(ready.all, /pre-ready-check\.sh exited 1/)
+  const ran = draft(args, { FAIL_CHECK: 'pre-ready-check.sh' })
+  ok(ran, 'pushDraft')
+  assert.match(ran.stdout, /State: reviewing/)
+  assert.equal(git(p.work, 'rev-parse', 'origin/12-add-thing'), sha)
+  assert.deepEqual(p.record(), record)
+  assert.doesNotMatch(p.read('FAKE_GH_LOG'), /^pr-ready/m)
+})
