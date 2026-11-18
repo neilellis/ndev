@@ -40,6 +40,19 @@ test('install all plans active harness paths, a single shared release, and leave
   assert.equal(existsSync(env.CLAUDE_CONFIG_DIR), false)
 })
 
+test('the Codex profile installs the CLI and triage skills for dollar invocation', t => {
+  const { home, env, install } = fixture(t)
+  const skills = ['ndev-cli', 'ndev-triage']
+  const files = install('codex', '--dry-run').files
+  for (const name of skills) assert.ok(files.includes(join(home, '.agents/skills', name, 'SKILL.md')), `Missing $${name} from the install plan`)
+  install('codex')
+  for (const name of skills) {
+    assert.match(readFileSync(join(home, '.agents/skills', name, 'SKILL.md'), 'utf8'), new RegExp(`^name: ${name}$`, 'm'))
+  }
+  if (process.env.NDEV_TEST_NATIVE_HARNESSES === '1') {
+    const result = spawnSync('codex', ['debug', 'prompt-input', '$ndev-triage --open'], { cwd: home, env, encoding: 'utf8', timeout: 15_000 })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    for (const name of skills) assert.ok(result.stdout.includes(`- ${name}: `), `Codex did not discover $${name}`)
 test('installed SDLC skills link to the shared North Star guide and require full reads at epic gates', t => {
   const { home, env, prefix, install } = fixture(t)
   install('all')

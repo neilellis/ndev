@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -56,6 +56,40 @@ test('project setup preserves existing settings and returns persisted values', t
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), {
     branding: { name: 'Example', site: 'https://example.com' }, github: { repo: 'owner/example', board: null },
   })
+})
+
+test('project setup asks the owner for a root North Star when the file is missing', t => {
+  const root = realpathSync(worktree(t))
+  const path = join(root, 'NORTH_STAR.md')
+  const nested = join(root, 'src')
+  mkdirSync(nested)
+  writeFileSync(join(nested, 'NORTH_STAR.md'), '# Notes for this package\n')
+
+  const before = run(['project', 'status', '--json'], nested)
+  assert.equal(before.status, 0, before.stderr)
+  const { result: status } = JSON.parse(before.stdout)
+  assert.deepEqual(status.northStar, { path, exists: false })
+  assert.doesNotMatch(status.text, /ask the project owner/i)
+  const setup = run(['project', 'setup', '--no-repo'], nested)
+  assert.equal(setup.status, 0, setup.stderr)
+  assert.ok(setup.stdout.includes(path))
+  assert.match(setup.stdout, /ask the project owner to create/i)
+  assert.equal(existsSync(path), false)
+
+  mkdirSync(path)
+  const occupied = run(['project', 'setup'], nested)
+  assert.equal(occupied.status, 0, occupied.stderr)
+  assert.match(occupied.stdout, /ask the project owner to replace it with a regular file/i)
+  rmSync(path, { recursive: true })
+
+  const original = '# North Star\n\nKeep decisions traceable to evidence.\n'
+  writeFileSync(path, original)
+  const after = run(['project', 'setup', '--json'], nested)
+  assert.equal(after.status, 0, after.stderr)
+  const { result } = JSON.parse(after.stdout)
+  assert.deepEqual(result.northStar, { path, exists: true })
+  assert.doesNotMatch(result.text, /ask the project owner to create|Keep decisions traceable/)
+  assert.equal(readFileSync(path, 'utf8'), original)
 })
 
 test('setting auto in hack mode fails before saving the configuration', t => {
