@@ -5,6 +5,8 @@ description: "Choose the type of a narrated video (how-to, explainer or marketin
 
 # Video types
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before choosing which product claims or rules the video teaches.
+
 Every video is one of three types. Each type has its own purpose, register, length, look and review. Choose the type before you write a word, and record it as `"type"` in `video.config.json`. Never mix two types in one video. If a request seems to need two, make two videos.
 
 | | How-to | Explainer | Marketing |

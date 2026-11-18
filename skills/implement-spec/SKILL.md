@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Implement a spec
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Check the spec against the applicable sections before you implement changes to project rules or architecture.
+
 Treat the spec as a dependency graph of tickets. Read the spec, the tickets and the relevant repository guidance first. Point to those files; do not copy long explanations.
 
 1. Find the frontier (tickets with no open blocker) and the dependencies. Explore code or external documentation only as needed. Save large findings outside the repository.

@@ -5,6 +5,8 @@ description: "Get an independent second opinion on a design, plan or piece of co
 
 # Second opinion
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Give the reviewer the applicable section names when the decision affects project architecture or rules.
+
 **Another agent judges the question from the code, and the quota decides who that agent is.** A second opinion from another model family finds what the author's own review does not. It costs quota that the agents also need for their own work, so the helper reads each provider's quota from Orca first. It picks the agent and the model from that, or it asks nobody.
 
 The helper is `scripts/second-opinion.mjs` in this skill's folder. Call it with `node`. It uses only the `orca` CLI.

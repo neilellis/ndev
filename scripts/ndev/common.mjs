@@ -111,6 +111,6 @@ export function atomicJson(file, data) {
   }
 }
 
-export function stateRoot() {
-  return join(resolve(process.env.XDG_STATE_HOME || join(process.env.HOME || homedir(), '.local/state')), 'ndev')
+export function stateRoot(env = process.env) {
+  return join(resolve(env.XDG_STATE_HOME || join(env.HOME || homedir(), '.local/state')), 'ndev')
 }

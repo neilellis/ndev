@@ -28,11 +28,12 @@ function hook(root, harness, toolName, command) {
   return result.stdout.trim() ? JSON.parse(result.stdout) : null
 }
 
-function linkedFixture(t, ignore = '') {
+function linkedFixture(t, ignore = '', separateGitDir = false) {
   const home = mkdtempSync(join(tmpdir(), 'ndev-hook-start-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const main = join(home, 'project')
   const linked = join(home, 'linked')
+  const metadata = join(home, 'metadata')
   const env = { HOME: home, PATH: process.env.PATH }
   const git = (cwd, ...args) => spawnSync('git', args, { cwd, env, encoding: 'utf8' })
   const checkedGit = (cwd, ...args) => {
@@ -41,7 +42,7 @@ function linkedFixture(t, ignore = '') {
     return result.stdout.trim()
   }
   mkdirSync(main)
-  checkedGit(main, 'init', '-q')
+  checkedGit(main, 'init', '-q', ...(separateGitDir ? ['--separate-git-dir', metadata] : []))
   writeFileSync(join(main, '.gitignore'), ignore)
   checkedGit(main, 'add', '.gitignore')
   checkedGit(main, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'fixture')
@@ -49,7 +50,7 @@ function linkedFixture(t, ignore = '') {
   const start = (harness = 'codex') => spawnSync(ndev, ['hook', 'session-start', '--harness', harness], {
     cwd: main, env, encoding: 'utf8', input: JSON.stringify({ session_id: 'fixture', cwd: linked }),
   })
-  return { main, linked, git, checkedGit, start }
+  return { main, linked, metadata, git, checkedGit, start }
 }
 
 test('session start copies project files and creates a separate worktree record', t => {
@@ -118,6 +119,16 @@ test('session start creates defaults for a linked worktree of a bare repository'
   assert.equal(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')).mode, 'light')
   assert.equal(statSync(join(linked, '.neil-dev.env')).mode & 0o777, 0o600)
   assert.ok(existsSync(join(linked, '.neil-dev.worktree.json')))
+})
+
+test('session start does not copy project files from a separate Git metadata directory', t => {
+  const { linked, metadata, start } = linkedFixture(t, '', true)
+  writeFileSync(join(metadata, '.neil-dev.json'), '{"mode":"heavy"}')
+  writeFileSync(join(metadata, '.neil-dev.env'), 'FIXTURE_WRONG_SOURCE=metadata\n')
+  const result = start()
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')).mode, 'light')
+  assert.doesNotMatch(readFileSync(join(linked, '.neil-dev.env'), 'utf8'), /FIXTURE_WRONG_SOURCE/)
 })
 
 test('session start does not replace a dangling worktree record symlink', t => {
@@ -212,4 +223,31 @@ test('the learning hook reacts to a landed push and leaves an unchanged ref alon
   call('pre-tool-use', 'landed')
   git('push', 'origin', 'HEAD:topic')
   assert.match(JSON.parse(call('post-tool-use', 'landed')).hookSpecificOutput.additionalContext, /origin\/topic.*ndev-dev-wiki/)
+})
+
+test('Codex SessionStart directs the first work turn to the linked GitHub issue', t => {
+  const root = fixture(t)
+  rmSync(join(root, '.neil-dev.issue-17.json'))
+  writeFileSync(join(root, '.neil-dev.json'), '{"github":{"repo":"neilellis/ndev"}}')
+  mkdirSync(join(root, 'dev-wiki'))
+  writeFileSync(join(root, 'dev-wiki/wiki.md'), '')
+  const orca = join(root, 'orca')
+  writeFileSync(orca, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"result":{"references":[{"provider":"github","type":"issue","url":"https://github.com/neilellis/ndev/issues/41"},{"provider":"github","type":"issue","url":"https://github.com/neilellis/ndev/issues/42","selected":true}]}}\'\n', { mode: 0o700 })
+  const start = source => {
+    const result = spawnSync(ndev, ['hook', 'session-start', '--harness', 'codex'], {
+      cwd: root, encoding: 'utf8',
+      env: { HOME: root, PATH: process.env.PATH, ORCA_AGENT_SESSION_ID: 'fixture', ORCA_CLI_COMMAND: orca },
+      input: JSON.stringify({ session_id: 'fixture', cwd: root, source }),
+    })
+    assert.equal(result.status, 0, result.stderr)
+    return JSON.parse(result.stdout)
+  }
+  assert.match(start('startup').hookSpecificOutput.additionalContext, /Before development work, run ndev flow start 42\./)
+  assert.doesNotMatch(start('compact').hookSpecificOutput.additionalContext, /ndev flow start 42/)
+  writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({
+    version: 1, issue: 17, workflow: { issue: 17, root, state: 'developing', branch: 'topic', base: 'main' },
+  }))
+  assert.match(start('startup').hookSpecificOutput.additionalContext, /Before development work, run ndev flow start 17\./)
+  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}')
+  assert.match(start('startup').systemMessage, /Workflow is disabled.*ndev flow on --project/)
 })

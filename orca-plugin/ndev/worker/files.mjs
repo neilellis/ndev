@@ -36,12 +36,14 @@ async function findMainCheckout(dir) {
   const first = list.split('\0\0', 1)[0].split('\0')
   if (first.includes('bare')) return null
   if (!first[0].startsWith('worktree ')) throw new NdevError('git', `git worktree list did not identify the main checkout in ${dir}.`)
-  return first[0].slice('worktree '.length)
+  const main = first[0].slice('worktree '.length)
+  const common = await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir'])
+  return await exists(main) && !await sameFolder(main, common) ? main : null
 }
 
 export async function mainCheckout(dir) {
   const main = await findMainCheckout(dir)
-  if (main === null) throw new NdevError('no_main', `${dir} belongs to a bare repository with no main checkout.`)
+  if (main === null) throw new NdevError('no_main', `Git could not identify a checked-out main worktree for ${dir}.`)
   return main
 }
 

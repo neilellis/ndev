@@ -156,6 +156,8 @@ At session start in a linked worktree, copy missing project settings and credent
 | `session-end` | Stop walk resources, apply the worktree stop policy, and release ownership. | `SessionEnd` | `SessionEnd` | Session close or delete when available, with watcher exit handling for a closed terminal |
 | `compact` | Mark skill context for reload. | `PostCompact` or `SessionStart` with source `compact` | `PostCompact` | Session compaction events |
 
+On a new session, instruct the agent to start the saved workflow before development. When the worktree has no workflow record, use a selected GitHub issue or the only issue Orca links from the configured repository. Ask which issue to use when the choice is ambiguous. A project that disables the workflow receives a startup notice with the command to enable it.
+
 Install one entry per native event for ndev so its checks run in order. Claude Code uses `~/.claude/settings.json`. Codex uses `~/.codex/hooks.json`, or the active Codex config directory, with hook trust set by the user. opencode uses a server plugin that calls the binary with an argument vector and sends JSON on stdin. Test the v2 event names and denial path with the installed v2 host. For Claude Code and Codex, the pre-tool adapter uses each host's denial JSON. Both hosts use a single native prompt hook to run both prompt handlers in order. Preserve other hook entries.
 
 Native interfaces

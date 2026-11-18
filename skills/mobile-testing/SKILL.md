@@ -5,6 +5,8 @@ description: "Capture and inspect the web app with Playwright mobile device emul
 
 # Mobile screenshots
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the project sets rules for the layout or behaviour you review.
+
 Run `scripts/mobile-shots.mjs` in this skill's folder with an explicit target. Then open the PNGs that it prints.
 
 ```bash

@@ -5,6 +5,8 @@ description: "Review schema changes, foreign keys, deletion behaviour and databa
 
 # Database integrity
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check for schema changes that affect domain rules or data guarantees.
+
 The migrations are the schema authority. Read the project's CLAUDE.md and its wiki for the migration tool and any schema notes before you change the schema.
 
 ## The workflow

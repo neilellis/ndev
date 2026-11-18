@@ -56,7 +56,9 @@ function fixture(t) {
 
 test('epic phases persist GitHub blocker links and a stacked implementer gets the open PR head', t => {
   const { root, home, answers, save, call, ok } = fixture(t)
-  assert.equal(ok('start', '40', '--run', 'run-1', '--repo-id', 'local').epic.state, 'framing')
+  const started = ok('start', '40', '--run', 'run-1', '--repo-id', 'local')
+  assert.equal(started.epic.state, 'framing')
+  assert.match(started.nextGuidance ?? '', /ndev-epic-plan.*read all of NORTH_STAR\.md/)
   assert.equal(call('phase', '40', 'framing', '--evidence', 'interviewed').status, 2)
   ok('phase', '40', 'framing', '--aim', 'ship the work', '--evidence', 'interviewed')
   writeFileSync(join(root, 'spec.md'), 'the spec')
@@ -122,14 +124,21 @@ test('remote routing selects a repository on the requested server and keeps the 
   writeFileSync(file,JSON.stringify(e))
   const impl = ok('brief','40','41','implementer')
   assert.ok(impl.argv.includes('host-1') && impl.argv.includes('id:away'))
+  assert.match(readFileSync(impl.path, 'utf8'), /Read only the cited sections of `NORTH_STAR\.md`/)
   assert.equal(call('issue','40','41','implementing','--worker','w','--workspace','local::/repo').status,2)
   ok('issue','40','41','implementing','--worker','w','--workspace','away::/repo')
   ok('start','40','--local')
   const review = ok('brief','40','41','reviewer','--pr','61')
   assert.ok(review.argv.includes('id:away::/repo') && review.argv.includes('host-1'))
   assert.ok(review.argv.includes('test-model'))
+  assert.match(readFileSync(review.path, 'utf8'), /Read only the cited sections of `NORTH_STAR\.md`/)
   assert.equal(ok('goto','done','--issue','40').nextAction.confirmation,'terminal')
   assert.equal(ok('status','40').epic.state,'coordinating')
+  e.state = 'closing'
+  writeFileSync(file, JSON.stringify(e))
+  const status = ok('status', '40')
+  assert.match(status.nextGuidance ?? '', /ndev-epic-coordinate.*read all of NORTH_STAR\.md again from the default branch/)
+  assert.deepEqual(status.nextAction.slice(0, 5), ['ndev', 'epic', 'phase', '40', 'closing'])
 })
 
 test('filing by title recovers an uncertain GitHub create and keeps a single epic issue', t => {

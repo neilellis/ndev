@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Project health review
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Read the applicable sections before scoring project health. Cite evidence for their application in the assessment.
+
 Take the ratings file from the arguments, else from the project's CLAUDE.md. A usual place is `docs/analysis/ratings.md`.
 
 ## The workflow

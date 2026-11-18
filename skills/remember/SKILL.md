@@ -5,6 +5,8 @@ description: "Record durable, non-obvious lessons from the session in the correc
 
 # Record what was learned
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you record a statement about how the project must work.
+
 Harvest only facts that change future behaviour. A cosmetic change or an unproven hypothesis is not a lesson.
 
 For each fact, ask what it replaced. If a documented claim became false, run `forget` for it.

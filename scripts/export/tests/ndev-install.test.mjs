@@ -40,6 +40,48 @@ test('install all plans active harness paths, a single shared release, and leave
   assert.equal(existsSync(env.CLAUDE_CONFIG_DIR), false)
 })
 
+test('the Codex profile installs the CLI and triage skills for dollar invocation', t => {
+  const { home, env, install } = fixture(t)
+  const skills = ['ndev-cli', 'ndev-triage']
+  const files = install('codex', '--dry-run').files
+  for (const name of skills) assert.ok(files.includes(join(home, '.agents/skills', name, 'SKILL.md')), `Missing $${name} from the install plan`)
+  install('codex')
+  for (const name of skills) {
+    assert.match(readFileSync(join(home, '.agents/skills', name, 'SKILL.md'), 'utf8'), new RegExp(`^name: ${name}$`, 'm'))
+  }
+  if (process.env.NDEV_TEST_NATIVE_HARNESSES === '1') {
+    const result = spawnSync('codex', ['debug', 'prompt-input', '$ndev-triage --open'], { cwd: home, env, encoding: 'utf8', timeout: 15_000 })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    for (const name of skills) assert.ok(result.stdout.includes(`- ${name}: `), `Codex did not discover $${name}`)
+test('installed SDLC skills link to the shared North Star guide and require full reads at epic gates', t => {
+  const { home, env, prefix, install } = fixture(t)
+  install('all')
+  const guide = join(prefix, 'share/ndev/kb/north-star.md')
+  for (const skills of [join(env.CLAUDE_CONFIG_DIR, 'skills'), join(home, '.agents/skills'), join(env.XDG_CONFIG_HOME, 'opencode/skills')]) {
+    const body = name => readFileSync(join(skills, `ndev-${name}/SKILL.md`), 'utf8')
+    for (const name of ['epic-plan', 'epic-coordinate', 'work-light', 'work-heavy', 'work-heavy-auto', 'implement-spec', 'interview', 'testing', 'adversarial-review', 'docs', 'publish']) {
+      assert.ok(body(name).includes(guide), `ndev-${name} in ${skills} must link to ${guide}`)
+      assert.match(body(name), /NORTH_STAR\.md/)
+    }
+    assert.match(body('epic-plan'), /read all of `NORTH_STAR\.md` before you frame/i)
+    assert.match(body('epic-coordinate'), /read all of `NORTH_STAR\.md` again from the default branch/i)
+    assert.match(body('epic-coordinate'), /approval before you run `ndev epic phase`/)
+    assert.doesNotMatch(body('work-light'), /read all of `NORTH_STAR\.md`/i)
+  }
+  const policy = readFileSync(guide, 'utf8')
+  assert.match(policy, /keep the phase open/i)
+  assert.match(policy, /read only the sections that apply/i)
+  for (const reviewer of [
+    join(env.CLAUDE_CONFIG_DIR, 'agents/ndev-diff-reviewer.md'),
+    join(env.CODEX_HOME, 'agents/ndev-diff-reviewer.toml'),
+    join(env.XDG_CONFIG_HOME, 'opencode/agents/ndev-diff-reviewer.md'),
+  ]) {
+    const instructions = readFileSync(reviewer, 'utf8')
+    assert.ok(instructions.includes(guide), `${reviewer} must link to ${guide}`)
+    assert.match(instructions, /check the axis that the brief assigns/i)
+  }
+})
+
 test('sequential installs preserve foreign hook entries, install the CLI and repair missing owned files', t => {
   const { env, home, prefix, run, install } = fixture(t)
   const config = join(env.CLAUDE_CONFIG_DIR, 'settings.json')
