@@ -53,6 +53,9 @@ test('the Codex profile installs the CLI and triage skills for dollar invocation
     const result = spawnSync('codex', ['debug', 'prompt-input', '$ndev-triage --open'], { cwd: home, env, encoding: 'utf8', timeout: 15_000 })
     assert.equal(result.status, 0, result.stderr || result.stdout)
     for (const name of skills) assert.ok(result.stdout.includes(`- ${name}: `), `Codex did not discover $${name}`)
+  }
+})
+
 test('installed SDLC skills link to the shared North Star guide and require full reads at epic gates', t => {
   const { home, env, prefix, install } = fixture(t)
   install('all')
