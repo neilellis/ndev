@@ -142,6 +142,8 @@ An epic stores GitHub sub-issues and their blocker links. A child can start from
 
 The hook process reads the event on stdin. Each event runs through shared CLI handlers. The adapter takes the harness event and gives the same worktree, session, tool, command, and result fields to the handler when those fields exist. The adapter writes the wire format that its harness expects. A decision to deny a tool call must reach the harness before it runs the call. A denial tells the agent to use `ndev flow checkpoint` when that repair applies.
 
+At session start in a linked worktree, copy missing project settings and credentials from the main checkout that Git reports. If no source file exists, write the default settings and an empty credentials file. Set the new credentials file to mode 600. Create a record with no resources for this worktree. Keep existing files. Add local Git excludes for the credentials and worktree record if Git does not already ignore them.
+
 | Event | Work | Claude Code | Codex | opencode |
 | --- | --- | --- | --- | --- |
 | `session-start` | Bind the session, give setup and issue guidance, and start or reuse the watcher. | `SessionStart` | `SessionStart` | `session.created` and first context hook on resume |
