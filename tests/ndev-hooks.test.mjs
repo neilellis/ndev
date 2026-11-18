@@ -294,3 +294,80 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
   const oldLargeRecord = { ...claude, content: 'a'.repeat(1024 * 1024) }
   assert.equal(call('claude', 'draft', [oldLargeRecord], '1', new Date(stamp(51))).decision, 'block')
 })
+
+test('chat guard replies launch Orca with the saved prompt from the same chat', t => {
+  const root = fixture(t)
+  const state = join(root, 'state')
+  mkdirSync(join(state, 'ndev'), { recursive: true })
+  writeFileSync(join(state, 'ndev', 'chat-guard'), '')
+  const transcript = join(root, 'conversation.jsonl')
+  const timestamp = new Date(Date.now() - 51 * 60_000).toISOString()
+  writeFileSync(transcript, [
+    { timestamp, type: 'response_item', payload: { type: 'message', role: 'assistant',
+      content: [{ type: 'output_text', text: 'The tests passed. The release still needs checking.' }] } },
+    { timestamp, type: 'event_msg', payload: { type: 'token_count',
+      info: { last_token_usage: { total_tokens: 50 } } } },
+  ].map(row => JSON.stringify(row)).join('\n'))
+  const orca = join(root, 'orca')
+  const launches = join(root, 'launches.jsonl')
+  writeFileSync(orca, `#!/bin/sh
+exec node --input-type=module -e '
+import { appendFileSync } from "node:fs"
+appendFileSync(process.env.LAUNCHES, JSON.stringify(process.argv.slice(1)) + "\\n")
+const result = { outcome: { kind: "structured" }, prompt: { outcome: "journaled" } }
+if (process.env.LAUNCH_RESULT === "missing") delete result.prompt
+if (process.env.LAUNCH_RESULT === "replay") {
+  console.log(JSON.stringify({ ok: false, error: { code: "agent_session_operation_unknown", data: { operationId: "replay-id" } } }))
+  process.exit(1)
+}
+if (process.env.LAUNCH_RESULT === "incompatible") {
+  console.log(JSON.stringify({ ok: false, error: { code: "incompatible_runtime" } }))
+  process.exit(1)
+}
+console.log(JSON.stringify({ ok: true, result }))
+' -- "$@"
+`, { mode: 0o700 })
+  const call = (session, prompt, outcome = '') => {
+    const result = spawnSync(ndev, ['hook', 'prompt-submit', '--harness', 'codex'], {
+      cwd: root, encoding: 'utf8',
+      env: { HOME: root, PATH: process.env.PATH, XDG_STATE_HOME: state, ORCA_STRUCTURED_SESSION: '1',
+        ORCA_CLI_COMMAND: orca, LAUNCHES: launches, LAUNCH_RESULT: outcome },
+      input: JSON.stringify({ cwd: root, session_id: session, transcript_path: transcript, prompt }),
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const reply = JSON.parse(result.stdout)
+    assert.equal(reply.decision, 'block')
+    return reply.reason
+  }
+  const draft = 'Check the release.\nKeep "$HOME" literal.'
+  assert.match(call('one', draft), /hand-off.*new-session/)
+  assert.match(call('other', 'new-session'), /no saved message/i)
+  assert.equal(existsSync(launches), false)
+  assert.match(call('one', 'new-session'), /sent.*new Orca chat/i)
+  assert.match(call('one', 'new-session'), /no saved message/i)
+  const second = 'Review the results.'
+  call('two', second)
+  assert.match(call('two', 'hand-off'), /sent.*new Orca chat/i)
+  call('three', 'Keep this if delivery is uncertain.')
+  assert.match(call('three', 'new-session', 'missing'), /could not confirm/i)
+  assert.match(call('three', 'new-session'), /check Orca/i)
+  assert.match(call('three', 'Replacement draft'), /check Orca/i)
+  call('four', 'Replay this draft.')
+  assert.match(call('four', 'new-session', 'replay'), /reply new-session again/i)
+  assert.match(call('four', 'hand-off'), /reply new-session again/i)
+  assert.match(call('four', 'new-session'), /sent.*new Orca chat/i)
+  call('five', 'Keep this draft after refusal.')
+  assert.match(call('five', 'new-session', 'incompatible'), /incompatible_runtime.*update Orca/i)
+  assert.match(call('five', 'new-session'), /sent.*new Orca chat/i)
+  const [fresh, handoff, uncertain, replay, retried, incompatible, afterRefusal] = readFileSync(launches, 'utf8').trim().split('\n').map(JSON.parse)
+  assert.deepEqual(fresh, [
+    'agent', 'launch', '--agent', 'codex', '--surface', 'chat', '--worktree', `path:${root}`,
+    '--focus', '--json', `--prompt=${draft}`,
+  ])
+  assert.deepEqual(handoff.slice(0, -1), fresh.slice(0, -1))
+  assert.match(handoff.at(-1), /The tests passed\. The release still needs checking\.[\s\S]*Review the results\.$/)
+  assert.equal(uncertain.at(-1), '--prompt=Keep this if delivery is uncertain.')
+  assert.deepEqual(retried, [...replay, '--retry-launch', 'replay-id'])
+  assert.deepEqual(afterRefusal, incompatible)
+  assert.equal(readFileSync(launches, 'utf8').trim().split('\n').length, 7)
+})
