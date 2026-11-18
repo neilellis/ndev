@@ -111,6 +111,11 @@ const groups = {
     usage: '<harness|all> [--prefix <dir>] [--dry-run] [--panels] [--approve <fingerprint>]',
     commands: { verify: '<harness|all> [--prefix <dir>]' },
   },
+  'chat-guard': {
+    description: 'Protect native Orca chats from expensive idle sends',
+    module: './ndev/chat-guard.mjs', run: 'runChatGuard',
+    commands: { on: '', off: '', status: '' },
+  },
   hook: {
     description: 'Handle a native harness event',
     module: './ndev/hooks.mjs', run: 'runHook',
