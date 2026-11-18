@@ -18,7 +18,7 @@ import { runningNow, withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
-import { shellCode } from '../shell-code'
+import { gitCode, gitFolder, OWN_WAIT, pushNames, pushesOnly, RAW_GIT } from './git-guard.ts'
 import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
 import { ATTEMPT_LIMIT, BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
@@ -2481,12 +2481,6 @@ export async function workflowOwnsChecks($: EngineInterface, project: LoadedConf
 
 // A raw commit runs no check script, and a raw push gets past the review. Each comes through
 // checkpoint while the workflow owns the checks, which is not so in setup, off, done or with checks skipped.
-const RAW_GIT = /(?:^|[;&|(\n`'"\s/\\])git((?:\s+-[cC]\s+(?:"[^"]*"|'[^']*'|(?:\\\s|\S)+)|\s+--(?:git-dir|work-tree|namespace|exec-path|config-env|super-prefix)\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--\S+|\s+-[a-zA-Z])*)\s+(commit|push)(?=[\s;&|)`'"<>]|$)/g
-// A commit message from a heredoc, which the shell code has already emptied. It runs nothing.
-const HEREDOC_TEXT = /"\$\(cat <<-?\s*(?:'[^']*'|"[^"]*"|\\?[\w.-]+)\s*\)"/g
-const gitCode = (command: string) => shellCode(command).replace(HEREDOC_TEXT, '""')
-// A wait of the agent's own. A single read of the checks is not one, and stays allowed.
-const OWN_WAIT = /wait-for-pr-change\.sh|wait-for-run\.sh|\bgh\s+run\s+watch\b|\bgh\s+pr\s+checks\b[^\n;&|]*--watch/
 // A worktree's own git folder, and the one that each worktree of the repository shares. Undefined when git cannot read the folder.
 async function gitDirs($: EngineInterface, cwd: string, dir: string): Promise<{ own: string; common: string } | undefined> {
   const out = await git(cwd, $, '-C', dir, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir')
@@ -2500,65 +2494,6 @@ async function commonDir($: EngineInterface, cwd: string, dir: string): Promise<
 }
 
 // Git's environment wins over its folder.
-const GIT_ENV = /\bGIT_(?:DIR|WORK_TREE|COMMON_DIR)\b/
-// A word that can change the folder, or run the next words in another shell.
-const FOLDER_WORDS = /(?:^|[\s;&|(`'"])(?:cd|pushd|popd|chdir|exec|eval|source|if|for|while|until|case|then|do)(?=[\s;&|)`'"]|$)|(?:^|[\s;&|(`'"/])(?:ba|z|da|k)?sh(?=[\s;&|)`'"]|$)|(?:^|[;&|(\n`]\s*)\.\s|(?:^|[\s;&|(])env\s[^;&|\n]*(?:-C\b|--chdir\b)/
-// A part of an && chain that does one plain thing: no other command, group or redirection.
-const NOT_PLAIN = /[;|&()\n{}`<>]|\$\(/
-const ONLY_CD = /^\s*cd\s+("[^"]*"|'[^']*'|(?:\\\s|\S)+)\s*$/
-// Quoted words are text, unless a substitution in them runs.
-const unquoted = (code: string) => code.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, w => (w[0] === '"' && /\$\(|`/.test(w) ? w : '""'))
-// The parts of an && chain. An && in quotes is text.
-const chain = (code: string) => {
-  const parts = ['']
-  for (const [word] of code.matchAll(/"(?:[^"\\]|\\.)*"|'[^']*'|&&|[^"'&]+|[\s\S]/g)) {
-    if (word === '&&') parts.push('')
-    else parts[parts.length - 1] += word
-  }
-  return parts
-}
-
-const plainPath = (word: string, home: string | undefined) =>
-  word.replace(/^["']|["']$/g, '').replace(/\\(\s)/g, '$1').replace(/^(~|\$HOME|\$\{HOME\})(?=\/|$)/, home ?? '$&')
-
-// The folder that this git runs in. Undefined when the command does not show it for sure, which counts as the workflow's.
-// A cd counts only in a plain && chain up to the git, because only there the git runs if the cd works, and in that folder.
-async function gitFolder($: EngineInterface, code: string, before: string, options: string, agentId: string | undefined, home: string | undefined): Promise<string | undefined> {
-  if (GIT_ENV.test(code)) return undefined
-  const parts = [...options.matchAll(/\s+(-C\s+|--\S+)("[^"]*"|'[^']*'|(?:\\\s|\S)+)?/g)]
-  if (parts.length > 1 || parts[0]?.[1]?.startsWith('--')) return undefined
-  const named = parts[0] ? plainPath(parts[0][2] ?? '', home) : undefined
-  if (named !== undefined) return named.startsWith('/') ? named : undefined
-  // In a hook, a subagent reads its own folder. The main agent's folder shows nothing, as it can be the main checkout.
-  if (!FOLDER_WORDS.test(unquoted(code))) return agentId ? $.session.cwd() : undefined
-  let folder: string | undefined
-  for (const part of chain(before)) {
-    const plain = unquoted(part)
-    if (NOT_PLAIN.test(plain)) return undefined
-    const cd = part.match(ONLY_CD)
-    if (cd) folder = plainPath(cd[1] ?? '', home)
-    else if (FOLDER_WORDS.test(plain)) return undefined
-  }
-  if (folder !== undefined) return folder.startsWith('/') ? folder : undefined
-  return agentId ? $.session.cwd() : undefined
-}
-
-// The push can reach the branch of the workflow or the base, from any worktree: it names one, it names all, or the name is not shown.
-const pushNames = (words: string, wf: Workflow) => {
-  if (/(?:^|\s)--(?:all|mirror|branches)(?=\s|$)|[*$`]/.test(words)) return true
-  const names = words.split(/[\s:'"+]+/).map(w => w.replace(/^(?:refs\/)?heads\//, ''))
-  return names.includes(wf.branch) || names.includes(wf.base)
-}
-
-// A redirection such as 2>&1 or 2>/dev/null is no argument of git, and its & does not end the command.
-const REDIRECTION = /\s(?:\d*>>?&?|&>>?|<)\s*[^\s;&|)]+/g
-function pushesOnly(tail: string, branch: string): boolean {
-  const words = (tail.replace(REDIRECTION, ' ').split(/[;&|\n)]/)[0] ?? '').trim().split(/\s+/).filter(Boolean)
-  const [remote, ...refs] = words.filter(word => word !== '-u' && word !== '--set-upstream')
-  if (remote !== undefined && remote !== 'origin') return false
-  return refs.every(ref => [branch, 'HEAD', `HEAD:${branch}`, `HEAD:refs/heads/${branch}`, `${branch}:${branch}`].includes(ref))
-}
-
 // The guard is for the workflow's own worktree, and for the worktrees that followUp started, which have the
 // checkpoint tool. A helper's own worktree and each other repository have no checks here, so they pass.
 // The main checkout of the repository does not pass. A command that does not show its folder for sure counts as the workflow's.
@@ -2569,7 +2504,7 @@ async function reachesWorkflowRepo($: EngineInterface, wf: Workflow, command: st
   const hotfixes = await read($, hotfixWorktrees)
   const code = gitCode(command)
   for (const match of code.matchAll(RAW_GIT)) {
-    const dir = await gitFolder($, code, code.slice(0, match.index), match[1] ?? '', agentId, home)
+    const dir = gitFolder(code, code.slice(0, match.index), match[1] ?? '', agentId ? await $.session.cwd() : undefined, home)
     if (!dir) return true
     const hotfixEntry = hotfixes.find(h => h.dir === dir.replace(/\/$/, ''))
     if (hotfixEntry) {

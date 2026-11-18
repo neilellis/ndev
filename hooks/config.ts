@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Mode, Steering } from '../types'
-import { SECRET_NAME } from './workflow/secrets'
+import { SECRET_NAME } from './workflow/secrets.ts'
 
 // All per-project settings of the plugin live in one checked-in file at the project root.
 export const CONFIG_FILE = '.neil-dev.json'
@@ -73,7 +73,7 @@ export async function projectRoot($: EngineInterface, cwd: string) {
   return ran.exitCode === 0 && ran.stdout.trim() !== '' ? ran.stdout.trim() : cwd
 }
 
-const validate = (raw: unknown): string | undefined => {
+export const validate = (raw: unknown): string | undefined => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'the file must hold a JSON object'
   const value = raw as Record<string, unknown>
   const unknown = Object.keys(value).filter(k => !(KEYS as readonly string[]).includes(k))

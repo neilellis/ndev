@@ -1,0 +1,11 @@
+{
+  "name": "orca-ndev",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "build": "node scripts/build.mjs"
+  }
+}

@@ -1,8 +1,8 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { confirm, contextOf, exec, type Fip, fingerprint, type Fw, hc, hcJson, type HostOptions, type Img, isOurs, isRemoteName, type Labels, labelsShown, NAME_RULE, said, scanKey, shown, type Srv, SSH_PORT, steps, USER } from './remote-host'
-import { type HostRecord, projectKey, readStore, storePath, writeStore } from './remote-store'
+import { confirm, contextOf, exec, type Fip, fingerprint, type Fw, hc, hcJson, type HostOptions, type Img, isOurs, isRemoteName, type Labels, labelsShown, NAME_RULE, said, scanKey, shown, type Srv, SSH_PORT, steps, USER } from './remote-host.ts'
+import { type HostRecord, projectKey, readStore, storePath, writeStore } from './remote-store.ts'
 
 // /dev remote import <hetzner-id>: hands a server that was made by hand to /dev remote. It adds the labels
 // managed-by=ndev and ndev-name=<name> to the server, to each firewall applied to it and to its floating IPv4, and
