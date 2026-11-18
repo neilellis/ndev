@@ -43,6 +43,19 @@ ndev pane view
 
 Use `ndev <group> --help` to see the commands in a group. Use `ndev <group> <command> --help` to see its flags.
 
+### Run from Codex chat
+
+Install the Codex profile with `ndev install codex` and start a fresh session. Type one of these commands in the chat.
+
+```text
+$ndev-cli flow status
+$ndev-cli pane view --open
+$ndev-triage --open
+$ndev-triage launch
+```
+
+`$ndev-cli` runs an ndev command and returns its result. `$ndev-triage` loads and groups issues, then shows a plan. Use `$ndev-triage launch` when you want Orca to start the workers.
+
 ## Source and tests
 
 - The [ndev 2.0 spec](docs/ndev-2/spec.md) defines the CLI, hooks, installer, and panel protocol.
