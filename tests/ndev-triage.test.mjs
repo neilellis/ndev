@@ -55,11 +55,24 @@ esac`)
   fi
   exit 0
 fi; if [ -n "$OWN_20" ]; then echo '{"ok":true,"result":{"worktrees":[{"id":"w20","projectId":"github:test/project","linkedItems":[{"type":"issue","number":20}]}]}}'; exit 0; fi; echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+'terminal create') echo '{"ok":true,"result":{"terminal":{"handle":"term-triage"}}}' ;;
 'worktree activate') echo '{"ok":true,"result":{"activated":true}}' ;;
-'orchestration run-create') echo '{"ok":true,"result":{"run":{"id":"run-15"}}}' ;;
-'orchestration task-create') echo '{"ok":true,"result":{"task":{"id":"task-15"}}}' ;;
+'orchestration run-create'|'orchestration task-create'|'orchestration worker-start')
+  if [ -n "$REJECT_SENDER" ] || { [ -n "$REQUIRE_SENDER" ] && [ "$ORCA_TERMINAL_HANDLE" != "term-triage" ]; }; then
+    echo '{"ok":false,"error":{"code":"no_active_sender_terminal","message":"No active sender"}}'
+    exit 1
+  fi
+  echo "sender $2 $ORCA_TERMINAL_HANDLE" >> "$FAKE_LOG"
+  case " $* " in
+    *' --full '*) ;;
+    *) echo '{"ok":true,"result":{"runId":"run-15","taskId":"task-15"}}'; exit 0 ;;
+  esac
+  case "$2" in
+run-create) echo '{"ok":true,"result":{"run":{"id":"run-15"}}}' ;;
+task-create) echo '{"ok":true,"result":{"task":{"id":"task-15"}}}' ;;
+worker-start) if [ -n "$START_UNKNOWN" ]; then echo '{"ok":false,"error":{"message":"lost response","data":{"orchestrationRequestId":"req-15"}}}'; exit 1; fi; if [ -n "$START_FAIL" ]; then echo '{"ok":true,"result":{"state":"failed","failedStage":"agent","lastError":"agent refused","dispatchId":"d-failed"}}'; exit 1; fi; echo '{"ok":true,"result":{"state":"ready","dispatchId":"d-15","effects":[{"kind":"worktree","id":"w-15"}]}}' ;;
+  esac ;;
 'orchestration request-show') echo '{"ok":true,"result":{"state":"completed"}}' ;;
-'orchestration worker-start') if [ -n "$START_UNKNOWN" ]; then echo '{"ok":false,"error":{"message":"lost response","data":{"requestId":"req-15"}}}'; exit 1; fi; if [ -n "$START_FAIL" ]; then echo '{"ok":true,"result":{"state":"failed","failedStage":"agent","lastError":"agent refused","dispatchId":"d-failed"}}'; exit 1; fi; echo '{"ok":true,"result":{"state":"ready","dispatchId":"d-15","effects":[{"kind":"worktree","id":"w-15"}]}}' ;;
 'orchestration task-list') echo '{"ok":true,"result":{"tasks":[]}}' ;;
 'orchestration worker-show') if [ -n "$NATIVE_RECEIPT" ]; then
   echo '{"ok":true,"result":{"dispatch":{"status":"failed"},"worker":{"worktreeId":"w-15","state":"stopped","lastError":"Worker process stopped"}}}'
@@ -78,11 +91,11 @@ esac`)
     return { ...data, status: result.status }
   }
   function ok(args, extra) { const value = cli(args, extra); assert.equal(value.status, 0, JSON.stringify(value.error)); return value.result }
-  function pane(...args) {
-    const result = run(bin, ['pane', 'bridge', ...args, '--json'])
+  function paneWithEnv(extra, ...args) {
+    const result = run(bin, ['pane', 'bridge', ...args, '--json'], extra)
     return { ...JSON.parse(result.stdout), status: result.status }
   }
-  return { root, env, input, cli, ok, pane, log: () => readFileSync(log, 'utf8'), json: value => writeFileSync(input, JSON.stringify(value)) }
+  return { root, env, input, cli, ok, pane: (...args) => paneWithEnv({}, ...args), paneWithEnv, log: () => readFileSync(log, 'utf8'), json: value => writeFileSync(input, JSON.stringify(value)) }
 }
 const group = (issues, extra = {}) => ({ issues, title: 'Fix group ' + issues[0], complexity: 'complex', hint: 'Exercise the public CLI', ...extra })
 test('triage dry-run validates a full partition, then starts one worker at a time in dependency order', t => {
@@ -328,4 +341,58 @@ test('triage displays failure and unanswered questions from native Orca receipts
   assert.deepEqual(p.pane('snapshot', 'triage').result.data.sections.find(section => section.title === 'Questions')?.rows, [
     { label: 'worker', value: 'Which fixture should I use?' },
   ])
+})
+
+test('Launch from the Orca pane gets its own sender and reuses it for subsequent workers', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open', '--batch', '1'])
+  p.json({ groups: [group([12]), group([15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  const snapshot = p.pane('snapshot', 'triage').result
+  const launch = p.paneWithEnv({ REQUIRE_SENDER: '1', ORCA_TERMINAL_HANDLE: '' }, 'action', 'triage', JSON.stringify({
+    worktreeId: snapshot.worktreeId, expectedRevision: snapshot.revision, actionId: 'triage.launch', input: {},
+  }))
+  assert.equal(launch.ok, true, JSON.stringify(launch.error))
+  assert.equal(launch.result.snapshot.data.triage.phase, 'running')
+  p.ok(['refresh'], { REQUIRE_SENDER: '1', ORCA_TERMINAL_HANDLE: '' })
+  assert.equal(p.log().match(/orca terminal create/g)?.length, 1)
+  assert.equal(p.log().match(/sender worker-start term-triage/g)?.length, 2)
+  assert.match(p.log(), /sender run-create term-triage/)
+  assert.match(p.log(), /sender task-create term-triage/)
+})
+
+test('an explicit missing-sender rejection leaves the plan ready to retry', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  const rejected = p.cli(['launch'], { REJECT_SENDER: '1' })
+  assert.equal(rejected.ok, false)
+  assert.match(rejected.error.message, /No active sender/)
+  assert.match(rejected.error.repair, /ndev triage launch/)
+  const status = p.ok(['status'])
+  assert.equal(status.phase, 'planned')
+  assert.equal(status.runId, undefined)
+  assert.deepEqual(status.groups[0].issues, [12, 15, 20])
+  assert.equal(status.operations?.run, undefined)
+  assert.equal(p.ok(['launch']).phase, 'running')
+})
+
+test('opening the pane restores a plan wedged by the old missing-sender error', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  const key = createHash('sha256').update(p.root).digest('hex')
+  const file = join(p.env.XDG_STATE_HOME, 'ndev', 'triage', key + '.json')
+  const state = JSON.parse(readFileSync(file, 'utf8'))
+  state.phase = 'running'
+  state.operations = { run: { receipt: { ok: false, error: { code: 'no_active_sender_terminal' } } } }
+  state.revision++
+  writeFileSync(file, JSON.stringify(state))
+  const snapshot = p.pane('snapshot', 'triage').result
+  assert.equal(snapshot.data.triage.phase, 'planned')
+  assert.ok(snapshot.data.actions.some(action => action.id === 'triage.launch'))
+  assert.equal(p.ok(['status']).operations.run, undefined)
+  assert.doesNotMatch(p.log(), /run-create|worker-start/)
 })

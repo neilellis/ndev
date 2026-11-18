@@ -515,9 +515,9 @@ function assertCurrent(snapshot, scope, expected) {
 async function cliAction(scope, actionId, action, input, options) {
   const args = action.args(input)
   if (options.ndev) return options.ndev(args, { cwd: scope.root, input: action.stdin?.(input) })
-  if (actionId === 'triage.confirm') {
+  if (['triage.confirm', 'triage.launch'].includes(actionId)) {
     const { runTriage } = await import('./triage.mjs')
-    return await runTriage(args.slice(1), { cwd: scope.root, json: false })
+    return await runTriage(args.slice(1), { cwd: scope.root, json: false, panelLaunch: actionId === 'triage.launch' })
   }
   const cli = process.argv[1]
   if (!cli) throw paneError(`No ndev executable is available to run ${actionId}.`, { repair: 'Run the installed ndev CLI.' })

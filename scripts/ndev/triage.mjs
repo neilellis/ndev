@@ -16,11 +16,11 @@ function read(root, env) {
   if (state.schemaVersion !== 1 || !Number.isSafeInteger(state.revision) || !Array.isArray(state.issues) || !Array.isArray(state.groups)) throw new CliError(1, `Invalid triage state in ${file}.`)
   return state
 }
-function save(root, state) {
-  const file = location(root)
+function save(root, state, env) {
+  const file = location(root, env)
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
   locked(file, () => {
-    const seen = read(root).revision
+    const seen = read(root, env).revision
     if (state.revision !== seen) throw new CliError(5, `Triage revision ${state.revision} is stale. Current revision is ${seen}.`, { repair: 'ndev triage status' })
     state.revision++
     atomicJson(file, state)
@@ -58,8 +58,14 @@ function gh(root, repo, argv, env = {}) {
 }
 const lines = output => output.split('\n').filter(Boolean).map(line => parsed('GitHub', line))
 const localHost = () => process.env.ORCA_ENVIRONMENT || (process.env.ORCA_PAIRING_CODE ? '' : 'local')
-function orca(root, host, argv, timeout = 180_000) {
-  const result = run(process.env.ORCA_CLI_COMMAND || 'orca', [...argv, ...(host ? ['--environment', host] : []), '--json'], { cwd: root, timeout })
+function orca(root, host, argv, sender) {
+  const env = { ...process.env }
+  if (sender) {
+    env.ORCA_TERMINAL_HANDLE = sender
+    delete env.ORCA_AGENT_SESSION_ID
+    delete env.ORCA_PANE_KEY
+  }
+  const result = run(env.ORCA_CLI_COMMAND || 'orca', [...argv, ...(host ? ['--environment', host] : []), '--json'], { cwd: root, env, timeout: 180_000 })
   let envelope
   try { envelope = JSON.parse(result.stdout) } catch {}
   if (result.status || envelope?.ok !== true || !envelope.result) {
@@ -284,7 +290,9 @@ function triageData(state) {
 }
 
 export function readTriagePanel(root, env) {
-  return triageData(read(root, env))
+  const state = read(root, env)
+  restoreRejectedRun(root, state, env)
+  return triageData(state)
 }
 
 async function view(root, state) {
@@ -306,27 +314,34 @@ function workerSpec(state, group) {
     `Record Model: ${group.model} and Effort: ${group.effort} in the PR. Report the PR and check status to the coordinator. Ask through orca orchestration ask when a human decision is needed.`,
   ].filter(Boolean).join('\n')
 }
+function recordedRequest(operation) {
+  const receipt = operation?.receipt
+  return operation?.requestId || receipt?.error?.data?.orchestrationRequestId || receipt?.error?.data?.requestId ||
+    receipt?.requestId || receipt?.result?.requestId
+}
+
 function mutation(root, state, key, argv, readReceipt, workerHost) {
   state.operations ||= {}
   const prior = state.operations[key]
   if (prior?.complete) return prior.result
-  if (prior && !prior.requestId) throw failure(`Run ${state.runId || '(pending)'}: the outcome of ${key} is uncertain. Inspect the earlier Orca receipt before retrying.`, prior)
-  if (prior?.requestId) {
-    const receipt = orca(root, state.host, ['orchestration', 'request-show', '--request', prior.requestId, ...(workerHost ? ['--on', workerHost] : []), '--full'])
-    if ((receipt.status ?? receipt.state) === 'absent') throw failure(`Orca lost receipt ${prior.requestId} for ${key}. Inspect the Run before retrying.`, receipt)
-    argv.push('--retry-request', prior.requestId)
+  const retryId = recordedRequest(prior)
+  if (prior && !retryId) throw failure(`Run ${state.runId || '(pending)'}: the outcome of ${key} is uncertain. Inspect the earlier Orca receipt before retrying.`, prior)
+  if (retryId) {
+    const receipt = orca(root, state.host, ['orchestration', 'request-show', '--request', retryId, ...(workerHost ? ['--on', workerHost] : []), '--full'], state.coordinatorTerminal)
+    if ((receipt.status ?? receipt.state) === 'absent') throw failure(`Orca lost receipt ${retryId} for ${key}. Inspect the Run before retrying.`, receipt)
+    argv.push('--retry-request', retryId)
   }
   state.operations[key] = { ...prior, startedAt: Date.now() }
   save(root, state)
   try {
-    const receipt = orca(root, state.host, argv)
+    const receipt = orca(root, state.host, argv, state.coordinatorTerminal)
     const result = readReceipt(receipt)
     state.operations[key] = { complete: true, result }
     save(root, state)
     return result
   } catch (error) {
     const receipt = error.details?.receipt
-    const requestId = receipt?.error?.data?.requestId || receipt?.requestId || receipt?.result?.requestId
+    const requestId = recordedRequest({ receipt })
     state.operations[key] = { ...state.operations[key], requestId, error: error.message, receipt }
     save(root, state)
     throw error
@@ -337,7 +352,20 @@ function launchedWorktree(receipt) {
     receipt?.worktree?.id ?? receipt?.worktreeId ?? receipt?.worktree
 }
 
-function launch(root, state, retry = false) {
+function restoreRejectedRun(root, state, env) {
+  const run = state.operations?.run
+  if (state.runId || !['planned', 'running'].includes(state.phase) || run?.complete || recordedRequest(run) ||
+    run?.receipt?.error?.code !== 'no_active_sender_terminal') return false
+  delete state.operations.run
+  delete state.coordinatorTerminal
+  state.phase = 'planned'
+  note(state, 'Orca rejected launch before creating a run. The saved plan is ready to launch again.')
+  save(root, state, env)
+  return true
+}
+
+function launch(root, state, retry = false, panelLaunch = false) {
+  restoreRejectedRun(root, state)
   const failed = state.groups.filter(group => group.status === 'failed')
   expectPhase(state, retry && failed.length ? ['planned', 'running', 'done'] : ['planned', 'running'])
   if (retry && failed.length) {
@@ -345,7 +373,7 @@ function launch(root, state, retry = false) {
     for (const group of failed) {
       const key = 'worker-' + group.lead
       const operation = state.operations?.[key]
-      if (!operation?.requestId && group.dispatchId) {
+      if (!recordedRequest(operation) && group.dispatchId) {
         group.previousDispatch = group.dispatchId
         delete group.dispatchId
         delete state.operations[key]
@@ -356,16 +384,27 @@ function launch(root, state, retry = false) {
     }
     save(root, state)
   }
-  if (state.phase === 'planned') {
-    state.phase = 'running'
-    note(state, 'Launching the saved plan.')
+  if (panelLaunch && !state.runId && !state.coordinatorTerminal && !state.operations?.run) {
+    const { terminal } = orca(root, state.host, ['terminal', 'create', '--worktree', 'path:' + root, '--title', 'Triage coordinator'])
+    if (!nonempty(terminal?.handle)) throw failure('Orca created no usable terminal handle for the Triage coordinator.', { terminal })
+    state.coordinatorTerminal = terminal.handle
     save(root, state)
   }
   if (!state.runId) {
-    state.runId = mutation(root, state, 'run', ['orchestration', 'run-create', '--objective', `Triage ${state.repo}: ${state.groups.length} groups`], r => {
-      if (!nonempty(r.run?.id)) throw failure('Orca returned no Run ID.', r)
-      return r.run.id
-    })
+    try {
+      state.runId = mutation(root, state, 'run', ['orchestration', 'run-create', '--objective', `Triage ${state.repo}: ${state.groups.length} groups`, '--full'], r => {
+        if (!nonempty(r.run?.id)) throw failure('Orca returned no Run ID.', r)
+        return r.run.id
+      })
+    } catch (error) {
+      if (!restoreRejectedRun(root, state)) throw error
+      throw new CliError(1, error.message, {
+        details: error.details,
+        repair: 'Retry Launch plan in Orca, or run ndev triage launch from a live Orca terminal in this workspace.',
+      })
+    }
+    state.phase = 'running'
+    note(state, `Created Orca Run ${state.runId} for the saved plan.`)
     save(root, state)
   }
   if (state.options['bugs-only']) {
@@ -382,7 +421,7 @@ function launch(root, state, retry = false) {
   for (const g of state.groups) {
     if (g.taskId) continue
     const deps = g.after.map(n => state.groups.find(x => x.lead === n).taskId)
-    const cmd = ['orchestration', 'task-create', '--run', state.runId, '--task-title', g.title, '--display-name', 'issue-' + g.lead, '--spec', workerSpec(state, g), ...(deps.length ? ['--deps', JSON.stringify(deps)] : [])]
+    const cmd = ['orchestration', 'task-create', '--run', state.runId, '--task-title', g.title, '--display-name', 'issue-' + g.lead, '--spec', workerSpec(state, g), ...(deps.length ? ['--deps', JSON.stringify(deps)] : []), '--full']
     g.taskId = mutation(root, state, 'task-' + g.lead, cmd, r => {
       if (!nonempty(r.task?.id)) throw failure(`Orca returned no task ID for #${g.lead}.`, r)
       return r.task.id
@@ -598,8 +637,8 @@ export async function runTriage([command = 'status', ...argv], options = {}) {
   }
   argsFor(argv, {}, 'ndev triage ' + command + ' --help')
   switch (command) {
-    case 'status': break
-    case 'launch': return updateAndView(root, state, () => launch(root, state, true))
+    case 'status': restoreRejectedRun(root, state); break
+    case 'launch': return updateAndView(root, state, () => launch(root, state, true, options.panelLaunch))
     case 'refresh': return updateAndView(root, state, () => refresh(root, state))
     case 'reset': {
       const next = { ...idle(), revision: state.revision }
@@ -613,7 +652,7 @@ export async function runTriage([command = 'status', ...argv], options = {}) {
 }
 export async function tickTriage(root) {
   const state = read(root)
-  if (state.phase !== 'running' || Date.now() < (state.nextCheckAt || 0)) return null
+  if (state.phase !== 'running' || !state.runId || Date.now() < (state.nextCheckAt || 0)) return null
   state.nextCheckAt = Date.now() + pollMs
   save(root, state)
   return updateAndView(root, state, () => refresh(root, state))
