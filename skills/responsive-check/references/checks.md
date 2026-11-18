@@ -19,13 +19,13 @@ The popular responsive design skills say "44 px minimum". That is the AAA and Ap
 ### Overflow
 
 - Find the deepest element in the finding. The usual causes: a fixed `width` in px, a long word or URL, a `min-width` on a flex child, a wide image, a table, a code block, or `100vw` (it includes the scroll bar).
-- Use `max-width: 100%` on media. Use `min-width: 0` on flex and grid children so that they can shrink. Use `overflow-wrap: anywhere` for long strings.
+- Use `max-width: 100%` on media. Use `min-width: 0` on flex and grid children so that they can shrink (`minmax(0, 1fr)` in a grid track), and `flex-shrink: 0` on avatars, icons and trailing actions so that they keep their size. Use `overflow-wrap: anywhere` for long strings, not `word-break: break-all`.
 - A wide table or a code block gets its own scroll container: `overflow-x: auto`. The page does not scroll sideways.
 - Do not hide the overflow on `body`. That clips content and hides the defect.
 
 ### Viewport meta
 
-Use `<meta name="viewport" content="width=device-width, initial-scale=1">`. Do not block zoom. Add `viewport-fit=cover` only when the page also uses safe-area insets.
+Use `<meta name="viewport" content="width=device-width, initial-scale=1">`. Do not block zoom. Add `viewport-fit=cover` only when the page also uses safe-area insets. On a page with an input pinned to the bottom (a chat composer), add `interactive-widget=resizes-content`, so that the Android keyboard shrinks the layout and `dvh` follows it. iOS Safari ignores it: check that page on a phone with the keyboard open.
 
 ### Touch targets
 
@@ -47,9 +47,15 @@ Set `font-size: 16px` (or `1rem`) on inputs, selects and text areas at phone wid
 
 On a page with `viewport-fit=cover`, pad fixed bars with `env(safe-area-inset-bottom)` and the other insets, so that the notch and the home indicator do not cover controls.
 
-### Hover-only menus
+### Hover on touch
 
-A menu that opens on `:hover` only does not open on touch. Open it on click, and show the hover style only under `@media (hover: hover) and (pointer: fine)`.
+A tap leaves `:hover` applied until the next tap, so a hover style sticks. Put each `:hover` style under `@media (hover: hover) and (pointer: fine)`, and give touch an `:active` style. The Tailwind v4 `hover:` variant already has a hover media query: check hand-written CSS. A menu that opens on `:hover` only does not open on touch: open it on click too.
+
+### Touch feel
+
+- Remove the tap highlight (`-webkit-tap-highlight-color: transparent`) only when each control has its own `:active` style.
+- Set `touch-action: manipulation` on buttons and links, so that quick repeat taps (a stepper) do not zoom the page.
+- In an app shell with its own scroll areas, set `overscroll-behavior: contain` on each one (a list, a sheet, a sidebar), so the scroll does not move the page behind. Do not block scroll with a `touchmove` listener that calls `preventDefault()`.
 
 ### Type and spacing
 
@@ -69,4 +75,5 @@ A menu that opens on `:hover` only does not open on touch. Open it on click, and
 
 - Dark mode is a design of its own, not inverted colours. Each text and border token gets a dark value that passes 4.5:1 on the dark surface.
 - Set `color-scheme: light dark` on `:root`, so that form controls and scroll bars follow the scheme.
+- Give the browser bar a colour for each scheme: two `<meta name="theme-color">` tags with `media="(prefers-color-scheme: light)"` and `dark`, in the colour of the top of the page. In Next.js, use `themeColor` in the `viewport` export. When the site stores its own theme, update the tag when the user changes it.
 - Check images and logos on the dark surface: a dark logo on a dark background disappears. Give them a dark variant or a light outline.

@@ -25,6 +25,8 @@ Trace these:
 - N+1 queries, unbounded result sets and transaction scope
 - sessions or connections that leak or that the code makes again without need
 
+For animation that stutters, follow step 4 of `## Check` in the `motion` skill.
+
 Keep a plausible concern apart from a measured regression. Use `hyperfine` for process timing and a profiler for in-process attribution. Do not invent a speed number.
 
 ## The workflow

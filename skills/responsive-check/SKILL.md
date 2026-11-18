@@ -1,6 +1,6 @@
 ---
 name: responsive-check
-description: "Check a website's layout on phones, tablets and desktops, in light and dark mode, and report each defect with its element. Use when the user asks to check a site on mobile, iPad, other widths or dark mode, for a responsive or reflow review, before a public page ships, or after a layout or theme change. Also maintains the breakpoint and layout rules on the project's brand site."
+description: "Check a website's layout on phones, tablets and desktops, in light and dark mode, and report each defect with its element. Use when the user asks to check a site on mobile, iPad, other widths or dark mode, for a responsive or reflow review, before a public page ships, or after a layout or theme change. Also use to stress-test a component with worst-case data (long names, unbreakable emails, empty and huge lists). Also maintains the breakpoint and layout rules on the project's brand site."
 ---
 
 # Responsive check
@@ -44,6 +44,7 @@ The default viewports are iPhone SE (320), iPhone 15 Pro (393), Pixel 7 (412), i
 
 - Read `report.json` in `--out`. Each cell has `measured.width` (the CSS viewport), its findings and its screenshot path.
 - **Look at the screenshots** of each cell that has a problem, and of the narrowest phone and one tablet in both schemes. The probe does not see visual defects: a clipped headline, a lost image focus, overlapped text or a broken visual rhythm.
+- Demo data hides most text defects. For a page or component that shows user data, run the matrix again with a worst-case fixture: see [references/worst-case-data.md](references/worst-case-data.md).
 - A note `no dark scheme` means the page has no dark design. The dark cells then show the light design. Report this; it is not a pass for dark mode.
 - Each check, its rule and the usual fix are in [references/checks.md](references/checks.md).
 

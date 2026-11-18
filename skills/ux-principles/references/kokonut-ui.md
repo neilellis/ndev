@@ -8,7 +8,7 @@ Take a component only when it improves a real interaction. Compare each control 
 
 | Interaction | Good fit | Why |
 |---|---|---|
-| Any delete or destructive action (delete, reset, delete all) | Hold button | Holding for 1 to 2 s is a clearer guard than a second click. |
+| An irreversible delete or destructive action (delete, reset, delete all) with no undo | Hold button | Holding for 1 to 2 s is a clearer guard than a second click. |
 | Progress against targets | Apple activity card | Rings show several ratios at a glance, for example steps done and questions answered. |
 | A live count on a dashboard | Number ticker (`smooth-number` and similar) | A changing number reads as live. |
 | A command search over many actions | Action search bar | It suits a long list of actions, not three buttons. |
@@ -24,7 +24,7 @@ Usually leave out:
 
 1. Run `npx shadcn@latest add https://kokonutui.com/r/<name>.json`. The registry is `https://kokonutui.com/r/<name>.json`, and the names are on each component's page.
 2. Add `motion` (Motion for React) if the project does not have it.
-3. Read the diff before you commit. The registry can add a `cn` package as a dependency. Remove it and use the project's own `cn` (for example `@/lib/utils`). Remove the demo content.
+3. Read the diff before you commit. The registry can add the `cn` npm package as a dependency. Import the project's own `cn` (for example `@/lib/utils`), and keep the package only if that file already uses it. Remove the demo content.
 4. Put the files in their own folder (for example `components/kokonut/`). Add the MIT notice (`LICENSE.kokonut.md`) and a README that lists each file, its upstream name and version, and what it is used for.
 5. Keep each file's upstream header, and add a "Changed for <project>" list under it.
 

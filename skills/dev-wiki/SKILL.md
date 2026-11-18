@@ -24,7 +24,7 @@ the task. Do not read the wiki again for each step.
 A lesson is about development, design or copywriting: how to build, test, ship, lay out or word
 something. Record it when one of these happens:
 
-- The user corrects how you work, or confirms a non-obvious approach.
+- The user corrects how you work (in words, by an edit to a file you wrote, or by a revert), or confirms a non-obvious approach.
 - A cause was not obvious, and the next person would dig for it again.
 - A test, guard or gate passed when it must fail, or did not run.
 - You wrote the same procedure or script a second time.

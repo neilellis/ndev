@@ -2,7 +2,7 @@
 
 > Source: [skills/modern-web-guidance/guides/ui-behaviors/group-element-transitions.md](https://github.com/GoogleChrome/modern-web-guidance/blob/4dd968349e54ca45a05dd5c818fb035c9054b022/skills/modern-web-guidance/guides/ui-behaviors/group-element-transitions.md), Apache-2.0. Changed for ndev: cross-references point to the local copies; the ndev note below comes first.
 
-> **ndev:** Use the technique (`view-transition-class`, `:only-child` for add and remove, `pointer-events: none` on `::view-transition`, reduced-motion `animation: none`), but not the example motion. Nothing flies in from off screen. Use opacity or a short move from the neighbour, 0.3 to 0.8 s, ease-out to enter and ease-in to leave.
+> **ndev:** Use the technique (`view-transition-class`, `:only-child` for add and remove, `pointer-events: none` on `::view-transition`, reduced-motion `animation: none`), but not the example motion. Nothing flies in from off screen. Use opacity or a short move from the neighbour, with the durations and easing of the `motion` skill: ease-out to enter, a shorter ease-in to leave.
 
 As items are added or removed from a list, or rearranged, transitions can help users maintain context. View transitions provide a way to transition between two states of an element by giving the element a unique `view-transition-name`. When multiple elements on a page share the same transition behavior, `view-transition-class` allows you to define that logic once in CSS rather than repeating it for every unique `view-transition-name`. This keeps your stylesheets maintainable while ensuring consistent animations across a group of elements.
 
