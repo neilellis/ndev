@@ -26,6 +26,7 @@ const groups = {
       'finished-interview': '', 'finished-plan': '--markdown-file <file>', 'finished-hacking': '',
       checkpoint: '--message <text> --file <path>... [--change-type <type>]... [--worktree <path>]',
       'finished-development': '[--issue <n>]... [--pr <n>]... [--message <text>] [--file <path>]... [--change-type <type>]... [--body-file <file>] [--hardening <text>]',
+      'push-draft': '[--issue <n>|--pr <n>] --sha <full-reviewed-sha> --review <text>',
       'finished-review': '(--review <text> | --waive-review <reason>) --deadcode <text> --remembered <text>',
       'finished-checks': '', 'finished-smoke': '--report-file <file>|--skipped <reason>',
       'finished-revision': '', done: '--message <text> [--remembered <text>]',
