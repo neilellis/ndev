@@ -312,7 +312,13 @@ On the phone, the pane sends the human to the terminal. There is no change to th
 
 **Restarted workers.** A coordinator may restart a failed Task by hand with `orca orchestration worker-start --retry-of <old ctx>`, which makes a new Dispatch of the same Task. On each refresh (`worker-list`, newest first), on a message from an unknown Dispatch of a known Task, and before the PR watch's first prod in a pass, the mod takes the Task's newest Dispatch: its terminal for Jump, the prods, no old failure, a fresh prod, and its followers no longer blocked; a triage that had ended runs again.
 
-**`--open`.** The issues are every open issue of the repository with no linked pull request, also when a board is set. An issue that an Orca workspace links is left out, as always.
+**`--open`.** The issues are every open issue of the repository, also when a board is set. An issue that an Orca workspace links is left out, as always.
+
+**Issues with a linked PR.** Start reads an issue with a linked PR too, and the coordinator checks it like any other issue. It reads each linked PR:
+
+- **Merged.** The coordinator checks the code. When the code does all that the issue asks, it asks the human with AskUserQuestion, closes only the issues that the human picks with `--reason completed`, and lists them in `closed`. No `--hint` is necessary. When work is left, it groups the issue.
+- **Closed without a merge.** The work is not done, so the coordinator groups the issue.
+- **Open.** That PR is the unfinished work, and no group starts it again. The coordinator lists the issue in `unfinished` as `{ issue, pr }`. The mod gives each PR to the `/fix-prs` loop (`/fix-prs start --prs <n,n>`), which works it with its owner until it is green and merged. A running or paused loop adds them to its queue and does not start again. A dry run gives them at `/orca-triage launch`. The mod reads each PR first, and refuses the report when a PR is not open or GitHub does not give it. It also refuses an issue that `unfinished` names twice.
 
 **`--hint "<text>"`.** The human's own steer, added to the coordinator's brief, such as `--hint "close outdated/superseded issues"`. Quote a text that holds a word starting with `--`; without quotes the hint runs to the next option. A `--hint` with no text is refused. When the hint asks the coordinator to close issues, it asks the human first, closes only those the human picks, and lists them in `closed` of `triage_groups`: those issues are in no group, and an issue there that is not one of the issues to group is refused.
 

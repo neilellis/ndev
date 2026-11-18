@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, START_ORCA, type Run } from './fix-all-prs'
+import { firstLine, gh, ghLines, makeRun, ofRepo, orca, orcaProject, orcaWorktrees, readPullRow, start as startFixPrs, closedPulls, START_ORCA, type Run } from './fix-all-prs'
 import { pullUrl } from './links'
 import type { PrRow, TriageAgent, TriageComplexity, TriageGroup, TriageIssue, TriageView } from '../types'
 
@@ -117,8 +117,8 @@ function setGroup($: EngineInterface, lead: number, change: Partial<TriageGroup>
   return update($, view, v => ({ ...v, groups: v.groups.map(g => (g.lead === lead ? { ...g, ...change } : g)) }))
 }
 
-// The issues to group: the board's Ready and In progress issue cards, else (and always with --open) the open issues
-// with no pull request. An issue an Orca workspace already links is someone's work, so it is left out.
+// The issues to group: the board's Ready and In progress issue cards, else (and always with --open) the open issues,
+// with a linked pull request or not. An issue an Orca workspace already links is someone's work, so it is left out.
 async function collect($: EngineInterface, project: LoadedConfig | undefined, o: Options): Promise<string> {
   const g = project?.config.github
   if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
@@ -126,11 +126,11 @@ async function collect($: EngineInterface, project: LoadedConfig | undefined, o:
   const repo = g.repo
   if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /orca-triage refresh reads it again.`
   await update($, view, () => ({ ...EMPTY, repo, isDryRun: o.isDryRun, agent: o.agent, isOpen: o.isOpen, batch: o.batch || undefined, hint: o.hint || undefined, since: o.since || undefined, isReverse: o.isReverse || undefined, isBugsOnly: o.isBugsOnly || undefined }))
-  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '-linked:pr', `/orca-triage start again${g.board ? ' without --open' : ''}`, o.since)
+  const got = await openIssues($, repo, g.board && !o.isOpen ? g.board : undefined, '', `/orca-triage start again${g.board ? ' without --open' : ''}`, o.since)
   const { issues, skipped } = got
   const left = ordered(got.left, o.isReverse)
   if (issues.length > LIMIT) {
-    throw new Error(`${repo} has more than ${LIMIT} open issues with no pull request, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /orca-triage start again${g.board ? ' without --open' : ''}. /orca-triage clean closes the outdated ones first.`)
+    throw new Error(`${repo} has more than ${LIMIT} open issues, more than one triage groups well.\nRepair: put the issues to work on in a GitHub project board's Ready column, save the board with /dev setup, and run /orca-triage start again${g.board ? ' without --open' : ''}. /orca-triage clean closes the outdated ones first.`)
   }
   if (!left.length) {
     await note($, `${issues.length} issues read${o.since ? ` above #${o.since}` : ''}; none is left without an Orca workspace`)
@@ -205,7 +205,7 @@ async function openIssues($: EngineInterface, repo: string, board: { owner: stri
     // search, and the number check below drops #since itself and any issue opened in the same second.
     const from = since ? ` created:>=${await openedAt(run, repo, since)}` : ''
     // The date bound matches #since too, which the number check drops: one more result keeps a cut visible.
-    issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${from}`, '--limit', String(LIMIT + (since ? 2 : 1))])
+    issues = await ghLines<TriageIssue>(run, ['issue-search', `${query}${from}`.trim(), '--limit', String(LIMIT + (since ? 2 : 1))])
   }
   if (since) issues = issues.filter(i => i.number > since)
   const linked = new Set(ofRepo(await orcaWorktrees(run, `, then run ${again}`), repo).filter(w => !w.isArchived)
@@ -247,9 +247,14 @@ function brief(repo: string, issues: TriageIssue[], agent: TriageAgent, batch: n
     ...(isReverse ? ['- This triage works the newest issues first: list the groups with the newest issues first, unless after or a risk needs another order.'] : []),
     ...(batch === 1 ? ['- This triage runs one worker at a time, in the order you list the groups: you decide that order. Put first what unblocks others, is most urgent, or is smallest and safest, so each pull request can merge before the next starts. A group still waits for the groups in its after.'] : []),
     ...(batch > 1 ? [`- This triage runs at most ${batch} workers at a time, in batches, in the order you list the groups: you decide that order. The next batch starts only when every worker of the last one has ended. Put first what unblocks others, is most urgent, or is smallest and safest, and put groups that touch the same files in different batches. A group still waits for the groups in its after.`] : []),
+    `- A linked pull request does not end the check of an issue. Read each one with \`gh issue view <n> --repo ${repo} --json closedByPullRequestsReferences\` and \`gh pr view <pr> --repo ${repo}\`.`,
+    '  - Its pull request merged: check the code. When the code does all that the issue asks, the issue is done but open. Ask the user with AskUserQuestion which of these to close,'
+    + ` close only those the user picks with \`gh issue close <n> --repo ${repo} --reason completed --comment "<the pull request and the evidence>"\`, and list them in closed. When work is left, group the issue for that work.`,
+    '  - Its pull request closed without a merge: the work is not done. Group the issue.',
+    '  - It has an open pull request: that pull request is the unfinished work, and no group starts it again. List it in unfinished as { issue, pr }. The mod hands each one to the /fix-prs loop, which works it with its owner until it is green and merged.',
     ...(hint ? ['', `The human's hint for this triage: ${hint}`, `Follow it where it goes beyond these rules. When it asks you to close issues that need no work, ask the user first with AskUserQuestion, close only those the user picks with \`gh issue close <n> --repo ${repo} --comment "<why>"\`, and list them in closed instead of in a group.`] : []),
     '',
-    `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }]${hint ? ', closed' : ''}${isBugsOnly ? ', screened' : ''} }.`,
+    `Then call \`${TOOL}\` once with { groups: [{ issues, title, complexity, hint, implemented, evidence, after }], closed, unfinished: [{ issue, pr }]${isBugsOnly ? ', screened' : ''} }.`,
     'If it refuses, fix what it names and call it again.',
     '',
     `You are the coordinator of this triage: one Orca worker takes each group through the ndev workflow (kb/workflow.md), and you do none of that work. Never call mcp__ndev__started for these issues, and never edit, commit or open a pull request for them. Answer the workers, decide what to do when one fails, and report to the user. The mod sends you each of these moments.`,
@@ -380,6 +385,18 @@ async function launch($: EngineInterface): Promise<void> {
     const failed = await writeLabels($, pending.repo, pending.labels)
     if (failed.length) throw new Error(`${failed.length} of ${pending.labels.length} labels failed, so no worker started:\n- ${failed.join('\n- ')}\n${labelRepair(pending.repo, pending.labels)}, then run /orca-triage launch again.`)
     await update($, view, (x): TriageView => ({ ...x, labels: undefined }))
+  }
+  // A dry run keeps the pull requests of its unfinished issues for the launch, which hands them to the /fix-prs loop.
+  if (pending.phase === 'planned' && pending.unfinished?.length) {
+    const prs = [...new Set(pending.unfinished.map(([, pr]) => pr))]
+    await startFixPrs($, false, prs)
+    await note($, `handed ${prs.map(n => `PR #${n}`).join(', ')} to the /fix-prs loop`)
+    await update($, view, (x): TriageView => ({ ...x, unfinished: undefined }))
+  }
+  // A dry run with no group has nothing more to launch.
+  if (pending.phase === 'planned' && !pending.groups.length && (pending.labels?.length || pending.unfinished?.length)) {
+    await update($, view, (x): TriageView => ({ ...x, phase: 'done' }))
+    return
   }
   let v: TriageView | undefined
   await update($, view, (x): TriageView => {
@@ -884,7 +901,12 @@ export async function startTriage($: EngineInterface) {
             required: ['issues', 'title', 'complexity', 'hint'],
           },
         },
-        closed: { type: 'array', items: { type: 'number' }, description: 'Issues closed on the human\'s --hint, after the human confirmed; they are in no group' },
+        closed: { type: 'array', items: { type: 'number' }, description: 'Issues closed after the human confirmed, as done by a merged pull request or on the human\'s --hint; they are in no group' },
+        unfinished: {
+          type: 'array',
+          description: 'Each issue whose open pull request is the unfinished work; the mod hands the pull request to the /fix-prs loop, and the issue is in no group',
+          items: { type: 'object', properties: { issue: { type: 'number' }, pr: { type: 'number' } }, required: ['issue', 'pr'] },
+        },
         screened: {
           type: 'array',
           description: 'Only with /orca-triage start --bugs-only: each issue that is not a bug, with its kind; they are in no group',
@@ -986,7 +1008,7 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
 
   on('tool.call', { tool: TOOL }, async ($, e) => {
     // The engine passes the tool's arguments on the event itself, beside `tool`.
-    const input = e as unknown as { groups?: Proposed[]; closed?: unknown; screened?: unknown }
+    const input = e as unknown as { groups?: Proposed[]; closed?: unknown; screened?: unknown; unfinished?: unknown }
     const v = await read($, view)
     if (v.phase !== 'grouping') return { result: `Refused: /orca-triage is not waiting for groups (it is ${v.phase}). /orca-triage start begins one.`, isError: true as const }
     const groups = Array.isArray(input.groups) ? input.groups : []
@@ -1010,9 +1032,30 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
         ...(inGroups.has(x?.issue) ? [`#${String(x?.issue)} is in a group and in screened`] : []),
         ...(closed.includes(x?.issue) ? [`#${String(x?.issue)} is in closed and in screened`] : []),
       ])]
-    const out = new Set<unknown>([...closed, ...screened.map(x => x.issue)])
+    // The issues whose open pull request is the unfinished work: the /fix-prs loop takes the pull request.
+    const open = Array.isArray(input.unfinished) ? (input.unfinished as unknown[]) : []
+    const unfinished = open.filter((x): x is { issue?: unknown; pr?: unknown } => x !== null && typeof x === 'object')
+    const screenedIssues = new Set(screened.map(x => x.issue))
+    const badUnfinished = [
+      ...open.flatMap((x, i) => (x !== null && typeof x === 'object' ? [] : [`unfinished item ${i + 1} is not an object; give { issue, pr }`])),
+      ...unfinished.flatMap(x => [
+        ...(!Number.isInteger(x.issue) || !known.has(x.issue as number) ? [`unfinished names ${JSON.stringify(x.issue)}, which is not one of the issues to group`] : []),
+        ...(!Number.isInteger(x.pr) || (x.pr as number) <= 0 ? [`unfinished #${String(x.issue)} gives no pull request number`] : []),
+        ...(inGroups.has(x.issue) ? [`#${String(x.issue)} is in a group and in unfinished`] : []),
+        ...(closed.includes(x.issue) ? [`#${String(x.issue)} is in closed and in unfinished`] : []),
+        ...(screenedIssues.has(x.issue) ? [`#${String(x.issue)} is in screened and in unfinished`] : []),
+      ]),
+      ...[...new Set(unfinished.map(x => x.issue))].filter(n => unfinished.filter(x => x.issue === n).length > 1).map(n => `unfinished names #${String(n)} twice`),
+    ]
+    const handed = unfinished as { issue: number; pr: number }[]
+    // The /fix-prs loop takes only an open pull request: a merged or closed one means that the issue is done or needs a group.
+    if (!badUnfinished.length && handed.length) {
+      const shut = await closedPulls(makeRun($, 60_000), [...new Set(handed.map(x => x.pr))])
+      badUnfinished.push(...handed.flatMap(x => shut.filter(b => b.pr === x.pr).map(b => `unfinished #${x.issue}: ${b.problem}. Group the issue, or close it when its work is done.`)))
+    }
+    const out = new Set<unknown>([...closed, ...screened.map(x => x.issue), ...handed.map(x => x.issue)])
     const rest = v.issues.filter(i => !out.has(i.number))
-    const early = [...badClosed, ...badScreened]
+    const early = [...badClosed, ...badScreened, ...badUnfinished]
     const wrong = [...early, ...(early.length ? [] : problems(rest, groups))]
     if (wrong.length) return { result: `Refused, nothing recorded:\n- ${wrong.join('\n- ')}\nFix these and call ${TOOL} again.`, isError: true as const }
     const kinds = screened as { issue: number; kind: string; reason: string }[]
@@ -1036,16 +1079,28 @@ export const triage = (on: On, project: () => LoadedConfig | undefined) => {
     }
     const screenedText = kinds.length ? ` It screened out ${kinds.length} issues that are not bugs: ${kinds.map(x => `#${x.issue} ${x.kind}`).join(', ')}.${labelled}` : labelled
     if (closed.length) await note($, `the model closed ${closed.map(n => `#${String(n)}`).join(' ')}`)
+    const prs = [...new Set(handed.map(x => x.pr))]
+    const prText = prs.map(n => `PR #${n}`).join(', ')
+    let handText = !prs.length ? '' : ` /orca-triage launch hands ${prText} to the /fix-prs loop.`
+    if (prs.length && !v.isDryRun) {
+      const said = await startFixPrs($, false, prs)
+      await note($, `handed ${prText} to the /fix-prs loop`)
+      handText = ` The /fix-prs loop has ${prText}: ${said} The PR queue pane shows it.`
+    }
     if (!groups.length) {
-      await update($, view, () => EMPTY)
-      return { result: `Recorded: no issue is left in a group, so there is nothing to start.${screenedText} Report the closed and screened issues to the user.` }
+      // A dry run keeps what its launch must still do: the labels, and the pull requests for the /fix-prs loop.
+      const kept = v.isDryRun && (prs.length || wanted.length)
+      await update($, view, () => (kept ? { ...EMPTY, repo: v.repo, phase: 'planned', isDryRun: true,
+        labels: wanted.length ? wanted : undefined, unfinished: prs.length ? handed.map((x): [number, number] => [x.issue, x.pr]) : undefined } : EMPTY))
+      return { result: `Recorded: no issue is left in a group, so no worker starts.${screenedText}${handText} Report the closed, screened and unfinished issues to the user.` }
     }
     const planned = groups.map(g => toGroup(g, agentOf(v)))
-    await update($, view, (x): TriageView => ({ ...x, phase: 'planned', issues: rest, groups: planned, labels: v.isDryRun && wanted.length ? wanted : undefined }))
+    await update($, view, (x): TriageView => ({ ...x, phase: 'planned', issues: rest, groups: planned, labels: v.isDryRun && wanted.length ? wanted : undefined,
+      unfinished: v.isDryRun && handed.length ? handed.map((x): [number, number] => [x.issue, x.pr]) : undefined }))
     await note($, `the model made ${planned.length} groups`)
-    if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /orca-triage launch starts them.${screenedText}` }
+    if (v.isDryRun) return { result: `Recorded ${planned.length} groups as a dry run: nothing started in Orca. /orca-triage launch starts them.${screenedText}${handText}` }
     detach(launch($).catch(fail($, 'launch')))
-    return { result: `Recorded ${planned.length} groups.${screenedText} The mod creates the Orca Run and starts the workers; the Triage pane shows them. You are the coordinator now: start no work on these issues, and wait for what the mod sends you.` }
+    return { result: `Recorded ${planned.length} groups.${screenedText}${handText} The mod creates the Orca Run and starts the workers; the Triage pane shows them. You are the coordinator now: start no work on these issues, and wait for what the mod sends you.` }
   })
 
   // The model's reply to a worker's question closes the question on the pane.

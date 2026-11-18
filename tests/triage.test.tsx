@@ -202,7 +202,7 @@ async function started($: Parameters<Extract<Parameters<typeof test>[1], (...arg
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true } as never)
 }
 
-test('with no board, /orca-triage start asks the model to group the open issues with no PR that no Orca workspace links', async ($, on) => {
+test('with no board, /orca-triage start asks the model to group the open issues that no Orca workspace links, with a pull request or not', async ($, on) => {
   const w = world(on, {
     issues: [issue(3), issue(7), issue(9)],
     worktrees: [{ id: 'repo-1::/w/seven', projectId: 'github:acme/widgets', path: '/w/seven', isArchived: false, isMainWorktree: false, workspaceStatus: 'in-progress', linkedPR: null,
@@ -213,7 +213,16 @@ test('with no board, /orca-triage start asks the model to group the open issues 
   expect(r.text).toMatch(/triage/i)
   await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
   const list = w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!
-  expect(list.join(' ')).toMatch(/issue-search -linked:pr/)
+  // An issue with a linked pull request is read too: a merged one can leave it done but open, and a closed one leaves the work undone.
+  expect(list.join(' ')).not.toMatch(/-linked:pr/)
+  expect(w.prompts[0]).toMatch(/linked pull request/)
+  expect(w.prompts[0]).toMatch(/merged.*check the code/)
+  expect(w.prompts[0]).toMatch(/closed without a merge/)
+  expect(w.prompts[0]).toMatch(/open pull request.*unfinished/)
+  // Closing a done issue needs no --hint, and the human picks each one.
+  expect(w.prompts[0]).toMatch(/AskUserQuestion/)
+  expect(w.prompts[0]).toMatch(/gh issue close <n> --repo acme\/widgets --reason completed --comment/)
+  expect(w.prompts[0]).toMatch(/groups: \[\{ issues, title, complexity, hint, implemented, evidence, after \}\], closed, unfinished: \[\{ issue, pr \}\] \}/)
   expect(w.prompts[0]).toMatch(/#3\b/)
   expect(w.prompts[0]).toMatch(/#9\b/)
   expect(w.prompts[0]).not.toMatch(/#7\b/)
@@ -719,8 +728,8 @@ test('/orca-triage start --open takes every open issue, not only the board\'s, a
   await $.command.run(command('start --open'))
   await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
   expect(w.ran.some(a => a.join(' ').includes('gh.sh board items'))).toBe(false)
-  // An issue with a pull request, or one an Orca workspace links, is being worked on.
-  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).toMatch(/-linked:pr/)
+  // An issue an Orca workspace links is being worked on. An issue with a pull request is read and checked.
+  expect(w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')).not.toMatch(/-linked:pr/)
   expect(w.prompts[0]).toMatch(/#3\b/)
   expect(w.prompts[0]).toMatch(/#11\b/)
   expect(w.prompts[0]).not.toMatch(/#7\b/)
@@ -1004,7 +1013,7 @@ test('/orca-triage start --since 5 groups only the issues above #5: it asks GitH
   await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
   const search = w.ran.find(a => a.join(' ').includes('gh.sh issue-search'))!.join(' ')
   // GitHub search has no number range, so the date #5 was opened bounds the search, and the number check is exact.
-  expect(search).toMatch(/-linked:pr created:>=2026-05-01T00:00:00Z/)
+  expect(search).toMatch(/issue-search created:>=2026-05-01T00:00:00Z/)
   // The date bound also matches #5, which the number check drops, so the search asks for one more to see a cut.
   expect(search).toMatch(/--limit 202\b/)
   expect(w.prompts[0]).toMatch(/#6\b/)
@@ -1154,6 +1163,21 @@ test('/orca-triage launch after a --bugs-only dry run writes the labels before i
   expect(labels().sort()).toEqual(['3 bug', '4 enhancement'])
 })
 
+test('a --bugs-only dry run with no group still writes its labels at the launch, and hands over its pull requests', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4)] })
+  await started($)
+  await $.command.run(command('start --dry-run --bugs-only'))
+  await until(() => w.prompts.length > 0, () => [w.ran.slice(-1), w.toasts])
+  const r = await $.tool.call({ tool: TOOL, groups: [], screened: [{ issue: 3, kind: 'enhancement', reason: 'a new page' }], unfinished: [{ issue: 4, pr: 20 }] } as never) as { result: string; isError?: boolean }
+  expect(r.isError).toBeUndefined()
+  const labels = () => w.ran.filter(a => a.join(' ').includes('gh.sh label ')).map(a => a.slice(-2).join(' '))
+  expect(labels()).toEqual([])
+  await $.command.run(command('launch'))
+  await until(() => w.ran.some(a => a.join(' ').includes('gh.sh repo-read')), () => [w.ran.slice(-3), w.toasts])
+  expect(labels()).toEqual(['3 enhancement'])
+  expect(w.orcaRan('orchestration run-create')).toEqual([])
+})
+
 test('screened is refused without --bugs-only', async ($, on) => {
   const w = world(on, { issues: [issue(3), issue(4)] })
   await started($)
@@ -1178,6 +1202,34 @@ test('/orca-triage --since refuses a value that is not an issue number, and name
   expect(toast).toMatch(/--since 404: GitHub did not give #404 of acme\/widgets/)
   expect(toast).toMatch(/HTTP 404/)
   expect(w.prompts).toEqual([])
+})
+
+test('an issue with an open pull request goes to the /fix-prs loop on that pull request, in no group; a dry run hands it over at the launch', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(4), issue(9)], merged: [21] })
+  await started($)
+  await $.command.run(command('start --dry-run'))
+  await until(() => w.prompts.length > 0)
+  const call = (input: Record<string, unknown>) => $.tool.call({ tool: TOOL, ...input } as never) as Promise<{ result: string; isError?: boolean }>
+  const bad = await call({ groups: [group([3, 9], 'simple')], unfinished: [{ issue: 4, pr: 'x' }, { issue: 12, pr: 20 }] })
+  expect(bad.isError).toBe(true)
+  expect(bad.result).toMatch(/unfinished #4 gives no pull request number/)
+  expect(bad.result).toMatch(/unfinished names 12, which is not one of the issues to group/)
+  const twice = await call({ groups: [group([3, 4, 9], 'simple')], unfinished: [{ issue: 4, pr: 20 }] })
+  expect(twice.result).toMatch(/#4 is in a group and in unfinished/)
+  const again = await call({ groups: [group([3, 9], 'simple')], unfinished: [{ issue: 4, pr: 20 }, { issue: 4, pr: 22 }] })
+  expect(again.result).toMatch(/unfinished names #4 twice/)
+  const shut = await call({ groups: [group([3, 9], 'simple')], unfinished: [{ issue: 4, pr: 21 }] })
+  expect(shut.isError).toBe(true)
+  expect(shut.result).toMatch(/unfinished #4: PR #21 is merged, not open/)
+  const r = await call({ groups: [group([3, 9], 'simple')], unfinished: [{ issue: 4, pr: 20 }] })
+  expect(r.isError).toBeUndefined()
+  expect(r.result).toMatch(/\/orca-triage launch hands PR #20 to the \/fix-prs loop/)
+  expect(w.ran.some(a => a.join(' ').includes('gh.sh repo-read'))).toBe(false)
+
+  await $.command.run(command('launch'))
+  await until(() => w.ran.some(a => a.join(' ').includes('gh.sh repo-read')), () => w.ran.slice(-3))
+  const status = await $.command.run({ ...command(''), command: 'fix-prs', args: 'status' } as never) as { text: string }
+  expect(status.text).toMatch(/Running|#20/)
 })
 
 test('with a --hint, the groups report may list closed issues, which are then in no group; a closed issue it does not know is refused', async ($, on) => {

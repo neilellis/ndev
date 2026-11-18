@@ -224,6 +224,7 @@ and each pull request's checks in a pane.
 | Command | Effect |
 | --- | --- |
 | `/fix-prs start [--no-merge]` | Start the loop. `--no-merge` records a green pull request as ready and leaves the merge to a human. |
+| `/fix-prs start --prs <n,n>` | Work only these pull requests. Each one must be open. A running or paused loop adds them and does not start again. `/orca-triage` uses it for an issue with an open pull request. |
 | `/fix-prs status` | Show where the loop is. |
 | `/fix-prs pause`, `/fix-prs resume` | Stop and continue the loop. |
 | `/fix-prs skip <pr>`, `/fix-prs retry <pr>` | Leave out a pull request, or put a blocked one back in the queue. |
