@@ -390,6 +390,11 @@ function startReview(wf: Workflow): string[] {
       `Worktree: ${wf.root}`,
       `The change: run git diff origin/${wf.base}...HEAD in the worktree. HEAD is ${sha}, and its last commit is not pushed yet.`,
       AXES[axis],
+      ...(axis === 'specification' ? [] : [
+        `North Star: Check the diff against origin/${wf.base}:NORTH_STAR.md. Scan the headings and read only the sections that apply. Follow any sources the file gives priority.`,
+        'If the diff adds, edits, or removes the file, check that change against owner approval. Use the base rules for the rest of the diff unless the owner approved a change to those rules.',
+        'For a conflict, cite the section and the changed file and line. Record the sections you checked, no applicable sections, file absent, or an access failure. When the file is absent, use the remaining project guidance.',
+      ]),
       ...reviewerBrief((wf.changeTypes ?? []) as any),
       MACHINES[wf.mode as 'light'].reviewBrief ?? '',
       reviewer ? `Your instructions as reviewer are in ${reviewer}: follow them.` : '',

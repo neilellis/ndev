@@ -58,6 +58,15 @@ test('installed SDLC skills link to the shared North Star guide and require full
   const policy = readFileSync(guide, 'utf8')
   assert.match(policy, /keep the phase open/i)
   assert.match(policy, /read only the sections that apply/i)
+  for (const reviewer of [
+    join(env.CLAUDE_CONFIG_DIR, 'agents/ndev-diff-reviewer.md'),
+    join(env.CODEX_HOME, 'agents/ndev-diff-reviewer.toml'),
+    join(env.XDG_CONFIG_HOME, 'opencode/agents/ndev-diff-reviewer.md'),
+  ]) {
+    const instructions = readFileSync(reviewer, 'utf8')
+    assert.ok(instructions.includes(guide), `${reviewer} must link to ${guide}`)
+    assert.match(instructions, /check the axis that the brief assigns/i)
+  }
 })
 
 test('sequential installs preserve foreign hook entries, install the CLI and repair missing owned files', t => {

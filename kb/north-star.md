@@ -9,6 +9,14 @@
 - Read a long file in ranges. Give each worker the relevant section names and verification tasks in its brief.
 - If the file is missing or unreadable, keep the phase open. Name the path and ask the owner to supply or restore the file. If a conflict remains, record it and ask the owner to resolve it before you finish that phase.
 
+## Code review
+
+Check the diff against `NORTH_STAR.md` on the PR base. In a two-axis review, the standards reviewer does this check. Scan the headings and read only the sections that apply. Follow any sources that the file gives priority.
+
+If the diff adds, edits, or removes the file, check the change against the owner's approval. Use the base version to check the rest of the diff. Apply new rules when the owner has approved them.
+
+Cite the section and the changed file and line for each conflict. If no section applies, say why. If you cannot read the file, report its absence or the access failure. Use the remaining project guidance when the file is absent. Include the result when you record the review evidence.
+
 ## Other SDLC work
 
 Read only the sections that apply. Start with the headings if the task touches project goals, domain rules, architecture, user behaviour, or public claims. Use the named source when a section gives it priority. If the task has no bearing on those statements, proceed with the task's own checks.
