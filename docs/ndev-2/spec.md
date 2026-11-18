@@ -89,7 +89,7 @@ ndev triage launch|refresh|reset|status
 ndev fix-prs start [--no-merge]
 ndev fix-prs status|pause|resume
 ndev fix-prs skip|retry <pr>
-ndev fix-prs report <pr> <pushed|blocked> [--reason <text>]
+ndev fix-prs report <pr> <pushed|blocked> [--reason <text>] [--worktree <path>]
 ndev pane view [--open]
 ndev pane responsive-matrix [--open]
 ndev pane screenshot <url> [--viewport <width>x<height>]... [--scheme <light|dark>]... [--full-page] [--wait-seconds <n>]
@@ -197,25 +197,25 @@ With `--panels`, delegate to `orca plugin install <folder> --json`. If Orca asks
 
 ## Work items and proof
 
-File the sub-issues after spec review. Link them to the epic and add the blocker links below. Start a dependent PR on the branch it needs until that PR merges. Retarget it to the default branch after its base merges. Keep each PR in draft while work remains.
+Track this release with the linked sub-issues and their blocker links below. Use one worktree and [PR #65](https://github.com/neilellis/ndev/pull/65). Keep the PR in draft while work remains. A human merges. The stacked PR behavior above applies to epics that the CLI coordinates.
 
 | Work item | Blocked by | Public tests |
 | --- | --- | --- |
-| CLI core | Spec review | Help, flags, JSON, process errors, repository and profile resolution. |
-| Workflow | CLI core | Start, state transitions, guard inputs, retry, checks, and git history in local repo fixtures. |
-| Waits | Workflow | One wait per call, timeout, cancellation, recovery, and state restored. |
-| Epic | Workflow | GitHub graph, stack brief, remote route, phase gates, and rebase handoff. |
-| Triage | Epic, waits | Group and clean decisions, worker receipts, refusal and retry. |
-| Fix-all-prs | Waits, triage | Queue order, check SHA, worker report, retry and merge modes. |
-| Panes | Fix-all-prs, triage | Plugin worker contracts, opened panel and text output, actions with stale revision. |
-| Hooks | Panes, waits | Native event payloads, Git guard pass and deny cases, cleanup and watcher delivery. |
-| Installer | Hooks | Dry run, repair, re-install, trust, and native discovery and hooks for each harness. |
+| [CLI core #67](https://github.com/neilellis/ndev/issues/67) | Spec review | Help, flags, JSON, process errors, repository and profile resolution. |
+| [Workflow #68](https://github.com/neilellis/ndev/issues/68) | CLI core | Start, state transitions, guard inputs, retry, checks, and git history in local repo fixtures. |
+| [Waits #66](https://github.com/neilellis/ndev/issues/66) | Workflow | One wait per call, timeout, cancellation, recovery, and state restored. |
+| [Epic #71](https://github.com/neilellis/ndev/issues/71) | Workflow | GitHub graph, stack brief, remote route, phase gates, and rebase handoff. |
+| [Triage #69](https://github.com/neilellis/ndev/issues/69) | Epic, waits | Group and clean decisions, worker receipts, refusal and retry. |
+| [Fix-all-prs #70](https://github.com/neilellis/ndev/issues/70) | Waits, triage | Queue order, check SHA, worker report, retry and merge modes. |
+| [Panes #72](https://github.com/neilellis/ndev/issues/72) | Fix-all-prs, triage | Plugin worker contracts, opened panel and text output, actions with stale revision. |
+| [Hooks #73](https://github.com/neilellis/ndev/issues/73) | Panes, waits | Native event payloads, Git guard pass and deny cases, cleanup and watcher delivery. |
+| [Installer #74](https://github.com/neilellis/ndev/issues/74) | Hooks | Dry run, repair, re-install, trust, and native discovery and hooks for each harness. |
 
 Write a public regression test first. Confirm it fails for the intended reason, then run it again with the fix. Use local Git remotes for pushes and lease races. Use fakes for GitHub, Orca, and cloud writes in automated tests. Keep a small live test for bridge behavior that a fake cannot prove. Use temporary homes and temporary worktrees or repos for install and hook tests. Keep each harness's config and credential paths inside the test home, including explicit config environment variables. Keep secrets out of fixtures, panel state and check logs. Report passed, failed, skipped with reason, and not run as distinct results.
 
-## Review points
+## Support and verification
 
-- Confirm the first supported host versions. The hook PR will test the installed Claude Code, Codex, and opencode v2 versions for context, denial, and session end.
-- Approve the human control for flow overrides and triage close. The proposal uses an Orca panel action or direct interactive terminal confirmation. A harness hook's caller role alone gives no authority to override.
-- Confirm the first release target for remote panels. Test the desktop panel with a connected remote worktree. It must read state and route actions to that worktree's host. A headless server uses text. If the desktop cannot use the remote bridge, keep that parity item open.
-- Confirm the fix-all-prs merge default. The legacy command tries to merge unless given `--no-merge`. The proposal requires the project to permit agent merge and uses `--no-merge` to leave green PRs for a human.
+- The install targets are Claude Code, Codex, and opencode v2. The installer trials used Claude Code 2.1.326, Codex 0.166.0, and opencode 2.3.0.
+- Use a named action and a confirmation for workflow overrides and triage close. A harness hook's caller role gives no authority to override.
+- Test the desktop panel with a connected remote worktree. A headless server uses text. Keep desktop remote panel parity open until the panel can read and change remote worktree state.
+- The PR queue merges only when the project permits agent merge. Use `--no-merge` to leave green PRs for a person.

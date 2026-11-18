@@ -1,8 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { sessionHuman } from './workflow/tools'
-import { type HostRecord, namedFor, orcaServers, projectKey, readStore, type Server, type Store, storePath, writeStore } from './remote-store'
+import { type HostRecord, namedFor, orcaServers, projectKey, readStore, type Server, type Store, storePath, writeStore } from './remote-store.ts'
 
 // /dev remote create <name> and /dev remote remove <name>: a Hetzner Cloud server that is an SSH host for Orca
 // workspaces. remove shuts the server down, snapshots it, and deletes it only once the snapshot is available; create
@@ -11,7 +10,14 @@ import { type HostRecord, namedFor, orcaServers, projectKey, readStore, type Ser
 // host key stay. Everything it makes carries the labels managed-by=ndev and ndev-name=<name>, and it touches nothing
 // without them; /dev remote import (remote-import.ts) gives them to a server made by hand. Every hcloud call names its context and runs with no HCLOUD_TOKEN or HCLOUD_CONTEXT.
 
-export type HostOptions = { context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; server?: string; ssh?: string; agent?: string; isForget: boolean; isUnverifiedHost?: boolean; isYes: boolean }
+type RemovalJournal = {
+  read(ctx: string, name: string, server: number): { token?: string; hostKey?: string; requested?: boolean; prune?: number[]; snapshot?: number; complete?: boolean }
+  claim(ctx: string, name: string, server: number, hostKey?: string): { token: string; requested: boolean; file: string }
+  request(): void
+  deleting(snapshot: number, prune: number[]): void
+  complete(): void
+}
+export type HostOptions = { removalJournal?: RemovalJournal; requestConfirmation?: (question: string) => void; hasHuman?: () => Promise<boolean>; context?: string; type?: string; location?: string; sshKey?: string; floatingIp?: string; name?: string; server?: string; ssh?: string; agent?: string; isForget: boolean; isUnverifiedHost?: boolean; isYes: boolean }
 
 export const REMOTE_HOST_HELP = [
   '  /dev remote create <name> [options] make a Hetzner Cloud server for Orca: from the snapshot remove kept, else from the base image',
@@ -174,9 +180,10 @@ async function pricing($: EngineInterface, ctx: string) {
 // Asks before any spend or deletion. With no one to ask, it refuses: only --yes confirms without a person.
 export async function confirm($: EngineInterface, o: HostOptions, question: string, yes: string, nothing: string): Promise<void> {
   if (o.isYes) return
+  if (o.requestConfirmation) return o.requestConfirmation(question)
   const refused = `no one confirmed it, so it is refused. ${nothing}\nRepair: run it where you can answer the question, or add --yes to confirm on the command line.`
   // A session with no person at it is not asked: an answer there would not be a person's.
-  if (!(await sessionHuman($))) throw new Error(refused)
+  if (!(await o.hasHuman?.())) throw new Error(refused)
   let answer: string
   try {
     answer = (await $.ui.ask(question, { header: 'Remote', options: [yes, 'Cancel'] })).trim()
@@ -195,6 +202,7 @@ export async function steps($: EngineInterface, fn: (did: (what: string) => void
       $.ui.toast(`/dev remote: ${what}`)
     })
   } catch (error) {
+    if (!done.length && error instanceof Error) throw error
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(done.length ? `${message}\nDone before this: ${done.join('; ')}.` : message)
   }
@@ -557,16 +565,41 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
   const ctx = await contextOf($, name, o.context, store.hosts[name]?.context, again)
   const { server, snapshots, fip, firewall } = await look($, ctx, name, o.floatingIp, store.hosts[name]?.floatingIp, path)
   const kept = [snapshots.length ? `snapshot ${snapshots.map(s => s.id).join(', ')}` : '', fip ? `floating IPv4 ${fip.ip}` : '', firewall ? `firewall ${firewall.name}` : ''].filter(Boolean).join(', ') || 'nothing'
-  if (!server && !o.isForget) throw new Error(`there is no server named ${name} in the hcloud context ${ctx}, so there is nothing to remove. Kept for ${name}: ${kept}. Nothing changed.\nRepair: /dev remote create ${name} makes it again; ${again} --forget deletes what is kept.`)
+  const recovered = !server && o.removalJournal ? snapshots.flatMap(image => {
+    const source = Number(image.labels['ndev-source'])
+    if (!Number.isSafeInteger(source) || source < 1) return []
+    const row = o.removalJournal!.read(ctx, name, source)
+    return row.snapshot === image.id && row.token === image.labels['ndev-operation'] ? [{ source, image, row }] : []
+  }) : []
+  if (recovered.length > 1) throw new Error(`Multiple removal snapshots of ${name} match local operations in ${ctx}: ${recovered.map(r => r.image.id).join(', ')}. Inspect the images before retrying.`)
+  if (!server && !o.isForget && !recovered.length) throw new Error(`there is no server named ${name} in the hcloud context ${ctx}, so there is nothing to remove. Kept for ${name}: ${kept}. Nothing changed.\nRepair: /dev remote create ${name} makes it again; ${again} --forget deletes what is kept.`)
   if (fip && fip.server !== null && fip.server !== server?.id) throw new Error(`the floating IP ${fip.ip} (${fip.id}) of ${name} is assigned to the server ${fip.server}, which is not the server ${name}, so it is in use. Nothing changed.\nRepair: look at it with hcloud --context ${ctx} floating-ip describe ${fip.id}; unassign it with hcloud --context ${ctx} floating-ip unassign ${fip.id} if that server must lose the address.`)
   const unfinished = snapshots.find(s => s.status !== 'available')
   if (unfinished) throw new Error(`the snapshot ${unfinished.id} of ${name} has the status "${unfinished.status}", not "available". Nothing changed.\nRepair: look at it with hcloud --context ${ctx} image describe ${unfinished.id}. When it is available, run ${again} again; delete a failed one with hcloud --context ${ctx} image delete ${unfinished.id}.`)
-  const unchecked = server ? await checkHostKey($, name, ctx, server, fip, store.hosts[name], path, again, o.isUnverifiedHost === true) : undefined
+  const prior = server && o.removalJournal?.read(ctx, name, server.id)
+  if (prior?.requested && server?.status !== 'off') throw new Error(`Snapshot request ${prior.token} is pending but server ${server?.id} is ${server?.status}. Inspect its snapshot and disk before removing ${name}.`)
+  const savedHostKey = store.hosts[name]?.context === ctx ? store.hosts[name]?.hostKey : undefined
+  const verifiedBeforeShutdown = server?.status === 'off' && savedHostKey && prior?.hostKey === savedHostKey
+  const unchecked = server && !verifiedBeforeShutdown ? await checkHostKey($, name, ctx, server, fip, store.hosts[name], path, again, o.isUnverifiedHost === true) : undefined
   const cost = await pricing($, ctx)
 
   return steps($, async did => {
     const said: string[] = []
     let keptSnapshots = snapshots
+    if (recovered.length && !o.isForget) {
+      const { source, image, row } = recovered[0]!
+      if (!row.complete) {
+        o.removalJournal!.claim(ctx, name, source, row.hostKey)
+        for (const old of snapshots.filter(s => s.id !== image.id && row.prune?.includes(s.id))) {
+          await hc($, ctx, ['image', 'delete', String(old.id)])
+          did(`deleted the older snapshot ${old.id}`)
+        }
+        store.hosts[name] = { ...store.hosts[name], context: ctx, ...(fip ? { ip: fip.ip, floatingIp: fip.id } : {}) }
+        await writeStore($, path, store)
+        o.removalJournal!.complete()
+      }
+      return `Recovered the removal of server ${name} (${source}) in ${ctx}. Its available snapshot is ${image.id}.`
+    }
     if (server) {
       const type = server.server_type.name
       const location = server.location?.name ?? 'unknown'
@@ -581,6 +614,7 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
         `If the snapshot fails, nothing is deleted.`,
       ].join('\n'), `Remove ${name}`, 'Nothing changed.')
 
+      const claim = o.removalJournal?.claim(ctx, name, server.id, unchecked ? undefined : savedHostKey)
       if (server.status !== 'off') {
         const off = `so no snapshot was taken. Nothing was deleted.\nRepair: switch it off with hcloud --context ${ctx} server poweroff ${server.id}, then run ${again} again.`
         try {
@@ -596,12 +630,21 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
       // The snapshot, and the proof that it is available. Until that proof, nothing is deleted.
       const before = new Set(snapshots.map(s => s.id))
       const intact = `Nothing was deleted: the server ${name} (${server.id}) is still there, shut down${fip ? `, with its floating IPv4 ${fip.ip}` : ''}${snapshots.length ? ` and the older snapshot ${snapshots.map(s => s.id).join(', ')}` : ''}.`
-      const repair = `Repair: run ${again} again to take the snapshot again, or start the server with hcloud --context ${ctx} server poweron ${server.id}.`
+      const repair = claim
+        ? `Repair: inspect hcloud --context ${ctx} image list -l ndev-operation=${claim.token}, then run ${again} again to recover that snapshot. If the provider confirms the request was never accepted, archive the journal ${claim.file} before retrying.`
+        : `Repair: run ${again} again to take the snapshot again, or start the server with hcloud --context ${ctx} server poweron ${server.id}.`
       let fresh: Img | undefined
       try {
-        await hc($, ctx, ['server', 'create-image', String(server.id), '--type', 'snapshot', '--description', `ndev ${name}`, ...labelArgs(name, { 'ndev-type': type, 'ndev-location': location })], { timeoutMs: 600_000 })
+        if (!claim?.requested) {
+          o.removalJournal?.request()
+          await hc($, ctx, ['server', 'create-image', String(server.id), '--type', 'snapshot', '--description', `ndev ${name}`, ...labelArgs(name, { 'ndev-type': type, 'ndev-location': location, ...(claim ? { 'ndev-operation': claim.token, 'ndev-source': String(server.id) } : {}) })], { timeoutMs: 600_000 })
+        }
         for (let tries = 0; tries < 90; tries++) {
-          fresh = (await hcJson<Img[]>($, ctx, ['image', 'list', '--type', 'snapshot', '-l', `ndev-name=${name}`, '-o', 'json'])).find(s => !before.has(s.id))
+          const images = await hcJson<Img[]>($, ctx, ['image', 'list', '--type', 'snapshot', '-l', `ndev-name=${name}`, '-o', 'json'])
+          const matching = claim ? images.filter(s => isOurs(s.labels, name) && s.labels['ndev-operation'] === claim.token) : images.filter(s => !before.has(s.id))
+          if (claim && matching.length > 1) throw new Error(`Multiple snapshots carry operation ${claim.token}: ${matching.map(s => s.id).join(', ')}.`)
+          fresh = matching[0]
+          if (claim?.requested && !fresh) break
           if (fresh?.status === 'available') break
           await pause($, 10)
         }
@@ -611,6 +654,9 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
       if (fresh?.status !== 'available') {
         throw new Error(`the snapshot of the server ${name} (${server.id}) is not available after the wait: ${fresh ? `snapshot ${fresh.id} has the status "${fresh.status}"` : 'hcloud lists no new snapshot'}.\n${intact}\n${repair}${fresh ? ` Look at the snapshot with hcloud --context ${ctx} image describe ${fresh.id}.` : ''}`)
       }
+      const keptId = fresh.id
+      const prune = snapshots.filter(s => s.id !== keptId)
+      o.removalJournal?.deleting(keptId, prune.map(s => s.id))
       did(`took snapshot ${fresh.id} of server ${server.id}, and it is available`)
 
       if (fip && fip.server === server.id) {
@@ -619,13 +665,14 @@ export async function removeHost($: EngineInterface, project: LoadedConfig | und
       }
       await hc($, ctx, ['server', 'delete', String(server.id)])
       did(`deleted server ${server.id}`)
-      for (const old of snapshots) {
+      for (const old of prune) {
         await hc($, ctx, ['image', 'delete', String(old.id)])
         did(`deleted the older snapshot ${old.id}`)
       }
       keptSnapshots = [fresh]
       store.hosts[name] = { ...store.hosts[name], context: ctx, ...(fip ? { ip: fip.ip, floatingIp: fip.id } : {}) }
       await writeStore($, path, store)
+      o.removalJournal?.complete()
       said.push(
         ...(unchecked ? [unchecked] : []),
         `The remote ${name} is removed from the hcloud context "${ctx}": the server ${server.id} is deleted, and the snapshot ${fresh.id} (${fresh.disk_size} GB disk, ${cost.snapshot(fresh.image_size)}) holds it.${fip ? ` The floating IPv4 ${fip.ip} is kept and still charged for.` : ''}`,

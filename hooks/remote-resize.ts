@@ -1,10 +1,10 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { makeRun, orca } from './fix-all-prs'
-import { triageRemote } from './remote'
-import { confirm, contextOf, exec, hc, hcJson, type HostOptions, type Out, pause, said, type ServerType, shown, steps } from './remote-host'
-import { projectKey, type Server } from './remote-store'
+import { makeRun, orca } from './remote-orca.ts'
+import { triageRemote } from './remote-selection.ts'
+import { confirm, contextOf, exec, hc, hcJson, type HostOptions, type Out, pause, said, type ServerType, shown, steps } from './remote-host.ts'
+import { projectKey, type Server } from './remote-store.ts'
 
 // /dev remote resize [<type>]: change the Hetzner server type of the box that the project's Orca server runs on.
 // 1. Find the box: the Orca server's SSH host (Orca's runtimes file, or --ssh), its Hetzner instance id from the

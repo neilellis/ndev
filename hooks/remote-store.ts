@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { LoadedConfig } from './config'
-import { makeRun, orca } from './fix-all-prs'
+import { makeRun, orca } from './remote-orca.ts'
 
 // The /dev remote record of this machine, ~/.config/ndev/remote.json. A saved Orca server is an entry in this
 // machine's Orca, and the host key of a server ndev made is what this machine trusts, so both live here, never in a

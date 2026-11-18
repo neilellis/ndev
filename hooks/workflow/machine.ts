@@ -2,8 +2,8 @@
 // tools.ts does the work of each tool, then asks this module where the workflow goes next.
 import type { ProjectLevel } from '../config'
 import type { Mode, Steering } from '../../types'
-import { REVIEW_DATABASE_STEP, REVIEW_DOCS_ONLY_STEP, SMOKE_DOCS_STEP, isDocsOnly, isDocsPath, isWebPath, requiredSmokeTypes, reviewWebStep, smokeWebStep } from './change-types'
-import type { ChangeType } from './change-types'
+import { REVIEW_DATABASE_STEP, REVIEW_DOCS_ONLY_STEP, SMOKE_DOCS_STEP, isDocsOnly, isDocsPath, isWebPath, requiredSmokeTypes, reviewWebStep, smokeWebStep } from './change-types.ts'
+import type { ChangeType } from './change-types.ts'
 
 export const ATTEMPT_LIMIT = 3
 

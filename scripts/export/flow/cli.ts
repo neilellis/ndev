@@ -1,23 +1,32 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, constants, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterSkip, afterStarted, afterTool, baseCheckScript, hooksFiredBy, mayMerge, maySkipReview, needsSmoke, nextStep } from './workflow/machine.ts'
-import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isWebPath, requiredSmokeTypes, reviewerBrief } from './workflow/change-types.ts'
+const HERE = dirname(fileURLToPath(import.meta.url))
+const bundled = existsSync(join(HERE, 'profile.json'))
+const workflowModules = bundled ? join(HERE, 'workflow') : resolve(HERE, '../../../hooks/workflow')
+const { BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterSkip, afterStarted, afterTool, baseCheckScript, hooksFiredBy, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView } = await import(join(workflowModules, 'machine.ts'))
+const { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isWebPath, requiredSmokeTypes, reviewerBrief } = await import(join(workflowModules, 'change-types.ts'))
 
 class Fail extends Error {
   code: number
+  repair?: string
+  details?: Record<string, unknown>
   constructor(code: number, message: string) {
     super(message)
     this.code = code
   }
 }
 
-const HERE = dirname(fileURLToPath(import.meta.url))
-const PROFILE = JSON.parse(readFileSync(join(HERE, 'profile.json'), 'utf8'))
+const standalone = process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+const publicCli = bundled ? undefined : await import('./public.ts')
+const epicCli = bundled ? undefined : await import('../../ndev/epic.mjs')
+const sourceRoot = resolve(HERE, '../../..')
+const PROFILE = bundled ? JSON.parse(readFileSync(join(HERE, 'profile.json'), 'utf8')) : { name: 'ndev', home: sourceRoot, skillsDir: join(sourceRoot, 'skills'), agentsDir: join(sourceRoot, 'agents') }
 const HOME: string = PROFILE.home
-const FLOW = `${HOME}/bin/ndev-flow`
+const FLOW = standalone ? `${HOME}/bin/ndev-flow` : 'ndev flow'
 const CHECK_DIR = 'scripts/ndev/workflow'
 const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh']
 const CHECK_MAX_MS = 20 * 60_000
@@ -32,7 +41,7 @@ const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`
 type Run = { status: number; stdout: string; stderr: string }
 function run(cmd: string, args: string[], opts: { cwd?: string; env?: Record<string, string | undefined>; input?: string; timeout?: number } = {}): Run {
   const r = spawnSync(cmd, args, { cwd: opts.cwd, env: { ...process.env, ...opts.env }, input: opts.input, encoding: 'utf8', timeout: opts.timeout, maxBuffer: 64 * 1024 * 1024 })
-  if (r.error) return { status: 127, stdout: '', stderr: `${cmd} did not run: ${r.error.message}` }
+  if (r.error) return { status: r.error.code === 'ETIMEDOUT' ? 124 : 127, stdout: r.stdout || '', stderr: [r.stderr, r.error.message].filter(Boolean).join('\n') }
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 const said = (r: Run) => (r.stderr.trim() || r.stdout.trim() || 'no output').split('\n').slice(-20).join('\n')
@@ -55,10 +64,9 @@ const need = (args: Args, name: string) => {
   if (!value) throw new Fail(2, `ndev-flow: --${name} is required here. Repair: run ndev-flow help.`)
   return value
 }
-const list = (value?: string) => (value ?? '').split(',').map(s => s.trim()).filter(Boolean)
+const list = (value?: string) => value?.startsWith('\0') ? value.slice(1).split('\0') : (value ?? '').split(',').map(s => s.trim()).filter(Boolean)
 
-const cwd = process.cwd()
-function topLevel(): string {
+function topLevel(cwd = process.cwd()): string {
   const r = run('git', ['rev-parse', '--show-toplevel'], { cwd })
   if (r.status !== 0) throw new Fail(2, `ndev-flow: ${cwd} is not in a git worktree (git rev-parse exited ${r.status}: ${said(r)}). Repair: run ndev-flow inside the worktree of the issue.`)
   return r.stdout.trim()
@@ -102,20 +110,44 @@ function findIssue(root: string, args: Args): number {
     return n
   }
   const held = readdirSync(root).map(name => /^\.neil-dev\.issue-(\d+)\.json$/.exec(name)?.[1]).filter((n): n is string => !!n).map(Number).filter(n => readRecord(root, n))
+  if (args.pr) {
+    const matches = held.filter(n => readRecord(root, n)?.prs?.includes(Number(args.pr)))
+    if (matches.length === 1) return matches[0]!
+    if (!matches.length) throw new Fail(2, `PR #${args.pr} has no workflow in ${root}.`)
+    throw new Fail(2, `PR #${args.pr} holds issues ${matches.join(', ')}. Choose --issue <n>.`)
+  }
+  const owned = held.filter(n => readRecord(root, n)?.owner?.session === session())
+  if (owned.length === 1) return owned[0]!
   if (held.length === 1) return held[0]!
   if (!held.length) throw new Fail(2, `ndev-flow: no workflow in ${root}. Repair: run ndev-flow started --issue <n> --short-name <two-to-five-words>.`)
   throw new Fail(2, `ndev-flow: ${root} holds the workflows of issues ${held.map(n => `#${n}`).join(', ')}. Repair: add --issue <n>.`)
 }
 function load(root: string, args: Args): Workflow {
+  if (!standalone) {
+    const records = publicCli!.readWorkflowRecords(root) as Workflow[]
+    const shared = records.filter(record => record.pr)
+    if (args.pr) {
+      const byPr = shared.find(record => record.pr === Number(args.pr))
+      if (byPr) return byPr
+    } else if (args.issue) {
+      const byIssue = shared.find(record => record.issues?.includes(Number(args.issue)))
+      if (byIssue && readRecord(root, Number(args.issue))?.state === 'developed') return byIssue
+    } else {
+      const active = records.filter(record => record.pr || record.state !== 'developed' || !shared.some(pr => pr.issues?.includes(record.issue)))
+      const owned = active.filter(record => record.owner?.session === session())
+      if (owned.length === 1) return owned[0]!
+      if (active.length === 1) return active[0]!
+    }
+  }
   const n = findIssue(root, args)
   const wf = readRecord(root, n)
   if (!wf) throw new Fail(2, `ndev-flow: issue #${n} has no workflow in ${root}. Repair: run ndev-flow started --issue ${n} --short-name <two-to-five-words>.`)
   return wf
 }
-const SESSION = `ndev-flow:${PROFILE.name}`
+const session = () => standalone ? `ndev-flow:${PROFILE.name}` : process.env.ORCA_AGENT_SESSION_ID || process.env.CODEX_THREAD_ID || process.env.CLAUDE_SESSION_ID || `ndev-terminal:${process.ppid}`
 function ownedElsewhere(wf: Workflow): string | undefined {
   const owner = wf.owner
-  if (!owner || owner.session === SESSION || typeof owner.at !== 'number' || now() - owner.at >= OWNER_LIVE_MS) return undefined
+  if (!owner || owner.session === session() || typeof owner.at !== 'number' || now() - owner.at >= OWNER_LIVE_MS) return undefined
   return `ndev-flow: the session ${owner.session} owns the workflow of #${wf.issue}, and it saved ${Math.round((now() - owner.at) / 1000)} s ago. Nothing changed. Leave it to that session. If that session is dead, run ndev-flow started --issue ${wf.issue} --take-over true.`
 }
 function save(wf: Workflow) {
@@ -181,7 +213,7 @@ function apply(wf: Workflow, to: Position, tool: string, notes: string[]) {
   wf.state = to.state
   if (to.previous) wf.previous = to.previous
   else delete wf.previous
-  wf.owner = { session: SESSION, at: now() }
+  wf.owner = { session: session(), at: now() }
   if (hooksFiredBy(from as any, to.state as any).includes('review')) notes.push(...startReview(wf))
 }
 
@@ -241,19 +273,52 @@ function runBaseCheck(wf: Workflow, notes: string[]) {
 
 function stage(wf: Workflow, files: string[]): boolean {
   if (!files.length) return false
-  const add = git(wf.root, 'add', '-A', '--', ...files)
-  if (add.status !== 0) throw new Fail(1, `git add of ${files.join(', ')} exited ${add.status}: ${said(add)}. Repair: name only paths in this worktree.`)
-  return git(wf.root, 'diff', '--cached', '--quiet').status !== 0
+  const names = files.map(file => relative(wf.root, resolve(wf.root, file)))
+  if (names.some(name => name === '..' || name.startsWith('../'))) throw new Fail(2, `Paths must belong to ${wf.root}: ${files.join(', ')}.`)
+  const staged = git(wf.root, 'diff', '--cached', '--name-only', '--no-renames', '-z')
+  if (staged.status !== 0) throw new Fail(1, `git diff --cached exited ${staged.status}: ${said(staged)}`)
+  const other = staged.stdout.split('\0').filter(path => path && !names.some(name => !name || path === name || path.startsWith(name + '/')))
+  if (other.length) throw new Fail(1, `Checkpoint would include other staged paths: ${other.join(', ')}. Repair: name those paths or unstage them before retrying.`)
+  const deleted = git(wf.root, 'diff', '--cached', '--name-only', '--diff-filter=D', '--no-renames', '-z')
+  if (deleted.status !== 0) throw new Fail(1, `git diff of staged deletions exited ${deleted.status}: ${said(deleted)}`)
+  const removed = deleted.stdout.split('\0').filter(Boolean)
+  const toAdd = names.filter(name => existsSync(join(wf.root, name)) || !removed.some(path => path === name || path.startsWith(name + '/')))
+  if (toAdd.length) gitOk(wf.root, '--literal-pathspecs', 'add', '-A', '--', ...toAdd.map(name => name || '.'))
+  const changed = git(wf.root, 'diff', '--cached', '--quiet')
+  if (changed.status > 1) throw new Fail(1, `git diff --cached exited ${changed.status}: ${said(changed)}`)
+  return changed.status === 1
 }
 function commit(wf: Workflow, message: string, op: string, empty = false) {
   const r = git(wf.root, 'commit', ...(empty ? ['--allow-empty'] : []), '-m', message, '--trailer', `Ndev-Op: ${op}`)
   if (r.status !== 0) throw new Fail(1, `git commit exited ${r.status}: ${said(r)}. Nothing was pushed.`)
 }
-function push(wf: Workflow) {
-  const r = run('git', ['push', '-u', 'origin', `HEAD:refs/heads/${wf.branch}`], { cwd: wf.root, timeout: 300_000 })
-  if (r.status !== 0) throw new Fail(1, `git push to origin ${wf.branch} exited ${r.status}: ${said(r)}. Repair: if the remote moved, run git pull --rebase origin ${wf.branch}, then run the command again.`)
+function push(wf: Workflow, retryRebase = false): string | undefined {
+  const ref = `refs/heads/${wf.branch}`
+  const pushArgs = ['origin', `HEAD:${ref}`]
+  const push = (options: string[]) => run('git', ['push', '-u', ...options, ...pushArgs], { cwd: wf.root, timeout: 300_000 })
+  const result = push([])
+  if (result.status === 0) return
+  const problem = `git push to origin ${wf.branch} exited ${result.status}: ${said(result)}`
+  if (!retryRebase || wf.branch === wf.base || !/\[rejected\].*\((non-fast-forward|fetch first)\)/.test(result.stderr)) {
+    throw new Fail(1, `${problem}. Repair: resolve the push error and retry. The commit is local.`)
+  }
+  gitOk(wf.root, 'fetch', '--no-tags', 'origin', '+refs/heads/*:refs/remotes/origin/*')
+  const advertised = gitOk(wf.root, 'ls-remote', '--heads', 'origin').split('\n').filter(Boolean).map(line => line.split('\t'))
+  const expected = advertised.find(([, name]) => name === ref)?.[0]
+  if (!expected) throw new Fail(1, `${problem}. Remote ${ref} disappeared after the push. The local commit was kept.`)
+  const others = advertised.filter(([, name]) => name !== ref).map(([sha]) => sha!)
+  const only = gitOk(wf.root, 'rev-list', expected, '--not', 'HEAD', ...others).split('\n').filter(Boolean)
+  const matches = new Set(gitOk(wf.root, 'cherry', 'HEAD', expected).split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2)))
+  const missing = only.filter(sha => !matches.has(sha))
+  if (missing.length) {
+    const commits = gitOk(wf.root, 'log', '--no-walk', '--format=%H %s', ...missing)
+    throw new Fail(1, `${problem}. Remote commits would be lost:\n${commits}\nRepair: git pull --rebase origin ${wf.branch}, then retry the checkpoint. The commit is local.`)
+  }
+  const forced = push([`--force-with-lease=${ref}:${expected}`])
+  if (forced.status !== 0) throw new Fail(1, `git push --force-with-lease of ${wf.branch} (expected ${expected}) exited ${forced.status}: ${said(forced)}. The commit is local. Repair: retry the checkpoint to inspect the new remote head.`)
+  return `Updated ${wf.branch} with a lease on ${expected}; ${only.length} remote-only commits matched patches in HEAD.`
 }
-const opId = (wf: Workflow, tool: string) => `${tool}-${wf.issue}-${Date.now().toString(36)}`
+const opId = (wf: Workflow, tool: string) => `${tool}-${wf.issue}-${randomUUID()}`
 function addTypes(wf: Workflow, files: string[], declared: string[]) {
   const all = new Set([...(wf.changeTypes ?? []), ...inferChangeTypes(files), ...declared])
   wf.changeTypes = CHANGE_TYPES.filter(t => all.has(t))
@@ -276,7 +341,7 @@ function sweepText(results: Sweep[]): string {
   }).join('\n')
 }
 function sweepDeadCode(wf: Workflow): Sweep[] {
-  const scripts = `${PROFILE.skillsDir}/ndev-deadcode/scripts`
+  const scripts = join(PROFILE.skillsDir, bundled ? 'ndev-deadcode' : 'deadcode', 'scripts')
   const ref = `origin/${wf.base}`
   const listed = git(wf.root, 'diff', '--name-only', '--diff-filter=d', `${ref}...HEAD`)
   if (listed.status !== 0) return [{ language: 'all', exitCode: listed.status || 2, output: `git diff ${ref}...HEAD exited ${listed.status}: ${said(listed)}` }]
@@ -306,7 +371,7 @@ const AXES: Record<string, string> = {
 function reviewerFile(): string | undefined {
   const dir = PROFILE.agentsDir
   if (!dir) return undefined
-  return [join(dir, 'ndev-diff-reviewer.toml'), join(dir, 'ndev-diff-reviewer.md')].find(existsSync)
+  return [join(dir, 'ndev-diff-reviewer.toml'), join(dir, 'ndev-diff-reviewer.md'), join(dir, 'diff-reviewer.md')].find(existsSync)
 }
 function startReview(wf: Workflow): string[] {
   const issue = ghJson<{ title: string; body: string | null }>(wf.root, wf.repo, ['issue-read', String(wf.issue)])
@@ -340,12 +405,17 @@ function startReview(wf: Workflow): string[] {
     return { axis, brief, out, log, pid: child.pid }
   })
   wf.exportReview = { sha, at: now(), runs }
+  if (!standalone) {
+    wf.hooks = { ...wf.hooks, review: { firedAt: now() }, remember: { firedAt: now() } }
+    if (inOrca()) ensureReviewWorkers(wf)
+  }
   wf.deadcode = { sha, results: sweepDeadCode(wf) }
   return [sweepText(wf.deadcode.results)]
 }
 function reviewText(wf: Workflow): string {
   const runs: { axis: string; brief: string; out: string; log: string; pid?: number }[] = wf.exportReview?.runs ?? []
   if (!runs.length) return 'ndev-flow started no review. Run ndev-flow skip only if the human says so; else ask the human.'
+  if (!standalone && runs.some(r => 'dispatchId' in r)) return wf.exportReview.runs.map((r: {axis: string; dispatchId: string}) => `${r.axis} reviewer ${r.dispatchId}. Wait with ndev wait agent dispatch:${r.dispatchId} and read its report.`).join(' ')
   if (!runs[0]!.pid) return `This harness has no review command, so ndev-flow wrote the brief${runs.length > 1 ? 's' : ''} and started nothing: ${runs.map(r => r.brief).join(', ')}. Give each brief to an independent reviewer (a subagent of this harness, or another agent) and keep the reports apart.`
   const each = runs.map(r => `${r.axis === 'review' ? 'the review' : `the ${r.axis} review`} (pid ${r.pid}): wait with ${WAIT_PID} ${r.pid}, then read ${r.out} (log ${r.log})`).join('; ')
   return `ndev-flow started ${runs.length === 1 ? 'one independent review' : `the two-axis review, ${runs.length} reviewers`} with the review command of this harness: ${each}. Do not start another review.${runs.length > 1 ? ' Keep the reports apart.' : ''} The wait is one blocking call, not a loop.`
@@ -365,7 +435,7 @@ function reviewAlive(wf: Workflow): string[] {
 
 type Checks = { pending: string[]; red: string[]; green: string[]; names: string[] }
 function readChecks(wf: Workflow, sha: string): Checks {
-  const { check_runs: runs = [], statuses = [] } = ghJson<{ check_runs?: { name: string; status: string; conclusion: string | null; started_at?: string | null }[]; statuses?: { context: string; state: string }[] }>(wf.root, wf.repo, ['commit-checks', sha, '--pr', String(prOf(wf))])
+  const { check_runs: runs = [], statuses = [] } = ghJson<{ check_runs?: { name: string; status: string; conclusion: string | null; started_at?: string | null }[]; statuses?: { context: string; state: string }[] }>(wf.root, wf.repo, ['commit-checks', sha, ...(wf.direct ? [] : ['--pr', String(prOf(wf))])])
   const out: Checks = { pending: [], red: [], green: [], names: [] }
   const latest = new Map<string, (typeof runs)[number]>()
   for (const c of runs) {
@@ -393,13 +463,14 @@ function readChecks(wf: Workflow, sha: string): Checks {
   }
   return out
 }
-function greenOrFail(wf: Workflow): Checks {
-  const sha = headSha(wf.root)
+function greenOrFail(wf: Workflow, sha: string): Checks {
   const pushed = git(wf.root, 'rev-parse', `origin/${wf.branch}`)
   if (pushed.status !== 0 || pushed.stdout.trim() !== sha) throw new Fail(1, `HEAD ${sha.slice(0, 8)} is not pushed to origin/${wf.branch}, so no check runs on it. Repair: commit and push with ndev-flow checkpoint.`)
-  const pr = ghJson<{ mergeable?: boolean | null; state?: string; merged?: boolean }>(wf.root, wf.repo, ['pr-read', String(prOf(wf))])
+  const pr = wf.direct ? { mergeable: true } : readPr(wf, prOf(wf))
+  if (!standalone && !wf.direct) confirmPrHead(wf, pr as Pr, sha)
   if (pr.mergeable === false) throw new Fail(1, `PR #${prOf(wf)} has merge conflicts with ${wf.base}. Merge origin/${wf.base} into the branch, resolve them (the ndev-resolving-merge-conflicts skill), and commit with ndev-flow checkpoint.`)
   const checks = readChecks(wf, sha)
+  if (wf.direct && (checks.red.length || checks.pending.length)) throw new Fail(1, `Checks on ${sha} in ${wf.base}: ${[...checks.red, ...checks.pending].join(', ')}. Rerun ndev flow finished-checks when green.`)
   if (checks.red.length) throw new Fail(1, `Checks failed on ${sha.slice(0, 8)}: ${checks.red.join(', ')}. Fix each one and commit with ndev-flow checkpoint, then wait with ${WAIT_PR} ${prOf(wf)} --skip-success --json.`)
   if (checks.pending.length) throw new Fail(1, `Checks still run on ${sha.slice(0, 8)}: ${checks.pending.join(', ')}. Wait with one blocking call: ${WAIT_PR} ${prOf(wf)} --skip-success --json. Then run ndev-flow finishedChecks again.`)
   return checks
@@ -431,13 +502,16 @@ function rewrite(text: string, wf?: Workflow): string {
 
 function report(wf: Workflow, config: Config, notes: string[]) {
   const lines = [
+    wf.off ? `Off for this issue: ${wf.off.reason}.` : '',
+    wf.blocked?.message ? `Blocked: ${wf.blocked.message}` : '',
     `State: ${wf.state}${wf.previous ? ` (then ${wf.previous})` : ''}. Issue #${wf.issue}, mode ${wf.mode}, steering ${wf.steering}.`,
     wf.prs[0] ? `PR: ${prUrl(wf)}` : '',
     ...notes.filter(Boolean),
     `Next: ${rewrite(nextStep(wf.state as any, facts(wf, config) as any), wf)}`,
-    `ndev-flow is ${FLOW}. Each tool named above is one of its commands: ndev-flow <tool> --name value. Run ndev-flow help for the flags.`,
+    standalone ? `ndev-flow is ${FLOW}. Each tool named above is one of its commands: ndev-flow <tool> --name value. Run ndev-flow help for the flags.` : '',
   ]
-  console.log(lines.filter(Boolean).join('\n'))
+  const text = lines.filter(Boolean).join('\n')
+  return { root: wf.root, issue: wf.issue, state: wf.state, workflow: wf, notes, next: modernText(rewrite(nextStep(wf.state, facts(wf, config)), wf)), text: standalone ? text : modernText(text) }
 }
 
 function resolveRepo(root: string, config: Config): string {
@@ -447,9 +521,15 @@ function resolveRepo(root: string, config: Config): string {
 }
 
 function setUpPr(wf: Workflow, title: string) {
+  if (wf.direct) return
   const open = ghRun(wf.root, wf.repo, ['pr-list', '--head', wf.branch, '--state', 'open']).split('\n').filter(Boolean).map(line => JSON.parse(line) as { number: number })
   if (open[0]) {
     wf.prs = [open[0].number]
+    if (!standalone) {
+      const pr = readPr(wf, open[0].number)
+      if (pr.head.ref !== wf.branch || pr.state !== 'open') throw new Fail(1, `PR #${pr.number} is ${pr.state} on ${pr.head.ref}. Refusing to join it from ${wf.branch}.`)
+      if (!hasIssueRef(pr.body ?? '', wf.issue)) gh(wf, ['pr-edit', String(pr.number), '--body-file', writeTemp(wf, 'pr-body.md', `${(pr.body || '').trimEnd()}\n\nCloses #${wf.issue}\n`)])
+    }
     return
   }
   if (gitOk(wf.root, 'rev-list', '--count', `origin/${wf.base}..HEAD`) === '0') commit(wf, `Start work on #${wf.issue}`, `start-${wf.issue}`, true)
@@ -478,7 +558,7 @@ function started(root: string, config: Config, args: Args) {
     }
     const to = afterStarted({ state: wf.state as any, previous: wf.previous as any }, { mode: wf.mode as any, steering: wf.steering as any })
     if (to.state !== wf.state) apply(wf, to, 'started', notes)
-    wf.owner = { session: SESSION, at: now() }
+    wf.owner = { session: session(), at: now() }
     save(wf)
     return report(wf, config, ['Resumed.', ...notes])
   }
@@ -492,11 +572,13 @@ function started(root: string, config: Config, args: Args) {
     const base = ghJson<{ default_branch: string }>(root, repo, ['default-branch']).default_branch
     const branch = gitOk(root, 'branch', '--show-current')
     if (!branch) throw new Fail(2, `ndev-flow: ${root} has a detached HEAD. Repair: git switch -c ${issue}-${shortName}`)
-    if (branch === base) throw new Fail(2, `ndev-flow: ${root} is on the base branch ${base}, and each issue needs its own branch. Repair: git switch -c ${issue}-${shortName}`)
-    wf = { issue, root, repo, base, branch, prs: [], shortName, state: 'setup', owner: { session: SESSION, at: now() }, evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], mode, steering }
+    if (branch === base && (standalone || config.projectLevel !== 'straw_man')) throw new Fail(2, `ndev-flow: ${root} is on the base branch ${base}, and each issue needs its own branch. Repair: git switch -c ${issue}-${shortName}`)
+    wf = { issue, root, repo, base, branch, ...(branch === base ? { direct: true } : {}), prs: [], shortName, state: 'setup', owner: { session: session(), at: now() }, evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], mode, steering }
   }
   const info = ghJson<{ title: string; state: string }>(root, wf.repo, ['issue-read', String(issue)])
+  if (info.state !== 'open') throw new Fail(1, `Issue #${issue} is ${info.state}. Reopen it before starting.`)
   const fetched = git(root, 'fetch', '-q', 'origin', wf.base)
+  if (!standalone && fetched.status !== 0) throw new Fail(1, `git fetch origin ${wf.base} exited ${fetched.status}: ${said(fetched)}. Repair the remote and retry.`)
   if (fetched.status !== 0) notes.push(`git fetch origin ${wf.base} exited ${fetched.status}: ${said(fetched)}. The checks compare with an old base.`)
   const missing = CHECKS.filter(c => !existsSync(join(root, CHECK_DIR, c)))
   if (missing.length) {
@@ -504,10 +586,11 @@ function started(root: string, config: Config, args: Args) {
     save(wf)
     return report(wf, config, [`Missing check scripts in ${root}/${CHECK_DIR}: ${missing.join(', ')}. Start each from the template ${HOME}/scripts/workflow/fast-checks-template.sh.`])
   }
+  if (!standalone) save(wf)
   setUpPr(wf, info.title)
   apply(wf, afterStarted(undefined, { mode: wf.mode as any, steering: wf.steering as any }), 'started', notes)
   save(wf)
-  report(wf, config, [`Issue #${issue}: ${info.title}`, ...notes])
+  return report(wf, config, [`Issue #${issue}: ${info.title}`, ...notes])
 }
 
 function checkpoint(wf: Workflow, config: Config, args: Args) {
@@ -523,33 +606,48 @@ function checkpoint(wf: Workflow, config: Config, args: Args) {
   const to = moveFor(wf, config, 'checkpoint', { docsOnly: isDocsOnly(types as any), smoke: !wf.evidence?.smoke && needsSmoke(wf.mode as any, files, [], all as any), prOpen })
   const localOnly = !!MACHINES[wf.mode as 'light'].localOnly?.includes(wf.state as any)
   const pushes = !localOnly && wf.state !== 'reviewing' && wf.state !== 'hardening'
-  if (!stage(wf, files)) throw new Fail(1, `ndev-flow: ${files.join(', ')} hold no change to commit. Repair: name the changed files in --files.`)
+  const branch = gitOk(wf.root, 'branch', '--show-current')
+  if (branch !== wf.branch || (branch === wf.base && !wf.direct)) throw new Fail(1, `Checkpoint for #${wf.issue} expects ${wf.branch}, found ${branch || 'detached HEAD'} (base ${wf.base}). Repair: git switch ${wf.branch}.`)
+  const op = wf.op?.tool === 'checkpoint' ? wf.op : { id: opId(wf, 'checkpoint'), tool: 'checkpoint' }
+  wf.op = op
+  save(wf)
+  const held = gitOk(wf.root, 'log', '-1', '--format=%H', `--grep=^Ndev-Op: ${op.id}$`)
   const notes: string[] = []
-  try {
-    const note = runCheck(wf, 'fast-checks.sh', files, declared)
-    if (note) notes.push(note)
-  } catch (error) {
-    if (!localOnly) throw error
-    notes.push(`Advice only, in this state: ${(error as Error).message}`)
+  if (stage(wf, files)) {
+    try {
+      const note = runCheck(wf, 'fast-checks.sh', files, declared)
+      if (note) notes.push(note)
+    } catch (error) {
+      if (!localOnly || !(error instanceof Fail) || error.name !== CHECK_FAILED) throw error
+      notes.push(`Advice only, in this state: ${error.message}`)
+    }
+    if (!localOnly) {
+      const note = runCheck(wf, 'pre-commit-check.sh', [], declared)
+      if (note) notes.push(note)
+    }
+    commit(wf, message, op.id)
+  } else {
+    if (!held || held !== headSha(wf.root)) throw new Fail(1, `ndev-flow: ${files.join(', ')} hold no change to commit. Repair: name the changed files in --files.`)
+    const dirty = gitOk(wf.root, 'diff', '--name-only')
+    if (dirty) throw new Fail(1, `The worktree changed after commit ${held}: ${dirty}. Repair: name the changes before retrying.`)
+    notes.push(`Resuming checkpoint of ${held}.`)
   }
-  if (!localOnly) {
-    const note = runCheck(wf, 'pre-commit-check.sh', [], declared)
-    if (note) notes.push(note)
-  }
-  commit(wf, message, opId(wf, 'checkpoint'))
   if (pushes) {
     const note = runCheck(wf, 'pre-push-check.sh', [], declared)
     if (note) notes.push(note)
-    push(wf)
+    const lease = push(wf, true)
+    if (lease) notes.push(lease)
     notes.push(`Committed and pushed ${headSha(wf.root).slice(0, 8)}.`)
   } else notes.push(`Committed ${headSha(wf.root).slice(0, 8)} on this computer only: in the state "${wf.state}" nothing is pushed.`)
+  delete wf.op
+  if (!standalone && wf.state === 'reviewing' && wf.exportReview?.sha !== headSha(wf.root)) notes.push(...startReview(wf))
   addTypes(wf, files, declared)
   apply(wf, to, 'checkpoint', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
-function finishedDevelopment(wf: Workflow, config: Config, args: Args) {
+function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = false) {
   const machine = MACHINES[wf.mode as 'light']
   const to = moveFor(wf, config, 'finishedDevelopment')
   const files = list(args.files)
@@ -564,54 +662,76 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args) {
   }
   addTypes(wf, files, declared)
   if (machine.hardens) runCheck(wf, 'pre-push-check.sh', [], declared)
-  if (machine.gates) {
+  if (machine.gates && !wf.direct) {
     const gates = run('bash', [`${HOME}/scripts/work/gates.sh`, String(wf.issue), 'HEAD', String(prOf(wf))], { cwd: wf.root, env: { GH_REPO: wf.repo } })
     if (gates.status !== 0) throw new Fail(1, `gates.sh exited ${gates.status} for #${wf.issue}: ${said(gates)}\nThe commit is held here and not pushed. Add what is missing, then run ndev-flow finishedDevelopment again.`)
   }
-  if (args['body-file']) {
-    const text = readFileSync(args['body-file'], 'utf8')
+  if (args['body-file'] && !wf.direct) {
+    const text = standalone ? readFileSync(args['body-file'], 'utf8') : publicCli!.inputFile(args['body-file'])
     const body = new RegExp(`(close[sd]?|fix(e[sd])?|resolve[sd]?) #${wf.issue}\\b`, 'i').test(text) ? text : `${text.trimEnd()}\n\nCloses #${wf.issue}\n`
     gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', body)])
     notes.push('The PR body is updated.')
   }
-  if (args.hardening) comment(wf, prOf(wf), `Hardening evidence:\n\n${args.hardening}`)
-  apply(wf, to, 'finishedDevelopment', notes)
+  if (args.hardening && !wf.direct) comment(wf, prOf(wf), `Hardening evidence:\n\n${args.hardening}`)
+  apply(wf, member ? { state: 'developed' } : to, 'finishedDevelopment', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function finishedReview(wf: Workflow, config: Config, args: Args) {
   const fields = { review: need(args, 'review'), deadcode: need(args, 'deadcode'), remembered: need(args, 'remembered') }
   const to = moveFor(wf, config, 'finishedReview')
+  if (!standalone && wf.exportReview?.sha && wf.exportReview.sha !== headSha(wf.root)) throw new Fail(1, `Review covers ${wf.exportReview.sha}, but HEAD is ${headSha(wf.root)}. Review the current commit before recording evidence.`)
+  if (!standalone && wf.exportReview?.runs?.some((r: Record<string, unknown>) => r.dispatchId || r.starting)) {
+    ensureReviewWorkers(wf)
+    for (const reviewer of wf.exportReview.runs) {
+      const receipt = orca(wf.root, reviewer.environment, ['orchestration', 'worker-show', '--dispatch', reviewer.dispatchId, '--full'])
+      if (!['completed', 'done', 'settled', 'succeeded', 'finished'].includes(receipt.state)) throw new Fail(1, `Reviewer ${reviewer.dispatchId} is ${receipt.state}: ${receipt.lastError || receipt.recovery || 'wait with ndev wait agent dispatch:' + reviewer.dispatchId}.`)
+    }
+  }
   const alive = reviewAlive(wf)
   if (alive.length) throw new Fail(1, `ndev-flow: the review still runs: ${alive.join(', ')}. Wait with ${WAIT_PID} <pid>, read its report, then run ndev-flow finishedReview again.`)
   const notes: string[] = []
+  const reviewed = headSha(wf.root)
   const note = runCheck(wf, 'pre-ready-check.sh', [], wf.changeTypes ?? [])
+  if (!standalone) assertHead(wf, reviewed)
   if (note) notes.push(note)
   push(wf)
-  gh(wf, ['pr-ready', String(prOf(wf))])
   const sha = headSha(wf.root)
+  if (!wf.direct) {
+    if (!standalone) confirmPrHead(wf, readPr(wf, prOf(wf)), sha)
+    gh(wf, ['pr-ready', String(prOf(wf))])
+  }
   const text = `review: ${fields.review}\ndeadcode: ${fields.deadcode}\nremembered: ${fields.remembered}`
-  comment(wf, prOf(wf), `Review of ${sha.slice(0, 8)}\n\n${text}`)
+  if (!wf.direct) comment(wf, prOf(wf), `Review of ${sha.slice(0, 8)}\n\n${text}`)
+  if (!standalone) {
+    assertHead(wf, reviewed)
+    if (!wf.direct) confirmPrHead(wf, readPr(wf, prOf(wf)), reviewed)
+  }
   wf.evidence = { ...wf.evidence, review: { sha, text } }
   const firedAt = now()
   wf.hooks = { ...wf.hooks, review: { firedAt: wf.hooks?.review?.firedAt ?? firedAt, result: fields.review.slice(0, 2000) }, remember: { firedAt: wf.hooks?.remember?.firedAt ?? firedAt, result: fields.remembered.slice(0, 2000) } }
-  notes.push(`Pushed ${headSha(wf.root).slice(0, 8)} and marked PR #${prOf(wf)} ready.`)
+  notes.push(wf.direct ? `Pushed ${sha} to ${wf.base}.` : `Pushed ${sha.slice(0, 8)} and marked PR #${prOf(wf)} ready.`)
   apply(wf, to, 'finishedReview', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function finishedChecks(wf: Workflow, config: Config) {
   moveFor(wf, config, 'finishedChecks')
-  const checks = greenOrFail(wf)
+  const sha = headSha(wf.root)
+  const checks = greenOrFail(wf, sha)
   const smoke = needsSmoke(wf.mode as any, changedPaths(wf), checks.names, (wf.changeTypes ?? []) as any)
   const to = moveFor(wf, config, 'finishedChecks', { smoke })
-  wf.evidence = { ...wf.evidence, checks: { sha: headSha(wf.root), text: `green: ${checks.green.join(', ') || 'none ran'}` } }
-  const notes = [`Checks are green on ${headSha(wf.root).slice(0, 8)}: ${checks.green.join(', ') || 'none ran'}.`]
+  if (!standalone) {
+    assertHead(wf, sha)
+    if (!wf.direct) confirmPrHead(wf, readPr(wf, prOf(wf)), sha)
+  }
+  wf.evidence = { ...wf.evidence, checks: { sha, text: `green: ${checks.green.join(', ') || 'none ran'}` } }
+  const notes = [`Checks are green on ${sha.slice(0, 8)}: ${checks.green.join(', ') || 'none ran'}.`]
   apply(wf, to, 'finishedChecks', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function finishedSmoke(wf: Workflow, config: Config, args: Args) {
@@ -620,12 +740,17 @@ function finishedSmoke(wf: Workflow, config: Config, args: Args) {
   const sha = headSha(wf.root)
   if (!args.report && !args.skipped) throw new Fail(2, 'ndev-flow: finishedSmoke needs --report <what you tested, with the URL> or --skipped <reason>.')
   if (args.skipped && required) throw new Fail(2, 'ndev-flow: this change requires its smoke test, and only a human can skip it, with ndev-flow skip --reason <reason>.')
-  comment(wf, prOf(wf), args.report ? `Smoke test of ${sha}\n\n${args.report}` : `Smoke test of ${sha} skipped: ${args.skipped}`)
+  if (!standalone && !wf.direct) confirmPrHead(wf, readPr(wf, prOf(wf)), sha)
+  comment(wf, wf.prs[0] || wf.issue, args.report ? `Smoke test of ${sha}\n\n${args.report}` : `Smoke test of ${sha} skipped: ${args.skipped}`)
+  if (!standalone) {
+    assertHead(wf, sha)
+    if (!wf.direct) confirmPrHead(wf, readPr(wf, prOf(wf)), sha)
+  }
   wf.evidence = { ...wf.evidence, smoke: { sha, text: args.report || `skipped: ${args.skipped}` } }
   const notes = ['The smoke report is on the PR.']
   apply(wf, to, 'finishedSmoke', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 type Comment = { id: number; body: string | null; user: { login: string; type?: string } | null; created_at?: string; submitted_at?: string }
@@ -737,7 +862,7 @@ function done(wf: Workflow, config: Config, args: Args) {
   if (extra.noChange) wf.closedNoChange = true
   apply(wf, to, 'done', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function finishedRevision(wf: Workflow, config: Config) {
@@ -750,7 +875,7 @@ function finishedRevision(wf: Workflow, config: Config) {
   const notes: string[] = []
   apply(wf, to, 'finishedRevision', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function simpleMove(tool: string) {
@@ -758,7 +883,7 @@ function simpleMove(tool: string) {
     const notes: string[] = []
     apply(wf, moveFor(wf, config, tool), tool, notes)
     save(wf)
-    report(wf, config, notes)
+    return report(wf, config, notes)
   }
 }
 
@@ -769,7 +894,7 @@ function interview(wf: Workflow, config: Config, args: Args) {
   if (to.state === 'developing' || to.state === 'planning') runBaseCheck(wf, notes)
   apply(wf, to, 'interview', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function finishedInterview(wf: Workflow, config: Config) {
@@ -778,13 +903,13 @@ function finishedInterview(wf: Workflow, config: Config) {
   if (!baseCheckScript(wf.mode as any)) notes.push(`Mode ${wf.mode} has no base check.`)
   else runBaseCheck(wf, notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function finishedPlan(wf: Workflow, config: Config, args: Args) {
   const file = need(args, 'file')
   const to = moveFor(wf, config, 'finishedPlan')
-  const text = readFileSync(file, 'utf8')
+  const text = standalone ? readFileSync(file, 'utf8') : publicCli!.inputFile(file)
   if (!/Test entry point:/i.test(text)) throw new Fail(2, `ndev-flow: the plan ${file} has no "Test entry point:" line. Repair: add one, then run the command again.`)
   gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', `${text.trimEnd()}\n\nCloses #${wf.issue}\n`)])
   const notes = [`The plan is in the body of ${prUrl(wf)}.`]
@@ -792,7 +917,7 @@ function finishedPlan(wf: Workflow, config: Config, args: Args) {
   if (to.state === 'blocked') notes.push(wf.blocked.message)
   apply(wf, to, 'finishedPlan', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function blocked(wf: Workflow, config: Config, args: Args) {
@@ -802,7 +927,7 @@ function blocked(wf: Workflow, config: Config, args: Args) {
   const notes = [`Blocked: ${message}`]
   apply(wf, to, 'blocked', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function unblocked(wf: Workflow, config: Config, args: Args) {
@@ -812,7 +937,7 @@ function unblocked(wf: Workflow, config: Config, args: Args) {
   const notes = [`Unblocked: ${message}`]
   apply(wf, to, 'unblocked', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function followUp(wf: Workflow, config: Config, args: Args) {
@@ -838,7 +963,7 @@ function followUp(wf: Workflow, config: Config, args: Args) {
     }
     notes.push(`PR #${carrier} now closes #${made.number}.`)
   }
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function setSteering(wf: Workflow, config: Config, args: Args) {
@@ -846,11 +971,12 @@ function setSteering(wf: Workflow, config: Config, args: Args) {
   const reason = need(args, 'reason')
   const to = moveFor(wf, config, 'setAuto')
   wf.steering = 'auto'
+  if (!standalone) comment(wf, wf.issue, `Steering set to auto: ${reason}`)
   if (wf.prs[0]) comment(wf, wf.prs[0], `Steering set to auto: ${reason}`)
   const notes = [`Steering is auto: ${reason}`]
   apply(wf, to, 'setAuto', notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function humanMove(wf: Workflow, config: Config, verb: string, to: Position, reason: string) {
@@ -874,20 +1000,20 @@ function humanMove(wf: Workflow, config: Config, verb: string, to: Position, rea
   wf.nudges = { count: 0 }
   apply(wf, to, verb, notes)
   save(wf)
-  report(wf, config, notes)
+  return report(wf, config, notes)
 }
 
 function skip(wf: Workflow, config: Config, args: Args) {
   const reason = need(args, 'reason')
   const to = afterSkip({ state: wf.state as any, previous: wf.previous as any }, wf.mode as any, wf.steering as any)
   if ('refused' in to) throw new Fail(1, rewrite(to.refused, wf))
-  humanMove(wf, config, 'skip', to, reason)
+  return humanMove(wf, config, 'skip', to, reason)
 }
 
 function goto(wf: Workflow, config: Config, args: Args) {
   const state = need(args, 'state')
   if (!GOTO.includes(state)) throw new Fail(2, `ndev-flow: goto does not move to "${state}". The states it moves to are ${GOTO.join(', ')}.`)
-  humanMove(wf, config, 'goto', { state }, args.reason?.trim() || `moved to ${state}`)
+  return humanMove(wf, config, 'goto', { state }, args.reason?.trim() || `moved to ${state}`)
 }
 
 function setMode(wf: Workflow, config: Config, args: Args) {
@@ -895,7 +1021,7 @@ function setMode(wf: Workflow, config: Config, args: Args) {
   if (!(mode in MACHINES)) throw new Fail(2, `ndev-flow: "${mode}" is not a mode. The modes are ${Object.keys(MACHINES).join(', ')}.`)
   wf.mode = mode
   save(wf)
-  report(wf, config, [`Mode is ${mode}.`])
+  return report(wf, config, [`Mode is ${mode}.`])
 }
 
 function setHumanSteering(wf: Workflow, config: Config, args: Args) {
@@ -903,13 +1029,13 @@ function setHumanSteering(wf: Workflow, config: Config, args: Args) {
   if (steering !== 'auto' && steering !== 'interactive') throw new Fail(2, `ndev-flow: "${steering}" is not a steering. Use auto or interactive.`)
   wf.steering = steering
   save(wf)
-  report(wf, config, [`Steering is ${steering}.`])
+  return report(wf, config, [`Steering is ${steering}.`])
 }
 
 function commentCommand(wf: Workflow, config: Config, args: Args) {
   const message = need(args, 'message')
   const n = Number(args.pr ?? args.on ?? wf.prs[0] ?? wf.issue)
-  console.log(comment(wf, n, message))
+  return { target: n, text: comment(wf, n, message) }
 }
 
 function addMigration(wf: Workflow, config: Config, args: Args) {
@@ -927,17 +1053,28 @@ function addMigration(wf: Workflow, config: Config, args: Args) {
   wf.migrations = [...(wf.migrations ?? []), { name, path: path.slice(wf.root.length + 1) }]
   if (wf.prs[0]) comment(wf, wf.prs[0], `Migration to run after the merge: ${path.slice(wf.root.length + 1)}`)
   save(wf)
-  report(wf, config, [`Created ${path}. Write the SQL in it and commit it with ndev-flow checkpoint.`])
+  return report(wf, config, [`Created ${path}. Write the SQL in it and commit it with ndev-flow checkpoint.`])
 }
 
 function requestSecret(root: string, args: Args) {
   const name = need(args, 'name')
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Fail(2, `Invalid secret name: ${name}.`)
+  if (!standalone) {
+    const main = gitOk(root, 'worktree', 'list', '--porcelain', '-z').split('\0')[0]!.slice(9)
+    const sources = publicCli!.secretFiles(root, main, homedir())
+    for (const file of sources) {
+      if (!existsSync(file)) continue
+      const line = publicCli!.findInText(name, readFileSync(file, 'utf8'))
+      if (line) return { name, file, line, text: `${name} is set in ${file}:${line}` }
+    }
+    throw new Fail(1, `${name} is absent from ${sources.join(', ')}. Ask the human to set it in ${sources[0]}.`)
+  }
   const files = [join(root, '.neil-dev.env'), join(root, '.env'), join(homedir(), '.zshrc'), join(homedir(), '.bashrc')]
   const pattern = new RegExp(`^\\s*(export\\s+)?${name.replace(/[^\w]/g, '')}=`)
   for (const file of files) {
     if (!existsSync(file)) continue
     const line = readFileSync(file, 'utf8').split('\n').findIndex(l => pattern.test(l))
-    if (line >= 0) return console.log(`${name} is set in ${file}:${line + 1}`)
+    if (line >= 0) return { name, file, line: line + 1, text: `${name} is set in ${file}:${line + 1}` }
   }
   throw new Fail(1, `ndev-flow: ${name} is not set in ${files.join(', ')}. Repair: ask the human to add it to ${files[0]}, which must be git-ignored.`)
 }
@@ -992,7 +1129,7 @@ Human commands:
 
 Every command but started, requestSecret and help takes --issue <n> when the worktree holds more than one workflow.`
 
-const ISSUE_COMMANDS: Record<string, (wf: Workflow, config: Config, args: Args) => void> = {
+const ISSUE_COMMANDS: Record<string, (wf: Workflow, config: Config, args: Args) => { text: string }> = {
   status: (wf, config) => report(wf, config, []),
   interview,
   finishedInterview,
@@ -1019,7 +1156,7 @@ const ISSUE_COMMANDS: Record<string, (wf: Workflow, config: Config, args: Args) 
 
 function main(argv: string[]) {
   const [command, ...rest] = argv
-  if (!command || command === 'help' || command === '--help') return console.log(HELP)
+  if (!command || command === 'help' || command === '--help') return { text: HELP }
   const instead = claudeOnly(command)
   if (instead) throw new Fail(2, `ndev-flow: ${command} needs the Claude plugin, so this harness does not have it. ${instead}`)
   if (command !== 'started' && command !== 'requestSecret' && !ISSUE_COMMANDS[command]) throw new Fail(2, `ndev-flow: "${command}" is not a command. Repair: run ndev-flow help.`)
@@ -1031,15 +1168,410 @@ function main(argv: string[]) {
   const wf = load(root, args)
   const elsewhere = command === 'status' ? undefined : ownedElsewhere(wf)
   if (elsewhere) throw new Fail(1, elsewhere)
-  ISSUE_COMMANDS[command]!(wf, config, args)
+  return ISSUE_COMMANDS[command]!(wf, config, args)
 }
 
-try {
-  main(process.argv.slice(2))
+if (standalone) try {
+  console.log(main(process.argv.slice(2)).text)
 } catch (error) {
   if (error instanceof Fail) {
     console.error(error.message)
     process.exit(error.code)
   }
   throw error
+}
+
+function modernText(text: string) {
+  return text.replaceAll('ndev-flow', 'ndev flow')
+    .replace(/\b(finished[A-Z]\w+|addMigration|requestSecret|followUp|setSteering)\b/g, word => word.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).replace('set-steering', 'steering'))
+    .replace(/ndev flow started --issue (\S+)/g, 'ndev flow start $1')
+    .replace(/ndev flow started\b/g, 'ndev flow start')
+    .replace(/ndev flow skip --reason/g, 'ndev flow skip')
+    .replace(/ndev flow goto --state/g, 'ndev flow goto')
+    .replace(/ndev flow steering --steering/g, 'ndev flow steering')
+    .replace(/ndev flow mode --mode/g, 'ndev flow mode')
+    .replace(/ndev flow unblocked --message/g, 'ndev flow unblock')
+    .replace(/--take-over true/g, '--take-over')
+    .replace(/ndev flow unblocked\b/g, 'ndev flow unblock')
+}
+function assertHead(wf: Workflow, expected: string) {
+  const actual = headSha(wf.root)
+  if (actual !== expected) throw new Fail(1, `Issue #${wf.issue} changed from ${expected} to ${actual} while reading evidence. Repair: rerun the checks for the new head.`)
+}
+function confirmPrHead(wf: Workflow, pr: Pr, sha: string) {
+  if (pr.head?.sha !== sha || pr.head?.ref !== wf.branch) throw new Fail(1, `PR #${pr.number} points to ${pr.head?.ref}@${pr.head?.sha}; expected ${wf.branch}@${sha}. Refresh the PR and retry on its current head.`)
+}
+function orca(root: string, environment: string, args: string[]) {
+  const result = run(process.env.ORCA_CLI_COMMAND || 'orca', [...args, ...(environment ? ['--environment', environment] : []), '--json'], { cwd: root, timeout: 120_000 })
+  const prefix = `orca ${args.join(' ')} in ${root}`
+  if (result.status !== 0) throw new Fail(1, `${prefix} exited ${result.status}: ${[result.stdout.trim(), result.stderr.trim()].filter(Boolean).join('\n') || 'no output'}`)
+  let receipt
+  try { receipt = JSON.parse(result.stdout) } catch { throw new Fail(1, `${prefix} printed invalid JSON: ${said(result)}`) }
+  if (receipt.ok === false || receipt.error) throw new Fail(1, `${prefix} returned a failure: ${JSON.stringify(receipt.error || receipt)}`)
+  return receipt.result ?? receipt
+}
+const orcaEnvironment = () => process.env.ORCA_ENVIRONMENT || (process.env.ORCA_PAIRING_CODE ? '' : 'local')
+function inOrca() {
+  return Boolean(process.env.ORCA_ENVIRONMENT || process.env.ORCA_TERMINAL_HANDLE || process.env.ORCA_PAIRING_CODE)
+}
+function syncWorkspace(wf: Workflow, notes: string[]) {
+  const view = orcaView(wf)
+  const args = ['worktree', 'set', '--worktree', `path:${wf.root}`, '--issue', String(wf.issue), '--comment', view.comment, '--workspace-status', view.status, view.attention ? '--unread' : '--read']
+  if (view.name) args.push('--display-name', view.name)
+  if (view.pr) args.push('--pr', String(view.pr))
+  try { orca(wf.root, orcaEnvironment(), args) }
+  catch (error) { notes.push(`Workspace update for #${wf.issue} failed: ${(error as Error).message}`) }
+}
+function publicStart(root: string, config: Config, args: Args, hotfix: boolean) {
+  const issue = findIssue(root, args)
+  const roots = gitOk(root, 'worktree', 'list', '--porcelain', '-z').split('\0').filter(line => line.startsWith('worktree ')).map(line => line.slice(9))
+  const existing = roots.find(path => existsSync(issueFile(path, issue)))
+  const repo = resolveRepo(root, config)
+  const info = ghJson<{title: string; state: string}>(root, repo, ['issue-read', String(issue)])
+  if (!existing && info.state !== 'open') throw new Fail(1, `Issue #${issue} is ${info.state}. Reopen it before starting.`)
+  const words = info.title.toLowerCase().match(/[a-z0-9]+/g)?.slice(0, 5) ?? []
+  args['short-name'] ||= words.length > 1 ? words.join('-') : `issue-${issue}`
+  checkSlug(args['short-name'])
+  const base = ghJson<{default_branch: string}>(root, repo, ['default-branch']).default_branch
+  const main = roots[0]!
+  const branchHere = gitOk(root, 'branch', '--show-current')
+  const name = `${issue}-${args['short-name']}`
+  if (hotfix && config.projectLevel === 'straw_man') return { root: main, issue, base, direct: true, text: `Hotfix #${issue} uses ${main} on ${base}. Commit the named changes through the active workflow checkpoint.` }
+  let target = existing || root
+  if (!existing && config.projectLevel !== 'straw_man' && (hotfix || branchHere === base)) {
+    const branch = `ndev/${name}`
+    const already = roots.find(path => gitOk(path, 'branch', '--show-current') === branch)
+    if (already) target = already
+    else {
+      const made = orca(root, orcaEnvironment(), ['worktree', 'create', '--repo', `path:${main}`, '--name', name, '--branch', branch, '--base-branch', `origin/${base}`, '--reference', `https://github.com/${repo}/issues/${issue}`])
+      target = made.worktree?.path
+      if (!target || !existsSync(target) || gitOk(target, 'rev-parse', '--path-format=absolute', '--git-common-dir') !== gitOk(root, 'rev-parse', '--path-format=absolute', '--git-common-dir') || gitOk(target, 'branch', '--show-current') !== branch) throw new Fail(1, `Orca returned a worktree outside the requested repository or branch ${branch}: ${JSON.stringify(made)}. Inspect orca worktree list --json before retrying.`)
+    }
+  }
+  if (hotfix) {
+    const wf = readRecord(target, issue) || { issue, root: target, repo, base, branch: gitOk(target, 'branch', '--show-current'), shortName: args['short-name'], prs: [], state: 'developing', mode: 'light', steering: 'auto', history: [], evidence: {}, migrations: [], followUps: [], hotfix: true, baseCheck: { note: 'hotfix' } }
+    if (!wf.prs.length) { save(wf); setUpPr(wf, info.title); save(wf) }
+    return report(wf, config, [`Hotfix #${issue} uses its own worktree ${target} and draft PR ${prUrl(wf)}.`])
+  }
+  if (!existing) {
+    const held = publicCli!.readWorkflowRecords(target) as Workflow[]
+    const foreign = held.filter(record => record.state !== 'done').map(ownedElsewhere).find(Boolean)
+    if (foreign) throw new Fail(1, foreign)
+  }
+  const result = started(target, config, args)
+  publicCli!.bind(target, issue, session())
+  if (inOrca() && !result.workflow.direct) {
+    syncWorkspace(result.workflow, result.notes)
+    return report(result.workflow, config, result.notes)
+  }
+  return result
+}
+function checkSlug(slug: string) {
+  if (!/^[a-z0-9]+(-[a-z0-9]+){1,4}$/.test(slug) || slug.length > 40) throw new Fail(2, `Invalid short name "${slug}". Use two to five lower-case words joined by hyphens, up to 40 characters.`)
+}
+function createIssueOnce(root: string, repo: string, identity: string[], title: string, body: string) {
+  const { record, path, recover } = publicCli!.issueRequest(root, repo, [...identity, title, body])
+  if (record.issue) return record.issue
+  const marker = `<!-- ndev-issue-request-${record.id} -->`
+  const repair = `Rerun the same command to recover request ${record.id}. Inspect GitHub in ${repo} for ${marker} before clearing ${path}.`
+  let issue: number
+  if (recover) {
+    const since = new Date(record.startedAt - 86_400_000).toISOString()
+    const query = `.[] | select((.pull_request == null) and ((.body // "") | contains(${JSON.stringify(marker)}))) | .number`
+    const out = ghRun(root, repo, ['api', '--paginate', `repos/${repo}/issues?state=all&per_page=100&since=${encodeURIComponent(since)}`, '--jq', query])
+    const matches = out.split('\n').filter(Boolean)
+    if (matches.length !== 1) throw new Fail(1, `Issue creation is uncertain in ${repo}: ${matches.length} matching issues for request ${record.id}. Repair: ${repair}`)
+    issue = Number(matches[0])
+  } else {
+    const file = join(gitDir(root), `ndev-issue-${record.id}.md`)
+    writeFileSync(file, `${body.trimEnd()}\n\n${marker}\n`, { mode: 0o600, flag: 'wx' })
+    try { issue = ghJson<{number: number}>(root, repo, ['issue-new', '--title', title, '--body-file', file]).number }
+    catch (error) { throw new Fail(1, `${(error as Error).message}. Repair: ${repair}`) }
+    finally { rmSync(file, { force: true }) }
+  }
+  if (!Number.isSafeInteger(issue) || issue <= 0) throw new Fail(1, `Invalid GitHub issue number ${issue} for request ${record.id}. Repair: ${repair}`)
+  return publicCli!.rememberIssue(path, record.id, issue)
+}
+function issueFromDescription(root: string, repo: string, args: Args) {
+  const description = args['description-file'] ? publicCli!.inputFile(args['description-file']).trim() : args.hotfix ? `Hotfix: ${args['short-name']!.replaceAll('-', ' ')}` : need(args, 'description-file')
+  const [title, ...lines] = description.split('\n')
+  if (!title) throw new Fail(2, 'The description needs an issue title on its first line.')
+  return createIssueOnce(root, repo, [args.hotfix ? 'hotfix' : 'create', args['short-name']!], title, lines.join('\n').trim() || title)
+}
+
+export function runFlow(argv: string[], options: { json?: boolean } = {}): unknown {
+  try { return dispatchFlow(argv, options) }
+  catch (error) {
+    if (!(error instanceof Error)) throw new Fail(1, String(error))
+    const e = error as Fail
+    if (typeof e.code !== 'number') throw new Fail(1, modernText(e.message))
+    e.message = modernText(e.message)
+    const repair = e.message.lastIndexOf('Repair: ')
+    if (!e.repair && repair >= 0) {
+      e.repair = e.message.slice(repair + 8).trim()
+      e.message = e.message.slice(0, repair).trim()
+    }
+    throw e
+  }
+}
+function dispatchFlow(argv: string[], options: { json?: boolean }) {
+  const parsed = publicCli!.parse(argv)
+  if (parsed.text) return { text: parsed.text }
+  const { command, args, numbers } = parsed
+  if (!command || !args) throw new Fail(2, 'Run ndev flow help.')
+  if (command === 'guide') return { text: modernText(readFileSync(join(HOME, 'kb/workflow.md'), 'utf8')) }
+  const here = topLevel(args.worktree || process.cwd())
+  const scope = args.worktree || ['start', 'create', 'hotfix', 'comment', 'request-secret'].includes(command) || args.project ? undefined : publicCli!.binding(here, session())
+  const root = scope?.root || here
+  if (scope && !args.issue && !args.pr) args.issue = String(scope.issue)
+  if (command === 'request-secret') return requestSecret(root, args)
+  const config = publicCli!.settings(root)
+  if ((command === 'on' || command === 'off') && args.project) return publicCli!.projectSwitch(root, command === 'on', !!options.json)
+  if (command === 'comment') {
+    const target = Number(args.issue || args.pr)
+    if (!target) throw new Fail(2, 'ndev flow comment needs --issue <n> or --pr <n>.')
+    return { target, text: ghRun(root, resolveRepo(root, config), ['comment', String(target), '--body', `${MARK}\n${need(args, 'message')}`]) }
+  }
+  const epic = epicCli!.activeEpic(root, session())
+  if (epic && !['status', 'guide', 'mode', 'steering'].includes(command)) throw new Fail(1, `Session ${session()} coordinates epic #${epic.epic}. Run ndev epic status. To resume issue work, use ndev epic off first.`)
+  if (['create', 'hotfix', 'start'].includes(command)) {
+    if (config.workflow === false) throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
+    if ((args.mode || config.mode) === 'hack' && config.steering === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
+    if (command !== 'start') checkSlug(need(args, 'short-name'))
+    const made = !args.issue && command !== 'start'
+    if (command === 'hotfix') args.hotfix = 'true'
+    if (made) args.issue = String(issueFromDescription(root, resolveRepo(root, config), args))
+    try { return publicStart(root, config, args, command === 'hotfix') }
+    catch (error) {
+      if (made) throw new Fail(1, `Filed #${args.issue}, but start failed: ${(error as Error).message}. Repair: ndev flow start ${args.issue} --short-name ${args['short-name']}.`)
+      throw error
+    }
+  }
+  if (command === 'finished-development') return developMembers(root, config, args, numbers || {})
+  const wf = load(root, args)
+  if (resolve(wf.root) !== root) throw new Fail(1, `The record of #${wf.issue} names ${wf.root}, but the worktree is ${root}. Repair the record before continuing.`)
+  wf.mode ??= config.mode ?? 'light'
+  wf.steering ??= config.steering ?? 'interactive'
+  if (command === 'status' || command === 'mode' && !args.mode || command === 'steering' && !args.steering) return report(wf, config, [])
+  if (config.workflow === false && command !== 'on') throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
+  if (wf.off && command !== 'on' && command !== 'off') throw new Fail(1, `Workflow of #${wf.issue} is off: ${wf.off.reason}. Run ndev flow on.`)
+  const elsewhere = ownedElsewhere(wf)
+  if (elsewhere && command !== 'unblock') throw new Fail(1, elsewhere)
+  if ((args.mode || wf.mode) === 'hack' && (args.steering || wf.steering) === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
+  if (command === 'skip' || command === 'goto' || command === 'off' || command === 'on' || command === 'mode' || command === 'steering' && !args.reason) {
+    const request = publicCli!.confirm(command, `#${wf.issue}`, wf.rev ?? 0, root, !!options.json)
+    if (request) return request
+  }
+  if (command === 'on' || command === 'off') {
+    if (command === 'off') wf.off = { at: now(), reason: args.reason || 'Disabled by the human.' }
+    else delete wf.off
+    save(wf)
+    return report(wf, config, [`Workflow ${command} for #${wf.issue}.`])
+  }
+  if (command === 'interview') {
+    if (wf.state !== 'interviewing') throw new Fail(1, `Issue #${wf.issue} is ${wf.state}. An interview needs state interviewing.`)
+    const view = publicCli!.interviewRound(root, wf.issue, wf.mode as any, args)
+    if (view) return { ...view, root, state: wf.state }
+    return interview(wf, config, {})
+  }
+  if (command === 'unblock') args.message ||= 'Unblocked by the human.'
+  if (command === 'skip') args.reason ||= 'Skipped by the human.'
+  if (command === 'checkpoint' && wf.state === 'developing' && baseCheckScript(wf.mode) && !wf.baseCheck) throw new Fail(1, `Issue #${wf.issue} needs its base check before committing. Run ndev flow finished-interview.`)
+  if (command === 'finished-smoke' && args.report && args.skipped) throw new Fail(2, 'Choose --report-file or --skipped.')
+  if (command === 'follow-up') return publicFollowUp(wf, config, args, numbers?.['existing-issue'] || [])
+  if (command === 'add-migration') return publicMigration(wf, config, args)
+  const before = { ...wf }
+  const camel = command.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())
+  const handler = command === 'unblock' ? unblocked : command === 'steering' && args.reason ? setSteering : ISSUE_COMMANDS[camel]
+  if (!handler) throw new Fail(2, `Unknown flow command ${command}. Run ndev flow help.`)
+  const result = handler(wf, config, args)
+  if (inOrca() && !wf.direct && (before.state !== wf.state || !!before.off !== !!wf.off)) {
+    const notes: string[] = []
+    syncWorkspace(wf, notes)
+    if (wf.state === 'blocked' || before.state === 'blocked') {
+      const notify = wf.state === 'blocked' ? ['raise', '--title', `Issue #${wf.issue} is blocked`, '--message', wf.blocked.message] : ['withdraw']
+      const alert = run('bash', [join(HOME, 'scripts/workflow/notify.sh'), ...notify, '--group', `ndev-${wf.issue}-${createHash('sha256').update(root).digest('hex').slice(0, 10)}`], { cwd: root })
+      if (alert.status !== 0) notes.push(`notify.sh ${notify[0]} exited ${alert.status} for #${wf.issue}: ${said(alert)}`)
+    }
+    if (notes.length) return report(wf, config, notes)
+  }
+  if (command === 'finished-interview' && wf.baseCheck?.exitCode !== 0 && wf.baseCheck?.exitCode !== undefined) throw new Fail(1, wf.baseCheck.note)
+  return result
+}
+
+function publicFollowUp(wf: Workflow, config: Config, args: Args, existing: number[]) {
+  const mode = need(args, 'mode')
+  const message = need(args, 'message')
+  if (!['this_agent', 'issue_only', 'worktree', 'subagent'].includes(mode)) throw new Fail(2, `Unknown follow-up mode ${mode}.`)
+  if (existing.length && mode !== 'worktree') throw new Fail(2, '--existing-issue needs --mode worktree.')
+  if (existing.includes(wf.issue)) throw new Fail(2, `#${wf.issue} cannot be its own follow-up.`)
+  const tool = mode === 'this_agent' ? 'followUpThisAgent' : mode === 'issue_only' ? 'followUpIssue' : 'followUpOther'
+  const to = moveFor(wf, config, tool)
+  const hash = createHash('sha256').update(JSON.stringify([mode, message, existing])).digest('hex')
+  const notes: string[] = []
+  const [title, ...body] = message.split('\n')
+  let entry = wf.followUps.find((item: {hash: string}) => item.hash === hash)
+  if (entry?.complete) return report(wf, config, [`Follow-up #${entry.issue} is already recorded${entry.dispatchId ? ` as worker ${entry.dispatchId}` : ''}.`])
+  if (mode === 'this_agent' && readPr(wf, prOf(wf)).state !== 'open') throw new Fail(1, `PR #${prOf(wf)} cannot carry a new issue because it is closed.`)
+  if (!entry) {
+    for (const id of existing) {
+      const prior = wf.followUps.find((item: {dispatchId?: string; issues?: number[]; issue: number}) => item.dispatchId && (item.issues || [item.issue]).includes(id))
+      if (prior) throw new Fail(1, `#${id} already belongs to worker ${prior.dispatchId}.`)
+      const issue = ghJson<{state: string}>(wf.root, wf.repo, ['issue-read', String(id)])
+      if (issue.state !== 'open') throw new Fail(1, `Follow-up issue #${id} is ${issue.state}.`)
+    }
+    const issue = existing[0] || createIssueOnce(wf.root, wf.repo, ['follow-up', String(wf.issue), mode], title!, `${body.join('\n')}\n\nFound while working on #${wf.issue}.`)
+    entry = { hash, title, mode, issue, ...(existing.length ? { issues: existing } : {}) }
+    wf.followUps.push(entry)
+    save(wf)
+  }
+  const issues = entry.issues || [entry.issue]
+  if (mode === 'this_agent') {
+    const pr = readPr(wf, prOf(wf))
+    gh(wf, ['subissues', 'link', String(wf.issue), String(entry.issue)])
+    if (!hasIssueRef(pr.body || '', entry.issue)) gh(wf, ['pr-edit', String(pr.number), '--body-file', writeTemp(wf, 'pr-body.md', `${(pr.body || '').trimEnd()}\n\nCloses #${entry.issue}\n`)])
+    if (!readRecord(wf.root, entry.issue)) save({ issue: entry.issue, root: wf.root, repo: wf.repo, base: wf.base, branch: wf.branch, prs: [pr.number], mode: wf.mode, steering: wf.steering, owner: wf.owner, state: 'developing', baseCheck: wf.baseCheck, evidence: {}, history: [], followUps: [], migrations: [] })
+  }
+  if ((mode === 'worktree' || mode === 'subagent') && !entry.dispatchId) {
+    const main = gitOk(wf.root, 'worktree', 'list', '--porcelain', '-z').split('\0')[0]!.slice(9)
+    const task = `Work on ${issues.map((id: number) => '#' + id).join(', ')} of ${wf.repo} together on one draft PR. Start each issue with ndev flow start in this workspace.\n\n${message}`
+    const agent = process.env.NDEV_WORKER_AGENT || (process.env.CLAUDE_SESSION_ID ? 'claude' : 'codex')
+    const slug = title!.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 38) || 'follow-up'
+    const worker = ['orchestration', 'worker-start', '--spec', task, '--task-title', title!, '--worktree', mode === 'subagent' ? 'new-child' : 'new-top-level', '--repo', `path:${main}`, '--name', `${entry.issue}-${slug}`, '--base-branch', `origin/${wf.base}`, '--agent', agent, '--full']
+    dispatchWorker(wf, entry, worker, `follow-up #${entry.issue}`)
+    notes.push(`Worker ${entry.dispatchId} in run ${entry.runId} carries ${issues.join(', ')}.`)
+  }
+  entry.complete = true
+  notes.push(`Follow-up #${entry.issue}: ${title}.`)
+  apply(wf, to, tool, notes)
+  save(wf)
+  return report(wf, config, notes)
+}
+function publicMigration(wf: Workflow, config: Config, args: Args) {
+  const name = need(args, 'name')
+  if (!/^[a-z0-9_]+$/.test(name)) throw new Fail(2, `Invalid migration name "${name}".`)
+  if (wf.direct || !wf.prs[0] || ['setup', 'done', 'wait', 'blocked'].includes(wf.state)) throw new Fail(1, `#${wf.issue} cannot add a PR migration in ${wf.state}.`)
+  const root = realpathSync(wf.root)
+  const workdir = realpathSync(resolve(root, args.workdir || '.'))
+  const under = (dir: string) => dir === root || dir.startsWith(root + '/')
+  if (!under(workdir) || !existsSync(join(workdir, 'supabase/config.toml'))) throw new Fail(2, `Expected a Supabase workdir inside ${root}: ${workdir}`)
+  const parent = realpathSync(join(workdir, 'supabase'))
+  if (!under(parent)) throw new Fail(2, `Supabase directory escapes ${root}: ${parent}`)
+  const dir = join(parent, 'migrations')
+  mkdirSync(dir, { recursive: true })
+  if (!under(realpathSync(dir))) throw new Fail(2, `Migration directory escapes ${root}: ${dir}`)
+  let entry = (wf.migrations || []).find((item: {name: string}) => item.name === name)
+  if (!entry || args['new-version']) {
+    const newest = readdirSync(dir).map(f => /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)_/.exec(f)).filter(Boolean).map(m => Date.UTC(+m![1]!, +m![2]! - 1, +m![3]!, +m![4]!, +m![5]!, +m![6]!) + 1000)
+    const version = new Date(Math.max(Date.now(), ...newest)).toISOString().replace(/\D/g, '').slice(0, 14)
+    const path = join(dir, `${version}_${name}.sql`)
+    if (args['new-version']) {
+      if (!entry) throw new Fail(2, `Migration ${name} is not listed on #${wf.issue}.`)
+      const old = realpathSync(join(root, entry.path))
+      if (!under(old)) throw new Fail(1, `Migration path leaves the worktree: ${old}`)
+      copyFileSync(old, path, constants.COPYFILE_EXCL)
+      entry.previous = entry.path
+      entry.path = relative(root, path)
+    } else {
+      writeFileSync(path, '', { flag: 'wx' })
+      entry = { name, path: relative(root, path) }
+      wf.migrations = [...(wf.migrations || []), entry]
+    }
+    save(wf)
+  }
+  if (!existsSync(join(root, entry.path))) throw new Fail(1, `Migration ${name} is missing. Restore ${entry.path} before retrying.`)
+  const section = `<!-- ndev:migrations -->\n## Migrations to run after merge\n\n${wf.migrations.map((m: {path: string}) => '- `' + m.path + '`').join('\n')}\n<!-- /ndev:migrations -->`
+  const body = readPr(wf, prOf(wf)).body || ''
+  const pattern = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->/
+  const updated = pattern.test(body) ? body.replace(pattern, () => section) : body.trimEnd() + '\n\n' + section + '\n'
+  if (body !== updated) gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', updated)])
+  return report(wf, config, [`Migration: ${entry.path}.${entry.previous ? ` The SQL was copied from ${entry.previous}. Remove the old version and checkpoint both paths.` : ''}`])
+}
+
+function developMembers(root: string, config: Config, args: Args, numbers: Record<string, number[]>) {
+  const records = publicCli!.readWorkflowRecords(root) as Workflow[]
+  const local = records.filter(record => !record.pr)
+  const named = numbers.issue || []
+  const prs = numbers.pr || []
+  const lead = named.length ? local.find(record => record.issue === named[0]) : prs.length ? local.find(record => record.prs.includes(prs[0]!)) : load(root, args)
+  if (!lead) throw new Fail(2, `No workflow in ${root} for ${named.length ? 'issue #' + named[0] : 'PR #' + prs[0]}.`)
+  const pr = lead.prs[0]
+  if (config.workflow === false) throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
+  if (prs.length && lead.direct) throw new Fail(2, `Issue #${lead.issue} works directly on ${lead.base} and has no PR.`)
+  for (const number of prs) {
+    const target = readPr(lead, number)
+    if (target.head.ref !== lead.branch || target.state !== 'open') throw new Fail(1, `PR #${number} is ${target.state} on ${target.head.ref}. Expected an open PR on ${lead.branch}.`)
+  }
+  const targets = named.length ? named : [lead.issue]
+  const selected = targets.map(n => {
+    const wf = local.find(record => record.issue === n)
+    if (!wf || wf.prs[0] !== pr || wf.branch !== lead.branch || wf.root !== root) throw new Fail(1, `#${n} does not share ${lead.branch} and PR #${pr} in ${root}.`)
+    if (wf.off) throw new Fail(1, `Workflow of #${n} is off: ${wf.off.reason}.`)
+    const other = ownedElsewhere(wf)
+    if (other) throw new Fail(1, other)
+    if (wf.state !== 'developed') {
+      moveFor(wf, config, 'finishedDevelopment')
+      if (wf.state === 'developing' && baseCheckScript(wf.mode) && !wf.baseCheck) throw new Fail(1, `#${n} needs its base check. Run ndev flow finished-interview --issue ${n}.`)
+      if (MACHINES[wf.mode].hardens && !args.hardening) throw new Fail(2, `#${n} needs --hardening evidence.`)
+    }
+    return wf
+  })
+  if (gitOk(root, 'branch', '--show-current') !== lead.branch) throw new Fail(1, `The workflow expects branch ${lead.branch}. Switch to it before committing.`)
+  args.message ||= `Finish work on ${targets.map(n => '#' + n).join(', ')}`
+  lead.prs = [...new Set([...lead.prs, ...prs])]
+  const members = local.filter(record => record.prs[0] === pr && !record.direct)
+  if (lead.direct || members.length < 2) return finishedDevelopment(lead, config, args)
+  let committed = false
+  const notes: string[] = []
+  for (const wf of selected) {
+    if (wf.state !== 'developed') {
+      const result = finishedDevelopment(wf, config, committed ? { ...args, files: '', 'body-file': '' } : args, true)
+      notes.push(...result.notes)
+      committed = true
+    }
+  }
+  const waiting = members.filter(record => !['done', 'developed'].includes(record.state))
+  if (waiting.length) return report(lead, config, [...notes, `PR #${pr} waits for ${waiting.map(record => '#' + record.issue).join(', ')}.`])
+  const existing = records.find(record => record.pr === pr)
+  if (existing) return report(existing, config, notes)
+  const issues = members.map(record => record.issue).sort((a, b) => a - b)
+  const carrier = { ...lead, issue: issues[0]!, pr, issues, prs: [pr!], rev: undefined, state: lead.state, history: [], evidence: {}, changeTypes: [...new Set(members.flatMap(record => record.changeTypes || []))], migrations: [...new Map(members.flatMap(record => record.migrations || []).map(entry => [entry.path, entry])).values()], followUps: [...new Map(members.flatMap(record => record.followUps || []).map(entry => [entry.hash, entry])).values()] } as Workflow
+  apply(carrier, { state: 'reviewing' }, 'finishedDevelopment', notes)
+  save(carrier)
+  return report(carrier, config, [...notes, `PR #${pr} carries ${issues.map(n => '#' + n).join(', ')} through review.`])
+}
+
+function dispatchWorker(wf: Workflow, entry: Record<string, any>, command: string[], label: string) {
+  if (entry.dispatchId) return
+  if (entry.starting && !entry.requestId) throw new Fail(1, `The previous start of ${label} has no confirmed outcome. Inspect orca orchestration worker-list --json before retrying.`)
+  const environment = entry.environment ?? orcaEnvironment()
+  if (entry.requestId) {
+    const status = orca(wf.root, environment, ['orchestration', 'request-show', '--request', entry.requestId, '--full'])
+    if ((status.state ?? status.status) === 'absent') throw new Fail(1, `Orca no longer has request ${entry.requestId} for ${label}. Inspect orca orchestration worker-list --json.`)
+    command.push('--retry-request', entry.requestId)
+  }
+  entry.starting = true
+  entry.environment = environment
+  save(wf)
+  try {
+    const receipt = orca(wf.root, environment, command)
+    entry.requestId = receipt.requestId || entry.requestId
+    entry.runId = receipt.runId
+    if (receipt.state !== 'ready' || !receipt.dispatchId) throw new Fail(1, `Orca did not start ${label}: ${JSON.stringify(receipt)}`)
+    entry.dispatchId = receipt.dispatchId
+    delete entry.starting
+  } catch (error) {
+    const id = /"requestId"\s*:\s*"([^"]+)"/.exec((error as Error).message)?.[1]
+    if (id) entry.requestId = id
+    save(wf)
+    throw error
+  }
+  save(wf)
+}
+function ensureReviewWorkers(wf: Workflow) {
+  for (const reviewer of wf.exportReview.runs) {
+    const spec = readFileSync(reviewer.brief, 'utf8')
+    const command = ['orchestration', 'worker-start', '--spec', spec, '--task-title', `Review #${wf.issue} (${reviewer.axis})`, '--worktree', `path:${wf.root}`, '--agent', process.env.NDEV_REVIEW_AGENT || 'codex', '--full']
+    dispatchWorker(wf, reviewer, command, `review of #${wf.issue} (${reviewer.axis})`)
+  }
 }
