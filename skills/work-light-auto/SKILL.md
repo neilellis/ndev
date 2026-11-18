@@ -5,6 +5,8 @@ description: "The non-interactive lightweight development skill (light mode, aut
 
 # Ready-board delivery, one unit at a time
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the change affects project goals, rules, or behaviour.
+
 This is the attended, native-dispatch form of `work-heavy-auto`. Survey and order the Ready column, then give each independent issue or dependency batch to one disposable worker. Report one line per unit. A human merges.
 
 ## The workflow

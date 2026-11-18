@@ -10,6 +10,8 @@ Before you write or review diagram labels and captions, read the project's writi
 
 # Diagram Design
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the diagram defines project architecture, domain rules, or user behaviour.
+
 Create diagrams as self-contained HTML files with inline SVG and an editorial design system.
 
 Forty-five visual types. Semantic patterns describe behavior; type references describe layout.

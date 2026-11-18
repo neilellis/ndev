@@ -5,6 +5,8 @@ description: "Bring user-facing docs pages back in line with code or wiki change
 
 # docs-sync: keep the docs site true to the code
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when a change affects the facts or rules a page describes.
+
 Before you write or review documentation, read the project's writing rules if `CLAUDE.md` or `AGENTS.md` names them.
 
 ## The workflow

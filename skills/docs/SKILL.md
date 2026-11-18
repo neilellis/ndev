@@ -5,6 +5,8 @@ description: "Locate and maintain project documentation, wiki knowledge and huma
 
 # Project documentation
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the docs state project goals, rules, or public claims.
+
 The project's knowledge lives in its wiki: a compounding, interlinked, current-state knowledge base that agents keep. The plugin's `kb/llm-wiki.md` holds the method. Start at the project's wiki index file. Read the wiki's `AGENTS.md` (its schema) before you change a wiki file.
 
 ## The workflow

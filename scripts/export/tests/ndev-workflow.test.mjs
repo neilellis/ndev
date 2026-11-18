@@ -262,6 +262,48 @@ test('two issues on one PR wait for the last developer and share one PR review r
   assert.equal(status.workflow.pr, 9)
   assert.equal(status.state, 'reviewing')
 })
+
+test('the code review checks the base North Star without copying it into reviewer briefs', () => {
+  for (const mode of ['light', 'heavy']) {
+    const p = project()
+    const record = JSON.parse(readFileSync(p.file, 'utf8'))
+    record.workflow.mode = mode
+    writeFileSync(p.file, JSON.stringify(record))
+    git(p.work, 'switch', '-q', 'main')
+    writeFileSync(join(p.work, 'NORTH_STAR.md'), '# North Star\n\nFixture statement kept out of the brief.\n')
+    git(p.work, 'add', 'NORTH_STAR.md')
+    git(p.work, 'commit', '-qm', 'Record the project North Star')
+    git(p.work, 'push', '-q', 'origin', 'main')
+    git(p.work, 'switch', '-q', 'feature')
+    const fake = services(p)
+    if (mode === 'heavy') {
+      const gh = join(p.dir, 'fake-bin/gh')
+      writeFileSync(gh, '#!/bin/sh\n[ "$1 $2" = "pr view" ] || exit 22\njq -n --rawfile body "$PR_BODY" \'{body: $body, state: "OPEN", mergeStateStatus: "CLEAN"}\'\n', { mode: 0o755 })
+      writeFileSync(fake.PR_BODY, 'Test entry point: CLI review brief.\n\nCloses #7\n')
+      mkdirSync(join(p.work, 'e2e'))
+      writeFileSync(join(p.work, 'issue_7_unit.txt'), 'Unit test evidence\n')
+      writeFileSync(join(p.work, 'e2e/issue_7_cli.txt'), 'CLI test evidence\n')
+      git(p.work, 'add', 'issue_7_unit.txt', 'e2e/issue_7_cli.txt')
+      git(p.work, 'commit', '-qm', 'Record the gate fixture files')
+    }
+    const result = JSON.parse(output(flow(p, ['finished-development', '--issue', '7'], fake)))
+    assert.equal(result.state, 'reviewing')
+    const briefs = new Map(result.workflow.exportReview.runs.map(run => [run.axis, readFileSync(run.brief, 'utf8')]))
+    const standard = briefs.get(mode === 'heavy' ? 'standards' : 'review')
+    assert.match(standard, /origin\/main:NORTH_STAR\.md/)
+    assert.match(standard, /read only the sections that apply/i)
+    assert.match(standard, /cite the section and the changed file and line/i)
+    assert.match(standard, /owner approval/i)
+    assert.match(standard, /follow any sources the file gives priority/i)
+    assert.match(standard, /use the base rules for the rest of the diff/i)
+    assert.match(standard, /no applicable sections.*file absent/i)
+    assert.match(standard, /when the file is absent, use the remaining project guidance/i)
+    if (mode === 'heavy') assert.doesNotMatch(briefs.get('specification'), /NORTH_STAR\.md/)
+    const dispatched = readFileSync(fake.ORCA_LOG, 'utf8')
+    assert.match(dispatched, /origin\/main:NORTH_STAR\.md/)
+    assert.doesNotMatch(dispatched, /Fixture statement kept out/)
+  }
+})
 test('starting from the base uses the Orca worktree receipt and resumes one draft PR', () => {
   const p = project()
   const fake = services(p)

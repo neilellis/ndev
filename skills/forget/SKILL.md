@@ -5,6 +5,8 @@ description: "Remove documentation and memory claims that code proves false afte
 
 # Remove stale knowledge
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the claim you remove comes from a project rule.
+
 Use with an explicit fact (`$ARGUMENTS`). If there is none, ask what became false. Use this skill when documented text contradicts the code, and after you remove, rename or deprecate behaviour.
 
 The project's wiki holds current state only (the plugin's `kb/llm-wiki.md`). A fact that is no longer true must leave every home, not only the one you found.

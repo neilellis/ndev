@@ -450,9 +450,11 @@ async function refresh($: EngineInterface, isQuiet = false, only?: number): Prom
     const repo = was.repo && was.defaultBranch && was.mergeMethod
       ? { full_name: was.repo, default_branch: was.defaultBranch, allow_merge_commit: was.mergeMethod === 'merge', allow_squash_merge: was.mergeMethod === 'squash', allow_rebase_merge: was.mergeMethod === 'rebase' }
       : (await gh(run, ['repo-read'])) as Repo
-    const rows = only !== undefined && was.rows.some(r => r.number === only)
+    // A loop on named pull requests (--prs) shows and works only those.
+    const named = (await read($, loop)).only
+    const rows = (only !== undefined && was.rows.some(r => r.number === only)
       ? await Promise.all(was.rows.map(async r => (r.number === only ? toRow(await readPull(run, repo.full_name, only)) : r)))
-      : await readQueue(run, repo.full_name, was.queue, was.rows)
+      : await readQueue(run, repo.full_name, was.queue, was.rows)).filter(r => !named || named.includes(r.number))
     let agentsError: string | undefined
     const agents = await listAgents($).catch((err: unknown) => {
       agentsError = err instanceof Error ? err.message : String(err) // shown in the pane
@@ -535,7 +537,10 @@ async function refresh($: EngineInterface, isQuiet = false, only?: number): Prom
       agentsError,
       orcaError,
     }
-    await update($, snapshot, () => fresh)
+    // A pull request added to the queue (start --prs) while this refresh ran, or not read by it, stays in the queue.
+    // The next whole read gives its row.
+    const keep = (await read($, loop)).only
+    await update($, snapshot, s => ({ ...fresh, queue: [...fresh.queue, ...s.queue.filter(n => !fresh.queue.includes(n) && (!keep || keep.includes(n)))] }))
     for (const [n, f] of Object.entries(found)) {
       if (f.owner) await noteOnce($, `#${n}: owner ${f.owner}, ${f.via}`)
     }
@@ -1035,10 +1040,43 @@ function tickLater($: EngineInterface, isForced = false, isStep = false): void {
   void tick($, isForced, isStep) // tick records its own failures
 }
 
+// Reads each named pull request once, and gives a problem for each one that GitHub does not give or that is not open.
+// A loop that queues such a number fails each refresh, so it is refused before the loop takes it.
+export async function closedPulls(run: Run, prs: number[]): Promise<{ pr: number; problem: string }[]> {
+  const read = await Promise.all(prs.map(async pr => {
+    try {
+      const p = (await gh(run, ['pr-read', String(pr)])) as RestPull
+      return p.state === 'open' ? [] : [{ pr, problem: `PR #${pr} is ${p.merged ? 'merged' : p.state}, not open` }]
+    } catch (err) {
+      return [{ pr, problem: `PR #${pr}: ${err instanceof Error ? err.message : String(err)}` }]
+    }
+  }))
+  return read.flat()
+}
+
 // `isNoMerge`: fix each pull request until it is green, and leave the merge to a human.
-async function start($: EngineInterface, isNoMerge = false): Promise<void> {
-  await update($, loop, (): Loop => ({ phase: 'running', attempts: 0, outcomes: {}, log: [], isNoMerge }))
-  await note($, isNoMerge ? 'Started the queue without merging' : 'Started the queue')
+// With prs, the loop works only those pull requests, and each one must be open. A running or paused loop on named pull
+// requests adds them and does not start afresh. A loop on the whole queue adds them to its queue.
+// The answer says what the loop did with prs.
+export async function start($: EngineInterface, isNoMerge = false, prs?: number[]): Promise<string> {
+  if (prs?.length) {
+    const bad = await closedPulls(makeRun($, 60_000), prs)
+    if (bad.length) throw new Error(`the loop takes only open pull requests, so it did not take ${prs.map(n => `#${n}`).join(' ')}:\n- ${bad.map(b => b.problem).join('\n- ')}`)
+    let was: Loop | undefined
+    await update($, loop, (l): Loop => {
+      was = l
+      return (l.phase === 'running' || l.phase === 'paused') && l.only ? { ...l, only: [...new Set([...l.only, ...prs])] } : l
+    })
+    if (was?.phase === 'running' || was?.phase === 'paused') {
+      await update($, snapshot, s => ({ ...s, queue: [...new Set([...s.queue, ...prs])] }))
+      const added = `Added ${prs.map(n => `#${n}`).join(' ')} to the queue`
+      await note($, added)
+      tickLater($, true)
+      return was.phase === 'paused' ? `${added}, but the loop is paused: /fix-prs resume runs it.` : `${added}.`
+    }
+  }
+  await update($, loop, (): Loop => ({ phase: 'running', attempts: 0, outcomes: {}, log: [], isNoMerge, ...(prs?.length ? { only: prs } : {}) }))
+  await note($, `${isNoMerge ? 'Started the queue without merging' : 'Started the queue'}${prs?.length ? ` on ${prs.map(n => `#${n}`).join(' ')}` : ''}`)
   // The new log starts empty: it says again how an owner found before the start was found. A refresh still
   // running writes its owners, then its rows, then its notes, so one of the two notes each owner, once.
   const open = (await read($, snapshot)).rows.filter(r => r.state === 'OPEN').map(r => r.number)
@@ -1047,8 +1085,9 @@ async function start($: EngineInterface, isNoMerge = false): Promise<void> {
     const c = known[n]
     if (c?.owner && c.via) await noteOnce($, `#${n}: owner ${c.owner}, ${c.via}`)
   }
-  await update($, snapshot, () => ({ queue: [], rows: [], checkedAt: 0 }))
+  await update($, snapshot, () => ({ queue: prs ?? [], rows: [], checkedAt: 0 }))
   tickLater($, true)
+  return prs?.length ? `Started the queue on ${prs.map(n => `#${n}`).join(' ')}.` : 'Started the queue.'
 }
 
 async function setPhase($: EngineInterface, phase: Loop['phase']): Promise<void> {
@@ -1185,7 +1224,7 @@ export async function startFixAllPrs($: EngineInterface) {
   await $.command.register({
     name: 'fix-prs',
     description: 'Run the loop that fixes and merges every open pull request of this repository, oldest first (--no-merge leaves the merge to a human)',
-    argumentHint: '[start [--no-merge]|status|pause|resume|skip <pr>|retry <pr>]',
+    argumentHint: '[start [--no-merge] [--prs <n,n>]|status|pause|resume|skip <pr>|retry <pr>]',
   })
   await $.tool.register({
     name: 'report',
@@ -1222,22 +1261,32 @@ export async function fixAllPrsTurn($: EngineInterface, e: TurnCompleteInput) {
 export const fixAllPrs = (on: On) => {
   // Answers at once: the work runs detached, since a slow gh would outlast the hook's budget.
   on('command.run', { command: 'fix-prs' }, async ($, e) => {
-    const words = e.args.trim().split(/\s+/).filter(Boolean)
+    const all = e.args.trim().split(/\s+/).filter(Boolean)
+    // --prs takes the next word as its value.
+    const at = all.indexOf('--prs')
+    const list = at < 0 ? undefined : all[at + 1] ?? ''
+    const words = at < 0 ? all : [...all.slice(0, at), ...all.slice(at + 2)]
     const options = words.filter(w => w.startsWith('--'))
     const [verb = 'start', arg] = words.filter(w => !w.startsWith('--'))
-    const unknown = options.find(o => o !== '--no-merge' || verb !== 'start')
-    if (unknown) return { text: `/fix-prs ${verb} does not know "${unknown}". The one option is /fix-prs start --no-merge.` }
+    const unknown = options.find(o => o !== '--no-merge' || verb !== 'start') ?? (list !== undefined && verb !== 'start' ? '--prs' : undefined)
+    if (unknown) return { text: `/fix-prs ${verb} does not know "${unknown}". The options are /fix-prs start --no-merge and /fix-prs start --prs <n,n>.` }
+    const prs = list === undefined ? undefined : [...new Set(list.split(',').map(Number))]
+    if (prs && (!prs.length || !prs.every(n => Number.isInteger(n) && n > 0))) {
+      return { text: `/fix-prs start --prs needs pull request numbers, for example --prs 182,190, not "${list}".` }
+    }
+    if (prs && arg !== undefined) return { text: `/fix-prs start --prs takes one list with commas, for example --prs 182,190, not "${arg}".` }
     const isNoMerge = options.includes('--no-merge')
     const n = Number(arg)
     if ((verb === 'skip' || verb === 'retry') && !Number.isInteger(n)) {
       return { text: `/fix-prs ${verb} needs a pull request number, for example /fix-prs ${verb} 182.` }
     }
-    const work = verb === 'start' ? start($, isNoMerge) : verb === 'pause' ? setPhase($, 'paused') : verb === 'resume' ? setPhase($, 'running')
+    const work = verb === 'start' ? start($, isNoMerge, prs) : verb === 'pause' ? setPhase($, 'paused') : verb === 'resume' ? setPhase($, 'running')
       : verb === 'skip' ? skip($, n) : verb === 'retry' ? retry($, n) : verb === 'status' ? refresh($, false) : undefined
     if (work === undefined) return { text: `/fix-prs does not know "${verb}". Use start, status, pause, resume, skip <pr> or retry <pr>.` }
     void work.catch((err: unknown) => $.ui.toast(`/fix-prs ${verb} failed: ${err instanceof Error ? err.message : String(err)}`))
     void openPane($)
     if (isNoMerge) return { text: 'start requested without merging: the loop leaves each green pull request for a human to merge. The PR queue pane shows the loop.' }
+    if (prs) return { text: `start requested on ${prs.map(n => `#${n}`).join(' ')} only. The PR queue pane shows the loop.` }
     if (verb !== 'status') return { text: `${verb} requested. The PR queue pane shows the loop.` }
     const l = await read($, loop)
     const { repo, rows } = await read($, snapshot)

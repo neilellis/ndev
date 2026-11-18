@@ -131,6 +131,7 @@ function actions(data) {
     const fields = (action.fields ?? []).map(field => actionField(form, field))
     const button = node('button', action.label ?? action.id)
     button.type = 'submit'
+    if (panelId === 'triage') button.dataset.triageFocus = JSON.stringify([action.id, action.input])
     form.append(button)
     form.onsubmit = async event => {
       event.preventDefault()
@@ -140,12 +141,14 @@ function actions(data) {
       if (interview) input.answers = Object.fromEntries(questions.map(read => read()))
       acting = true
       button.disabled = true
-      message('Applying action…')
+      const openingWorkspace = action.id === 'triage.workspace'
+      message(openingWorkspace ? 'Opening workspace…' : 'Applying action…')
       try {
         await ask('panel.action', { worktreeId, expectedRevision: revision, actionId: action.id, input }, 245_000)
         message()
         await load()
       } catch (error) {
+        if (panelId === 'triage' && !openingWorkspace) await load()
         message(errorText(error), true)
       } finally {
         button.disabled = false
@@ -173,6 +176,11 @@ function interviewHistory(rounds) {
 function paint(next) {
   const { data } = next
   find('title').textContent = data.title ?? document.title
+  find('reload').hidden = panelId === 'triage' && Boolean(data.triage && data.actions?.some(action => action.id === 'triage.refresh'))
+  if (panelId === 'triage' && data.triage) {
+    paintTriage(data, snapshot?.worktreeId === next.worktreeId)
+    return
+  }
   const children = []
   if (data.status) children.push(node('p', data.status, 'quiet'))
   for (const group of data.sections ?? []) {
@@ -200,6 +208,7 @@ async function load() {
   } catch (error) {
     if (['no_workspace', 'remote_workspace', 'no_worktree', 'workspace_changed'].includes(error.code)) {
       snapshot = undefined
+      find('reload').hidden = false
       find('content').replaceChildren()
     }
     message(errorText(error), true)

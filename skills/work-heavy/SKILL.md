@@ -5,6 +5,8 @@ description: "The interactive heavyweight development skill (heavy mode). The he
 
 # Development method (staged)
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you plan architecture or change project rules.
+
 Use this skill for one larger or riskier development task. For a focused fix or a small feature, use
 `work-light`, which is the default. Choose `work-heavy` when the change has several steps, crosses
 modules, touches schema, auth or migrations, or needs a plan, independent reviews and staged

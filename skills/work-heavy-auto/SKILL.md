@@ -5,6 +5,8 @@ description: "The non-interactive heavyweight development skill (heavy mode, aut
 
 # Ready-board delivery
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if an issue changes project architecture or rules. Record each conflict as a blocker.
+
 Do one bounded pass: read the board, sort the startable issues, work each unit in its own worktree, branch and PR, verify it, smoke-test it where the project has a preview, and leave each PR for a human to merge. Never merge. Never push the base branch.
 
 ## The workflow

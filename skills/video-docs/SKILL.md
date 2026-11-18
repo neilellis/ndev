@@ -5,6 +5,8 @@ description: "Keep documentation videos true to the documentation they cite: tra
 
 # Documentation videos
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
+
 A documentation video repeats claims from documentation pages. When a page changes, the video can become wrong. This skill keeps each video traceable to its sources and its evidence tied to the files it reviewed. Use the `video-*` skills for the method of making the video, and `video-how-to` or `video-explainer` for its words. Work from the repository root. This skill does not authorise publishing or deployment.
 
 ## The workflow

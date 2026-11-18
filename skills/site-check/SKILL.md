@@ -5,6 +5,8 @@ description: "Check a local, preview or live copy of a website for broken links,
 
 # Site check
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when verification includes a project rule for how the site must behave.
+
 There are two checks. Both work on a local server, a Vercel preview or the live site. Run them in the project root: the scripts load their packages from the project's `node_modules`.
 
 - **Link check.** `node "${CLAUDE_PLUGIN_ROOT}/skills/site-check/scripts/links.mjs" <url>` uses linkinator to visit every page on the site: every page in the sitemap and every page reachable by links. It checks every link and image on those pages, including links to other sites. Sites that turn checkers away (401, 403, 429, 999) are listed as warnings.

@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -46,14 +47,41 @@ function project(t) {
   *) echo "unsupported gh $*" >&2; exit 21 ;;
 esac`)
   fixture('orca', `case "$1 $2" in
-'worktree list') if [ -n "$OWN_20" ]; then echo '{"ok":true,"result":{"worktrees":[{"id":"w20","projectId":"github:test/project","linkedItems":[{"type":"issue","number":20}]}]}}'; exit 0; fi; echo '{"ok":true,"result":{"worktrees":[]}}' ;;
-'orchestration run-create') echo '{"ok":true,"result":{"run":{"id":"run-15"}}}' ;;
-'orchestration task-create') echo '{"ok":true,"result":{"task":{"id":"task-15"}}}' ;;
+'worktree list') if [ -n "$DUPLICATE_WORKTREE" ]; then
+  if [ "$5" = "--environment" ] && [ "$6" = "remote-host" ]; then
+    echo '{"ok":true,"result":{"worktrees":[{"id":"w-15","projectId":"github:test/project","linkedPR":56}]}}'
+  else
+    echo '{"ok":true,"result":{"worktrees":[{"id":"w-15","projectId":"github:test/project","linkedPR":99}]}}'
+  fi
+  exit 0
+fi; if [ -n "$OWN_20" ]; then echo '{"ok":true,"result":{"worktrees":[{"id":"w20","projectId":"github:test/project","linkedItems":[{"type":"issue","number":20}]}]}}'; exit 0; fi; echo '{"ok":true,"result":{"worktrees":[]}}' ;;
+'terminal create') echo '{"ok":true,"result":{"terminal":{"handle":"term-triage"}}}' ;;
+'worktree activate') echo '{"ok":true,"result":{"activated":true}}' ;;
+'orchestration run-create'|'orchestration task-create'|'orchestration worker-start')
+  if [ -n "$REJECT_SENDER" ] || { [ -n "$REQUIRE_SENDER" ] && [ "$ORCA_TERMINAL_HANDLE" != "term-triage" ]; }; then
+    echo '{"ok":false,"error":{"code":"no_active_sender_terminal","message":"No active sender"}}'
+    exit 1
+  fi
+  echo "sender $2 $ORCA_TERMINAL_HANDLE" >> "$FAKE_LOG"
+  case " $* " in
+    *' --full '*) ;;
+    *) echo '{"ok":true,"result":{"runId":"run-15","taskId":"task-15"}}'; exit 0 ;;
+  esac
+  case "$2" in
+run-create) echo '{"ok":true,"result":{"run":{"id":"run-15"}}}' ;;
+task-create) echo '{"ok":true,"result":{"task":{"id":"task-15"}}}' ;;
+worker-start) if [ -n "$START_UNKNOWN" ]; then echo '{"ok":false,"error":{"message":"lost response","data":{"orchestrationRequestId":"req-15"}}}'; exit 1; fi; if [ -n "$START_FAIL" ]; then echo '{"ok":true,"result":{"state":"failed","failedStage":"agent","lastError":"agent refused","dispatchId":"d-failed"}}'; exit 1; fi; echo '{"ok":true,"result":{"state":"ready","dispatchId":"d-15","effects":[{"kind":"worktree","id":"w-15"}]}}' ;;
+  esac ;;
 'orchestration request-show') echo '{"ok":true,"result":{"state":"completed"}}' ;;
-'orchestration worker-start') if [ -n "$START_UNKNOWN" ]; then echo '{"ok":false,"error":{"message":"lost response","data":{"requestId":"req-15"}}}'; exit 1; fi; if [ -n "$START_FAIL" ]; then echo '{"ok":true,"result":{"state":"failed","failedStage":"agent","lastError":"agent refused","dispatchId":"d-failed"}}'; exit 1; fi; echo '{"ok":true,"result":{"state":"ready","dispatchId":"d-15","worktree":"w-15"}}' ;;
 'orchestration task-list') echo '{"ok":true,"result":{"tasks":[]}}' ;;
-'orchestration worker-show') if [ -n "$WORKER_FAILED" ]; then echo '{"ok":true,"result":{"state":"failed","lastError":"lost worker"}}'; exit 0; fi; echo '{"ok":true,"result":{"state":"completed","pr":55}}' ;;
-'orchestration inbox') echo '{"ok":true,"result":{"messages":[]}}' ;;
+'orchestration worker-show') if [ -n "$NATIVE_RECEIPT" ]; then
+  echo '{"ok":true,"result":{"dispatch":{"status":"failed"},"worker":{"worktreeId":"w-15","state":"stopped","lastError":"Worker process stopped"}}}'
+  exit 0
+fi; if [ -n "$WORKER_FAILED" ]; then echo '{"ok":true,"result":{"state":"failed","lastError":"lost worker"}}'; exit 0; fi; echo '{"ok":true,"result":{"state":"completed","pr":55}}' ;;
+'orchestration inbox') if [ -n "$NATIVE_RECEIPT" ]; then
+  echo '{"ok":true,"result":{"messages":[{"id":"q1","run_id":"run-15","thread_id":"q1","from_handle":"worker","to_handle":"coordinator","type":"question","body":"Which fixture should I use?"},{"id":"q2","run_id":"run-15","thread_id":"q2","from_handle":"worker","to_handle":"coordinator","type":"question","body":"Can I proceed?"},{"id":"r2","run_id":"run-15","thread_id":"q2","from_handle":"coordinator","to_handle":"worker","type":"status","body":"Yes."},{"id":"q3","run_id":"another-run","thread_id":"q3","from_handle":"worker","to_handle":"coordinator","type":"question","body":"Unrelated question"}]}}'
+  exit 0
+fi; echo '{"ok":true,"result":{"messages":[]}}' ;;
 *) echo "unsupported orca $*" >&2; exit 23 ;;
 esac`)
   fixture('gh', 'echo "ok"')
@@ -63,7 +91,11 @@ esac`)
     return { ...data, status: result.status }
   }
   function ok(args, extra) { const value = cli(args, extra); assert.equal(value.status, 0, JSON.stringify(value.error)); return value.result }
-  return { root, env, input, cli, ok, log: () => readFileSync(log, 'utf8'), json: value => writeFileSync(input, JSON.stringify(value)) }
+  function paneWithEnv(extra, ...args) {
+    const result = run(bin, ['pane', 'bridge', ...args, '--json'], extra)
+    return { ...JSON.parse(result.stdout), status: result.status }
+  }
+  return { root, env, input, cli, ok, pane: (...args) => paneWithEnv({}, ...args), paneWithEnv, log: () => readFileSync(log, 'utf8'), json: value => writeFileSync(input, JSON.stringify(value)) }
 }
 const group = (issues, extra = {}) => ({ issues, title: 'Fix group ' + issues[0], complexity: 'complex', hint: 'Exercise the public CLI', ...extra })
 test('triage dry-run validates a full partition, then starts one worker at a time in dependency order', t => {
@@ -100,6 +132,9 @@ test('a partial launch records the Run and failed dispatch receipt without relau
   assert.equal(first.status, 1)
   assert.match(first.error.message, /run-15/)
   assert.match(first.error.message, /agent refused/)
+  const failed = p.pane('snapshot', 'triage').result.data.triage?.groups[0]
+  assert.equal(failed?.status, 'failed')
+  assert.match(failed.error, /agent refused/)
   const state = p.ok(['status'])
   assert.equal(state.groups[0].dispatchId, 'd-failed')
   assert.doesNotMatch(p.log(), /worker-stop/)
@@ -202,4 +237,162 @@ test('restarting a failed predecessor recovers its descendants while preserving 
   const resumed = p.ok(['refresh'])
   assert.deepEqual(resumed.groups.map(g => g.status), ['done', 'running', 'blocked'])
   assert.equal(resumed.phase, 'running')
+})
+
+test('the triage pane publishes each issue and opens only a group workspace advertised at its revision', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15])], skipped: [{ issue: 20, reason: 'Outside scope' }] })
+  p.ok(['groups', '--file', p.input])
+  const plan = p.pane('snapshot', 'triage').result
+  assert.equal(plan.data.triage?.phase, 'planned')
+  assert.deepEqual(plan.data.triage.groups[0].issues, [
+    { number: 12, title: 'Issue 12', url: 'https://github.com/test/project/issues/12' },
+    { number: 15, title: 'Issue 15', url: 'https://github.com/test/project/issues/15' },
+  ])
+  assert.equal(plan.data.triage.skipped[0].reason, 'Outside scope')
+  assert.equal(plan.data.actions.some(action => action.id === 'triage.workspace'), false)
+  p.ok(['launch'])
+  const running = p.pane('snapshot', 'triage').result
+  assert.equal(running.data.triage.groups[0].status, 'running')
+  const activate = (lead, expectedRevision = running.revision) => p.pane('action', 'triage', JSON.stringify({
+    worktreeId: running.worktreeId, expectedRevision, actionId: 'triage.workspace', input: { lead },
+  }))
+  assert.equal(activate(15).ok, false)
+  assert.equal(activate(12, plan.revision).ok, false)
+  assert.doesNotMatch(p.log(), /worktree activate/)
+  assert.equal(activate(12).result.result.activated, true)
+  assert.match(p.log(), /worktree activate --worktree id:w-15 --environment local/)
+  p.ok(['refresh'])
+  const completedPanel = p.pane('snapshot', 'triage').result.data
+  const completed = completedPanel.triage.groups[0]
+  assert.ok(completedPanel.actions.some(action => action.id === 'triage.refresh'))
+  assert.equal(completed.status, 'done')
+  assert.deepEqual(completed.pr, { number: 55, state: 'open', url: 'https://github.com/test/project/pull/55' })
+})
+
+test('opening the pane upgrades a saved plan from the older flat snapshot', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  const file = join(p.root, '.git', 'ndev-state', 'panels', 'triage.json')
+  const legacy = JSON.parse(readFileSync(file, 'utf8'))
+  delete legacy.data.triage
+  writeFileSync(file, JSON.stringify(legacy))
+  const first = p.pane('snapshot', 'triage').result
+  assert.equal(first.data.triage?.phase, 'planned')
+  assert.deepEqual(first.data.triage.groups[0].issues.map(issue => issue.number), [12, 15, 20])
+  assert.equal(first.revision, legacy.revision + 1)
+  assert.deepEqual(p.pane('snapshot', 'triage').result, first)
+  assert.doesNotMatch(p.log(), /run-create|worker-start/)
+})
+
+test('workspace actions reject an old snapshot after the underlying run is saved without publishing', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  p.ok(['launch'])
+  const running = p.pane('snapshot', 'triage').result
+  const key = createHash('sha256').update(p.root).digest('hex')
+  const file = join(p.env.XDG_STATE_HOME, 'ndev', 'triage', key + '.json')
+  const state = JSON.parse(readFileSync(file, 'utf8'))
+  state.phase = 'idle'
+  state.groups = []
+  state.revision++
+  writeFileSync(file, JSON.stringify(state))
+  const action = p.pane('action', 'triage', JSON.stringify({
+    worktreeId: running.worktreeId, expectedRevision: running.revision, actionId: 'triage.workspace', input: { lead: 12 },
+  }))
+  assert.equal(action.ok, false)
+  assert.doesNotMatch(p.log(), /worktree activate/)
+  assert.equal(p.pane('snapshot', 'triage').result.data.triage.phase, 'idle')
+})
+
+test('workspace IDs and pull requests are matched on the worker host', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  p.ok(['launch'])
+  const key = createHash('sha256').update(p.root).digest('hex')
+  const file = join(p.env.XDG_STATE_HOME, 'ndev', 'triage', key + '.json')
+  const state = JSON.parse(readFileSync(file, 'utf8'))
+  state.remote = { id: 'remote-host' }
+  state.groups[0].workerHost = 'remote-host'
+  writeFileSync(file, JSON.stringify(state))
+  p.ok(['refresh'], { DUPLICATE_WORKTREE: '1' })
+  const completed = p.pane('snapshot', 'triage').result.data.triage.groups[0]
+  assert.equal(completed.workspace.host, 'remote-host')
+  assert.equal(completed.pr.number, 56)
+})
+
+test('triage displays failure and unanswered questions from native Orca receipts', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  p.ok(['launch'])
+  const status = p.ok(['refresh'], { NATIVE_RECEIPT: '1' })
+  assert.equal(status.phase, 'done')
+  assert.equal(status.groups[0].status, 'failed')
+  assert.equal(status.groups[0].error, 'Worker process stopped')
+  assert.deepEqual(p.pane('snapshot', 'triage').result.data.sections.find(section => section.title === 'Questions')?.rows, [
+    { label: 'worker', value: 'Which fixture should I use?' },
+  ])
+})
+
+test('Launch from the Orca pane gets its own sender and reuses it for subsequent workers', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open', '--batch', '1'])
+  p.json({ groups: [group([12]), group([15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  const snapshot = p.pane('snapshot', 'triage').result
+  const launch = p.paneWithEnv({ REQUIRE_SENDER: '1', ORCA_TERMINAL_HANDLE: '' }, 'action', 'triage', JSON.stringify({
+    worktreeId: snapshot.worktreeId, expectedRevision: snapshot.revision, actionId: 'triage.launch', input: {},
+  }))
+  assert.equal(launch.ok, true, JSON.stringify(launch.error))
+  assert.equal(launch.result.snapshot.data.triage.phase, 'running')
+  p.ok(['refresh'], { REQUIRE_SENDER: '1', ORCA_TERMINAL_HANDLE: '' })
+  assert.equal(p.log().match(/orca terminal create/g)?.length, 1)
+  assert.equal(p.log().match(/sender worker-start term-triage/g)?.length, 2)
+  assert.match(p.log(), /sender run-create term-triage/)
+  assert.match(p.log(), /sender task-create term-triage/)
+})
+
+test('an explicit missing-sender rejection leaves the plan ready to retry', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  const rejected = p.cli(['launch'], { REJECT_SENDER: '1' })
+  assert.equal(rejected.ok, false)
+  assert.match(rejected.error.message, /No active sender/)
+  assert.match(rejected.error.repair, /ndev triage launch/)
+  const status = p.ok(['status'])
+  assert.equal(status.phase, 'planned')
+  assert.equal(status.runId, undefined)
+  assert.deepEqual(status.groups[0].issues, [12, 15, 20])
+  assert.equal(status.operations?.run, undefined)
+  assert.equal(p.ok(['launch']).phase, 'running')
+})
+
+test('opening the pane restores a plan wedged by the old missing-sender error', t => {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open'])
+  p.json({ groups: [group([12, 15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  const key = createHash('sha256').update(p.root).digest('hex')
+  const file = join(p.env.XDG_STATE_HOME, 'ndev', 'triage', key + '.json')
+  const state = JSON.parse(readFileSync(file, 'utf8'))
+  state.phase = 'running'
+  state.operations = { run: { receipt: { ok: false, error: { code: 'no_active_sender_terminal' } } } }
+  state.revision++
+  writeFileSync(file, JSON.stringify(state))
+  const snapshot = p.pane('snapshot', 'triage').result
+  assert.equal(snapshot.data.triage.phase, 'planned')
+  assert.ok(snapshot.data.actions.some(action => action.id === 'triage.launch'))
+  assert.equal(p.ok(['status']).operations.run, undefined)
+  assert.doesNotMatch(p.log(), /run-create|worker-start/)
 })

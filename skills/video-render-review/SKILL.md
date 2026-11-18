@@ -5,6 +5,8 @@ description: "Render a video's stills and MP4, inspect them, show the user befor
 
 # Render and review
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the review covers claims about the product.
+
 Rendering needs Node 22 or later, the project's npm dependencies (`ffmpeg-static`, `ffprobe-static`, `playwright-core`) and Google Chrome. Do not rely on a system FFmpeg. Run every command in the video's folder.
 
 ## The workflow

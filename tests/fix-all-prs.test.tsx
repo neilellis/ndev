@@ -236,7 +236,10 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
       return ok(JSON.stringify({ statuses: [], check_runs: (p?.statusCheckRollup ?? []).map((c: { name: string; status: string; conclusion: string; startedAt?: string }) => ({ name: c.name, started_at: c.startedAt ?? null, status: c.status.toLowerCase(), conclusion: c.conclusion ? c.conclusion.toLowerCase() : null })) }))
     }
     const one = /^gh\.sh pr-read (\d+)$/.exec(args)
-    if (one) return ok(JSON.stringify(rest(prs.find(p => p.number === Number(one[1]))!)))
+    if (one) {
+      const p = prs.find(x => x.number === Number(one[1]))
+      return p ? ok(JSON.stringify(rest(p))) : { value: { exitCode: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     if (args.startsWith('gh.sh pr-rows')) return ok(prs.filter(p => p.state === 'OPEN').map(p => `${JSON.stringify(p)}\n`).join(''))
     if (args.startsWith('gh.sh pr-list')) return ok(prs.map(p => `${JSON.stringify(rest(p))}\n`).join(''))
     return ok('')
@@ -405,6 +408,46 @@ test('the Start No Merge button starts the loop without merging', async ($, on) 
   expect((await ui.find({ type: 'Text', text: /#185/ }))?.text).toMatch(/ready\s+#185/)
   await ui.unmount()
   expect(w.merged).toEqual([])
+})
+
+test('start --prs works only the named pull requests; a second --prs adds to the running loop', async ($, on) => {
+  const prs = [pr(182, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-176'), pr(185, '2026-10-26T12:00:00Z', 'SUCCESS'), pr(190, '2026-10-26T13:00:00Z', 'FAILURE')]
+  const w = world(on, prs, [{ name: 'issue-176', status: 'idle' }])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(JSON.stringify(await $.command.run(command('start --prs 182')))).toMatch(/#182/)
+  await until(() => w.sent.length === 1)
+  expect(w.sent[0]!.text).toMatch(/PR #182 /)
+
+  // While the loop waits on #182, a second --prs adds #185 and does not start afresh.
+  await $.command.run(command('start --prs 185'))
+  Object.assign(prs[0]!, { headRefOid: 'head-182-2', mergeStateStatus: 'CLEAN', statusCheckRollup: [{ name: 'tests', status: 'COMPLETED', conclusion: 'SUCCESS' }] })
+  await $.session.receive({ origin: { kind: 'peer' }, text: '<cross-session-message from="uds:/tmp/cc-socks/1.sock" from-name="issue-176" from-mode="prompting">PR #182 is pushed.</cross-session-message>' })
+  await until(async () => JSON.stringify(await $.command.run(command('status'))).includes('Finished'), () => w.merged)
+  expect(w.merged).toEqual(['gh pr merge 182 --merge', 'gh pr merge 185 --merge'])
+  // #190 is not named, so no agent starts for it and the pane does not list it.
+  expect(w.orca.created).toEqual([])
+  expect(JSON.stringify(await $.command.run(command('status')))).not.toMatch(/#190/)
+})
+
+test('start --prs refuses a list that is not pull request numbers', async ($, on) => {
+  world(on, [pr(182, '2026-10-26T11:00:00Z', 'FAILURE')], [])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const out = (await $.command.run(command('start --prs 18x'))) as { text: string }
+  expect(out.text).toMatch(/--prs needs pull request numbers, for example --prs 182,190/)
+  const extra = (await $.command.run(command('start --prs 182 190'))) as { text: string }
+  expect(extra.text).toMatch(/--prs takes one list with commas, for example --prs 182,190, not "190"/)
+})
+
+test('start --prs refuses a pull request that GitHub does not give, or one that is not open, and starts nothing', async ($, on) => {
+  const w = world(on, [pr(182, '2026-10-26T11:00:00Z', 'FAILURE'), { ...pr(185, '2026-10-26T12:00:00Z', 'SUCCESS'), state: 'MERGED' }], [])
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(command('start --prs 182,999,185'))
+  await until(() => w.toasts.some(t => t.includes('/fix-prs start failed')), () => w.toasts)
+  const toast = w.toasts.find(t => t.includes('/fix-prs start failed'))!
+  expect(toast).toMatch(/PR #999: .*HTTP 404/)
+  expect(toast).toMatch(/PR #185 is merged, not open/)
+  expect(JSON.stringify(await $.command.run(command('status')))).not.toMatch(/Running/)
+  expect(w.sent).toEqual([])
 })
 
 test('an unknown option is refused with the ones that exist', async ($, on) => {

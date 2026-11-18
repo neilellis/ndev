@@ -67,6 +67,18 @@ function nextAction(epic) {
   return argv
 }
 
+function epicResult(epic) {
+  const result = { epic, nextAction: nextAction(epic) }
+  if (epic.off) return result
+  if (epic.state === 'framing') {
+    return { ...result, nextGuidance: 'Load ndev-epic-plan and read all of NORTH_STAR.md before framing.' }
+  }
+  if (epic.state === 'closing') {
+    return { ...result, nextGuidance: 'Load ndev-epic-coordinate and read all of NORTH_STAR.md again from the default branch before closing.' }
+  }
+  return result
+}
+
 function save(workspace, e, before, action, from, to) {
   const file = pathFor(workspace.root, e.epic)
   ignore(workspace, file)
@@ -79,7 +91,7 @@ function save(workspace, e, before, action, from, to) {
     e.history.push({ at, tool: action, from, to })
     atomicJson(file, e)
   })
-  return { epic: e, nextAction: nextAction(e) }
+  return epicResult(e)
 }
 
 function github(root, repo, endpoint, pages = false) {
@@ -326,7 +338,7 @@ function handoffs(workspace, e, sub) {
     h.receipt = receipt.result
     save(workspace,e,recorded,'handoff-sent',sub.state,sub.state)
   }
-  return { epic: e, nextAction: nextAction(e) }
+  return epicResult(e)
 }
 
 function move(workspace, e, before, sub, to, v) {
@@ -413,7 +425,7 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
   }
   const before = load(workspace.root, n)
   const e = structuredClone(before)
-  if (verb === 'status') return { epic: e, nextAction: nextAction(e), ...(e.state === 'coordinating' ? { frontier: frontier(e) } : {}) }
+  if (verb === 'status') return { ...epicResult(e), ...(e.state === 'coordinating' ? { frontier: frontier(e) } : {}) }
   if (!override && (e.off || e.owner?.session !== session())) refuse(`This session does not coordinate #${n}.`, `Run ndev epic start ${n}.`)
   if (verb === 'next') return { epic: n, state: e.state, frontier: e.state === 'coordinating' ? frontier(e) : null }
   if (verb === 'phase') return phase(workspace,e,before,pos[1],v)

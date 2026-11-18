@@ -114,6 +114,8 @@ export type Loop = {
   quota?: Quota
   // Started with --no-merge: a green pull request is recorded as ready, not merged.
   isNoMerge?: boolean
+  // /fix-prs start --prs <n,n>, or a triage hand-over: the loop works only these pull requests.
+  only?: number[]
 }
 
 // The /triage run (hooks/triage.tsx): this session's model groups the open issues, and each group becomes
@@ -188,6 +190,8 @@ export type TriageView = {
   remote?: { id: string; name: string }
   // --bugs-only: each [issue, label] that the mod wrote in this triage.
   labelled?: [number, string][]
+  // A dry run: each [issue, pull request] that /dev triage launch hands to the /fix-prs loop.
+  unfinished?: [number, number][]
   // --bugs-only with --dry-run: each [issue, label] that /dev triage launch writes.
   labels?: [number, string][]
   // A triage saved before --batch: --sequential, one worker at a time.

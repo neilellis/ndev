@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Design work with the user
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Read the applicable sections before you propose a design that affects project goals or rules.
+
 Use this for a new idea, a vague request, or an issue with no contract that you can implement. Do not use it for a specified issue or a queue of ready work.
 
 ## The workflow

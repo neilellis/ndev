@@ -52,6 +52,116 @@ textarea { min-height: 48px; resize: vertical; }
 table { border-collapse: collapse; width: 100%; }
 th, td { border-top: 1px solid var(--orca-border, GrayText); padding: 5px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 td small { display: block; }
+
+body[data-panel="triage"] {
+  --triage-line: var(--orca-border, light-dark(#dbe1ea, #414b5b));
+  --triage-card: var(--orca-card, Canvas);
+  --triage-blue: light-dark(#2055a4, #9bc1ff);
+  --triage-red: light-dark(#a5293c, #ffa3b0);
+  padding: 16px;
+}
+
+[data-panel="triage"] header h1 { font-size: 19px; letter-spacing: -.02em; }
+[data-panel="triage"] header button { min-height: 30px; }
+[data-panel="triage"] [data-state="queued"] { --state-ink: light-dark(#53617a, #b4bdd0); }
+[data-panel="triage"] [data-state="running"] { --state-ink: var(--triage-blue); }
+[data-panel="triage"] [data-state="done"] { --state-ink: light-dark(#18704d, #86d9ad); }
+[data-panel="triage"] [data-state="blocked"] { --state-ink: light-dark(#85520f, #f0bf69); }
+[data-panel="triage"] [data-state="failed"] { --state-ink: var(--triage-red); }
+
+.triage-summary {
+  margin: 14px 0 12px;
+  padding: 14px 16px;
+  border-color: var(--triage-line);
+  border-radius: 12px;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--triage-blue) 10%, var(--triage-card)), var(--triage-card));
+}
+.triage-summary-heading, .triage-group-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.triage-summary-heading h2 { font-size: 17px; margin: 0; letter-spacing: -.015em; }
+.triage-summary-heading span { overflow-wrap: anywhere; }
+.triage-summary p { margin: 4px 0 10px; }
+.triage-progress {
+  display: flex;
+  gap: 2px;
+  height: 7px;
+  margin: 12px 0 9px;
+  overflow: hidden;
+  border-radius: 5px;
+}
+.triage-progress > span { flex-basis: 0; min-width: 3px; background: var(--state-ink); }
+.triage-legend, .triage-issues, .triage-groups > ol { list-style: none; padding: 0; margin: 0; }
+.triage-legend, .triage-group-actions { display: flex; flex-wrap: wrap; gap: 5px 8px; align-items: center; }
+.triage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-ink, GrayText) 13%, transparent);
+  color: var(--state-ink, CanvasText);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.triage-mark { line-height: 1; }
+.triage-groups { padding: 0; border: 0; margin: 18px 0 12px; }
+.triage-groups > ol { display: grid; gap: 8px; }
+.triage-group {
+  padding: 12px 12px 10px 14px;
+  border: 1px solid var(--triage-line);
+  border-inline-start: 3px solid var(--state-ink, var(--triage-line));
+  border-radius: 9px;
+  background: var(--triage-card);
+  overflow-wrap: anywhere;
+}
+.triage-group:target { outline: 2px solid var(--triage-blue); outline-offset: 1px; }
+.triage-group-heading { margin-bottom: 8px; }
+.triage-group h3 { margin: 0; font-size: 14px; flex: 1 1 180px; }
+.triage-issues { display: grid; gap: 6px; }
+.triage-issues li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  justify-items: start;
+  gap: 2px 8px;
+  overflow-wrap: anywhere;
+}
+.triage-issues li small { grid-column: 2; }
+.triage-link, .triage-group-actions button {
+  display: inline-block;
+  padding: 3px 8px;
+  min-height: 25px;
+  border: 1px solid var(--triage-line);
+  border-radius: 5px;
+  color: var(--triage-blue);
+  font-weight: 600;
+  text-decoration: none;
+}
+.triage-link:hover, .triage-group-actions button:hover { background: color-mix(in srgb, var(--triage-blue) 10%, transparent); }
+.triage-group-actions { margin-top: 10px; }
+.triage-dependencies a { color: var(--triage-blue); }
+.triage-attention { color: var(--triage-red); white-space: pre-wrap; }
+.triage-disclosure, .triage-ungrouped { margin: 8px 0; padding: 10px 12px; border: 1px solid var(--triage-line); border-radius: 8px; }
+.triage-disclosure summary { cursor: pointer; font-weight: 650; }
+.triage-disclosure .triage-issues { margin-top: 9px; }
+.triage-activity { font-size: 12px; overflow-wrap: anywhere; }
+[data-panel="triage"] #content > .actions button { min-height: 30px; font-weight: 600; }
+
+.triage-screen-reader {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 </style>
   </head>
   <body data-panel="triage">
@@ -62,6 +172,196 @@ td small { display: block; }
     <p id="message" role="status" aria-live="polite"></p>
     <main id="content"></main>
     <script type="module">
+const triageStates = {
+  running: { label: 'Running', icon: '▶' },
+  queued: { label: 'Queued', icon: '○' },
+  done: { label: 'Done', icon: '✓' },
+  blocked: { label: 'Blocked', icon: 'Ⅱ' },
+  failed: { label: 'Failed', icon: '×' },
+}
+const triagePhases = {
+  idle: 'Idle',
+  grouping: 'Grouping issues',
+  planned: 'Plan ready',
+  running: 'Run in progress',
+  done: 'Triage complete',
+  cleaning: 'Reviewing issues',
+  confirming: 'Awaiting decisions',
+}
+
+function triageBadge(status) {
+  const { label, icon } = triageStates[status] ?? { label: status, icon: '○' }
+  const badge = node('span', undefined, 'triage-badge')
+  badge.dataset.state = status
+  const mark = node('span', icon, 'triage-mark')
+  mark.setAttribute('aria-hidden', 'true')
+  badge.append(mark, label)
+  return badge
+}
+
+function triageLink(label, url) {
+  const link = node('a', label, 'triage-link')
+  link.href = url
+  link.dataset.triageFocus = url
+  link.onclick = async event => {
+    event.preventDefault()
+    if (!event.isTrusted) return
+    message()
+    try {
+      await orca.shell.openExternal(url)
+    } catch (error) {
+      message(errorText(error), true)
+    }
+  }
+  return link
+}
+
+function triageIssues(issues) {
+  const list = node('ul', undefined, 'triage-issues')
+  for (const issue of issues) {
+    const item = node('li')
+    const link = triageLink(`#${issue.number}`, issue.url)
+    if (issue.title) link.setAttribute('aria-label', `#${issue.number} ${issue.title}`)
+    item.append(link)
+    if (issue.title) item.append(node('span', issue.title))
+    if (issue.reason) item.append(node('small', issue.reason, 'quiet'))
+    list.append(item)
+  }
+  return list
+}
+
+function triageSummary(triage) {
+  const summary = node('section', undefined, 'triage-summary')
+  const heading = node('div', undefined, 'triage-summary-heading')
+  heading.append(node('h2', triagePhases[triage.phase] ?? triage.phase))
+  if (triage.repo) heading.append(node('span', triage.repo, 'quiet'))
+  summary.append(heading)
+  if (!triage.groups.length) return summary
+  const issueCount = triage.groups.reduce((total, group) => total + group.issues.length, 0)
+  const countLabel = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`
+  const totals = [countLabel(triage.groups.length, 'group'), countLabel(issueCount, 'issue')]
+  if (triage.batch) totals.push(triage.batch === 1 ? 'One group at a time' : `Up to ${triage.batch} groups at a time`)
+  summary.append(node('p', totals.join(' · '), 'quiet'))
+  const bar = node('div', undefined, 'triage-progress')
+  bar.setAttribute('aria-hidden', 'true')
+  const legend = node('ul', undefined, 'triage-legend')
+  for (const [status, { label }] of Object.entries(triageStates)) {
+    const count = triage.groups.filter(group => group.status === status).length
+    if (count) {
+      const segment = node('span')
+      segment.dataset.state = status
+      segment.style.flexGrow = String(count)
+      bar.append(segment)
+      const item = node('li')
+      const badge = triageBadge(status)
+      badge.lastChild.textContent = `${count} ${label.toLowerCase()}`
+      item.append(badge)
+      legend.append(item)
+    }
+  }
+  summary.append(bar, legend)
+  return summary
+}
+
+function triageGroup(group, data) {
+  const card = node('li', undefined, 'triage-group')
+  card.dataset.state = group.status
+  const heading = node('div', undefined, 'triage-group-heading')
+  heading.append(node('h3', group.title), triageBadge(group.status))
+  card.append(heading, triageIssues(group.issues))
+  if (group.after?.length) {
+    const dependency = node('p', 'After ', 'triage-dependencies quiet')
+    group.after.forEach((lead, index) => {
+      if (index) dependency.append(', ')
+      const link = node('a', `group #${lead}`)
+      link.href = `#triage-group-${lead}`
+      link.dataset.triageFocus = `dependency-${group.lead}-${lead}`
+      dependency.append(link)
+    })
+    card.append(dependency)
+  }
+  if (group.stalled && group.status === 'running') card.append(node('p', 'Worker needs attention', 'triage-attention'))
+  if (group.error) card.append(node('p', group.error, 'triage-attention'))
+  const workspace = data.actions?.find(action => action.id === 'triage.workspace' && action.input.lead === group.lead)
+  if (workspace || group.pr) {
+    const links = node('div', undefined, 'triage-group-actions')
+    if (workspace) links.append(actions({ actions: [workspace] }))
+    if (group.pr) {
+      const label = [`PR #${group.pr.number}`, group.pr.state].filter(Boolean).join(' · ')
+      links.append(triageLink(label, group.pr.url))
+    }
+    card.append(links)
+  }
+  card.id = `triage-group-${group.lead}`
+  return card
+}
+
+function triageDisclosure(title, issues) {
+  const previous = find(`triage-${title}`)
+  const details = node('details', undefined, 'triage-disclosure')
+  details.id = `triage-${title}`
+  details.open = previous?.open ?? false
+  const summary = node('summary', `${title} issues (${issues.length})`)
+  summary.dataset.triageFocus = details.id
+  details.append(summary, triageIssues(issues))
+  return details
+}
+
+function triageView(data) {
+  const triage = data.triage
+  const children = [triageSummary(triage)]
+  const controls = data.actions?.filter(action => action.id !== 'triage.workspace') ?? []
+  if (controls.length) children.push(actions({ actions: controls }))
+  if (triage.groups.length) {
+    const section = node('section', undefined, 'triage-groups')
+    const list = node('ol')
+    list.append(...triage.groups.map(group => triageGroup(group, data)))
+    section.append(node('h2', 'Groups'), list)
+    children.push(section)
+  }
+  if (triage.ungrouped.length) {
+    const section = node('section', undefined, 'triage-ungrouped')
+    section.append(node('h2', `Issues to group (${triage.ungrouped.length})`), triageIssues(triage.ungrouped))
+    children.push(section)
+  }
+  if (triage.skipped.length) children.push(triageDisclosure('Skipped', triage.skipped))
+  if (triage.excluded.length) children.push(triageDisclosure('Already assigned', triage.excluded))
+  for (const group of data.sections ?? []) {
+    if (!['Groups', 'Issues to group', 'Last activity'].includes(group.title)) children.push(rows(group))
+  }
+  if (triage.activity) {
+    const time = new Date(triage.activity.at)
+    const activity = node('p', undefined, 'triage-activity quiet')
+    const stamp = node('time', time.toLocaleString())
+    stamp.dateTime = time.toISOString()
+    activity.append(stamp, ' · ', triage.activity.message)
+    children.push(activity)
+  }
+  if (triage.phase === 'idle') children.push(node('p', 'No plan is saved for this worktree.', 'quiet'))
+  return children
+}
+
+function paintTriage(data, sameWorktree) {
+  const content = find('content')
+  const focused = sameWorktree && content.contains(document.activeElement) && document.activeElement.dataset.triageFocus
+  const children = triageView(data)
+  content.replaceChildren(...children)
+  if (focused) {
+    const target = [...content.querySelectorAll('[data-triage-focus]')].find(item => item.dataset.triageFocus === focused)
+    target?.focus({ preventScroll: true })
+  }
+  let announcement = find('triage-status')
+  if (!announcement) {
+    announcement = node('p', undefined, 'triage-screen-reader')
+    announcement.id = 'triage-status'
+    announcement.setAttribute('role', 'status')
+    content.before(announcement)
+  }
+  const counts = [...content.querySelectorAll('.triage-legend .triage-badge')].map(badge => badge.lastChild.textContent)
+  const status = [triagePhases[data.triage.phase], ...counts].join(', ')
+  if (announcement.textContent !== status) announcement.textContent = status
+}
+
 const panelId = document.body.dataset.panel
 const find = id => document.getElementById(id)
 const ask = (name, input, timeoutMs = 20_000) => orca.plugin.request(name, { panelId, ...input }, { timeoutMs })
@@ -195,6 +495,7 @@ function actions(data) {
     const fields = (action.fields ?? []).map(field => actionField(form, field))
     const button = node('button', action.label ?? action.id)
     button.type = 'submit'
+    if (panelId === 'triage') button.dataset.triageFocus = JSON.stringify([action.id, action.input])
     form.append(button)
     form.onsubmit = async event => {
       event.preventDefault()
@@ -204,12 +505,14 @@ function actions(data) {
       if (interview) input.answers = Object.fromEntries(questions.map(read => read()))
       acting = true
       button.disabled = true
-      message('Applying action…')
+      const openingWorkspace = action.id === 'triage.workspace'
+      message(openingWorkspace ? 'Opening workspace…' : 'Applying action…')
       try {
         await ask('panel.action', { worktreeId, expectedRevision: revision, actionId: action.id, input }, 245_000)
         message()
         await load()
       } catch (error) {
+        if (panelId === 'triage' && !openingWorkspace) await load()
         message(errorText(error), true)
       } finally {
         button.disabled = false
@@ -237,6 +540,11 @@ function interviewHistory(rounds) {
 function paint(next) {
   const { data } = next
   find('title').textContent = data.title ?? document.title
+  find('reload').hidden = panelId === 'triage' && Boolean(data.triage && data.actions?.some(action => action.id === 'triage.refresh'))
+  if (panelId === 'triage' && data.triage) {
+    paintTriage(data, snapshot?.worktreeId === next.worktreeId)
+    return
+  }
   const children = []
   if (data.status) children.push(node('p', data.status, 'quiet'))
   for (const group of data.sections ?? []) {
@@ -264,6 +572,7 @@ async function load() {
   } catch (error) {
     if (['no_workspace', 'remote_workspace', 'no_worktree', 'workspace_changed'].includes(error.code)) {
       snapshot = undefined
+      find('reload').hidden = false
       find('content').replaceChildren()
     }
     message(errorText(error), true)

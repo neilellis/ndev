@@ -5,6 +5,8 @@ description: "Push the current video change and keep fixing its pull request unt
 
 # Finish the current change
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
+
 The user may not be technical. Tell them what is happening in plain English, with clear links. Never merge. Merging needs `/publish` or "Approve and publish" (see `video-publish`).
 
 ## The workflow

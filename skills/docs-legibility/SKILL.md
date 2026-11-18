@@ -5,6 +5,8 @@ description: "Check and fix user-facing docs pages so a new reader understands t
 
 # docs-legibility: plain English for docs pages
 
+For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if an edit changes the meaning of a product claim or rule.
+
 Before you write or review documentation, read the project's writing rules and its legibility standard if `CLAUDE.md` or `AGENTS.md` names them. They take precedence over this skill.
 
 ## The workflow
