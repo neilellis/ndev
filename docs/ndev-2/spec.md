@@ -41,6 +41,7 @@ ndev flow finished-plan --markdown-file <file>
 ndev flow finished-hacking
 ndev flow checkpoint --message <text> --file <path>... [--change-type <type>]... [--worktree <path>]
 ndev flow finished-development --issue <n>...|--pr <n>... [--message <text>] [--file <path>]... [--change-type <type>]... [--body-file <file>] [--hardening <text>]
+ndev flow push-draft --sha <full-reviewed-sha> --review <text>
 ndev flow finished-review --review <text> --deadcode <text> --remembered <text>
 ndev flow finished-checks
 ndev flow finished-smoke --report-file <file>|--skipped <reason>
@@ -110,6 +111,8 @@ ndev walk-doc finish [<summary>]
 ndev hook <event> [--harness <harness>]
 ndev watch [--session <id>] [--worktree <selector>] [--once]
 ```
+
+When an owner needs to inspect a reviewed commit before a release prerequisite can be met, use `ndev flow push-draft` in the reviewing phase. Supply the full SHA and a summary of the independent review for that commit. It checks the clean worktree, runs `pre-push-check.sh` and pushes that SHA with Git hooks to the existing draft PR in the same repository. The workflow stays in review. Use `finished-review` to run the pre-ready check and mark the PR ready.
 
 Flow transitions with a single target accept `--issue` or `--pr` unless the tree gives the target form. `finished-plan` takes an issue. `finished-development` accepts both lists when the work spans issues and PRs. An agent can set issue steering to auto only with a reason that no human can answer. A human sets it back through the controls described below. A change of mode or steering that yields hack with auto fails before any write.
 

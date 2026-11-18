@@ -172,7 +172,7 @@ function ghJson<T>(root: string, repo: string | undefined, args: string[]): T {
   }
 }
 const gh = (wf: Workflow, args: string[]) => ghRun(wf.root, wf.repo, args)
-type Pr = { number: number; state: string; merged?: boolean; draft?: boolean; mergeable?: boolean | null; body?: string | null; created_at: string; head: { sha: string; ref: string } }
+type Pr = { number: number; state: string; merged?: boolean; draft?: boolean; mergeable?: boolean | null; body?: string | null; created_at: string; head: { sha: string; ref: string; crossRepository?: boolean } }
 const readPr = (wf: Workflow, n: number) => ghJson<Pr>(wf.root, wf.repo, ['pr-read', String(n)])
 const prOf = (wf: Workflow) => {
   const pr = wf.prs[0]
@@ -292,11 +292,11 @@ function commit(wf: Workflow, message: string, op: string, empty = false) {
   const r = git(wf.root, 'commit', ...(empty ? ['--allow-empty'] : []), '-m', message, '--trailer', `Ndev-Op: ${op}`)
   if (r.status !== 0) throw new Fail(1, `git commit exited ${r.status}: ${said(r)}. Nothing was pushed.`)
 }
-function push(wf: Workflow, retryRebase = false): string | undefined {
+function push(wf: Workflow, retryRebase = false, source = 'HEAD', options: string[] = []): string | undefined {
   const ref = `refs/heads/${wf.branch}`
-  const pushArgs = ['origin', `HEAD:${ref}`]
+  const pushArgs = ['origin', `${source}:${ref}`]
   const push = (options: string[]) => run('git', ['push', '-u', ...options, ...pushArgs], { cwd: wf.root, timeout: 300_000 })
-  const result = push([])
+  const result = push(options)
   if (result.status === 0) return
   const problem = `git push to origin ${wf.branch} exited ${result.status}: ${said(result)}`
   if (!retryRebase || wf.branch === wf.base || !/\[rejected\].*\((non-fast-forward|fetch first)\)/.test(result.stderr)) {
@@ -698,6 +698,58 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = 
   apply(wf, member ? { state: 'developed' } : to, 'finishedDevelopment', notes)
   save(wf)
   return report(wf, config, notes)
+}
+
+function pushDraft(wf: Workflow, config: Config, args: Args) {
+  const sha = need(args, 'sha')
+  const review = need(args, 'review')
+  if (wf.state !== 'reviewing' || wf.direct || wf.branch === wf.base || !wf.prs[0]) {
+    throw new Fail(1, `Issue #${wf.issue} needs a draft PR in review. Run ndev flow status --issue ${wf.issue}.`)
+  }
+  const prNumber = prOf(wf)
+  const assertDraft = () => {
+    const pr = readPr(wf, prNumber)
+    if (pr.state !== 'open' || pr.draft !== true || pr.head?.ref !== wf.branch || pr.head.crossRepository !== false) {
+      throw new Fail(1, `Expected open draft PR #${prNumber} on this repository's ${wf.branch} branch. Check the PR and retry.`)
+    }
+    const fetchUrl = gitOk(wf.root, 'remote', 'get-url', '--all', 'origin')
+    const pushUrl = gitOk(wf.root, 'remote', 'get-url', '--push', '--all', 'origin')
+    if (!fetchUrl || fetchUrl.includes('\n') || fetchUrl !== pushUrl) {
+      throw new Fail(1, 'Draft pushes require one matching fetch and push URL for origin. Check git remote get-url --push --all origin and fix the origin configuration.')
+    }
+    const originRepo = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/|ssh:\/\/git@ssh\.github\.com:443\/)([^/\s]+\/[^/\s]+)\/?$/i.exec(pushUrl)?.[1]?.replace(/\.git$/i, '')
+    if (originRepo?.toLowerCase() !== wf.repo.toLowerCase()) {
+      throw new Fail(1, `Origin must point to GitHub repository ${wf.repo} for draft PR #${prNumber}. Check git remote get-url --push origin and fix the origin configuration.`)
+    }
+    const ref = `refs/heads/${wf.branch}`
+    const remote = gitOk(wf.root, 'ls-remote', '--refs', 'origin', ref)
+    if (remote !== `${pr.head.sha}\t${ref}`) {
+      throw new Fail(1, `Origin does not advertise the head of draft PR #${prNumber} (${pr.head.sha}). Check that origin points to ${wf.repo} and retry.`)
+    }
+  }
+  const assertLocal = () => {
+    if (sha !== headSha(wf.root) || gitOk(wf.root, 'branch', '--show-current') !== wf.branch) {
+      throw new Fail(1, `Expected reviewed commit ${sha} at HEAD on ${wf.branch}. Check out the workflow branch and supply its full reviewed SHA.`)
+    }
+    if (gitOk(wf.root, 'status', '--porcelain', '--untracked-files=all')) {
+      throw new Fail(1, `Issue #${wf.issue} needs a clean worktree to check the reviewed commit ${sha}. Save local changes separately before retrying.`)
+    }
+  }
+  assertDraft()
+  assertLocal()
+  const path = `${CHECK_DIR}/pre-push-check.sh`
+  if (wf.noChecks && !existsSync(join(wf.root, path))) {
+    throw new Fail(1, `${path} is missing. Add the pre-push check before using push-draft.`)
+  }
+  const note = runCheck(wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
+  assertDraft()
+  assertLocal()
+  push(wf, false, sha, ['--no-follow-tags', '--recurse-submodules=no'])
+  return report(wf, config, [
+    ...(note ? [note] : []),
+    `Pushed reviewed commit ${sha} to draft PR #${prNumber} after the pre-push check. Review: ${review}`,
+    'Run finished-review to apply the normal pre-ready gate and mark the PR ready.',
+  ])
 }
 
 function finishedReview(wf: Workflow, config: Config, args: Args) {
@@ -1136,6 +1188,7 @@ Agent commands:
   checkpoint --message <m> --files <a,b> [--change-types <t,..>]   checks, commit, push
   finishedHacking                                hack: the human agrees that the hack works
   finishedDevelopment --message <m> --files <a,b> [--body-file <f>] [--hardening <t>]   commit, start the review and the dead-code sweep
+  pushDraft --sha <full-reviewed-sha> --review <r>   checked push to the open draft, stay in review
   finishedReview (--review <r> | --waive-review <reason>) --deadcode <d> --remembered <w>   pre-ready check, push, mark the PR ready
   finishedChecks                                 read the checks of HEAD
   finishedSmoke --report <r> | --skipped <reason>
@@ -1166,6 +1219,7 @@ const ISSUE_COMMANDS: Record<string, (wf: Workflow, config: Config, args: Args) 
   finishedHacking: simpleMove('finishedHacking'),
   finishedDevelopment,
   finishedReview,
+  pushDraft,
   finishedChecks,
   finishedSmoke,
   finishedRevision,

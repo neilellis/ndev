@@ -161,7 +161,7 @@ issue-new) if [ -n "$ACCEPTED_BODY" ]; then cp "$5" "$ACCEPTED_BODY"; echo 'lost
 api) if [ -z "$SEARCH_DELAY" ]; then jq -n --rawfile body "$ACCEPTED_BODY" '[{number:40,body:$body},{number:55,body:"unrelated"},{number:67,body:$body,pull_request:{}}]' | jq -r "$5"; fi ;;
 pr-list) [ -z "$EXISTING_PR" ] || echo '{"number":9}' ;;
 pr-new) echo '{"url":"https://github.com/test/project/pull/9"}' ;;
-pr-read) node -e 'console.log(JSON.stringify({number:9,state:"open",draft:false,head:{sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
+pr-read) node -e 'console.log(JSON.stringify({number:9,state:"open",draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
 pr-edit) cp "$4" "$PR_BODY" ;;
 comment|subissues|pr-ready) echo '{"ok":true}' ;;
 commit-checks) if [ -n "$MOVE_DURING_CHECKS" ]; then git commit --allow-empty -qm 'New head while reading checks'; git push -q origin HEAD:feature; fi; echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"success"}],"statuses":[]}' ;;
@@ -446,4 +446,59 @@ test('an early nitpick waiver keeps the pre-ready gate and records the reason on
   assert.equal(finished.workflow.evidence.review.sha, git(p.origin, 'rev-parse', 'feature'))
   assert.match(readFileSync(fake.GH_LOG, 'utf8'), /waived.*Only punctuation remains/i)
   assert.doesNotMatch(readFileSync(fake.ORCA_LOG, 'utf8'), /worker-show/)
+})
+
+
+test('public push-draft keeps Git hooks and pushes only the stated reviewing SHA', () => {
+  const p = project()
+  const fake = services(p)
+  mkdirSync(join(p.work, 'scripts/ndev/workflow'), { recursive: true })
+  writeFileSync(join(p.work, 'scripts/ndev/workflow/pre-push-check.sh'), 'exit 0\n')
+  output(flow(p, ['checkpoint', '--file', 'next.txt', '--file', 'scripts/ndev/workflow/pre-push-check.sh', '--message', 'Install the check'], fake))
+  writeFileSync(join(p.work, 'next.txt'), 'review me\n')
+  output(flow(p, ['finished-development', '--issue', '7', '--file', 'next.txt', '--message', 'Reviewable change'], fake))
+  const remote = git(p.origin, 'rev-parse', 'feature')
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  const hook = join(p.work, '.git/hooks/pre-push')
+  writeFileSync(hook, '#!/bin/sh\necho "the pre-push hook refused" >&2\nexit 1\n', { mode: 0o755 })
+  const gitIgnore = join(p.work, '.git/info/exclude')
+  writeFileSync(gitIgnore, '.neil-dev.*\n')
+  const args = ['push-draft', '--pr', '9', '--sha', sha, '--review', 'Independent review recorded.']
+  const before = readFileSync(p.file, 'utf8')
+  const fakeGit = git(p.work, 'config', '--get', 'remote.origin.url')
+  const bin = join(p.dir, 'git-url-bin')
+  mkdirSync(bin)
+  const gitShim = join(bin, 'git')
+  writeFileSync(gitShim, `#!/bin/sh
+if [ "\$1 \$2" = "remote get-url" ]; then
+  urls=\$(command_git "\$@") || exit \$?
+  if [ "\$urls" = "\$DRAFT_TEST_ORIGIN" ]; then
+    printf '%s\n' git@github.com:test/project.git
+    exit 0
+  fi
+fi
+exec command_git "\$@"
+`.replaceAll('command_git', output(run(p.work, 'sh', ['-c', 'command -v git']))), { mode: 0o755 })
+  const settings = { ...fake, PR_DRAFT: '1', PR_SHA: remote, DRAFT_TEST_ORIGIN: fakeGit, PATH: bin + ':' + env.PATH }
+  const other = join(p.dir, 'other.git')
+  git(p.dir, 'clone', '--bare', p.origin, other)
+  git(p.work, 'remote', 'set-url', '--push', 'origin', other)
+  assert.match(flow(p, args, settings).stderr, /one matching fetch and push URL/)
+  assert.equal(git(other, 'rev-parse', 'feature'), remote)
+  git(p.work, 'config', '--unset', 'remote.origin.pushurl')
+  git(p.work, 'remote', 'set-url', 'origin', other)
+  assert.match(flow(p, args, settings).stderr, /Origin must point to GitHub repository test\/project/)
+  assert.equal(git(other, 'rev-parse', 'feature'), remote)
+  git(p.work, 'remote', 'set-url', 'origin', fakeGit)
+  assert.match(flow(p, args, settings).stderr, /the pre-push hook refused/)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), remote)
+  writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+  git(p.work, 'tag', '-a', 'local-only', '-m', 'Keep local')
+  git(p.work, 'config', 'push.followTags', 'true')
+  const result = JSON.parse(output(flow(p, args, settings)))
+  assert.equal(result.state, 'reviewing')
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), sha)
+  assert.equal(git(p.origin, 'tag', '--list'), '')
+  assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /^pr-ready/m)
 })
