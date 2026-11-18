@@ -88,6 +88,7 @@ Delight is motion that tells the reader something: their action landed, the work
 - A sequence that breaks when it starts again before it ends.
 - A half-done removal: the animation went, but its start state or a wait for `onAnimationEnd` stayed.
 - Decoration that runs all day: a loop that does not stop when the work stops.
+- A pulse, ping or shimmer on an element that is not live or loading (except the one Shimmer CTA that `kb/ui-components.md` allows in a marketing hero), or a `hover:scale` on a card. A hover is a colour or surface change.
 
 ## The workflow
 

@@ -24,6 +24,7 @@ Find the project's UX pages from its wiki index file (usually under a `visual/` 
 - Read `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` before you write or replace a component, and choose each component from it. It names the source, the registry item and the styling rules for each component type.
 - For the platform detail of a control (CSS, accessibility checks, keyboard tests, fallbacks), use `modern-web-guidance`. Its guides add to the component the map names; they do not replace it.
 - Check desktop reflow and the mobile layout. Use `responsive-check` for the matrix of viewports and colour schemes and for worst-case data, and `mobile-testing` for quick mobile screenshots.
+- When a screen looks generated or like a template (glows, gradient text, emoji labels, uneven spacing), or the user asks to polish it, audit it with [references/generic-look.md](references/generic-look.md) before you change it.
 - To choose between layouts or interactions, build named variants with the human: see "Explore UI variants" in `work-hack`.
 - Use `copy` for the words.
 

@@ -39,7 +39,12 @@ Then change the environment: the component's real container (a sidebar is not a 
 | Wrong initials, or `�` for an emoji | Initials from grapheme clusters (`Intl.Segmenter`), first and last word without suffixes (Jr, III), an icon when there is no name |
 | "1 members", `1284`, `0.30000000000000004`, `NaN` | `Intl.PluralRules`, `Intl.NumberFormat` in the user's locale, a null guard |
 | Numbers change width as they update | `tabular-nums` |
-| Punctuation on the wrong side of a right-to-left name | `dir="auto"` on user text |
+| Punctuation on the wrong side of a right-to-left name | Wrap user text in `<bdi>`, or put `dir="auto"` on an inline element. Do not put `dir="auto"` on a table cell, because it flips the cell's alignment |
+| `12%+` in a right-to-left line | `<bdi dir="ltr">` around a signed number |
+| Back arrows and chevrons that point the left-to-right way in `dir="rtl"` | Mirror icons that show direction only. Do not mirror media controls, a clock or a check mark |
+| `٣` next to `3` on one screen | One digit system: the same `numberingSystem` (for example `"latn"`, or the locale tag `-u-nu-latn`) on `Intl.NumberFormat` and `Intl.DateTimeFormat` |
+| Arabic letters pulled apart | `letter-spacing: 0` on Arabic text, also on large text and uppercase label styles |
+| Arabic dots and vowel marks clipped | For Arabic text: line height 1.6–1.8 for body and 1.3–1.4 for headings |
 | Diacritics clipped | No `overflow: hidden` on text with a tight `line-height` |
 | 1,000 rows scroll slowly | Virtualise or add pages, and say which |
 

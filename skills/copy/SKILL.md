@@ -17,6 +17,13 @@ If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `
 
 - Use sentence case, ordinary verbs and short sentences. Contractions are correct in interface text.
 - Front-load the meaning. Use a specific label ("Delete 3 reports", "Billing"), not an umbrella word ("Manage", "Settings", "Submit").
+- A headline says what this product does, and for whom, with the product's own nouns. If it still fits after you swap in a competitor's name, rewrite it. Use only facts that are already on the page.
+- A page title names the context (the page, the period, the project), not a greeting such as "Welcome back, Sam! 👋".
+- No exclamation marks in interface text. No hype words (supercharge, seamless, unlock, magic, revolutionise) and no "AI-powered" label on each feature: say what the feature does.
+- Labels, buttons, headings and captions have no final full stop. Only text of two or more sentences keeps its full stops.
+- A placeholder is a short hint or example ("Search", "DD/MM/YYYY"), not a sentence ("Search anything..."). It does not replace the visible label.
+- A change names its comparison: "+12% vs last month", not "+12%".
+- If a claim cannot be checked ("Loved by 10,000+ teams", "10x faster"), ask whether it is true. Make a true claim specific and give its source. Remove the claim otherwise, and list it in the report.
 - An error or an empty state gives a useful next action.
 - Keep database names, internal codes, raw errors and implementation jargon out of public copy. Operator tools can keep precise technical terms.
 - Format numbers, money, dates and plurals with `Intl` (`NumberFormat`, `DateTimeFormat`, `RelativeTimeFormat`, `PluralRules`) in the user's locale. "1 members", `1284` and a literal `null`, `undefined` or `NaN` are defects.
