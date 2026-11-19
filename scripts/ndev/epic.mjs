@@ -413,7 +413,7 @@ function prepareMergeHandoffs(e, sub) {
 }
 
 function handoffs(workspace, e, sub) {
-  for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
+  for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.stackedOn === sub.issue && item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
     const h = child.handoff
     if (!child.implementer) continue
     if (h.state === 'sending' && !h.requestId) refuse(`Epic #${e.epic} is saved at revision ${e.revision}. Delivery to ${child.implementer} is uncertain for #${child.issue}.`, 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.')
@@ -426,7 +426,7 @@ function handoffs(workspace, e, sub) {
     let receipt
     try { receipt = JSON.parse(out.stdout) } catch {}
     if (out.status !== 0 || receipt?.ok !== true || receipt.result?.accepted === false || receipt.result?.delivered === false || !receipt.result) {
-      h.requestId = receipt?.error?.data?.requestId ?? h.requestId
+      h.requestId = receipt?.error?.data?.orchestrationRequestId ?? receipt?.error?.data?.requestId ?? h.requestId
       h.error = receipt?.error ?? (out.stderr.trim() || out.stdout.trim())
       save(workspace,e,recorded,'handoff-uncertain',sub.state,sub.state)
       throw new CliError(1, `Epic #${e.epic} is saved at revision ${e.revision}. Orca send to dispatch:${child.implementer} exited ${out.status}: ${JSON.stringify(h.error)}`, { details: { receipt, requestId: h.requestId }, repair: h.requestId ? `Retry ndev epic issue ${e.epic} ${sub.issue} merged.` : 'Inspect the Run mailbox before attempting another delivery.' })

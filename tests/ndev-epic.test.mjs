@@ -51,7 +51,7 @@ function fixture(t) {
     `fs.appendFileSync(${JSON.stringify(join(home, 'orca.log'))},JSON.stringify(process.argv.slice(2))+'\\n')`,
     `const marker=${JSON.stringify(join(home, 'during-send.once'))}`,
     "if(db['orca-during-send'] && !fs.existsSync(marker)) { fs.writeFileSync(marker,'started'); const cp=require('node:child_process'); const r=cp.spawnSync(db['orca-during-send'][0],db['orca-during-send'].slice(1),{encoding:'utf8',env:process.env}); fs.writeFileSync(marker+'.result',JSON.stringify({status:r.status,stdout:r.stdout,stderr:r.stderr})) }",
-    "const error=db['orca-error:'+key]; if(error) { console.log(JSON.stringify({ok:false,error})); process.exit(db['orca-exit:'+key] ?? 1) }",
+    "const error=db['orca-error:'+key]; if(error) { console.log(JSON.stringify({id:'local',ok:false,error,_meta:{runtimeId:null}})); process.exit(db['orca-exit:'+key] ?? 1) }",
     'console.log(JSON.stringify(result ? {ok:true,result} : {ok:false,error:{message:"Unexpected Orca command "+key}}))',
   ].join('\n'), { mode: 0o755 })
   return { root, home, env, answers, save, call, ok }
@@ -410,7 +410,7 @@ test('import refresh sends the normal merge handoff to a managed stacked child e
 
 test('import handoff delivery failure saves a retryable merge and preserves the request on refresh', t => {
   const f = managedStackFixture(t)
-  f.answers['orca-error:orchestration send'] = { message: 'lost handoff receipt', data: { requestId: 'request-rebase-42' } }
+  f.answers['orca-error:orchestration send'] = { message: 'lost handoff receipt', data: { orchestrationRequestId: 'request-rebase-42' } }
   f.answers['orca-exit:orchestration send'] = 17
   f.save()
   const failed = f.refresh()
@@ -474,7 +474,7 @@ test('import repairs a previously saved managed merge that has no stacked handof
 
 test('import retains the durable request when a retry loses its receipt', t => {
   const f = managedStackFixture(t)
-  f.answers['orca-error:orchestration send'] = { message: 'lost receipt', data: { requestId: 'durable-request' } }
+  f.answers['orca-error:orchestration send'] = { message: 'lost receipt', data: { orchestrationRequestId: 'durable-request' } }
   f.save()
   assert.equal(f.refresh().status, 1)
   f.answers['orca-error:orchestration send'] = { message: 'retry transport failed' }
@@ -492,7 +492,7 @@ test('import retains the durable request when a retry loses its receipt', t => {
 
 test('overlapping import cannot discard an in-flight handoff receipt', t => {
   const f = managedStackFixture(t)
-  f.answers['orca-error:orchestration send'] = { message: 'lost receipt', data: { requestId: 'overlap-request' } }
+  f.answers['orca-error:orchestration send'] = { message: 'lost receipt', data: { orchestrationRequestId: 'overlap-request' } }
   f.answers['orca-exit:orchestration send'] = 17
   f.answers['orca-during-send'] = [binary, 'epic', 'import', '40', '--issues-file', 'refresh.json', '--evidence', 'overlapping refresh', '--json']
   f.save()
@@ -512,7 +512,7 @@ test('overlapping import cannot discard an in-flight handoff receipt', t => {
 for (const requestId of [undefined, 'obsolete-request']) {
   test(`import ignores a merged child's obsolete handoff (${requestId ? 'retryable' : 'uncertain'})`, t => {
     const f = managedStackFixture(t)
-    f.answers['orca-error:orchestration send'] = { message: 'lost receipt', ...(requestId ? { data: { requestId } } : {}) }
+    f.answers['orca-error:orchestration send'] = { message: 'lost receipt', ...(requestId ? { data: { orchestrationRequestId: requestId } } : {}) }
     f.save()
     assert.equal(f.refresh().status, 1)
     f.answers['repos/example/repo/issues/40/sub_issues'][1].state = 'closed'
@@ -527,3 +527,36 @@ for (const requestId of [undefined, 'obsolete-request']) {
     assert.equal(f.deliveries().length, 1)
   })
 }
+
+
+test('import saves the actual Orca orchestration request ID and retries that request', t => {
+  const f = managedStackFixture(t)
+  f.answers['orca-error:orchestration send'] = { code: 'runtime_unavailable', message: 'delivery outcome uncertain', data: { orchestrationRequestId: 'actual-orca-request' } }
+  f.save()
+  assert.equal(f.refresh().status, 1)
+  assert.equal(f.ok('status', '40').epic.issues[42].handoff.requestId, 'actual-orca-request')
+  delete f.answers['orca-error:orchestration send']
+  f.save()
+  assert.equal(f.refresh().status, 0)
+  assert.ok(f.deliveries()[1].includes('actual-orca-request'))
+})
+
+test('import leaves a verified child detached from its old uncertain handoff', t => {
+  const f = managedStackFixture(t)
+  f.answers['orca-error:orchestration send'] = { message: 'no receipt' }
+  f.save()
+  assert.equal(f.refresh().status, 1)
+  delete f.answers['orca-error:orchestration send']
+  Object.assign(f.answers['repos/example/repo/pulls/62'], { draft: false, mergeable: true, base: { ref: 'main' } })
+  f.answers['checks:62'] = { headRefOid: 'child-sha', statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }] }
+  f.answers['repos/example/repo/pulls/62/files'] = []
+  f.save()
+  const verified = f.ok('issue', '40', '42', 'verified', '--verdict', 'approve').epic.issues[42]
+  assert.equal(verified.stackedOn, undefined)
+  const refreshed = f.refresh()
+  assert.equal(refreshed.status, 0, JSON.stringify(refreshed))
+  assert.equal(refreshed.result.epic.issues[42].state, 'verified')
+  assert.equal(refreshed.result.epic.issues[42].handoff.state, 'sending')
+  f.ok('issue', '40', '41', 'merged')
+  assert.equal(f.deliveries().length, 1)
+})
