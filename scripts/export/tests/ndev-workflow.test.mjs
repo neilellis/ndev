@@ -305,7 +305,7 @@ test('the code review checks the base North Star without copying it into reviewe
     assert.doesNotMatch(dispatched, /Fixture statement kept out/)
   }
 })
-test('starting from the base uses the Orca worktree receipt and resumes one draft PR', () => {
+test('starting from the base uses the Orca worktree receipt and defers the draft PR', () => {
   const p = project()
   const fake = services(p)
   rmSync(p.file)
@@ -320,12 +320,12 @@ test('starting from the base uses the Orca worktree receipt and resumes one draf
   const start = JSON.parse(output(flow(p, args, fake)))
   assert.match(start.root, /7-test-claim$/)
   assert.equal(start.workflow.owner.session, 'session-A')
-  assert.deepEqual(start.workflow.prs, [9])
+  assert.deepEqual(start.workflow.prs, [])
   const status = output(run(p.work, join(repo, 'bin/ndev'), ['flow', 'status', '--json'], fake))
   assert.equal(JSON.parse(status).result.root, start.root)
   const resumed = JSON.parse(output(flow(p, args, fake)))
   assert.equal(resumed.root, start.root)
-  assert.equal(readFileSync(fake.GH_LOG, 'utf8').match(/^pr-new /gm).length, 1)
+  assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /^pr-new /m)
   assert.equal(readFileSync(fake.ORCA_LOG, 'utf8').match(/worktree create/g).length, 1)
   const denied = flow(p, args, { ...fake, ORCA_AGENT_SESSION_ID: 'another-owner' })
   assert.equal(denied.status, 1)

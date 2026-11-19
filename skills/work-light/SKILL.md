@@ -18,7 +18,7 @@ While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp
 
 | Stage | Tool | What the tool does |
 |---|---|---|
-| Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree and opens the draft PR. Call it first. |
+| Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree. The first push of a real change opens the draft PR. Call it first. |
 | Interview (interactive) | `mcp__ndev__interview(interviewJson)`, then `mcp__ndev__interview()` | Asks the human in a pane, then goes on. Load the `interview` skill. |
 | Plan (heavy) | `mcp__ndev__finishedPlan(markdown_file)` | Puts the plan in the PR body and runs `pre-push-check.sh` on the base. |
 | Base check (light, auto) | `mcp__ndev__finishedInterview()` | With no interview, call it before any code. It runs `pre-commit-check.sh` on the base. `interview()` runs the same check when it goes on to development. A failure does not stop you: fix it if small, or use `followUp` or `blocked`. |
