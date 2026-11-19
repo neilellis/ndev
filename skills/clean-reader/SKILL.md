@@ -5,8 +5,6 @@ description: "Review supplied documentation or video narration as a first-time r
 
 # Clean reader
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Give the reader any applicable project rules when the review tests claims about the product.
-
 A clean reader has no project or conversation context. It reads only the prose you give it and reports where a first-time reader gets stuck.
 
 ## The workflow

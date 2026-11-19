@@ -5,8 +5,6 @@ description: "Audit gaps in project documentation by concept and audience, and r
 
 # Documentation coverage
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check for gaps in how the docs explain project goals or rules.
-
 Take the report path from the arguments, else from the project's CLAUDE.md. A usual place is `docs/analysis/doc-coverage.md`. If no report exists, make one with the sections below.
 
 ## The workflow

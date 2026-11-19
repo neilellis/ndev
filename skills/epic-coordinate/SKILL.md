@@ -27,7 +27,7 @@ Follow each tool's answer; if it differs from this skill, the answer wins. Each 
 
 Load the `orchestration` skill once for the Orca commands. Then, for each wake:
 
-Put the applicable North Star section names and checks in each issue or its spec section. The implementer and reviewer briefs direct both workers to those citations.
+Put the applicable spec sections and checks in each issue. Direct implementer and reviewer briefs to those citations.
 
 1. **Start the frontier.** For each issue from `epicNext`, ready or stacked: `epicBrief(role: "implementer")` writes the brief and answers with the `orca orchestration worker-start` command, filled in. Run that command as given, then `epicIssue(state: "implementing", worker, workspace)` with the dispatch id and the workspace path from its result. Start the stacked issues too: do not wait for the blocker to merge. `epicBrief` gives each the blocker's PR branch as its base, and a stacked start with no such brief is refused.
 2. **End the turn.** Orca wakes you when a worker reports, asks or stalls. Hold no poll and no sleep loop.
@@ -43,9 +43,9 @@ When every sub-issue is merged, `epicPhase(finished: "coordinating")`.
 
 ## Closing
 
-Read all of `NORTH_STAR.md` again from the default branch before you close the epic. Follow the closing gate in `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Check the merged work against the guide and run the spec's acceptance checks end to end where the human allows it.
+Run the spec's acceptance checks end to end where the human allows it.
 
-Record the North Star sections, the evidence, and any gaps in the closing report. Show the report to the human. Get approval before you run `mcp__ndev__epicPhase(issue, finished: "closing", evidence: report)`.
+Record the acceptance evidence and any gaps in the closing report. Show the report to the human. Get approval before you run `mcp__ndev__epicPhase(issue, finished: "closing", evidence: report)`.
 
 ## Rulings
 

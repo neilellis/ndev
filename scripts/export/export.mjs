@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const USAGE = 'usage: export.mjs <harness> [--out <dir>] [--skills-dir <dir>] [--agents-dir <dir>] [--home <dir>] [--plugin-root <dir>] [--date <iso>] [--dry-run]'
 const HOME_DIRS = ['scripts', 'kb', 'templates']
-const EXCLUDED_SKILLS = new Set(['for-codex'])
 const SKIPPED = new Set(['node_modules', '.DS_Store', '__pycache__', '.pytest_cache'])
 const TEXT = new Set(['.md', '.sh', '.mjs', '.js', '.cjs', '.ts', '.tsx', '.json', '.toml', '.yaml', '.yml', '.py', '.txt', '.html', '.css', '.svg', '.bash', '.zsh', ''])
 const FLOW_FILES = { 'flow/workflow/machine.ts': 'hooks/workflow/machine.ts', 'flow/workflow/change-types.ts': 'hooks/workflow/change-types.ts' }
@@ -314,7 +313,7 @@ function main() {
   const opts = parseArgs(process.argv.slice(2))
   const places = placesFor(opts)
   const { version, commit } = plugin(places.pluginRoot)
-  const skills = readdirSync(join(places.pluginRoot, 'skills')).filter(n => !EXCLUDED_SKILLS.has(n) && existsSync(join(places.pluginRoot, 'skills', n, 'SKILL.md'))).sort()
+  const skills = readdirSync(join(places.pluginRoot, 'skills')).filter(n => existsSync(join(places.pluginRoot, 'skills', n, 'SKILL.md'))).sort()
   const agents = readdirSync(join(places.pluginRoot, 'agents')).filter(f => f.endsWith('.md') && f !== 'README.md').map(f => f.slice(0, -3)).sort()
   const ctx = { ...places, version, commit, date: opts.date ?? new Date().toISOString(), skills, agents }
   const { files, leftovers } = plan(ctx)
@@ -331,7 +330,7 @@ function main() {
 
 export function runInstall(argv) {
   return installRelease(argv, ({ profile, share, binary, root, version }) => {
-    const skills = readdirSync(join(root, 'skills')).filter(name => !EXCLUDED_SKILLS.has(name) && existsSync(join(root, 'skills', name, 'SKILL.md'))).sort()
+    const skills = readdirSync(join(root, 'skills')).filter(name => existsSync(join(root, 'skills', name, 'SKILL.md'))).sort()
     const agents = readdirSync(join(root, 'agents')).filter(name => name.endsWith('.md') && name !== 'README.md').map(name => name.slice(0, -3)).sort()
     return plan({ profile, binary, pluginRoot: root, home: share, skillsDir: profile.skillsDir, agentsDir: profile.agentsDir, skills, agents, version, commit: 'release', date: version }).files
   })

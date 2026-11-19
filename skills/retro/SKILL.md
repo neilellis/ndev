@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Session retrospective
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when a lesson concerns how the work met a project goal or rule.
-
 Read the session's actual work and failures. Record only changes that would alter future behaviour:
 
 - a missing navigation pointer or a hidden dependency

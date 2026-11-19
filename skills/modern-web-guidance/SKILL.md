@@ -5,8 +5,6 @@ description: "Find and apply the modern web platform guide for an HTML, CSS or c
 
 # Modern web guidance
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before making choices that affect project architecture, goals, or user behaviour.
-
 This skill holds a local copy of every guide in [GoogleChrome/modern-web-guidance](https://github.com/GoogleChrome/modern-web-guidance) (Apache-2.0, maintained by the Chrome, Edge, Firefox and MDN teams). The guides give the current platform feature for a job, its browser support and its fallback. They stop an agent from writing a legacy pattern from old training data.
 
 ## What comes first

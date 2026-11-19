@@ -1,11 +1,11 @@
 ---
 name: work-heavy
-description: "The interactive heavyweight development skill (heavy mode). The heavyweight staged development method for larger or riskier changes: multi-step features, cross-cutting changes, high-risk work such as schema, auth or migrations, and any change that needs a written plan, independent reviews and staged verification. Uses worktrees, a draft PR as the plan of record, TDD, a two-axis review, verification, knowledge ingest and continuation state. Use `work-light` instead for focused fixes and small features; `work-light` is the default. Load `work-heavy` when the user or an orchestrator (`work-heavy-auto`, `work-light-auto`, `goal-work`, a preloading agent) names it."
+description: "Implement larger or risky changes in heavy mode with a written plan, independent reviews and staged verification. Load when selected by the user or orchestrator. Use work-light for focused fixes; use an auto skill for a Ready-board pass."
 ---
 
 # Development method (staged)
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you plan architecture or change project rules.
+Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Use this skill for one larger or riskier development task. For a focused fix or a small feature, use
 `work-light`, which is the default. Choose `work-heavy` when the change has several steps, crosses
@@ -146,4 +146,4 @@ references again after every PR body edit. Details: `references/prs.md`.
 
 When a procedure changes, update the reference that owns it and keep this file short.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

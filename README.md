@@ -30,6 +30,10 @@ Open the project's Git worktree in Orca. Give the agent this prompt in Claude Co
 
 The install adds the CLI, skills, and hooks to your user account. Project setup records the GitHub settings in `.neil-dev.json`. Run project setup in each new repository. If the installer has just added the skills or hooks, start a fresh agent session. In Codex, use `/hooks` to review and trust the new hooks.
 
+## Skills
+
+Use the [skill index](skills/README.md) to find a task, compare related skills and see retired entry points. Skills are installed as `ndev-<name>` in each harness. To refresh Claude and Codex, run each profile’s dry-run, install and verify commands. Reinstall uses the ownership manifest to retire old files and preserve unrelated skills and hooks. Start a fresh session afterward.
+
 ## Use
 
 ```sh

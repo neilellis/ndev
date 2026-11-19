@@ -5,7 +5,7 @@ description: "The interactive hack development skill (hack mode). Find a solutio
 
 # Hack work
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you plan architecture or change project rules.
+Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Hack mode has two parts. First, the human and the agent hack at a solution with few rules. Then the agent makes the change strict before any of it is pushed. A human steers hack mode at every step, so it is interactive only: auto steering refuses it.
 

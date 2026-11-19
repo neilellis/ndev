@@ -5,8 +5,6 @@ description: "Locate and maintain project documentation, wiki knowledge and huma
 
 # Project documentation
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the docs state project goals, rules, or public claims.
-
 The project's knowledge lives in its wiki: a compounding, interlinked, current-state knowledge base that agents keep. The plugin's `kb/llm-wiki.md` holds the method. Start at the project's wiki index file. Read the wiki's `AGENTS.md` (its schema) before you change a wiki file.
 
 ## The workflow
@@ -70,4 +68,4 @@ The lint is only the mechanical half. A sentence can pass and still say nothing.
 
 Use `copy` for product interface wording.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

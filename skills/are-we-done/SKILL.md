@@ -5,8 +5,6 @@ description: "Check whether the current work is actually finished. Use for \"are
 
 # Close out honestly
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the closeout covers project rules or goals.
-
 Answer whether the work is finished. Do not write a general activity summary. Run the checks; do not rely on conversation memory:
 
 ```bash
@@ -26,7 +24,7 @@ Classify open work:
 
 Uncommitted or unpushed work, a draft PR, a red or unmergeable PR and an unverified deployment are unfinished.
 
-If the session found a durable, non-obvious lesson, use the `r` skill. If it found a documented claim that the code contradicts, use the `forget` skill. Ask before `r` only when the lesson is optional and the case is close.
+If the session found a durable, non-obvious lesson, use the `remember` skill. If it found a documented claim that the code contradicts, use the `forget` skill. Ask before `remember` only when the lesson is optional and the case is close.
 
 Answer in one paragraph. Start with "Done" or with what remains. Name each unverified claim and the concrete action the user must take. If everything is closed, say so and stop.
 

@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Work a goal
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before you rank or group issues that affect the project goals.
-
 `$ARGUMENTS` selects a set of issues. If it is empty, ask for the condition. This skill is for an attended set. Use `work-heavy-auto` for the Ready column and `work-light` or `work-heavy` for one issue that is already specified.
 
 ## The workflow
@@ -52,4 +50,4 @@ For the first accepted group, call `mcp__ndev__started(<lead>, shortName)` and f
 
 One line per PR, the solved or dropped issues with evidence, and anything blocked or waiting for the user.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

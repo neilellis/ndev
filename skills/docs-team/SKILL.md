@@ -5,8 +5,6 @@ description: "Coordinate a hierarchy of agents (coordinator, unit leads, module 
 
 # docs-team: a team workflow for a documentation site
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Give each lead the applicable section names when the site explains project goals or rules.
-
 A repeatable workflow that writes a documentation site from the code and the project's internal docs, then audits it with agents that did not write it. Use `docs` for one page; use this skill when the work spans many units.
 
 ## The workflow

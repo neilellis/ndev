@@ -5,8 +5,6 @@ description: "Use when you need to resolve an in-progress git merge/rebase confl
 
 # Resolve merge conflicts
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the conflict changes a project rule or the behaviour it governs.
-
 1. **See the current state** of the merge or rebase: `git status`, the recent history on both sides, and the conflicting files.
 2. **Find the primary sources** for each conflict. Learn why each change was made and what its intent was. Read the commit messages, the PRs and the original issues.
 3. **Resolve each hunk.** Keep both intents where you can. Where they are incompatible, choose the one that matches the merge's stated goal and record the trade-off. Do not invent new behaviour. Always resolve; never `--abort`.
