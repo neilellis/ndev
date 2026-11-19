@@ -685,7 +685,14 @@ function checkpoint(wf: Workflow, config: Config, args: Args) {
   return report(wf, config, notes)
 }
 
+function requireDevelopmentConfirmation(wf: Workflow, config: Config, args: Args) {
+  if ((wf.steering ?? config.steering ?? 'interactive') === 'interactive' && !args['human-confirmation']?.trim()) {
+    throw new Fail(1, `Issue #${wf.issue} needs human confirmation before final checks or review. Show a concrete development preview when relevant, ask whether the work is done, and keep developing if the human requests changes. Only after the human confirms, run ndev flow finished-development --issue ${wf.issue} --human-confirmation "<the human's confirmation>" with the changed files and commit message.`)
+  }
+}
+
 function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = false) {
+  requireDevelopmentConfirmation(wf, config, args)
   const machine = MACHINES[wf.mode as 'light']
   const to = moveFor(wf, config, 'finishedDevelopment')
   const files = list(args.files)
@@ -698,6 +705,7 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = 
     commit(wf, need(args, 'message'), opId(wf, 'finishedDevelopment'))
     notes.push(`Committed ${headSha(wf.root).slice(0, 8)}. It is not pushed until finishedReview.`)
   }
+  if ((wf.steering ?? config.steering ?? 'interactive') === 'interactive') wf.developmentConfirmation = args['human-confirmation'].trim()
   addTypes(wf, files, declared)
   if (machine.hardens) runCheck(wf, 'pre-push-check.sh', [], declared)
   openPendingPr(wf)
@@ -1207,7 +1215,7 @@ Agent commands:
   finishedPlan --file <plan.md>                  heavy: put the plan in the PR body
   checkpoint --message <m> --files <a,b> [--change-types <t,..>]   checks, commit, push
   finishedHacking                                hack: the human agrees that the hack works
-  finishedDevelopment --message <m> --files <a,b> [--body-file <f>] [--hardening <t>]   commit, start the review and the dead-code sweep
+  finishedDevelopment --message <m> --files <a,b> [--body-file <f>] [--hardening <t>] [--human-confirmation <text>]   commit, start the review and the dead-code sweep
   pushDraft --sha <full-reviewed-sha> --review <r>   checked push to the open draft, stay in review
   finishedReview (--review <r> | --waive-review <reason>) --deadcode <d> --remembered <w>   pre-ready check, push, mark the PR ready
   finishedChecks                                 read the checks of HEAD
@@ -1612,6 +1620,7 @@ function developMembers(root: string, config: Config, args: Args, numbers: Recor
     const other = ownedElsewhere(wf)
     if (other) throw new Fail(1, other)
     if (wf.state !== 'developed') {
+      requireDevelopmentConfirmation(wf, config, args)
       moveFor(wf, config, 'finishedDevelopment')
       if (wf.state === 'developing' && baseCheckScript(wf.mode) && !wf.baseCheck) throw new Fail(1, `#${n} needs its base check. Run ndev flow finished-interview --issue ${n}.`)
       if (MACHINES[wf.mode].hardens && !args.hardening) throw new Fail(2, `#${n} needs --hardening evidence.`)
