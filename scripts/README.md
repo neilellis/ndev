@@ -2,7 +2,7 @@
 
 Helpers that two or more skills, agents or hooks call. Each one has one copy here. A helper that only one skill uses stays in that skill's `scripts/` folder.
 
-Call a script as `${CLAUDE_PLUGIN_ROOT}/scripts/<area>/<name>`. Outside Claude Code (for example Codex through the `for-codex` skill), the plugin root is two folders above a skill's folder: `<skill folder>/../../scripts/<area>/<name>`. `for-codex` also links `<project>/.codex/scripts` to this folder, so that path works when a tool shortens it as text.
+Call a script as `${CLAUDE_PLUGIN_ROOT}/scripts/<area>/<name>`. The installer resolves the root to the shared ndev release folder for each harness. Use the installed absolute paths; skill folders are separate from the shared release.
 
 Scripts find their siblings from their own real path (`pwd -P`). If a sibling is missing, the script prints the missing path and the repair, then exits non-zero.
 
@@ -68,7 +68,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
-| `orca-shot.sh` | Opens a URL in Orca's built-in browser, sets and checks the viewport, and saves a PNG screenshot. A new tab closes after the screenshot (or stays with `--keep-tab`); a `--page <id>` tab stays open. It names the repair when Orca is not running or the page is missing. | kb `testing.md`, finish, responsive-check, mobile-testing, motion, command-reuse |
+| `orca-shot.sh` | Opens a URL in Orca's built-in browser, sets and checks the viewport, and saves a PNG screenshot. A new tab closes after the screenshot (or stays with `--keep-tab`); a `--page <id>` tab stays open. It names the repair when Orca is not running or the page is missing. | kb `testing.md`, finish, responsive-check, motion, command-reuse |
 | `tests/test_orca_shot.sh` | Proves `orca-shot.sh` with a fake `orca`. | |
 
 ## walk-doc/

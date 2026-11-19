@@ -5,8 +5,6 @@ description: "Write or change a video's narration, voices, pronunciation, pacing
 
 # Narration
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the script changes a statement about how the product works.
-
 The script is one line of narration per scene, in the file `"script"` names in `video.config.json` (by default `scripts/vo.json`). Entry N is spoken over `<section id="sN">` in the page. Each line becomes one voice clip per voice.
 
 ## The workflow

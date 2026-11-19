@@ -26,7 +26,7 @@ test('each exported skill is renamed ndev-<name> and carries the generated stamp
   const skills = readdirSync(join(out, 'skills'))
   assert.ok(skills.length > 20, `only ${skills.length} skills exported`)
   assert.ok(skills.every(name => name.startsWith('ndev-')), skills.join(', '))
-  assert.ok(!skills.includes('ndev-for-codex'), 'for-codex links Claude skills into Codex, which the export replaces')
+  assert.ok(!skills.includes('ndev-for-codex'), 'the obsolete Codex linker must stay retired')
   for (const name of skills) {
     const text = readFileSync(join(out, 'skills', name, 'SKILL.md'), 'utf8')
     const lines = text.split('\n')

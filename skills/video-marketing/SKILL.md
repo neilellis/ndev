@@ -5,8 +5,6 @@ description: "Write and review a marketing film of about 60 seconds that tells a
 
 # Marketing films
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
-
 A marketing film tells a prospective client, in about a minute, why to talk to you. It moves from a question, to the problem, to the offer, to evidence, to one action. This skill gives the rules the kit enforces. The shared rules are in `video-types`.
 
 ## The workflow

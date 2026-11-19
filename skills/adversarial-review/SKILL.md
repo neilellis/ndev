@@ -5,8 +5,6 @@ description: "Run an independent adversarial review of a pull request: a fresh a
 
 # Adversarial review
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. If the diff can affect a project rule, give the reviewer the applicable section names and ask for evidence.
-
 **A fresh agent reviews the change from the repository, not from its description, and tries to break it.** Every check that the author ran came from the author's own account of the change. This review lists the surfaces that the change touches and attacks them. A review that reads the PR body and agrees with it has not happened. The rules behind it are in [verification-policy.md](../../kb/verification-policy.md).
 
 The argument is a PR number or a branch. If there is no argument, review the current branch against the main branch.

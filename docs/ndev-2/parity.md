@@ -224,7 +224,7 @@ Install each retained skill as `ndev-<name>`. Tests check native discovery, link
 | `harness-sync` skill | `skills/harness-sync/SKILL.md` | `ndev-harness-sync` skill | Installer | Discover `ndev-harness-sync` and resolve its references in each harness. |
 | `hotfix` skill | `skills/hotfix/SKILL.md` | `ndev-hotfix` skill | Installer | Discover `ndev-hotfix` and resolve its references in each harness. |
 | `hyperfine` skill | `skills/hyperfine/SKILL.md` | `ndev-hyperfine` skill | Installer | Discover `ndev-hyperfine` and resolve its references in each harness. |
-| `i` skill | `skills/i/SKILL.md` | `ndev-i` skill | Installer | Discover `ndev-i` and resolve its references in each harness. |
+| `i` skill | `skills/i/SKILL.md` | Consolidated into `ndev-issue` | Installer | Discover `ndev-issue` in each harness. |
 | `i-have-adhd` skill | `skills/i-have-adhd/SKILL.md` | `ndev-i-have-adhd` skill | Installer | Discover `ndev-i-have-adhd` and resolve its references in each harness. |
 | `implement-spec` skill | `skills/implement-spec/SKILL.md` | `ndev-implement-spec` skill | Installer | Discover `ndev-implement-spec` and resolve its references in each harness. |
 | `improve-agent` skill | `skills/improve-agent/SKILL.md` | `ndev-improve-agent` skill | Installer | Discover `ndev-improve-agent` and resolve its references in each harness. |
@@ -234,14 +234,14 @@ Install each retained skill as `ndev-<name>`. Tests check native discovery, link
 | `merge` skill | `skills/merge/SKILL.md` | `ndev-merge` skill | Installer | Discover `ndev-merge` and resolve its references in each harness. |
 | `milestone-release` skill | `skills/milestone-release/SKILL.md` | `ndev-milestone-release` skill | Installer | Discover `ndev-milestone-release` and resolve its references in each harness. |
 | `milestone-release-notes` skill | `skills/milestone-release-notes/SKILL.md` | `ndev-milestone-release-notes` skill | Installer | Discover `ndev-milestone-release-notes` and resolve its references in each harness. |
-| `mobile-testing` skill | `skills/mobile-testing/SKILL.md` | `ndev-mobile-testing` skill | Installer | Discover `ndev-mobile-testing` and resolve its references in each harness. |
+| `mobile-testing` skill | `skills/mobile-testing/SKILL.md` | Mobile capture helper in `ndev-responsive-check` | Installer | Capture mobile screenshots through the responsive-check skill. |
 | `modern-web-guidance` skill | `skills/modern-web-guidance/SKILL.md` | `ndev-modern-web-guidance` skill | Installer | Discover `ndev-modern-web-guidance` and resolve its references in each harness. |
 | `motion` skill | `skills/motion/SKILL.md` | `ndev-motion` skill | Installer | Discover `ndev-motion` and resolve its references in each harness. |
 | `perf-review` skill | `skills/perf-review/SKILL.md` | `ndev-perf-review` skill | Installer | Discover `ndev-perf-review` and resolve its references in each harness. |
 | `pick-up-prs` skill | `skills/pick-up-prs/SKILL.md` | `ndev-pick-up-prs` skill | Installer | Discover `ndev-pick-up-prs` and resolve its references in each harness. |
 | `project-analysis` skill | `skills/project-analysis/SKILL.md` | `ndev-project-analysis` skill | Installer | Discover `ndev-project-analysis` and resolve its references in each harness. |
 | `publish` skill | `skills/publish/SKILL.md` | `ndev-publish` skill | Installer | Discover `ndev-publish` and resolve its references in each harness. |
-| `r` skill | `skills/r/SKILL.md` | `ndev-r` skill | Installer | Discover `ndev-r` and resolve its references in each harness. |
+| `r` skill | `skills/r/SKILL.md` | Consolidated into `ndev-remember` | Installer | Discover `ndev-remember` in each harness. |
 | `react-grab` skill | `skills/react-grab/SKILL.md` | `ndev-react-grab` skill | Installer | Discover `ndev-react-grab` and resolve its references in each harness. |
 | `remember` skill | `skills/remember/SKILL.md` | `ndev-remember` skill | Installer | Discover `ndev-remember` and resolve its references in each harness. |
 | `report-work-done` skill | `skills/report-work-done/SKILL.md` | `ndev-report-work-done` skill | Installer | Discover `ndev-report-work-done` and resolve its references in each harness. |

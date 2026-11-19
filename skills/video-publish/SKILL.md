@@ -5,8 +5,6 @@ description: "Merge the current video change's pull request and confirm the prod
 
 # Publish the current change
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
-
 When the user types `/publish`, that is their approval to merge the pull request for the current change. Use `video-finish` to get it ready. Never push to the base branch directly.
 
 ## The workflow
@@ -59,4 +57,4 @@ Tell the user in plain English:
 
 If a build fix was needed, say what failed and link its pull request. If access, an external service or a user decision blocks progress, stop at the last confirmed state and name the blocker.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

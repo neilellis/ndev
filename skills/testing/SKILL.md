@@ -5,8 +5,6 @@ description: "Apply the testing taxonomy and verification rules across Python an
 
 # Testing discipline
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Cite the sections each test or eval checks.
-
 Choose the tier that can observe the changed behaviour, and keep the test at that boundary. The plugin's `kb/testing.md` and `kb/guards.md` hold the full method.
 
 ## The workflow

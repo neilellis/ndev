@@ -5,8 +5,6 @@ description: "Apply the project's UX guidance to navigation, disclosure, touch, 
 
 # UX guidance
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before making choices that affect project architecture, goals, or user behaviour.
-
 Find the project's UX pages from its wiki index file (usually under a `visual/` section). Read only the pages that apply to the decision. If the project has no UX pages, use the principles below and record the decision in the wiki.
 
 | Decision | Principle |
@@ -23,7 +21,7 @@ Find the project's UX pages from its wiki index file (usually under a `visual/` 
 - For a motion-rich interaction that shadcn/ui lacks (hold to confirm, progress rings, live counters), look at [Kokonut UI](https://kokonutui.com/). It installs through the shadcn registry. Judge each control, adopt only what improves a real interaction, and follow [references/kokonut-ui.md](references/kokonut-ui.md) for install, licence, theming, accessibility and tests.
 - Read `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md` before you write or replace a component, and choose each component from it. It names the source, the registry item and the styling rules for each component type.
 - For the platform detail of a control (CSS, accessibility checks, keyboard tests, fallbacks), use `modern-web-guidance`. Its guides add to the component the map names; they do not replace it.
-- Check desktop reflow and the mobile layout. Use `responsive-check` for the matrix of viewports and colour schemes and for worst-case data, and `mobile-testing` for quick mobile screenshots.
+- Check desktop reflow and the mobile layout. Use `responsive-check` for the matrix of viewports and colour schemes and for worst-case data, and its mobile screenshot helper for quick captures.
 - When a screen looks generated or like a template (glows, gradient text, emoji labels, uneven spacing), or the user asks to polish it, audit it with [references/generic-look.md](references/generic-look.md) before you change it.
 - To choose between layouts or interactions, build named variants with the human: see "Explore UI variants" in `work-hack`.
 - Use `copy` for the words.

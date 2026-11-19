@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Improve an automated agent from its logs
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the agent applies or judges a project rule.
-
 Invoke with the agent name, for example `/improve-agent judge`. If the name is missing, ask for it. The output is a plan, not an implementation. Do not change data, skills, permissions, caches or pipeline state, and do not start model runs.
 
 ## The workflow

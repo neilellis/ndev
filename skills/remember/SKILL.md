@@ -1,11 +1,9 @@
 ---
 name: remember
-description: "Record durable, non-obvious lessons from the session in the correct project wiki, skill, guide or memory home. Use before a PR leaves draft or when explicitly asked to remember. Also invoked as /r."
+description: "Record durable project facts and corrections in the owning wiki, skill, guide or memory. Use before a PR leaves draft or when asked to remember. Use dev-wiki for lessons that apply across projects."
 ---
 
 # Record what was learned
-
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you record a statement about how the project must work.
 
 Harvest only facts that change future behaviour. A cosmetic change or an unproven hypothesis is not a lesson.
 

@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Continue open PRs
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if work on a pull request changes behaviour governed by the project.
-
 1. Survey every open PR with the GitHub CLI or REST: draft state, mergeability, checks, branch, closing issues.
    ```bash
    gh pr list --state open --json number,title,isDraft,mergeable,headRefName,statusCheckRollup,closingIssuesReferences
@@ -27,4 +25,4 @@ Never create a second PR for a branch. Never merge, and never push the base bran
 
 `mcp__ndev__started` resumes the state in the record of each PR. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
