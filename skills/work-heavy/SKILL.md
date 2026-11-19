@@ -12,6 +12,10 @@ Use this skill for one larger or riskier development task. For a focused fix or 
 modules, touches schema, auth or migrations, or needs a plan, independent reviews and staged
 verification.
 
+## Confirm development is done
+
+Under interactive steering, show a concrete development preview when relevant and keep taking design feedback. Ask whether the work is done before final checks or review. Wait for the human to confirm. If they request changes, keep developing and ask again when those changes are ready. Only then call `ndev flow finished-development` with `--human-confirmation` containing the human’s answer. The CLI refuses an interactive finish without this answer, before staging files, checks or review. Auto steering continues without this confirmation.
+
 ## The workflow
 
 While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp__ndev__*` tools carry this method. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. Each tool records the state in `.neil-dev.issue-<id>.json` and answers with the next step. Follow that answer. If it differs from this skill, the answer wins.

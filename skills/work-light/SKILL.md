@@ -101,6 +101,10 @@ If baseline health matters, check it once on the base commit. An unrelated basel
 - Every error message prints the failed identifier and useful diagnostics. When the repair is known, the message names it.
 - Do not write comments in code. The only exception is a fact that took a lot of research or trial and error to find; if you are not sure, leave it out. The rule is `${CLAUDE_PLUGIN_ROOT}/kb/comments.md`.
 
+## Confirm development is done
+
+Under interactive steering, show a concrete development preview when relevant and keep taking design feedback. Ask whether the work is done before final checks or review. Wait for the human to confirm. If they request changes, keep developing and ask again when those changes are ready. Only then call `ndev flow finished-development` with `--human-confirmation` containing the human’s answer. The CLI refuses an interactive finish without this answer, before staging files, checks or review. Auto steering continues without this confirmation.
+
 ## Finish once
 
 Inspect the final diff for scope, accidental changes and missing acceptance criteria.

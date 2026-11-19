@@ -825,6 +825,8 @@ A new issue joins the unfinished issue of the agent. It uses the same worktree, 
 
 ### The issue and the PR
 
+Under interactive steering, the agent shows a concrete development preview when relevant and keeps taking design feedback. It asks whether the work is done before final checks or review. A request for changes keeps development open. The human must confirm before the agent calls `ndev flow finished-development --human-confirmation "<the human’s answer>"`. The CLI refuses an interactive finish without this answer before it stages files, runs checks or starts review. The issue record stores this confirmation. Auto steering needs no confirmation. Development tests and checkpoints still run as work proceeds.
+
 `finishedDevelopment` is the merge point. Each issue has a record for development, and the PR has a record for what comes after.
 
 
