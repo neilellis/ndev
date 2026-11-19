@@ -24,8 +24,12 @@ function load(root, n) {
   const file = pathFor(root, n)
   const e = readObject(file)
   if (e.epic !== n || !EPIC_STATES.includes(e.state) || !e.roles?.implementer?.agent || !e.roles?.reviewer?.agent || !Number.isInteger(e.parallel) || e.parallel < 1 || !e.evidence || !Array.isArray(e.history) || !e.issues || Array.isArray(e.issues)) refuse(`Invalid epic record ${file}.`, `Restore the last valid ${file}.`)
+  if (e.externalBlockers !== undefined && (!e.externalBlockers || typeof e.externalBlockers !== 'object' || Array.isArray(e.externalBlockers))) refuse(`Invalid external blockers in ${file}.`)
+  for (const [key, item] of Object.entries(e.externalBlockers ?? {})) {
+    if (!item || String(item.issue) !== key || e.issues[key] || !['waiting', 'merged'].includes(item.state) || !Array.isArray(item.blockedBy) || item.blockedBy.length || item.state === 'merged' && (!item.pr || !item.mergeSha)) refuse(`Invalid external blocker #${key} in ${file}.`)
+  }
   for (const [key, item] of Object.entries(e.issues)) {
-    if (!item || String(item.issue) !== key || !ISSUE_STATES.includes(item.state) || !Array.isArray(item.blockedBy) || item.blockedBy.some(id => !e.issues[id])) refuse(`Invalid sub-issue ${key} in ${file}.`)
+    if (!item || String(item.issue) !== key || !ISSUE_STATES.includes(item.state) || !Array.isArray(item.blockedBy) || item.blockedBy.some(id => !e.issues[id] && !e.externalBlockers?.[id])) refuse(`Invalid sub-issue ${key} in ${file}.`)
   }
   return e
 }
@@ -170,7 +174,8 @@ async function start(workspace, argv) {
   const e = before ? structuredClone(before) : { epic: n, repo, root, title: gh.title, state: 'framing', evidence: {}, parallel: DEFAULT_PARALLEL, roles: { implementer: { agent: 'claude' }, reviewer: { agent: 'codex' } }, issues: {}, history: [] }
   delete e.off
   if (!before || before.owner?.session !== session()) delete e.coordinator
-  if (process.env.ORCA_TERMINAL_HANDLE) e.coordinator = { terminal: process.env.ORCA_TERMINAL_HANDLE }
+  if (process.env.ORCA_AGENT_SESSION_ID) e.coordinator = { session: process.env.ORCA_AGENT_SESSION_ID }
+  else if (process.env.ORCA_TERMINAL_HANDLE) e.coordinator = { terminal: process.env.ORCA_TERMINAL_HANDLE }
   if (process.env.ORCA_DISPATCH_ID) e.coordinator = { dispatch: process.env.ORCA_DISPATCH_ID }
   if (parallel) e.parallel = parallel
   if (v['short-name']) e.shortName = v['short-name']
@@ -189,7 +194,7 @@ function slices(root, epic, file) {
   const children = github(root, epic.repo, `/issues/${epic.epic}/sub_issues`, true)
   const actual = children.map(child => {
     const n = number(child.number, 'GitHub sub-issue')
-    if (child.state !== 'open') refuse(`GitHub sub-issue #${n} is ${child.state}.`)
+    if (child.state !== 'open') refuse(`GitHub sub-issue #${n} is ${child.state}.`, `Run ndev epic import ${epic.epic} --issues-file <json> --evidence <text> to verify and import existing work.`)
     const blockers = github(root, epic.repo, `/issues/${n}/dependencies/blocked_by`, true)
     return { issue: n, key: `issue-${n}`, title: child.title, blockedBy: blockers.map(item => number(item.number, 'GitHub blocker')).sort((a,b) => a-b) }
   })
@@ -206,6 +211,82 @@ function slices(root, epic, file) {
   const problem = sliceProblems(actual)
   if (problem) refuse(problem, 'Correct the GitHub sub-issues and their blocker links.')
   return Object.fromEntries(actual.map(s => [s.issue, { ...s, state: 'waiting', rounds: 0 }]))
+}
+
+function linkedPulls(root, repo, n) {
+  const timeline = github(root, repo, `/issues/${n}/timeline`, true)
+  const prefix = `https://api.github.com/repos/${repo}/pulls/`
+  const candidates = [...new Set(timeline.flatMap(event => {
+    const url = event.source?.issue?.pull_request?.url
+    return event.event === 'cross-referenced' && typeof url === 'string' && url.startsWith(prefix) ? [number(url.slice(prefix.length), 'referenced PR')] : []
+  }))]
+  return candidates.flatMap(pr => {
+    const out = checked('gh', ['pr', 'view', String(pr), '-R', repo, '--json', 'closingIssuesReferences'], { cwd: root, repair: `Run gh pr view ${pr} --repo ${repo} --json closingIssuesReferences, then retry ndev epic import.` })
+    let links
+    try { links = JSON.parse(out).closingIssuesReferences } catch (error) { refuse(`PR #${pr} closure evidence is invalid JSON: ${error.message}.`) }
+    if (!Array.isArray(links) || links.length >= 100) refuse(`PR #${pr} has missing or potentially truncated closing issue evidence.`, `Inspect gh pr view ${pr} --repo ${repo} --json closingIssuesReferences before retrying import.`)
+    if (!links.some(link => link.number === n && link.url === `https://github.com/${repo}/issues/${n}`)) return []
+    const pull = github(root, repo, `/pulls/${pr}`)
+    if (pull.number !== pr || !['open', 'closed'].includes(pull.state) || typeof pull.merged !== 'boolean' || pull.merged && (pull.state !== 'closed' || !pull.merge_commit_sha)) refuse(`PR #${pr} has uncertain merge evidence for issue #${n}: ${JSON.stringify(pull)}.`, `Inspect gh pr view ${pr} --repo ${repo} before retrying import.`)
+    return [pull]
+  })
+}
+
+function importedIssue(root, repo, child, kind) {
+  const n = number(child.number, 'GitHub issue')
+  if (!['open', 'closed'].includes(child.state)) refuse(`GitHub issue #${n} has unknown state ${JSON.stringify(child.state)}.`)
+  if (kind === 'human') {
+    if (child.state !== 'open') refuse(`Human decision #${n} is ${child.state}; import cannot infer human approval from closure.`, `Inspect gh issue view ${n} --repo ${repo}; keep the decision pending until its human owner records evidence.`)
+    return { state: 'human-pending', note: 'Pending decision by the human owner; implementation dispatch and automatic merge are forbidden.' }
+  }
+  const prs = linkedPulls(root, repo, n)
+  const merged = prs.filter(pr => pr.merged === true && pr.state === 'closed' && pr.merge_commit_sha)
+  const open = prs.filter(pr => pr.state === 'open' && pr.merged === false)
+  if (child.state === 'closed') {
+    if (merged.length !== 1 || open.length) refuse(`Closed issue #${n} needs one verified merged closing PR and no open closing PR; found merged [${merged.map(p => p.number)}], open [${open.map(p => p.number)}].`, `Inspect gh issue view ${n} --repo ${repo} and its closing PRs, then retry ndev epic import.`)
+    return { state: 'merged', pr: number(merged[0].number, 'merged PR'), mergeSha: merged[0].merge_commit_sha, mergedUnverified: true }
+  }
+  if (merged.length || open.length > 1) refuse(`Issue #${n} has uncertain closing PR evidence: ${prs.map(pr => `#${pr.number} (${pr.state}, merged ${pr.merged})`).join(', ')}.`, `Inspect gh issue view ${n} --repo ${repo} and resolve its closing PR links before import.`)
+  return open.length ? { state: 'external', pr: number(open[0].number, 'existing PR'), note: 'Existing PR remains with its current owner. Resume that workflow; do not dispatch a duplicate.' } : { state: 'waiting' }
+}
+
+function importEpic(workspace, e, before, v) {
+  if (!['slicing', 'coordinating'].includes(e.state)) refuse(`Epic #${e.epic} is ${e.state}; import requires slicing or coordinating.`, `Run ndev epic status ${e.epic}.`)
+  if (!v['issues-file'] || !v.evidence?.trim()) bad('Import requires --issues-file and --evidence.')
+  const file = v['issues-file']
+  let list
+  try { list = JSON.parse(readFileSync(file === '-' ? 0 : resolve(workspace.root, file), 'utf8')) } catch (error) { bad(`Cannot read ${file}: ${error.message}`) }
+  const children = github(workspace.root, e.repo, `/issues/${e.epic}/sub_issues`, true)
+  if (!Array.isArray(list) || list.some(s => !s || typeof s !== 'object' || Array.isArray(s)) || list.length !== children.length || new Set(list.map(s => s?.issue)).size !== list.length) refuse(`Import manifest ${file} must name each of the ${children.length} GitHub children of #${e.epic} exactly once.`)
+  const issues = {}
+  for (const child of children) {
+    const n = number(child.number, 'GitHub sub-issue')
+    const entry = list.find(s => s.issue === n)
+    if (!entry || !KEY.test(entry.key ?? '') || !['implementation', 'human'].includes(entry.kind) || !Array.isArray(entry.blockedBy) || entry.blockedBy.some(b => !Number.isSafeInteger(b) || b < 1) || new Set(entry.blockedBy).size !== entry.blockedBy.length) refuse(`Import manifest ${file} needs #${n}, a valid key, explicit kind (implementation or human), and unique blockedBy issue numbers.`)
+    const blockedBy = github(workspace.root, e.repo, `/issues/${n}/dependencies/blocked_by`, true).map(b => number(b.number, 'GitHub blocker')).sort((a, b) => a - b)
+    if (!isDeepStrictEqual([...entry.blockedBy].sort((a, b) => a - b), blockedBy)) refuse(`Sub-issue #${n} blockers in ${file} differ from GitHub [${blockedBy.join(', ')}].`, 'Correct the GitHub blocker links or update the manifest; never drop a dependency.')
+    const imported = importedIssue(workspace.root, e.repo, child, entry.kind)
+    const old = e.issues[n]
+    const managed = old && !['waiting', 'external', 'merged', 'human-pending'].includes(old.state)
+    if (old && (old.kind && old.kind !== entry.kind || old.state === 'merged' && imported.state !== 'merged' || managed && (entry.kind === 'human' || !isDeepStrictEqual(old.blockedBy, blockedBy) || old.pr !== undefined && imported.pr !== old.pr))) refuse(`Import of #${n} conflicts with its saved ${old.state} workflow.`, `Run ndev epic status ${e.epic} and reconcile #${n} with its existing owner.`)
+    issues[n] = { ...(old ?? { rounds: 0 }), issue: n, key: entry.key, title: child.title, kind: entry.kind, blockedBy, ...(managed && imported.state !== 'merged' ? {} : imported) }
+  }
+  const externalBlockers = {}
+  const externalIds = [...new Set(Object.values(issues).flatMap(s => s.blockedBy).filter(n => !issues[n]))]
+  for (const n of externalIds) {
+    const child = github(workspace.root, e.repo, `/issues/${n}`)
+    if (child.number !== n || child.pull_request) refuse(`External blocker #${n} did not resolve to that GitHub issue.`)
+    const imported = importedIssue(workspace.root, e.repo, child, 'implementation')
+    externalBlockers[n] = { issue: n, key: `issue-${n}`, title: child.title, rounds: 0, blockedBy: [], ...imported, state: imported.state === 'merged' ? 'merged' : 'waiting' }
+  }
+  if (Object.keys(e.issues).some(n => !issues[n])) refuse(`Import would remove saved children from epic #${e.epic}.`, `Run ndev epic status ${e.epic} and reconcile removed children with their owners.`)
+  const problem = sliceProblems(Object.values(issues), externalIds)
+  if (problem) refuse(problem, 'Correct the GitHub sub-issues and their blocker links.')
+  e.issues = issues
+  e.externalBlockers = externalBlockers
+  e.evidence.import = { text: v.evidence, at: Date.now(), files: file === '-' ? [] : [resolve(workspace.root, file)] }
+  e.state = 'coordinating'
+  return { ...save(workspace, e, before, 'epicImport', before.state, e.state), frontier: frontier(e) }
 }
 
 function phase(workspace, e, before, finished, v) {
@@ -232,6 +313,7 @@ function branchFor(e) {
 function brief(workspace, e, before, sub, role, pr) {
   if (!['implementer','reviewer'].includes(role)) bad('Name implementer or reviewer.')
   if (e.state !== 'coordinating') refuse(`Epic #${e.epic} is ${e.state}.`)
+  if (['external', 'human-pending', 'merged'].includes(sub.state)) refuse(`Sub-issue #${sub.issue} is ${sub.state}; it cannot receive a new ${role} worker.`, `Run ndev epic status ${e.epic} and contact its existing owner.`)
   const placement = sub.state === 'waiting' && role === 'implementer' ? e.remote : sub.remote
   let files = e.evidence.specifying?.files ?? []
   if (placement) {
@@ -346,6 +428,7 @@ function move(workspace, e, before, sub, to, v) {
   if (!ISSUE_STATES.includes(to)) bad(`Unknown sub-issue state ${to}.`)
   const from = sub.state
   if (v.workspace && (sub.remote ? !/^.+::\/.+/.test(v.workspace) || (sub.remoteRepo?.startsWith('id:') && !v.workspace.startsWith(sub.remoteRepo.slice(3) + '::/')) : !v.workspace.startsWith('/'))) bad(`Invalid workspace ${v.workspace} for ${sub.remote?.id ?? 'local'}.`)
+  if (['external', 'human-pending'].includes(from)) refuse(`Issue #${sub.issue} is ${from}; its existing owner must resume it.`, `Refresh evidence with ndev epic import ${e.epic} --issues-file <json> --evidence <text>.`)
   if (from === 'merged' && to === 'merged') return handoffs(workspace,e,sub)
   if (to === 'blocked' && !['blocked','merged'].includes(from)) {
     if (!v.note?.trim()) bad(`Blocking #${sub.issue} requires --note.`)
@@ -395,11 +478,12 @@ function notifyCoordinator(workspace, e, changed, from) {
   const target = e.coordinator
   if (!target) return { ...changed, notification: 'coordinator can read the saved change with ndev epic status' }
   const message = e.off ? `Human ended coordination of epic #${e.epic}.` : `Human moved epic #${e.epic} from ${from} to ${e.state}. Run ndev epic status ${e.epic}.`
-  const argv = target.dispatch ? ['orchestration','send','--to',`dispatch:${target.dispatch}`,'--subject','Epic phase changed','--body',message] : ['terminal','send','--terminal',target.terminal,'--text',message,'--enter','--wait-submit','5']
+  const agentSession = target.session ?? (/^(?:orca_session_id:|structworker_|codex_|claude_)/.test(target.terminal ?? '') ? target.terminal : undefined)
+  const argv = agentSession ? ['orchestration','send','--to',agentSession.startsWith('orca_session_id:') ? agentSession : `orca_session_id:${agentSession}`,'--subject','Epic phase changed','--body',message] : target.dispatch ? ['orchestration','send','--to',`dispatch:${target.dispatch}`,'--subject','Epic phase changed','--body',message] : ['terminal','send','--terminal',target.terminal,'--text',message,'--enter','--wait-submit','5']
   const out = run('orca', [...argv,'--json'], { cwd: workspace.root })
   let receipt
   try { receipt = JSON.parse(out.stdout) } catch {}
-  if (out.status !== 0 || receipt?.ok !== true || receipt.result?.accepted === false) {
+  if (out.status !== 0 || receipt?.ok !== true || !receipt.result || receipt.result.accepted === false || receipt.result.delivered === false) {
     throw new CliError(1, `Epic #${e.epic} is saved at revision ${e.revision}. Coordinator notification exited ${out.status}: ${receipt?.error?.message || out.stderr.trim() || out.stdout.trim()}`, { details: { receipt, revision: e.revision }, repair: `Read ndev epic status ${e.epic} and inspect the Orca receipt before retrying delivery.` })
   }
   return { ...changed, notification: receipt.result }
@@ -409,6 +493,7 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
   const workspace = gitWorkspace()
   if (verb === 'start') return start(workspace, args)
   const specs = {
+    import: [{ evidence: string, 'issues-file': string }, 1],
     phase: [{ evidence: string, file: { ...string, multiple: true }, aim: string, 'issues-file': string }, 2],
     next: [{}, 1], brief: [{ pr: string }, 3], issue: [{ pr: string, worker: string, workspace: string, verdict: string, note: string }, 3],
     status: [{}, 1], skip: [{ issue: string }, 1], goto: [{ issue: string }, 2], off: [{ issue: string }, 0],
@@ -416,7 +501,7 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
   const [opts, count] = specs[verb] ?? bad(`Unknown epic command ${verb}.`)
   const { values: v, positionals: pos } = argsFor(args, opts, `ndev epic ${verb} --help`, { positionals: count })
   const override = ['skip','goto','off'].includes(verb)
-  if (['phase','next','brief','issue'].includes(verb) && pos.length !== count) bad(`ndev epic ${verb} requires ${count} positional argument(s).`)
+  if (['phase','import','next','brief','issue'].includes(verb) && pos.length !== count) bad(`ndev epic ${verb} requires ${count} positional argument(s).`)
   const raw = override ? v.issue : pos[0]
   const n = raw !== undefined ? number(raw, 'epic') : activeEpic(workspace.root)?.epic
   if (!n) {
@@ -428,6 +513,7 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
   if (verb === 'status') return { ...epicResult(e), ...(e.state === 'coordinating' ? { frontier: frontier(e) } : {}) }
   if (!override && (e.off || e.owner?.session !== session())) refuse(`This session does not coordinate #${n}.`, `Run ndev epic start ${n}.`)
   if (verb === 'next') return { epic: n, state: e.state, frontier: e.state === 'coordinating' ? frontier(e) : null }
+  if (verb === 'import') return importEpic(workspace,e,before,v)
   if (verb === 'phase') return phase(workspace,e,before,pos[1],v)
   if (override) {
     const from = e.state

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-const binary = fileURLToPath(new URL('../bin/ndev', import.meta.url))
+const binary = process.env.NDEV_TEST_BINARY || fileURLToPath(new URL('../bin/ndev', import.meta.url))
 
 function fixture(t) {
   const home = mkdtempSync(join(tmpdir(), 'ndev-epic-'))
@@ -28,7 +28,7 @@ function fixture(t) {
   save()
   writeFileSync(join(home, 'gh'), [
     '#!/usr/bin/env node', "const fs=require('node:fs')",
-    "const path=process.argv[2] === 'pr' ? 'checks:'+process.argv[4] : process.argv.slice(2).find(v => v.startsWith('repos/'))?.split('?')[0]",
+    "const path=process.argv[2] === 'pr' ? (process.argv.includes('closingIssuesReferences') ? 'links:' : 'checks:')+process.argv[4] : process.argv.slice(2).find(v => v.startsWith('repos/'))?.split('?')[0]",
     `const answer=JSON.parse(fs.readFileSync(${JSON.stringify(responses)}))[path]`,
     'if (!answer) {console.error("Unexpected gh call "+process.argv.slice(2).join(" ")); process.exit(9)}',
     'console.log(JSON.stringify(answer))',
@@ -158,4 +158,199 @@ test('filing by title recovers an uncertain GitHub create and keeps a single epi
   assert.equal(ok('start','--title','A new epic').epic.epic, 44)
   assert.equal(JSON.parse(readFileSync(log)).calls, 1)
   assert.equal(JSON.parse(readFileSync(join(root,'.neil-dev.epic-44.json'))).state, 'framing')
+})
+
+function importedFixture(t) {
+  const f = fixture(t)
+  const { answers, save, ok, root } = f
+  const children = [1350, 1351, 1352, 1353, 1358, 1369, 1403, 1411, 1413, 1414, 1415]
+  answers['repos/example/repo/issues/40/sub_issues'] = children.map(number => ({ number, title: `Child ${number}`, state: [1358, 1369, 1411].includes(number) ? 'closed' : 'open' }))
+  const blockers = { 1350: [1369], 1351: [1369], 1352: [1369], 1353: [1369], 1358: [1369], 1403: [1358, 1401], 1415: [1414] }
+  for (const n of [...children, 1401]) {
+    answers[`repos/example/repo/issues/${n}/dependencies/blocked_by`] = (blockers[n] ?? []).map(number => ({ number }))
+    answers[`repos/example/repo/issues/${n}/timeline`] = []
+  }
+  answers['repos/example/repo/issues/1401'] = { number: 1401, title: 'External writer', state: 'open' }
+  const linked = (n, pr, merged) => {
+    answers[`repos/example/repo/issues/${n}/timeline`].push({ event: 'cross-referenced', source: { issue: { pull_request: { url: `https://api.github.com/repos/example/repo/pulls/${pr}` } } } })
+    answers[`repos/example/repo/pulls/${pr}`] = { number: pr, state: merged ? 'closed' : 'open', merged, merge_commit_sha: merged ? `sha-${pr}` : null, head: { ref: `branch-${pr}` } }
+    answers[`links:${pr}`] = { closingIssuesReferences: [{ number: n, url: `https://github.com/example/repo/issues/${n}` }] }
+  }
+  linked(1358, 1431, true)
+  linked(1369, 1371, true)
+  linked(1411, 1412, true)
+  linked(1350, 1419, false)
+  linked(1401, 1402, false)
+  answers['repos/example/repo/issues/1413/timeline'] = answers['repos/example/repo/issues/1411/timeline']
+  save()
+  const manifest = children.map(issue => ({ issue, key: `issue-${issue}`, kind: issue === 1413 ? 'human' : 'implementation', blockedBy: blockers[issue] ?? [] }))
+  writeFileSync(join(root, 'import.json'), JSON.stringify(manifest))
+  ok('start', '40', '--parallel', '3', '--local')
+  const stateFile = join(root, '.neil-dev.epic-40.json')
+  const e = JSON.parse(readFileSync(stateFile))
+  e.state = 'slicing'
+  writeFileSync(stateFile, JSON.stringify(e))
+  return { ...f, stateFile, manifest, linked, import: () => f.call('import', '40', '--issues-file', 'import.json', '--evidence', 'reconciled existing epic') }
+}
+
+test('supported import verifies completed real children, preserves external and human gates, and reserves carried PR capacity', t => {
+  const f = importedFixture(t)
+  const imported = f.import()
+  assert.equal(imported.status, 0, JSON.stringify(imported))
+  const { epic, frontier } = imported.result
+  assert.equal(epic.state, 'coordinating')
+  for (const [n, pr] of [[1358, 1431], [1369, 1371], [1411, 1412]]) {
+    assert.equal(epic.issues[n].state, 'merged')
+    assert.equal(epic.issues[n].pr, pr)
+    assert.equal(epic.issues[n].mergeSha, `sha-${pr}`)
+  }
+  assert.equal(epic.issues[1413].state, 'human-pending')
+  assert.equal(epic.issues[1350].state, 'external')
+  assert.equal(epic.issues[1350].pr, 1419)
+  assert.equal(frontier.free, 2)
+  assert.deepEqual(frontier.ready.map(s => s.issue), [1351, 1352])
+  assert.ok(frontier.waitingOn.find(s => s.issue === 1403).open.includes(1401))
+  assert.deepEqual(epic.issues[1403].blockedBy, [1358, 1401])
+  assert.equal(epic.externalBlockers[1401].state, 'waiting')
+  assert.equal(epic.externalBlockers[1401].pr, 1402)
+  for (const n of [1413, 1350]) {
+    assert.equal(f.call('brief', '40', String(n), 'implementer').status, 1)
+    assert.equal(f.call('issue', '40', String(n), 'implementing', '--worker', 'duplicate').status, 1)
+  }
+  assert.equal(f.call('issue', '40', '1413', 'merged').status, 1)
+  assert.equal(f.call('phase', '40', 'coordinating', '--evidence', 'not complete').status, 1)
+  f.ok('issue', '40', '1351', 'implementing', '--worker', 'first')
+  f.ok('issue', '40', '1352', 'implementing', '--worker', 'second')
+  assert.equal(f.call('issue', '40', '1353', 'implementing', '--worker', 'overflow').status, 1)
+  assert.equal(f.call('issue', '40', '1415', 'implementing', '--worker', 'out-of-order').status, 1)
+  assert.equal(f.import().status, 0)
+  assert.equal(f.ok('status', '40').epic.issues[1351].implementer, 'first')
+  assert.equal(f.ok('next', '40').frontier.free, 0)
+  assert.equal(f.ok('status', '40').epic.issues[1350].workspace, undefined)
+})
+
+test('import refuses closed unmerged or unrelated PR evidence and leaves the record unchanged', t => {
+  const f = importedFixture(t)
+  const before = readFileSync(f.stateFile, 'utf8')
+  f.answers['repos/example/repo/pulls/1431'].merged = false
+  f.save()
+  const refused = f.import()
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /#1358.*merged/)
+  assert.equal(readFileSync(f.stateFile, 'utf8'), before)
+  f.answers['repos/example/repo/pulls/1431'].merged = true
+  f.answers['links:1431'].closingIssuesReferences = [{ number: 999, url: 'https://github.com/example/repo/issues/999' }]
+  f.save()
+  assert.equal(f.import().status, 1)
+  assert.equal(readFileSync(f.stateFile, 'utf8'), before)
+})
+
+test('import refresh verifies external completion without dropping blockers and refuses partial lookup failure', t => {
+  const f = importedFixture(t)
+  assert.equal(f.import().status, 0)
+  const before = readFileSync(f.stateFile, 'utf8')
+  delete f.answers['repos/example/repo/issues/1401']
+  f.save()
+  const failed = f.import()
+  assert.equal(failed.status, 1)
+  assert.match(failed.error.message, /1401.*9|9.*1401/)
+  assert.equal(readFileSync(f.stateFile, 'utf8'), before)
+  f.answers['repos/example/repo/issues/1401'] = { number: 1401, title: 'External writer', state: 'closed' }
+  Object.assign(f.answers['repos/example/repo/pulls/1402'], { state: 'closed', merged: true, merge_commit_sha: 'external-merge' })
+  f.save()
+  const refreshed = f.import()
+  assert.equal(refreshed.status, 0, JSON.stringify(refreshed))
+  assert.equal(refreshed.result.epic.externalBlockers[1401].state, 'merged')
+  assert.ok(!refreshed.result.frontier.waitingOn.some(s => s.issue === 1403))
+  assert.deepEqual(refreshed.result.epic.issues[1403].blockedBy, [1358, 1401])
+})
+
+test('import refuses ambiguous active PRs, changed dependencies and missing explicit human classification atomically', t => {
+  const f = importedFixture(t)
+  const before = readFileSync(f.stateFile, 'utf8')
+  f.linked(1350, 1500, false)
+  f.save()
+  assert.equal(f.import().status, 1)
+  assert.equal(readFileSync(f.stateFile, 'utf8'), before)
+  f.answers['repos/example/repo/issues/1350/timeline'].pop()
+  f.save()
+  f.manifest.find(s => s.issue === 1403).blockedBy = [1358]
+  writeFileSync(join(f.root, 'import.json'), JSON.stringify(f.manifest))
+  assert.equal(f.import().status, 1)
+  assert.equal(readFileSync(f.stateFile, 'utf8'), before)
+  f.manifest.find(s => s.issue === 1403).blockedBy = [1358, 1401]
+  delete f.manifest.find(s => s.issue === 1413).kind
+  writeFileSync(join(f.root, 'import.json'), JSON.stringify(f.manifest))
+  assert.equal(f.import().status, 1)
+  assert.equal(readFileSync(f.stateFile, 'utf8'), before)
+})
+
+test('agent coordinator notification uses orchestration and reports saved revision on delivery failure', t => {
+  const f = fixture(t)
+  f.env.ORCA_AGENT_SESSION_ID = 'structworker_test'
+  f.env.ORCA_TERMINAL_HANDLE = 'structworker_test'
+  f.ok('start', '40')
+  const failed = confirmedGoto(f, 'slicing')
+  assert.equal(failed.status, 1, failed.stdout + failed.stderr)
+  assert.match(failed.stdout, /saved at revision 2.*notification exited 0/)
+  assert.equal(f.ok('status', '40').epic.state, 'slicing')
+  const delivery = JSON.parse(readFileSync(join(f.home, 'orca.log'), 'utf8').trim())
+  assert.deepEqual(delivery.slice(0, 2), ['orchestration', 'send'])
+  assert.ok(delivery.includes('orca_session_id:structworker_test'))
+})
+
+function confirmedGoto(f, target) {
+  const initial = f.ok('goto', target, '--issue', '40')
+  const phrase = `confirm epic goto ${target} 40 ${initial.nextAction.revision}`
+  const script = `import os,pty,subprocess
+m,s=pty.openpty()
+os.write(m,${JSON.stringify(phrase + '\n')}.encode())
+p=subprocess.Popen(${JSON.stringify([binary, 'epic', 'goto', target, '--issue', '40'])},stdin=s,stdout=s,stderr=s)
+os.close(s)
+while True:
+ try:
+  b=os.read(m,8192)
+ except OSError: break
+ if not b: break
+ print(b.decode(),end='')
+raise SystemExit(p.wait())
+`
+  return spawnSync('python3', ['-c', script], { cwd: f.root, env: f.env, encoding: 'utf8' })
+}
+
+
+test('legacy agent terminal addresses also use orchestration and successful delivery preserves the saved result', t => {
+  const f = fixture(t)
+  f.ok('start', '40')
+  const stateFile = join(f.root, '.neil-dev.epic-40.json')
+  const e = JSON.parse(readFileSync(stateFile))
+  e.coordinator = { terminal: 'structworker_legacy' }
+  writeFileSync(stateFile, JSON.stringify(e))
+  f.answers['orca:orchestration send'] = { accepted: true, delivered: true, id: 'receipt' }
+  f.save()
+  const sent = confirmedGoto(f, 'slicing')
+  assert.equal(sent.status, 0, sent.stdout + sent.stderr)
+  assert.equal(f.ok('status', '40').epic.revision, 2)
+  const delivery = JSON.parse(readFileSync(join(f.home, 'orca.log'), 'utf8').trim())
+  assert.ok(delivery.includes('orca_session_id:structworker_legacy'))
+})
+
+
+test('import holds dependants of a carried PR and refuses closed human decisions without inventing approval', t => {
+  const f = importedFixture(t)
+  f.answers['repos/example/repo/issues/1353/dependencies/blocked_by'] = [{ number: 1350 }]
+  f.manifest.find(s => s.issue === 1353).blockedBy = [1350]
+  writeFileSync(join(f.root, 'import.json'), JSON.stringify(f.manifest))
+  f.save()
+  const imported = f.import()
+  assert.equal(imported.status, 0, JSON.stringify(imported))
+  assert.deepEqual(imported.result.frontier.waitingOn.find(s => s.issue === 1353).open, [1350])
+  assert.ok(!imported.result.frontier.stacked.some(s => s.sub.issue === 1353))
+  const before = readFileSync(f.stateFile, 'utf8')
+  f.answers['repos/example/repo/issues/40/sub_issues'].find(s => s.number === 1413).state = 'closed'
+  f.save()
+  const refused = f.import()
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /Human decision #1413.*cannot infer human approval/)
+  assert.equal(readFileSync(f.stateFile, 'utf8'), before)
 })
