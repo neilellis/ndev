@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
@@ -254,4 +254,24 @@ test('opencode delivers lifecycle, prompt and post-tool context once to the orig
   assert.deepEqual(await context('other'), ['session-start/other', 'prompt-context/other'])
   assert.deepEqual(await context('first'), ['session-start/first', 'prompt-submit/first', 'post-tool-use/first', 'prompt-context/first'])
   assert.deepEqual(await context('first'), ['prompt-context/first'])
+})
+
+
+test('reinstall keeps an active skill when an old manifest path aliases the same file', t => {
+  const { home, env, install } = fixture(t)
+  const first = install('claude')
+  const skill = join(env.CLAUDE_CONFIG_DIR, 'skills/ndev-work-light/SKILL.md')
+  const oldDirectory = join(env.CLAUDE_CONFIG_DIR, 'skills/ndev-old-profile')
+  symlinkSync(join(env.CLAUDE_CONFIG_DIR, 'skills/ndev-work-light'), oldDirectory, 'dir')
+  const oldSkill = join(oldDirectory, 'SKILL.md')
+  const manifest = read(first.manifest)
+  manifest.files[oldSkill] = { ...manifest.files[skill] }
+  writeFileSync(first.manifest, JSON.stringify(manifest))
+  rmSync(skill)
+  const result = install('claude')
+  assert.equal(existsSync(skill), true, 'stale alias cleanup must keep the active skill')
+  assert.equal(existsSync(oldSkill), true)
+  assert.equal(result.removed.includes(oldSkill), false)
+  assert.equal(Object.hasOwn(read(first.manifest).files, oldSkill), false)
+  assert.match(readFileSync(skill, 'utf8'), /name: ndev-work-light/)
 })
