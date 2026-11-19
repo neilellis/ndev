@@ -37,6 +37,7 @@ export function run(executable, argv, { cwd, input, timeout = 30_000, env } = {}
     cwd, input, timeout, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
   })
   return {
+    ...(result.error ? { error: { code: result.error.code, message: result.error.message, ...(result.error.syscall ? { syscall: result.error.syscall } : {}) }, pid: result.pid } : {}),
     status: result.error ? (result.error.code === 'ETIMEDOUT' ? 124 : 127) : result.status ?? 1,
     stdout: result.stdout ?? '',
     stderr: [result.stderr, result.error?.message, result.signal && `Signal ${result.signal}`].filter(Boolean).join('\n'),

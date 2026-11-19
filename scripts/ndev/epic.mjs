@@ -294,7 +294,7 @@ function importEpic(workspace, e, before, v) {
   const merged = Object.values(e.issues).filter(sub => sub.state === 'merged')
   for (const sub of merged) prepareMergeHandoffs(e, sub)
   save(workspace, e, before, 'epicImport', before.state, e.state)
-  for (const sub of merged) handoffs(workspace, e, sub)
+  handoffs(workspace, e, merged)
   return { ...epicResult(e), frontier: frontier(e) }
 }
 
@@ -412,29 +412,45 @@ function prepareMergeHandoffs(e, sub) {
   for (const child of children) child.handoff = { state: 'pending', blocker: sub.issue, message: `PR #${sub.pr} is merged. Rebase #${child.issue} onto origin/${main}, checkpoint the rebased branch, and retarget ${child.pr ? `PR #${child.pr}` : 'your PR'} to ${main}. Report the new PR head.` }
 }
 
-function handoffs(workspace, e, sub) {
-  for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.stackedOn === sub.issue && item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
-    const h = child.handoff
-    if (!child.implementer) continue
-    if (h.state === 'sending' && !h.requestId) refuse(`Epic #${e.epic} is saved at revision ${e.revision}. Delivery to ${child.implementer} is uncertain for #${child.issue}.`, 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.')
-    const before = structuredClone(e)
-    h.state = 'sending'
-    save(workspace, e, before, 'handoff-start', sub.state, sub.state)
-    const recorded = structuredClone(e)
-    const args = ['orchestration','send','--to',`dispatch:${child.implementer}`,'--subject',`Rebase #${child.issue} after #${sub.issue} merged`,'--body',h.message,...(e.run ? ['--run',e.run] : []),...(h.requestId ? ['--retry-request',h.requestId] : []),'--full','--json']
-    const out = run('orca', args, { cwd: workspace.root })
-    let receipt
-    try { receipt = JSON.parse(out.stdout) } catch {}
-    if (out.status !== 0 || receipt?.ok !== true || receipt.result?.accepted === false || receipt.result?.delivered === false || !receipt.result) {
-      h.requestId = receipt?.error?.data?.orchestrationRequestId ?? receipt?.error?.data?.requestId ?? h.requestId
-      h.error = receipt?.error ?? (out.stderr.trim() || out.stdout.trim())
-      save(workspace,e,recorded,'handoff-uncertain',sub.state,sub.state)
-      throw new CliError(1, `Epic #${e.epic} is saved at revision ${e.revision}. Orca send to dispatch:${child.implementer} exited ${out.status}: ${JSON.stringify(h.error)}`, { details: { receipt, requestId: h.requestId }, repair: h.requestId ? `Retry ndev epic issue ${e.epic} ${sub.issue} merged.` : 'Inspect the Run mailbox before attempting another delivery.' })
+function handoffs(workspace, e, parents) {
+  const failures = []
+  const inspect = 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.'
+  for (const sub of Array.isArray(parents) ? parents : [parents]) {
+    for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.stackedOn === sub.issue && item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
+      const h = child.handoff
+      if (!child.implementer) continue
+      const recipient = `dispatch:${child.implementer}`
+      if (h.state === 'sending' && !h.requestId) {
+        failures.push({ issue: child.issue, recipient, message: `Delivery to ${child.implementer} is uncertain for #${child.issue}.`, repair: inspect })
+        continue
+      }
+      const firstAttempt = h.state === 'pending' && !h.requestId
+      const before = structuredClone(e)
+      h.state = 'sending'
+      save(workspace, e, before, 'handoff-start', sub.state, sub.state)
+      const recorded = structuredClone(e)
+      const args = ['orchestration','send','--to',recipient,'--subject',`Rebase #${child.issue} after #${sub.issue} merged`,'--body',h.message,...(e.run ? ['--run',e.run] : []),...(h.requestId ? ['--retry-request',h.requestId] : []),'--full','--json']
+      const out = run('orca', args, { cwd: workspace.root })
+      let receipt
+      try { receipt = JSON.parse(out.stdout) } catch {}
+      if (out.status !== 0 || receipt?.ok !== true || receipt.result?.accepted === false || receipt.result?.delivered === false || !receipt.result) {
+        const launchFailed = out.pid === 0 && ['ENOENT', 'EACCES', 'ENOTDIR', 'ENOEXEC', 'E2BIG'].includes(out.error?.code)
+        const requestId = receipt?.error?.data?.orchestrationRequestId ?? receipt?.error?.data?.requestId ?? h.requestId
+        if (requestId !== undefined) h.requestId = requestId
+        h.error = receipt?.error ?? (out.error ? { ...out.error, ...(out.pid !== undefined ? { pid: out.pid } : {}) } : out.stderr.trim() || out.stdout.trim())
+        if (firstAttempt && launchFailed && !h.requestId) h.state = 'pending'
+        save(workspace,e,recorded,h.state === 'pending' ? 'handoff-not-launched' : 'handoff-uncertain',sub.state,sub.state)
+        const retry = `Retry ndev epic issue ${e.epic} ${sub.issue} merged.`
+        const repair = launchFailed ? `Restore orca on PATH, run orca --version, then ${retry}` : h.requestId ? retry : inspect
+        failures.push({ issue: child.issue, recipient, message: `Orca send to ${recipient} exited ${out.status}: ${JSON.stringify(h.error)}`, exitCode: out.status, error: h.error, receipt, requestId: h.requestId, repair })
+        continue
+      }
+      h.state = 'sent'
+      h.receipt = receipt.result
+      save(workspace,e,recorded,'handoff-sent',sub.state,sub.state)
     }
-    h.state = 'sent'
-    h.receipt = receipt.result
-    save(workspace,e,recorded,'handoff-sent',sub.state,sub.state)
   }
+  if (failures.length) throw new CliError(1, `Epic #${e.epic} is saved at revision ${e.revision}. Handoff delivery failed: ${failures.map(f => `#${f.issue} (${f.recipient}): ${f.message}`).join('; ')}`, { details: { revision: e.revision, failures }, repair: [...new Set(failures.map(f => f.repair))].join(' ') })
   return epicResult(e)
 }
 

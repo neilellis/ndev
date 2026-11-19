@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,6 +36,7 @@ function fixture(t) {
   writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ github: { repo: 'example/repo' } }))
   function call(...args) {
     const out = spawnSync(binary, ['epic', ...args, '--json'], { cwd: root, env, encoding: 'utf8' })
+    assert.notEqual(out.stdout.trim(), '', `ndev epic ${args.join(' ')} exited ${out.status}: ${out.stderr || out.error?.message || 'no output'}`)
     return { status: out.status, ...JSON.parse(out.stdout) }
   }
   function ok(...args) {
@@ -51,7 +52,7 @@ function fixture(t) {
     `fs.appendFileSync(${JSON.stringify(join(home, 'orca.log'))},JSON.stringify(process.argv.slice(2))+'\\n')`,
     `const marker=${JSON.stringify(join(home, 'during-send.once'))}`,
     "if(db['orca-during-send'] && !fs.existsSync(marker)) { fs.writeFileSync(marker,'started'); const cp=require('node:child_process'); const r=cp.spawnSync(db['orca-during-send'][0],db['orca-during-send'].slice(1),{encoding:'utf8',env:process.env}); fs.writeFileSync(marker+'.result',JSON.stringify({status:r.status,stdout:r.stdout,stderr:r.stderr})) }",
-    "const error=db['orca-error:'+key]; if(error) { console.log(JSON.stringify({id:'local',ok:false,error,_meta:{runtimeId:null}})); process.exit(db['orca-exit:'+key] ?? 1) }",
+    "const target=process.argv[process.argv.indexOf('--to')+1]; const error=db['orca-error:'+key+':'+target] ?? db['orca-error:'+key]; if(error) { console.log(JSON.stringify({id:'local',ok:false,error,_meta:{runtimeId:null}})); process.exit(db['orca-exit:'+key] ?? 1) }",
     'console.log(JSON.stringify(result ? {ok:true,result} : {ok:false,error:{message:"Unexpected Orca command "+key}}))',
   ].join('\n'), { mode: 0o755 })
   return { root, home, env, answers, save, call, ok }
@@ -359,8 +360,13 @@ test('import holds dependants of a carried PR and refuses closed human decisions
 })
 
 
-function managedStackFixture(t) {
+function managedStackFixture(t, sibling = false) {
   const f = fixture(t)
+  if (sibling) {
+    f.answers['repos/example/repo/issues/40/sub_issues'].push({ number: 43, title: 'Sibling', state: 'open' })
+    f.answers['repos/example/repo/issues/43/dependencies/blocked_by'] = [{ number: 41 }]
+    f.save()
+  }
   f.ok('start', '40', '--run', 'run-1')
   f.ok('phase', '40', 'framing', '--aim', 'ship', '--evidence', 'agreed')
   writeFileSync(join(f.root, 'spec.md'), 'specification')
@@ -372,10 +378,16 @@ function managedStackFixture(t) {
   f.ok('brief', '40', '42', 'implementer')
   f.ok('issue', '40', '42', 'implementing', '--worker', 'child-worker', '--workspace', f.root)
   f.ok('issue', '40', '42', 'reviewing', '--pr', '62', '--worker', 'child-reviewer')
+  if (sibling) {
+    f.ok('brief', '40', '43', 'implementer')
+    f.ok('issue', '40', '43', 'implementing', '--worker', 'sibling-worker', '--workspace', f.root)
+    f.ok('issue', '40', '43', 'reviewing', '--pr', '63', '--worker', 'sibling-reviewer')
+    f.answers['repos/example/repo/pulls/63'] = { number: 63, state: 'open', merged: false, head: { ref: 'sibling', sha: 'sibling-sha' }, base: { ref: 'parent' } }
+  }
   f.answers['repos/example/repo/issues/40/sub_issues'][0].state = 'closed'
   Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merge_commit_sha: 'merged-parent' })
   f.answers['repos/example/repo/pulls/62'] = { number: 62, state: 'open', merged: false, head: { ref: 'child', sha: 'child-sha' }, base: { ref: 'parent' } }
-  for (const [issue, pr] of [[41, 61], [42, 62]]) {
+  for (const [issue, pr] of [[41, 61], [42, 62], ...(sibling ? [[43, 63]] : [])]) {
     f.answers[`repos/example/repo/issues/${issue}/timeline`] = [{ event: 'cross-referenced', source: { issue: { pull_request: { url: `https://api.github.com/repos/example/repo/pulls/${pr}` } } } }]
     f.answers[`links:${pr}`] = { closingIssuesReferences: [{ number: issue, url: `https://github.com/example/repo/issues/${issue}` }] }
   }
@@ -384,6 +396,7 @@ function managedStackFixture(t) {
   writeFileSync(join(f.root, 'refresh.json'), JSON.stringify([
     { issue: 41, key: 'parent', kind: 'implementation', blockedBy: [] },
     { issue: 42, key: 'child', kind: 'implementation', blockedBy: [41] },
+    ...(sibling ? [{ issue: 43, key: 'sibling', kind: 'implementation', blockedBy: [41] }] : []),
   ]))
   return { ...f, refresh: () => f.call('import', '40', '--issues-file', 'refresh.json', '--evidence', 'refreshed merge'), deliveries: () => readFileSync(join(f.home, 'orca.log'), 'utf8').trim().split('\n').map(line => JSON.parse(line)) }
 }
@@ -559,4 +572,90 @@ test('import leaves a verified child detached from its old uncertain handoff', t
   assert.equal(refreshed.result.epic.issues[42].handoff.state, 'sending')
   f.ok('issue', '40', '41', 'merged')
   assert.equal(f.deliveries().length, 1)
+})
+
+
+function hideOrca(f) {
+  symlinkSync(process.execPath, join(f.home, 'node'))
+  for (const command of ['git', 'dirname']) {
+    const found = spawnSync('which', [command], { encoding: 'utf8' })
+    assert.equal(found.status, 0, found.stderr)
+    symlinkSync(found.stdout.trim(), join(f.home, command))
+  }
+  renameSync(join(f.home, 'orca'), join(f.home, 'orca-hidden'))
+  f.env.PATH = f.home
+}
+
+test('a proven first launch failure stays pending and recovers when Orca is restored', t => {
+  const f = managedStackFixture(t)
+  hideOrca(f)
+  const failed = f.refresh()
+  assert.equal(failed.status, 1, JSON.stringify(failed))
+  const h = f.ok('status', '40').epic.issues[42].handoff
+  assert.equal(h.state, 'pending')
+  assert.equal(h.error.code, 'ENOENT')
+  assert.match(failed.error.message, /dispatch:child-worker.*127.*ENOENT/)
+  assert.match(failed.error.repair, /orca --version.*ndev epic issue 40 41 merged/)
+  renameSync(join(f.home, 'orca-hidden'), join(f.home, 'orca'))
+  assert.equal(f.refresh().status, 0)
+  assert.equal(f.deliveries().length, 1)
+})
+
+test('a failed launch while retrying a known request preserves the uncertain delivery state', t => {
+  const f = managedStackFixture(t)
+  f.answers['orca-error:orchestration send'] = { message: 'uncertain', data: { orchestrationRequestId: 'existing-request' } }
+  f.save()
+  assert.equal(f.refresh().status, 1)
+  hideOrca(f)
+  assert.equal(f.refresh().status, 1)
+  const h = f.ok('status', '40').epic.issues[42].handoff
+  assert.equal(h.state, 'sending')
+  assert.equal(h.requestId, 'existing-request')
+  renameSync(join(f.home, 'orca-hidden'), join(f.home, 'orca'))
+  delete f.answers['orca-error:orchestration send']
+  f.save()
+  assert.equal(f.refresh().status, 0)
+  assert.ok(f.deliveries()[1].includes('existing-request'))
+})
+
+test('an uncertain recipient does not prevent its independent sibling delivery or permit a blind retry', t => {
+  const f = managedStackFixture(t, true)
+  f.answers['orca-error:orchestration send:dispatch:child-worker'] = { message: 'ambiguous delivery' }
+  f.save()
+  const failed = f.refresh()
+  assert.equal(failed.status, 1, JSON.stringify(failed))
+  const saved = f.ok('status', '40').epic
+  assert.equal(saved.issues[42].handoff.state, 'sending')
+  assert.equal(saved.issues[43].handoff.state, 'sent')
+  assert.equal(saved.issues[43].implementer, 'sibling-worker')
+  assert.match(failed.error.message, /saved at revision.*#42.*dispatch:child-worker/)
+  assert.equal(f.deliveries().length, 2)
+  delete f.answers['orca-error:orchestration send:dispatch:child-worker']
+  f.save()
+  const retry = f.call('issue', '40', '41', 'merged')
+  assert.equal(retry.status, 1)
+  assert.match(retry.error.message, /uncertain for #42/)
+  assert.match(retry.error.repair, /Inspect the Orca Run mailbox/)
+  assert.equal(f.deliveries().length, 2)
+})
+
+test('handoff failure reports every recipient and retries an independent durable request', t => {
+  const f = managedStackFixture(t, true)
+  f.answers['orca-error:orchestration send:dispatch:child-worker'] = { message: 'ambiguous delivery' }
+  f.answers['orca-error:orchestration send:dispatch:sibling-worker'] = { message: 'lost receipt', data: { orchestrationRequestId: 'sibling-request' } }
+  f.save()
+  const failed = f.refresh()
+  assert.equal(failed.status, 1)
+  assert.match(failed.error.message, /#42.*dispatch:child-worker.*#43.*dispatch:sibling-worker/)
+  assert.equal(failed.error.details.failures.length, 2)
+  assert.match(failed.error.repair, /Inspect the Orca Run mailbox/)
+  assert.match(failed.error.repair, /ndev epic issue 40 41 merged/)
+  delete f.answers['orca-error:orchestration send:dispatch:sibling-worker']
+  f.save()
+  const retry = f.refresh()
+  assert.equal(retry.status, 1)
+  assert.equal(retry.error.details.failures.length, 1)
+  assert.equal(f.ok('status', '40').epic.issues[43].handoff.state, 'sent')
+  assert.ok(f.deliveries()[2].includes('sibling-request'))
+  assert.equal(f.deliveries().length, 3)
 })
