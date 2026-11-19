@@ -47,6 +47,8 @@ After a durable change, do an ingest:
 
 If the project has a human docs site, each page explains its topic to a reader with no project background. A page names the wiki pages it derives from, and links each first use of jargon to a real glossary entry. Check each code-backed claim against the code. Build the site and look at the output for rendering defects.
 
+For pages with product screenshots, follow `${CLAUDE_PLUGIN_ROOT}/kb/docs-screenshots.md`. Use the project's screenshot capture and freshness commands if it has them. Otherwise create a project-owned `docs-screenshots.json` with source inputs, capture commands and every published PNG output. Run `${CLAUDE_PLUGIN_ROOT}/scripts/docs/screenshots.mjs` with Node: `refresh <manifest>` captures stale images; `check <manifest>` rejects stale, missing or changed files. Add the check to the project's docs build or CI. Commit the manifest, screenshots and receipt together, then inspect the images in the rendered page.
+
 ## Readability lint
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/docs/readability.sh` lints prose against the House vale style in `${CLAUDE_PLUGIN_ROOT}/scripts/docs/vale/`. Run it on a plan, a comment, a wiki page or a docs page before you post or commit it.
