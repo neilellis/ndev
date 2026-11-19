@@ -83,7 +83,12 @@ function epicResult(epic) {
   return result
 }
 
+function mutate(workspace, n, work) {
+  return locked(join(workspace.gitDir, `ndev-epic-${n}-mutation`), () => work({ ...workspace, mutation: n }))
+}
+
 function save(workspace, e, before, action, from, to) {
+  if (workspace.mutation !== e.epic) return mutate(workspace, e.epic, scoped => save(scoped, e, before, action, from, to))
   const file = pathFor(workspace.root, e.epic)
   ignore(workspace, file)
   locked(file, () => {
@@ -408,7 +413,7 @@ function prepareMergeHandoffs(e, sub) {
 }
 
 function handoffs(workspace, e, sub) {
-  for (const child of Object.values(e.issues).filter(item => item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
+  for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
     const h = child.handoff
     if (!child.implementer) continue
     if (h.state === 'sending' && !h.requestId) refuse(`Epic #${e.epic} is saved at revision ${e.revision}. Delivery to ${child.implementer} is uncertain for #${child.issue}.`, 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.')
@@ -516,25 +521,28 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
     if (verb === 'status') return { epic: null }
     bad('Name the epic number.')
   }
-  const before = load(workspace.root, n)
-  const e = structuredClone(before)
-  if (verb === 'status') return { ...epicResult(e), ...(e.state === 'coordinating' ? { frontier: frontier(e) } : {}) }
-  if (!override && (e.off || e.owner?.session !== session())) refuse(`This session does not coordinate #${n}.`, `Run ndev epic start ${n}.`)
-  if (verb === 'next') return { epic: n, state: e.state, frontier: e.state === 'coordinating' ? frontier(e) : null }
-  if (verb === 'import') return importEpic(workspace,e,before,v)
-  if (verb === 'phase') return phase(workspace,e,before,pos[1],v)
-  if (override) {
-    const from = e.state
-    const to = verb === 'goto' ? pos[0] : nextEpicState(from)
-    if (verb !== 'off' && !EPIC_STATES.includes(to)) bad(`Invalid target phase for ${verb}: ${to}.`)
-    const revision = createHash('sha256').update(JSON.stringify(e)).digest('hex').slice(0, 12)
-    const action = confirm(`epic ${verb}${verb === 'goto' ? ' ' + to : ''}`, String(n), revision, workspace.root, json)
-    if (action) return action
-    if (verb === 'off') { e.off = true; delete e.owner }
-    else { e.state = to; e.evidence[from] = { at: Date.now(), text: pos[verb === 'goto' ? 1 : 0] ?? 'Human override' } }
-    return notifyCoordinator(workspace, e, save(workspace,e,before,`human:${verb}`,from,e.state), from)
+  const execute = workspace => {
+    const before = load(workspace.root, n)
+    const e = structuredClone(before)
+    if (verb === 'status') return { ...epicResult(e), ...(e.state === 'coordinating' ? { frontier: frontier(e) } : {}) }
+    if (!override && (e.off || e.owner?.session !== session())) refuse(`This session does not coordinate #${n}.`, `Run ndev epic start ${n}.`)
+    if (verb === 'next') return { epic: n, state: e.state, frontier: e.state === 'coordinating' ? frontier(e) : null }
+    if (verb === 'import') return importEpic(workspace,e,before,v)
+    if (verb === 'phase') return phase(workspace,e,before,pos[1],v)
+    if (override) {
+      const from = e.state
+      const to = verb === 'goto' ? pos[0] : nextEpicState(from)
+      if (verb !== 'off' && !EPIC_STATES.includes(to)) bad(`Invalid target phase for ${verb}: ${to}.`)
+      const revision = createHash('sha256').update(JSON.stringify(e)).digest('hex').slice(0, 12)
+      const action = confirm(`epic ${verb}${verb === 'goto' ? ' ' + to : ''}`, String(n), revision, workspace.root, json)
+      if (action) return action
+      if (verb === 'off') { e.off = true; delete e.owner }
+      else { e.state = to; e.evidence[from] = { at: Date.now(), text: pos[verb === 'goto' ? 1 : 0] ?? 'Human override' } }
+      return notifyCoordinator(workspace, e, save(workspace,e,before,`human:${verb}`,from,e.state), from)
+    }
+    const sub = e.issues[number(pos[1], 'sub-issue')]
+    if (!sub) refuse(`#${pos[1]} is outside epic #${n}.`)
+    return verb === 'brief' ? brief(workspace,e,before,sub,pos[2],v.pr && number(v.pr,'PR')) : move(workspace,e,before,sub,pos[2],v)
   }
-  const sub = e.issues[number(pos[1], 'sub-issue')]
-  if (!sub) refuse(`#${pos[1]} is outside epic #${n}.`)
-  return verb === 'brief' ? brief(workspace,e,before,sub,pos[2],v.pr && number(v.pr,'PR')) : move(workspace,e,before,sub,pos[2],v)
+  return ['status', 'next'].includes(verb) ? execute(workspace) : mutate(workspace, n, execute)
 }
