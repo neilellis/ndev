@@ -119,6 +119,7 @@ type ModeMachine = {
   interview: string
   // Two reviewers, one for the standards and one for the specification, in place of one.
   twoAxisReview: boolean
+  reviewScreenshots: boolean
   // What the reviewer checks besides the diff, when the mode has a skill with its own finish.
   reviewBrief?: string
   // finishedDevelopment runs gates.sh for each issue of this mode.
@@ -156,6 +157,7 @@ const LIGHT: ModeMachine = {
   reopen: 'developing',
   interview: 'Ask at most 5 pertinent questions and 5 follow-ups, or none if none is pertinent.',
   twoAxisReview: false,
+  reviewScreenshots: false,
   gates: false,
   smokeOnPreview: false,
 }
@@ -176,6 +178,7 @@ const HEAVY: ModeMachine = {
   reopen: 'developing',
   interview: 'Go through the whole design tree, round by round, and let the last round confirm the shared understanding.',
   twoAxisReview: true,
+  reviewScreenshots: true,
   reviewBrief: 'The change follows the work-heavy skill, so check what a finished change of that skill must include.',
   gates: true,
   smokeOnPreview: true,
@@ -199,6 +202,7 @@ const HACK: ModeMachine = {
   validNow: { developing: 'finishedHacking, when the human agrees that the hack works. finishedDevelopment comes after hardening' },
   interview: 'Hack mode has no interview.',
   twoAxisReview: true,
+  reviewScreenshots: true,
   reviewBrief: 'The change follows the work-hack skill: it was hacked, then hardened, so check that its tests pin each behaviour of the diff and that no spike code, debug output or dead end is left.',
   gates: true,
   smokeOnPreview: true,
@@ -342,10 +346,10 @@ export function boardColumn(w: { state: State; merged?: boolean; closedNoChange?
 export const baseCheckScript = (mode: Mode) => MACHINES[mode].baseCheck
 
 // What the accumulated change types add to the next step of the review and the smoke test.
-function reviewStep(full: string, facts: Pick<Facts, 'changeTypes' | 'webFiles'>): string {
+function reviewStep(full: string, facts: Pick<Facts, 'mode' | 'changeTypes' | 'webFiles'>): string {
   const types = facts.changeTypes ?? []
   if (isDocsOnly(types)) return REVIEW_DOCS_ONLY_STEP
-  return [full, types.includes('web') ? reviewWebStep(facts.webFiles ?? []) : '', types.includes('database') ? REVIEW_DATABASE_STEP : ''].filter(Boolean).join(' ')
+  return [full, types.includes('web') && MACHINES[facts.mode].reviewScreenshots ? reviewWebStep(facts.webFiles ?? []) : '', types.includes('database') ? REVIEW_DATABASE_STEP : ''].filter(Boolean).join(' ')
 }
 
 function stepText(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level' | 'merged' | 'remembered' | 'changeTypes' | 'webFiles' | 'baseChecked'>): string {
