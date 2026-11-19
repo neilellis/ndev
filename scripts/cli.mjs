@@ -50,6 +50,7 @@ const groups = {
     module: './ndev/epic.mjs', run: 'runEpic',
     commands: {
       start: '[<issue>|--title <text>] [--short-name <slug>] [--parallel <n>] [--implementer <agent>] [--implementer-model <model>] [--reviewer <agent>] [--reviewer-model <model>] [--run <id>] [--repo-id <id>] [--remote [<server>]|--local] [--remote-repo <selector>] [--take-over]',
+      import: '<epic> --issues-file <json> --evidence <text>',
       phase: '<epic> <phase> --evidence <text> [--file <path>]... [--aim <text>] [--issues-file <json>]',
       next: '<epic>', brief: '<epic> <sub> <implementer|reviewer> [--pr <n>]',
       issue: '<epic> <sub> <state> [--pr <n>] [--worker <id>] [--workspace <selector>] [--verdict <approve|changes>] [--note <text>]',
