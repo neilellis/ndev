@@ -286,7 +286,11 @@ function importEpic(workspace, e, before, v) {
   e.externalBlockers = externalBlockers
   e.evidence.import = { text: v.evidence, at: Date.now(), files: file === '-' ? [] : [resolve(workspace.root, file)] }
   e.state = 'coordinating'
-  return { ...save(workspace, e, before, 'epicImport', before.state, e.state), frontier: frontier(e) }
+  const merged = Object.values(e.issues).filter(sub => sub.state === 'merged')
+  for (const sub of merged) prepareMergeHandoffs(e, sub)
+  save(workspace, e, before, 'epicImport', before.state, e.state)
+  for (const sub of merged) handoffs(workspace, e, sub)
+  return { ...epicResult(e), frontier: frontier(e) }
 }
 
 function phase(workspace, e, before, finished, v) {
@@ -397,11 +401,17 @@ function verify(e, sub) {
   return { sha, base: main, checks: rollup.map(check => [check.workflowName, check.name ?? check.context].filter(Boolean).join('/')) }
 }
 
+function prepareMergeHandoffs(e, sub) {
+  const children = Object.values(e.issues).filter(item => item.stackedOn === sub.issue && item.state !== 'merged' && item.handoff?.blocker !== sub.issue)
+  const main = children.length && branchFor(e)
+  for (const child of children) child.handoff = { state: 'pending', blocker: sub.issue, message: `PR #${sub.pr} is merged. Rebase #${child.issue} onto origin/${main}, checkpoint the rebased branch, and retarget ${child.pr ? `PR #${child.pr}` : 'your PR'} to ${main}. Report the new PR head.` }
+}
+
 function handoffs(workspace, e, sub) {
   for (const child of Object.values(e.issues).filter(item => item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
     const h = child.handoff
     if (!child.implementer) continue
-    if (h.state === 'sending' && !h.requestId) refuse(`Delivery to ${child.implementer} is uncertain for #${child.issue}.`, 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.')
+    if (h.state === 'sending' && !h.requestId) refuse(`Epic #${e.epic} is saved at revision ${e.revision}. Delivery to ${child.implementer} is uncertain for #${child.issue}.`, 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.')
     const before = structuredClone(e)
     h.state = 'sending'
     save(workspace, e, before, 'handoff-start', sub.state, sub.state)
@@ -411,10 +421,10 @@ function handoffs(workspace, e, sub) {
     let receipt
     try { receipt = JSON.parse(out.stdout) } catch {}
     if (out.status !== 0 || receipt?.ok !== true || receipt.result?.accepted === false || receipt.result?.delivered === false || !receipt.result) {
-      h.requestId = receipt?.error?.data?.requestId
+      h.requestId = receipt?.error?.data?.requestId ?? h.requestId
       h.error = receipt?.error ?? (out.stderr.trim() || out.stdout.trim())
       save(workspace,e,recorded,'handoff-uncertain',sub.state,sub.state)
-      throw new CliError(1, `Orca send to dispatch:${child.implementer} exited ${out.status}: ${JSON.stringify(h.error)}`, { details: { receipt, requestId: h.requestId }, repair: h.requestId ? `Retry ndev epic issue ${e.epic} ${sub.issue} merged.` : 'Inspect the Run mailbox before attempting another delivery.' })
+      throw new CliError(1, `Epic #${e.epic} is saved at revision ${e.revision}. Orca send to dispatch:${child.implementer} exited ${out.status}: ${JSON.stringify(h.error)}`, { details: { receipt, requestId: h.requestId }, repair: h.requestId ? `Retry ndev epic issue ${e.epic} ${sub.issue} merged.` : 'Inspect the Run mailbox before attempting another delivery.' })
     }
     h.state = 'sent'
     h.receipt = receipt.result
@@ -463,9 +473,7 @@ function move(workspace, e, before, sub, to, v) {
     if (pr.merged !== true) refuse(`GitHub has not merged PR #${sub.pr}.`)
     if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
     if (from !== 'verified' || (sub.verification && sub.verification.sha !== pr.head.sha)) sub.mergedUnverified = true
-    const children = Object.values(e.issues).filter(item => item.stackedOn === sub.issue && item.state !== 'merged')
-    const main = children.length && branchFor(e)
-    for (const child of children) child.handoff = { state: 'pending', blocker: sub.issue, message: `PR #${sub.pr} is merged. Rebase #${child.issue} onto origin/${main}, checkpoint the rebased branch, and retarget ${child.pr ? `PR #${child.pr}` : 'your PR'} to ${main}. Report the new PR head.` }
+    prepareMergeHandoffs(e, sub)
   } else refuse(`Issue #${sub.issue} cannot move from ${from} to ${to}.`)
   if (v.workspace) sub.workspace = v.workspace
   if (v.note) sub.note = v.note

@@ -49,6 +49,7 @@ function fixture(t) {
     "const key=process.argv.slice(2,4).join(' ')",
     "const result=db['orca:'+key]",
     `fs.appendFileSync(${JSON.stringify(join(home, 'orca.log'))},JSON.stringify(process.argv.slice(2))+'\\n')`,
+    "const error=db['orca-error:'+key]; if(error) { console.log(JSON.stringify({ok:false,error})); process.exit(db['orca-exit:'+key] ?? 1) }",
     'console.log(JSON.stringify(result ? {ok:true,result} : {ok:false,error:{message:"Unexpected Orca command "+key}}))',
   ].join('\n'), { mode: 0o755 })
   return { root, home, env, answers, save, call, ok }
@@ -353,4 +354,135 @@ test('import holds dependants of a carried PR and refuses closed human decisions
   assert.equal(refused.status, 1, JSON.stringify(refused))
   assert.match(refused.error.message, /Human decision #1413.*cannot infer human approval/)
   assert.equal(readFileSync(f.stateFile, 'utf8'), before)
+})
+
+
+function managedStackFixture(t) {
+  const f = fixture(t)
+  f.ok('start', '40', '--run', 'run-1')
+  f.ok('phase', '40', 'framing', '--aim', 'ship', '--evidence', 'agreed')
+  writeFileSync(join(f.root, 'spec.md'), 'specification')
+  for (const phase of ['researching', 'specifying', 'deciding', 'spec-review', 'slicing']) {
+    f.ok('phase', '40', phase, '--evidence', 'accepted', ...(['researching', 'specifying', 'spec-review'].includes(phase) ? ['--file', 'spec.md'] : []))
+  }
+  f.ok('issue', '40', '41', 'implementing', '--worker', 'parent-worker', '--workspace', f.root)
+  f.ok('issue', '40', '41', 'reviewing', '--pr', '61', '--worker', 'parent-reviewer')
+  f.ok('brief', '40', '42', 'implementer')
+  f.ok('issue', '40', '42', 'implementing', '--worker', 'child-worker', '--workspace', f.root)
+  f.ok('issue', '40', '42', 'reviewing', '--pr', '62', '--worker', 'child-reviewer')
+  f.answers['repos/example/repo/issues/40/sub_issues'][0].state = 'closed'
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merge_commit_sha: 'merged-parent' })
+  f.answers['repos/example/repo/pulls/62'] = { number: 62, state: 'open', merged: false, head: { ref: 'child', sha: 'child-sha' }, base: { ref: 'parent' } }
+  for (const [issue, pr] of [[41, 61], [42, 62]]) {
+    f.answers[`repos/example/repo/issues/${issue}/timeline`] = [{ event: 'cross-referenced', source: { issue: { pull_request: { url: `https://api.github.com/repos/example/repo/pulls/${pr}` } } } }]
+    f.answers[`links:${pr}`] = { closingIssuesReferences: [{ number: issue, url: `https://github.com/example/repo/issues/${issue}` }] }
+  }
+  f.answers['orca:orchestration send'] = { accepted: true, delivered: true, id: 'handoff-receipt' }
+  f.save()
+  writeFileSync(join(f.root, 'refresh.json'), JSON.stringify([
+    { issue: 41, key: 'parent', kind: 'implementation', blockedBy: [] },
+    { issue: 42, key: 'child', kind: 'implementation', blockedBy: [41] },
+  ]))
+  return { ...f, refresh: () => f.call('import', '40', '--issues-file', 'refresh.json', '--evidence', 'refreshed merge'), deliveries: () => readFileSync(join(f.home, 'orca.log'), 'utf8').trim().split('\n').map(line => JSON.parse(line)) }
+}
+
+test('import refresh sends the normal merge handoff to a managed stacked child exactly once', t => {
+  const f = managedStackFixture(t)
+  const imported = f.refresh()
+  assert.equal(imported.status, 0, JSON.stringify(imported))
+  const child = imported.result.epic.issues[42]
+  assert.equal(child.handoff?.state, 'sent')
+  assert.equal(child.handoff.blocker, 41)
+  assert.match(child.handoff.message, /PR #61 is merged.*Rebase #42 onto origin\/main.*retarget PR #62 to main/)
+  assert.equal(child.implementer, 'child-worker')
+  assert.equal(child.reviewer, 'child-reviewer')
+  assert.equal(child.workspace, f.root)
+  assert.equal(child.stackedOn, 41)
+  assert.equal(imported.result.epic.issues[41].mergeSha, 'merged-parent')
+  assert.equal(f.deliveries().length, 1)
+  assert.ok(f.deliveries()[0].includes('dispatch:child-worker'))
+  assert.equal(f.refresh().status, 0)
+  f.ok('issue', '40', '41', 'merged')
+  assert.equal(f.deliveries().length, 1)
+})
+
+test('import handoff delivery failure saves a retryable merge and preserves the request on refresh', t => {
+  const f = managedStackFixture(t)
+  f.answers['orca-error:orchestration send'] = { message: 'lost handoff receipt', data: { requestId: 'request-rebase-42' } }
+  f.answers['orca-exit:orchestration send'] = 17
+  f.save()
+  const failed = f.refresh()
+  assert.equal(failed.status, 1, JSON.stringify(failed))
+  assert.match(failed.error.message, /saved at revision.*dispatch:child-worker.*exited 17.*lost handoff receipt/)
+  assert.match(failed.error.repair, /ndev epic issue 40 41 merged/)
+  const saved = f.ok('status', '40').epic
+  assert.equal(saved.issues[41].state, 'merged')
+  assert.equal(saved.issues[42].handoff.state, 'sending')
+  assert.equal(saved.issues[42].handoff.requestId, 'request-rebase-42')
+  delete f.answers['orca-error:orchestration send']
+  f.save()
+  assert.equal(f.refresh().status, 0)
+  assert.ok(f.deliveries()[1].includes('--retry-request'))
+  assert.ok(f.deliveries()[1].includes('request-rebase-42'))
+  f.ok('issue', '40', '41', 'merged')
+  assert.equal(f.deliveries().length, 2)
+})
+
+test('import lookup failure neither saves the merge nor sends a stacked handoff', t => {
+  const f = managedStackFixture(t)
+  const file = join(f.root, '.neil-dev.epic-40.json')
+  const before = readFileSync(file, 'utf8')
+  delete f.answers['repos/example/repo/issues/42/timeline']
+  f.save()
+  const failed = f.refresh()
+  assert.equal(failed.status, 1)
+  assert.match(failed.error.message, /42.*9|9.*42/)
+  assert.equal(readFileSync(file, 'utf8'), before)
+  assert.throws(() => f.deliveries(), /ENOENT/)
+})
+
+
+test('import does not resend an uncertain stacked handoff without a retry request', t => {
+  const f = managedStackFixture(t)
+  f.answers['orca-error:orchestration send'] = { message: 'no durable receipt' }
+  f.save()
+  assert.equal(f.refresh().status, 1)
+  delete f.answers['orca-error:orchestration send']
+  f.save()
+  const refused = f.refresh()
+  assert.equal(refused.status, 1)
+  assert.match(refused.error.message, /saved at revision.*Delivery to child-worker is uncertain for #42/)
+  assert.match(refused.error.repair, /Inspect the Orca Run mailbox/)
+  assert.equal(f.deliveries().length, 1)
+})
+
+test('import repairs a previously saved managed merge that has no stacked handoff', t => {
+  const f = managedStackFixture(t)
+  const file = join(f.root, '.neil-dev.epic-40.json')
+  const historical = JSON.parse(readFileSync(file, 'utf8'))
+  Object.assign(historical.issues[41], { state: 'merged', mergeSha: 'merged-parent', mergedUnverified: true })
+  writeFileSync(file, JSON.stringify(historical))
+  const repaired = f.refresh()
+  assert.equal(repaired.status, 0, JSON.stringify(repaired))
+  assert.equal(repaired.result.epic.issues[42].handoff.state, 'sent')
+  assert.equal(repaired.result.epic.issues[42].implementer, 'child-worker')
+  assert.equal(f.deliveries().length, 1)
+})
+
+
+test('import retains the durable request when a retry loses its receipt', t => {
+  const f = managedStackFixture(t)
+  f.answers['orca-error:orchestration send'] = { message: 'lost receipt', data: { requestId: 'durable-request' } }
+  f.save()
+  assert.equal(f.refresh().status, 1)
+  f.answers['orca-error:orchestration send'] = { message: 'retry transport failed' }
+  f.save()
+  const retried = f.refresh()
+  assert.equal(retried.status, 1)
+  assert.equal(f.ok('status', '40').epic.issues[42].handoff.requestId, 'durable-request')
+  assert.match(retried.error.repair, /ndev epic issue 40 41 merged/)
+  delete f.answers['orca-error:orchestration send']
+  f.save()
+  assert.equal(f.refresh().status, 0)
+  assert.ok(f.deliveries()[2].includes('durable-request'))
 })
