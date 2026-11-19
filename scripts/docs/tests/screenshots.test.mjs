@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
-const tool = fileURLToPath(new URL('../scripts/docs/screenshots.mjs', import.meta.url))
+const tool = fileURLToPath(new URL('../screenshots.mjs', import.meta.url))
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='
 
 function fixture(t) {

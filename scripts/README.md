@@ -54,6 +54,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
+| `screenshots.mjs` | Refreshes stale project screenshots and checks source and PNG receipts. | docs, docs-sync |
 | `readability.sh` | Lints prose with the House vale style in `vale/`. | docs, work-light, work-heavy, work-heavy-auto (`work_ready_workflow.js`) |
 | `md-to-pdf.sh` | Renders a markdown file to an A4 PDF. | docs |
 | `vale/test.sh` | Proves every vale rule fires on `testdata/bad.md` and none fires on `testdata/good.md`. | docs |
