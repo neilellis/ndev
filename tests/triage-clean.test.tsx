@@ -215,5 +215,12 @@ test('a clean that fails ends the clean before it: the tool takes no more verdic
   w.fail.logCut = true
   await $.command.run(command('clean'))
   await until(() => w.toasts.some(t => /more than the engine keeps/.test(t)), () => [w.ran.slice(-2), w.toasts])
-  expect(w.prompts.length).toBe(1)
+  const requests = w.prompts.filter(text => text.startsWith('Clean: judge'))
+  const notices = w.prompts.filter(text => text.startsWith('Triage notice:'))
+  expect(requests).toHaveLength(1)
+  expect(notices).toHaveLength(3)
+  expect(notices[0]).toContain('a fact record for each of 3 issues sent to the model')
+  expect(notices[1]).toContain('the GraphQL read of #1–#3 of acme/widgets failed')
+  expect(notices[2]).toContain('printed more than the engine keeps')
+  expect(w.prompts).toHaveLength(requests.length + notices.length)
 })
