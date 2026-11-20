@@ -150,6 +150,34 @@ test('finishedInterview keeps its base check when another writer saves the recor
   expect(w.state()?.otherWriter).toBe('kept')
 })
 
+test('finishedInterview refuses to attach a base check to a commit that changed while it ran', async ($, on) => {
+  const w = engine(on, { wf: { baseCheck: undefined } })
+  await start($, w)
+  let release = () => {}
+  w.s.checkHold = new Promise<void>(resolve => { release = resolve })
+  const pending = tool($, 'finishedInterview', { issue: 7 })
+  await settle()
+  w.s.sha = 'changed-head'
+  release()
+  const result = await pending
+  expect(result.isError).toBe(true)
+  expect(result.text).toContain('no longer matches its commit or mode')
+  expect(result.text).toContain('call finishedInterview again')
+  expect(w.state()?.baseCheck).toBeUndefined()
+})
+
+test('finishedInterview names its bounded retries when every save loses to another writer', async ($, on) => {
+  const w = engine(on, { wf: { baseCheck: undefined } })
+  await start($, w)
+  w.s.staleSaves = 99
+  const result = await tool($, 'finishedInterview', { issue: 7 })
+  expect(result.isError).toBe(true)
+  expect(result.text).toContain('set-workflow exited 5 for /proj')
+  expect(result.text).toContain('finishedInterview read the record again 3 times')
+  expect(result.text).toContain('call status, then finishedInterview again')
+  expect(w.state()?.baseCheck).toBeUndefined()
+})
+
 test('heavy runs pre-push-check.sh in finishedPlan, before the sign-off reaches the human', async ($, on) => {
   const plan = `${ROOT}/plan.md`
   const w = engine(on, { wf: { state: 'planning', mode: 'heavy', steering: 'interactive', baseCheck: undefined }, files: { [plan]: 'Test entry point: the CLI\n' } })
