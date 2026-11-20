@@ -5,8 +5,6 @@ description: "Verify wiki structure, source citations and behavioural claims aga
 
 # Verify the wiki
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the wiki makes a claim about a project goal or rule.
-
 The project's wiki is a compounding, interlinked, current-state knowledge base that agents keep. The plugin's `kb/llm-wiki.md` holds the method. Read the wiki's `AGENTS.md` (its schema) and its index file first.
 
 Honour the requested page, area or section. With no scope, choose dev pages that are likely to drift, from recent code changes and earlier lint logs. State the selection.

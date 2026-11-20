@@ -1,7 +1,7 @@
 import type { Server } from '../../hooks/remote-store'
 
 export type EpicState = 'framing' | 'researching' | 'specifying' | 'deciding' | 'spec-review' | 'slicing' | 'coordinating' | 'closing' | 'done'
-export type IssueState = 'waiting' | 'implementing' | 'reviewing' | 'fixing' | 'verified' | 'merged' | 'blocked'
+export type IssueState = 'waiting' | 'implementing' | 'reviewing' | 'fixing' | 'verified' | 'merged' | 'blocked' | 'human-pending' | 'external'
 export type Role = { agent: string; model?: string }
 export type SubIssue = {
   issue: number
@@ -10,6 +10,7 @@ export type SubIssue = {
   blockedBy: number[]
   state: IssueState
   pr?: number
+  kind?: 'implementation' | 'human'
   implementer?: string
   reviewer?: string
   // The implementer's worktree, where the reviewer works too.
@@ -49,14 +50,15 @@ export type Epic = {
   // and the selector of the repository on that server, which its Orca needs to make a worktree.
   remote?: Server
   remoteRepo?: string
+  externalBlockers?: Record<string, SubIssue>
   issues: Record<string, SubIssue>
   history: { at: number; tool: string; from?: string; to: string }[]
 }
 export type Slice = { issue: number; key: string; title: string; blockedBy: number[] }
 
 export const EPIC_STATES: EpicState[] = ['framing', 'researching', 'specifying', 'deciding', 'spec-review', 'slicing', 'coordinating', 'closing', 'done']
-export const ISSUE_STATES: IssueState[] = ['waiting', 'implementing', 'reviewing', 'fixing', 'verified', 'merged', 'blocked']
-export const IN_FLIGHT: IssueState[] = ['implementing', 'reviewing', 'fixing', 'verified']
+export const ISSUE_STATES: IssueState[] = ['waiting', 'implementing', 'reviewing', 'fixing', 'verified', 'merged', 'blocked', 'human-pending', 'external']
+export const IN_FLIGHT: IssueState[] = ['implementing', 'reviewing', 'fixing', 'verified', 'external']
 // The states in which the implementer has pushed its branch and the record holds its PR.
 const PUSHED: IssueState[] = ['reviewing', 'fixing', 'verified']
 export const PLAN_STATES: EpicState[] = ['framing', 'researching', 'specifying', 'deciding', 'spec-review', 'slicing']
@@ -71,7 +73,7 @@ export const tag = (n: number) => `#${n}`
 export const tags = (ns: number[]) => ns.map(tag).join(', ')
 
 // The slicing checks that need no GitHub call: undefined when the list is good.
-export function sliceProblems(slices: Slice[]): string | undefined {
+export function sliceProblems(slices: Slice[], external: number[] = []): string | undefined {
   if (!slices.length) return 'the issues list is empty; slicing needs at least one sub-issue'
   const problems: string[] = []
   const seen = new Set<number>()
@@ -80,7 +82,7 @@ export function sliceProblems(slices: Slice[]): string | undefined {
     seen.add(s.issue)
   }
   for (const s of slices) {
-    const unknown = s.blockedBy.filter(b => !seen.has(b))
+    const unknown = s.blockedBy.filter(b => !seen.has(b) && !external.includes(b))
     if (unknown.length) problems.push(`${tag(s.issue)} is blocked by ${tags(unknown)}, which is not in the list`)
   }
   if (problems.length) return problems.join('; ')
@@ -117,6 +119,10 @@ export type StackPlan = { on: SubIssue } | { why: string; split?: true }
 // undefined when every blocker is merged, so it starts from the default branch. With several unmerged blockers it
 // stacks only on the one whose branch holds the others: the record shows that as a chain of stackedOn.
 export function stackPlan(epic: Epic, sub: SubIssue): StackPlan | undefined {
+  const missing = sub.blockedBy.filter(b => !epic.issues[b] && !epic.externalBlockers?.[b])
+  if (missing.length) return { why: `${tag(sub.issue)} has unrecorded blockers ${tags(missing)}. Run ndev epic import ${epic.epic} --issues-file <json> --evidence <text>.` }
+  const external = sub.blockedBy.filter(b => epic.externalBlockers?.[b]?.state !== 'merged' && !epic.issues[b])
+  if (external.length) return { why: `${tag(sub.issue)} waits for external blockers ${tags(external)}. Refresh with ndev epic import ${epic.epic} --issues-file <json> --evidence <text>.` }
   const open = sub.blockedBy.map(b => epic.issues[String(b)]).filter((b): b is SubIssue => !!b && b.state !== 'merged')
   if (!open.length) return undefined
   const early = open.filter(b => !(PUSHED.includes(b.state) && b.pr))
@@ -142,7 +148,7 @@ export type Frontier = {
 // branch of an unmerged blocker (stacked). The two together are cut to the free places.
 export function frontier(epic: Epic): Frontier {
   const all = Object.values(epic.issues).sort((a, b) => a.issue - b.issue)
-  const merged = new Set(all.filter(i => i.state === 'merged').map(i => i.issue))
+  const merged = new Set([...all, ...Object.values(epic.externalBlockers ?? {})].filter(i => i.state === 'merged').map(i => i.issue))
   const inFlight = all.filter(i => IN_FLIGHT.includes(i.state))
   const free = Math.max(0, epic.parallel - inFlight.length)
   const waiting = all.filter(i => i.state === 'waiting').map(sub => ({ sub, plan: stackPlan(epic, sub) }))

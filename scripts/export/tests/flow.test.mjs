@@ -30,7 +30,7 @@ case "$1" in
   default-branch) echo '{"default_branch":"main"}' ;;
   issue-read) echo '{"number":12,"title":"Add a thing","state":"open","body":"Make the thing.","url":"https://github.com/o/r/issues/12"}' ;;
   pr-list) ;;
-  pr-new) echo '{"url":"https://github.com/o/r/pull/7"}' ;;
+  pr-new) [ -z "$FAIL_PR_NEW" ] || { echo 'PR creation unavailable' >&2; exit 19; }; cp "$5" "$FAKE_PR_BODY"; echo '{"url":"https://github.com/o/r/pull/7"}' ;;
   pr-edit) echo '{"number":7,"url":"https://github.com/o/r/pull/7"}' ;;
   pr-read) cat "$FAKE_PR" ;;
   feedback) cat "$FAKE_FEEDBACK" ;;
@@ -79,7 +79,7 @@ function project({ scripts = true, config = { steering: 'auto' } } = {}) {
   writeFileSync(fakeGh, FAKE_GH)
   const fakeMerge = join(dir, 'merge.sh')
   writeFileSync(fakeMerge, '#!/bin/bash\necho "$*" >> "$FAKE_GH_LOG"\necho \'{"merged":true}\'\n')
-  const env = { NDEV_FLOW_GH: fakeGh, NDEV_FLOW_MERGE: fakeMerge, FAKE_GH_LOG: join(dir, 'gh.log'), FAKE_CHECKS: join(dir, 'checks.json'), FAKE_PR: join(dir, 'pr.json'), FAKE_FEEDBACK: join(dir, 'feedback.jsonl'), CHECK_LOG: join(dir, 'checks.log'), FAIL_CHECK: '' }
+  const env = { NDEV_FLOW_GH: fakeGh, NDEV_FLOW_MERGE: fakeMerge, FAKE_PR_BODY: join(dir, 'created-pr-body.md'), FAKE_GH_LOG: join(dir, 'gh.log'), FAKE_CHECKS: join(dir, 'checks.json'), FAKE_PR: join(dir, 'pr.json'), FAKE_FEEDBACK: join(dir, 'feedback.jsonl'), CHECK_LOG: join(dir, 'checks.log'), FAIL_CHECK: '' }
   writeFileSync(env.FAKE_GH_LOG, '')
   writeFileSync(env.CHECK_LOG, '')
   writeFileSync(env.FAKE_FEEDBACK, '')
@@ -121,17 +121,16 @@ test('a light issue goes from started to done through the plugin state machine',
   ok(started, 'started')
   noClaude(started)
   assert.match(started.stdout, /State: developing/)
-  assert.match(started.stdout, /https:\/\/github\.com\/o\/r\/pull\/7/)
+  assert.match(started.stdout, /The first push opens the draft PR/)
   assert.match(started.stdout, /finishedInterview/)
   const first = p.record()
   assert.equal(first.state, 'developing')
-  assert.deepEqual(first.prs, [7])
+  assert.deepEqual(first.prs, [])
   assert.equal(first.repo, 'o/r')
   assert.equal(first.base, 'main')
   assert.equal(first.branch, '12-add-thing')
   for (const key of ['root', 'evidence', 'attempts', 'nudges', 'followUps', 'migrations', 'history']) assert.ok(key in first, `the record has ${key}`)
-  assert.match(p.read('FAKE_GH_LOG'), /^pr-new .*--base main --head 12-add-thing/m)
-  assert.match(git(p.work, 'log', '-1', '--format=%B', 'origin/12-add-thing'), /Start work on #12[\s\S]*Ndev-Op: start-12/)
+  assert.doesNotMatch(p.read('FAKE_GH_LOG'), /^pr-new /m)
 
   const interviewed = p.flow(['finishedInterview'])
   ok(interviewed, 'finishedInterview')
@@ -317,15 +316,15 @@ test('started refuses a workflow that a live Claude session owns, and --take-ove
   assert.match(p.record().owner.session, /^ndev-flow:/)
 })
 
-test('started on a resumed workflow with no PR opens the PR', () => {
+test('started on a resumed empty workflow still defers the PR', () => {
   const p = project({ scripts: false })
   ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
   ok(p.flow(['skip', '--reason', 'no checks here']), 'skip setup')
   assert.deepEqual(p.record().prs, [])
   const resumed = p.flow(['started', '--issue', '12'])
   ok(resumed, 'resume')
-  assert.deepEqual(p.record().prs, [7])
-  assert.match(p.read('FAKE_GH_LOG'), /^pr-new /m)
+  assert.deepEqual(p.record().prs, [])
+  assert.doesNotMatch(p.read('FAKE_GH_LOG'), /^pr-new /m)
 })
 
 test('done refuses each problem at once: a dirty tree, a draft PR at another commit, and a lost Closes line', () => {
@@ -399,6 +398,8 @@ test('a human skip of ci lets done pass on red checks, and goto uses the plugin 
 test('followUp this_agent files the issue and adds its Closes line to the PR body', () => {
   const p = project()
   ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  ok(p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py']), 'checkpoint')
   const r = p.flow(['followUp', '--mode', 'this_agent', '--message', 'Fix the other thing\nIt breaks.'])
   ok(r, 'followUp')
   const edit = /^pr-edit 7 --body-file (\S+)$/m.exec(p.read('FAKE_GH_LOG'))
@@ -406,4 +407,90 @@ test('followUp this_agent files the issue and adds its Closes line to the PR bod
   const body = readFileSync(edit[1], 'utf8')
   assert.match(body, /Closes #12/)
   assert.match(body, /Closes #30/)
+})
+
+test('pushDraft checks the exact reviewed commit and leaves the PR draft and the readiness gate intact', () => {
+  const p = project({ config: { steering: 'auto', checkEnv: ['FAIL_CHECK'] } })
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  ok(p.flow(['finishedInterview']), 'finishedInterview')
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  ok(p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py']), 'checkpoint')
+  const remote = git(p.work, 'rev-parse', 'origin/12-add-thing')
+  writeFileSync(join(p.work, 'README.md'), 'reviewable change\n')
+  ok(p.flow(['finishedDevelopment', '--message', 'Update README', '--files', 'README.md']), 'finishedDevelopment')
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  const record = p.record()
+  const args = ['pushDraft', '--sha', sha, '--review', 'Independent review found no blocking issues.']
+  const bin = join(dirname(p.origin), 'git-url-bin')
+  mkdirSync(bin)
+  const nativeGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim()
+  const shim = join(bin, 'git')
+  writeFileSync(shim, `#!/bin/sh
+if [ "\$1 \$2" = "remote get-url" ]; then
+  printf '%s\n' https://github.com/o/r.git
+  exit 0
+fi
+exec "${nativeGit}" "\$@"
+`, { mode: 0o755 })
+  const draft = (args, extra = {}) => p.flow(args, { PATH: bin + ':' + process.env.PATH, ...extra })
+  const setDraft = fields => p.setPr({ draft: true, head: { ref: '12-add-thing', sha: remote, crossRepository: false }, ...fields })
+  setDraft({ draft: false })
+  assert.match(draft(args).all, /open draft PR #7/)
+  setDraft({ head: { ref: '12-add-thing', sha: remote, crossRepository: true } })
+  assert.match(draft(args).all, /open draft PR #7/)
+  setDraft()
+  assert.match(draft(['pushDraft', '--sha', remote, '--review', 'Reviewed the prior commit.']).all, /reviewed commit/)
+  writeFileSync(join(p.work, 'untracked.txt'), 'local work\n')
+  assert.match(draft(args).all, /clean worktree/)
+  git(p.work, 'clean', '-f', '--', 'untracked.txt')
+  assert.match(draft(args, { FAIL_CHECK: 'pre-push-check.sh' }).all, /pre-push-check\.sh exited 1/)
+  assert.equal(git(p.work, 'rev-parse', 'origin/12-add-thing'), remote)
+  const ready = p.flow(['finishedReview', '--review', 'Reviewed.', '--deadcode', 'none', '--remembered', 'nothing: a test'], { FAIL_CHECK: 'pre-ready-check.sh' })
+  assert.equal(ready.status, 1)
+  assert.match(ready.all, /pre-ready-check\.sh exited 1/)
+  const ran = draft(args, { FAIL_CHECK: 'pre-ready-check.sh' })
+  ok(ran, 'pushDraft')
+  assert.match(ran.stdout, /State: reviewing/)
+  assert.equal(git(p.work, 'rev-parse', 'origin/12-add-thing'), sha)
+  assert.deepEqual(p.record(), record)
+  assert.doesNotMatch(p.read('FAKE_GH_LOG'), /^pr-ready/m)
+})
+
+
+test('a fresh start waits for a real push before creating its draft PR', () => {
+  const p = project()
+  const base = git(p.work, 'rev-parse', 'HEAD')
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  assert.deepEqual(p.record().prs, [])
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), base)
+  assert.doesNotMatch(p.read('FAKE_GH_LOG'), /^pr-new /m)
+  const remote = spawnSync('git', ['show-ref', '--verify', 'refs/heads/12-add-thing'], { cwd: p.origin, encoding: 'utf8' })
+  assert.equal(remote.status, 128)
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  ok(p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py']), 'checkpoint')
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), git(p.origin, 'rev-parse', 'refs/heads/12-add-thing'))
+  assert.deepEqual(p.record().prs, [7])
+  assert.equal(p.read('FAKE_GH_LOG').match(/^pr-new /gm).length, 1)
+})
+
+
+test('the first push keeps the saved plan and can retry PR creation without another commit', () => {
+  const p = project({ config: { mode: 'heavy', steering: 'auto' } })
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  const plan = join(dirname(p.work), 'plan.md')
+  writeFileSync(plan, 'Implement the thing.\n\nTest entry point: the public command.\n')
+  ok(p.flow(['finishedPlan', '--file', plan]), 'finishedPlan')
+  assert.doesNotMatch(p.read('FAKE_GH_LOG'), /^pr-edit /m)
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  const failed = p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py'], { FAIL_PR_NEW: '1' })
+  assert.equal(failed.status, 1, failed.all)
+  assert.match(failed.all, /PR creation unavailable/)
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  assert.equal(sha, git(p.origin, 'rev-parse', 'refs/heads/12-add-thing'))
+  assert.deepEqual(p.record().prs, [])
+  ok(p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py']), 'retry checkpoint')
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), sha)
+  assert.deepEqual(p.record().prs, [7])
+  assert.match(p.read('FAKE_PR_BODY'), /Implement the thing/)
+  assert.match(p.read('FAKE_PR_BODY'), /Closes #12/)
 })

@@ -2,7 +2,7 @@
 
 > Source: [skills/modern-web-guidance/guides/ui-behaviors/dynamic-sibling-animations.md](https://github.com/GoogleChrome/modern-web-guidance/blob/4dd968349e54ca45a05dd5c818fb035c9054b022/skills/modern-web-guidance/guides/ui-behaviors/dynamic-sibling-animations.md), Apache-2.0. Changed for ndev: cross-references point to the local copies; the ndev note below comes first.
 
-> **ndev:** Do not stagger the first render of a list: our motion rules say nothing animates on first paint. Stagger only items added after load, and cap the total delay so a long list does not hold the reader. Keep `animation: none` under reduced motion.
+> **ndev:** Do not stagger the first render of a list: our motion rules say nothing animates on first paint. Stagger only items added after load, 30–80 ms per item. Cap the total delay at about 300 ms (for example 5 × 60 ms), so a long list does not hold the reader; past the cap, the items fade in as one. Use `both` in the `animation` shorthand, so an item stays hidden during its delay. Keep `animation: none` under reduced motion.
 
 Stagger animations provide an interesting effect where multiple ordered elements animate sequentially with a slight delay between each, rather than all animating at once. This technique is often used in lists, galleries, or navigation menus to guide the user's eye and add a polished, rhythmic feel to interactions.
 

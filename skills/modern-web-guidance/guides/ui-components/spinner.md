@@ -2,7 +2,7 @@
 
 > Source: [skills/modern-web-guidance/guides/ui-components/spinner.md](https://github.com/GoogleChrome/modern-web-guidance/blob/4dd968349e54ca45a05dd5c818fb035c9054b022/skills/modern-web-guidance/guides/ui-components/spinner.md), Apache-2.0. Changed for ndev: cross-references point to the local copies; the ndev note below comes first.
 
-> **ndev:** In a React app, do not hand-write this control. Use the shadcn `spinner` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`: for waits under about 1 s or inside a button. Use a skeleton for content. Give each spinner an accessible name ("Loading" or the task name). Under reduced motion, slow the spin or show a static icon.
+> **ndev:** In a React app, do not hand-write this control. Use the shadcn `spinner` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`: for waits under about 1 s or inside a button. Use a skeleton for content. Show the spinner only after about 300 ms, so a fast reply does not flash it. Give each spinner an accessible name ("Loading" or the task name). Under reduced motion, slow the spin or show a static icon.
 
 A loading spinner (or activity indicator) informs users that a process is underway when the exact duration is unknown. Unlike a progress ring, a spinner is "indeterminate" and typically uses animation to signal activity.
 

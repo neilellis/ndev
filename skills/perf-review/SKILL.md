@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Performance review
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the project sets limits or priorities for the work you review.
-
 Take the target file or directory from the arguments. If there is none, ask for it.
 
 Read the target code and its callers. Report only findings that have evidence. Give each finding:
@@ -24,6 +22,8 @@ Trace these:
 - blocking or repeated I/O
 - N+1 queries, unbounded result sets and transaction scope
 - sessions or connections that leak or that the code makes again without need
+
+For animation that stutters, follow step 4 of `## Check` in the `motion` skill.
 
 Keep a plausible concern apart from a measured regression. Use `hyperfine` for process timing and a profiler for in-process attribution. Do not invent a speed number.
 

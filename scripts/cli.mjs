@@ -25,8 +25,8 @@ const groups = {
       interview: '[--round-file <json>|--answers-file <json>|--finish]',
       'finished-interview': '', 'finished-plan': '--markdown-file <file>', 'finished-hacking': '',
       checkpoint: '--message <text> --file <path>... [--change-type <type>]... [--worktree <path>]',
-      'finished-development': '[--issue <n>]... [--pr <n>]... [--message <text>] [--file <path>]... [--change-type <type>]... [--body-file <file>] [--hardening <text>]',
-      'finished-review': '--review <text> --deadcode <text> --remembered <text>',
+      'finished-development': '[--issue <n>]... [--pr <n>]... [--message <text>] [--file <path>]... [--change-type <type>]... [--body-file <file>] [--hardening <text>] [--human-confirmation <text>]',
+      'finished-review': '(--review <text> | --waive-review <reason>) --deadcode <text> --remembered <text>',
       'finished-checks': '', 'finished-smoke': '--report-file <file>|--skipped <reason>',
       'finished-revision': '', done: '--message <text> [--remembered <text>]',
       blocked: '--message <text>', unblock: '[<answer>]',
@@ -50,6 +50,7 @@ const groups = {
     module: './ndev/epic.mjs', run: 'runEpic',
     commands: {
       start: '[<issue>|--title <text>] [--short-name <slug>] [--parallel <n>] [--implementer <agent>] [--implementer-model <model>] [--reviewer <agent>] [--reviewer-model <model>] [--run <id>] [--repo-id <id>] [--remote [<server>]|--local] [--remote-repo <selector>] [--take-over]',
+      import: '<epic> --issues-file <json> --evidence <text>',
       phase: '<epic> <phase> --evidence <text> [--file <path>]... [--aim <text>] [--issues-file <json>]',
       next: '<epic>', brief: '<epic> <sub> <implementer|reviewer> [--pr <n>]',
       issue: '<epic> <sub> <state> [--pr <n>] [--worker <id>] [--workspace <selector>] [--verdict <approve|changes>] [--note <text>]',
@@ -110,6 +111,11 @@ const groups = {
     module: './export/export.mjs', run: 'runInstall',
     usage: '<harness|all> [--prefix <dir>] [--dry-run] [--panels] [--approve <fingerprint>]',
     commands: { verify: '<harness|all> [--prefix <dir>]' },
+  },
+  'chat-guard': {
+    description: 'Protect native Orca chats from expensive idle sends',
+    module: './ndev/chat-guard.mjs', run: 'runChatGuard',
+    commands: { on: '', off: '', status: '' },
   },
   hook: {
     description: 'Handle a native harness event',

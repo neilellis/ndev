@@ -5,8 +5,6 @@ description: "Run an independent adversarial review of a pull request: a fresh a
 
 # Adversarial review
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. If the diff can affect a project rule, give the reviewer the applicable section names and ask for evidence.
-
 **A fresh agent reviews the change from the repository, not from its description, and tries to break it.** Every check that the author ran came from the author's own account of the change. This review lists the surfaces that the change touches and attacks them. A review that reads the PR body and agrees with it has not happened. The rules behind it are in [verification-policy.md](../../kb/verification-policy.md).
 
 The argument is a PR number or a branch. If there is no argument, review the current branch against the main branch.
@@ -29,7 +27,7 @@ Do not give it the PR body, the reasoning in the commit messages, or your own ac
 3. **The plan row, promise by promise.** Quote each promise of the plan row. For each one, cite the code or the test that delivers it, or write *not built*. If the PR marks the row done and a promise is *not built*, that is a finding.
 4. **Tests that cannot fail.** For each new test, ask: can it pass against the code before the fix? Look for a mock that accepts any input, an assertion on a value that the test itself supplies, and a live test that skips silently. Then check that CI runs it: it must be under a folder that a CI step discovers, not missing from a list.
 5. **Instructions run literally.** Run each command, configuration snippet, code snippet or request that the PR adds to a document. If you cannot run it, trace it to the code that makes it work. If it fails as written, that is a finding.
-6. **Break it.** Try at least three inputs or sequences that the author did not test: boundary values, the empty case, a repeated or concurrent call, the build without the feature, a restart in the middle. Say what happens, from the code or by running it.
+6. **Break it.** Try at least three inputs or sequences that the author did not test: boundary values, the empty case, a repeated or concurrent call, the build without the feature, a restart in the middle. For a UI change, include the longest value that the schema accepts, an unbreakable string, a missing optional field, counts of 0 and 1, and 1,000 items (`responsive-check`, `references/worst-case-data.md`). Say what happens, from the code or by running it.
 
 ## The report
 

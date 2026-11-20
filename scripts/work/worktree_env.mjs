@@ -41,7 +41,7 @@
 // another worktree lists); 4 remove-stack or remove-dev-server: not listed; 5 set-workflow: a stale
 // revision.
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -494,9 +494,19 @@ function init(values) {
     console.log(`worktree-env: ${root} is the main checkout, which keeps no ${FILE}; nothing created.`)
     return
   }
-  refuseNotIgnored(root, common)
+  if (values['session-start']) {
+    const credentials = '.neil-dev.env'
+    trackedRefusal(root, credentials)
+    trackedRefusal(root, FILE)
+    excludeLocally(root, common, credentials, credentials)
+    excludeLocally(root, common, FILE, FILE)
+  } else {
+    refuseNotIgnored(root, common)
+  }
   withLock(root, () => {
-    if (existsSync(file)) {
+    const info = lstatSync(file, { throwIfNoEntry: false })
+    if (info) {
+      if (!info.isFile()) throw new Fail(3, `worktree-env: ${file} is not a regular file. Move it aside and run the command again.`)
       console.log(`worktree-env: ${file} already exists; nothing changed.`)
       return
     }
@@ -1123,6 +1133,7 @@ function main(argv) {
         key: { type: 'string' },
         value: { type: 'string' },
         'expect-rev': { type: 'string' },
+        'session-start': { type: 'boolean' },
       },
       strict: true,
     }))

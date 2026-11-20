@@ -1,7 +1,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -148,6 +148,7 @@ function services(p) {
   mkdirSync(bin)
   const ghLog = join(p.dir, 'gh.log')
   const orcaLog = join(p.dir, 'orca.log')
+  writeFileSync(orcaLog, '')
   const prBody = join(p.dir, 'body')
   writeFileSync(prBody, 'Closes #7\n')
   writeFileSync(fakeGh, `#!/bin/sh
@@ -160,7 +161,7 @@ issue-new) if [ -n "$ACCEPTED_BODY" ]; then cp "$5" "$ACCEPTED_BODY"; echo 'lost
 api) if [ -z "$SEARCH_DELAY" ]; then jq -n --rawfile body "$ACCEPTED_BODY" '[{number:40,body:$body},{number:55,body:"unrelated"},{number:67,body:$body,pull_request:{}}]' | jq -r "$5"; fi ;;
 pr-list) [ -z "$EXISTING_PR" ] || echo '{"number":9}' ;;
 pr-new) echo '{"url":"https://github.com/test/project/pull/9"}' ;;
-pr-read) node -e 'console.log(JSON.stringify({number:9,state:"open",draft:false,head:{sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
+pr-read) node -e 'console.log(JSON.stringify({number:9,state:"open",draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
 pr-edit) cp "$4" "$PR_BODY" ;;
 comment|subissues|pr-ready) echo '{"ok":true}' ;;
 commit-checks) if [ -n "$MOVE_DURING_CHECKS" ]; then git commit --allow-empty -qm 'New head while reading checks'; git push -q origin HEAD:feature; fi; echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"success"}],"statuses":[]}' ;;
@@ -305,7 +306,7 @@ test('the code review checks the base North Star without copying it into reviewe
     assert.doesNotMatch(dispatched, /Fixture statement kept out/)
   }
 })
-test('starting from the base uses the Orca worktree receipt and resumes one draft PR', () => {
+test('starting from the base uses the Orca worktree receipt and defers the draft PR', () => {
   const p = project()
   const fake = services(p)
   rmSync(p.file)
@@ -320,12 +321,12 @@ test('starting from the base uses the Orca worktree receipt and resumes one draf
   const start = JSON.parse(output(flow(p, args, fake)))
   assert.match(start.root, /7-test-claim$/)
   assert.equal(start.workflow.owner.session, 'session-A')
-  assert.deepEqual(start.workflow.prs, [9])
+  assert.deepEqual(start.workflow.prs, [])
   const status = output(run(p.work, join(repo, 'bin/ndev'), ['flow', 'status', '--json'], fake))
   assert.equal(JSON.parse(status).result.root, start.root)
   const resumed = JSON.parse(output(flow(p, args, fake)))
   assert.equal(resumed.root, start.root)
-  assert.equal(readFileSync(fake.GH_LOG, 'utf8').match(/^pr-new /gm).length, 1)
+  assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /^pr-new /m)
   assert.equal(readFileSync(fake.ORCA_LOG, 'utf8').match(/worktree create/g).length, 1)
   const denied = flow(p, args, { ...fake, ORCA_AGENT_SESSION_ID: 'another-owner' })
   assert.equal(denied.status, 1)
@@ -382,3 +383,194 @@ for (const command of ['create', 'hotfix', 'follow-up']) {
     assert.match(readFileSync(fake.ACCEPTED_BODY, 'utf8'), /<!-- ndev-issue-request-/)
   })
 }
+
+test('review checkpoints hold a fourth head without launching a fourth review round', () => {
+  const p = project()
+  const fake = services(p)
+  const base = git(p.origin, 'rev-parse', 'feature')
+  output(flow(p, ['finished-development', '--issue', '7'], fake))
+  for (const round of [2, 3, 4]) {
+    writeFileSync(join(p.work, 'next.txt'), `round ${round}\n`)
+    output(flow(p, ['checkpoint', '--file', 'next.txt', '--message', `Fix for round ${round}`], fake))
+  }
+  assert.equal(readFileSync(fake.ORCA_LOG, 'utf8').match(/worker-start/g).length, 3)
+  const status = JSON.parse(output(flow(p, ['status', '--issue', '7'], fake)))
+  assert.match(status.next, /3 review rounds.*--waive-review/)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), base)
+  const refused = flow(p, ['finished-review', '--review', 'Third review', '--deadcode', 'None', '--remembered', 'None'], fake)
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /3 review rounds.*--waive-review/)
+  const closed = JSON.parse(output(flow(p, ['finished-review', '--waive-review', 'Fourth commit only corrects a spelling nit', '--deadcode', 'None', '--remembered', 'None'], fake)))
+  assert.equal(closed.state, 'ci')
+  assert.match(closed.workflow.evidence.review.text, /waived.*Fourth commit only corrects a spelling nit/i)
+  assert.equal(closed.workflow.evidence.review.sha, git(p.origin, 'rev-parse', 'feature'))
+})
+
+test('the review limit also applies to workflows opened before the counter existed', () => {
+  const p = project()
+  const fake = services(p)
+  const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+  raw.workflow.state = 'reviewing'
+  raw.workflow.exportReview = { sha: git(p.work, 'rev-parse', 'HEAD'), runs: [{ axis: 'review', dispatchId: 'old-review' }] }
+  raw.workflow.history = [
+    { tool: 'finishedDevelopment', from: 'developing', to: 'reviewing' },
+    { tool: 'checkpoint', from: 'reviewing', to: 'reviewing' },
+    { tool: 'checkpoint', from: 'reviewing', to: 'reviewing' },
+  ]
+  writeFileSync(p.file, JSON.stringify(raw))
+  const held = JSON.parse(output(flow(p, ['checkpoint', '--file', 'next.txt', '--message', 'Fix the last finding'], fake)))
+  assert.equal(held.workflow.reviewRounds, 3)
+  assert.match(held.next, /No more reviews will start/)
+  assert.doesNotMatch(readFileSync(fake.ORCA_LOG, 'utf8'), /worker-start/)
+})
+
+test('an early nitpick waiver keeps the pre-ready gate and records the reason on the pushed head', () => {
+  const p = project()
+  const fake = services(p)
+  const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+  raw.workflow.noChecks = false
+  writeFileSync(p.file, JSON.stringify(raw))
+  const checks = join(p.work, 'scripts/ndev/workflow')
+  mkdirSync(checks, { recursive: true })
+  const check = join(checks, 'pre-ready-check.sh')
+  writeFileSync(check, '#!/bin/sh\n[ "$FAIL_READY" != 1 ] || exit 19\necho pre-ready-passed\n')
+  output(flow(p, ['finished-development', '--issue', '7'], fake))
+  const base = git(p.origin, 'rev-parse', 'feature')
+  git(p.work, 'commit', '--allow-empty', '-qm', 'Tidy punctuation')
+  const cmd = ['finished-review', '--waive-review', 'Only punctuation remains', '--deadcode', 'None', '--remembered', 'None']
+  const failed = flow(p, cmd, { ...fake, FAIL_READY: '1' })
+  assert.equal(failed.status, 1)
+  assert.match(failed.stderr, /pre-ready-check\.sh exited 19/)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), base)
+  assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /pr-ready/)
+  const finished = JSON.parse(output(flow(p, cmd, fake)))
+  assert.equal(finished.workflow.evidence.review.sha, git(p.origin, 'rev-parse', 'feature'))
+  assert.match(readFileSync(fake.GH_LOG, 'utf8'), /waived.*Only punctuation remains/i)
+  assert.doesNotMatch(readFileSync(fake.ORCA_LOG, 'utf8'), /worker-show/)
+})
+
+
+test('public push-draft keeps Git hooks and pushes only the stated reviewing SHA', () => {
+  const p = project()
+  const fake = services(p)
+  mkdirSync(join(p.work, 'scripts/ndev/workflow'), { recursive: true })
+  writeFileSync(join(p.work, 'scripts/ndev/workflow/pre-push-check.sh'), 'exit 0\n')
+  output(flow(p, ['checkpoint', '--file', 'next.txt', '--file', 'scripts/ndev/workflow/pre-push-check.sh', '--message', 'Install the check'], fake))
+  writeFileSync(join(p.work, 'next.txt'), 'review me\n')
+  output(flow(p, ['finished-development', '--issue', '7', '--file', 'next.txt', '--message', 'Reviewable change'], fake))
+  const remote = git(p.origin, 'rev-parse', 'feature')
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  const hook = join(p.work, '.git/hooks/pre-push')
+  writeFileSync(hook, '#!/bin/sh\necho "the pre-push hook refused" >&2\nexit 1\n', { mode: 0o755 })
+  const gitIgnore = join(p.work, '.git/info/exclude')
+  writeFileSync(gitIgnore, '.neil-dev.*\n')
+  const args = ['push-draft', '--pr', '9', '--sha', sha, '--review', 'Independent review recorded.']
+  const before = readFileSync(p.file, 'utf8')
+  const fakeGit = git(p.work, 'config', '--get', 'remote.origin.url')
+  const bin = join(p.dir, 'git-url-bin')
+  mkdirSync(bin)
+  const gitShim = join(bin, 'git')
+  writeFileSync(gitShim, `#!/bin/sh
+if [ "\$1 \$2" = "remote get-url" ]; then
+  urls=\$(command_git "\$@") || exit \$?
+  if [ "\$urls" = "\$DRAFT_TEST_ORIGIN" ]; then
+    printf '%s\n' git@github.com:test/project.git
+    exit 0
+  fi
+fi
+exec command_git "\$@"
+`.replaceAll('command_git', output(run(p.work, 'sh', ['-c', 'command -v git']))), { mode: 0o755 })
+  const settings = { ...fake, PR_DRAFT: '1', PR_SHA: remote, DRAFT_TEST_ORIGIN: fakeGit, PATH: bin + ':' + env.PATH }
+  const other = join(p.dir, 'other.git')
+  git(p.dir, 'clone', '--bare', p.origin, other)
+  git(p.work, 'remote', 'set-url', '--push', 'origin', other)
+  assert.match(flow(p, args, settings).stderr, /one matching fetch and push URL/)
+  assert.equal(git(other, 'rev-parse', 'feature'), remote)
+  git(p.work, 'config', '--unset', 'remote.origin.pushurl')
+  git(p.work, 'remote', 'set-url', 'origin', other)
+  assert.match(flow(p, args, settings).stderr, /Origin must point to GitHub repository test\/project/)
+  assert.equal(git(other, 'rev-parse', 'feature'), remote)
+  git(p.work, 'remote', 'set-url', 'origin', fakeGit)
+  assert.match(flow(p, args, settings).stderr, /the pre-push hook refused/)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), remote)
+  writeFileSync(hook, '#!/bin/sh\nexit 0\n')
+  git(p.work, 'tag', '-a', 'local-only', '-m', 'Keep local')
+  git(p.work, 'config', 'push.followTags', 'true')
+  const result = JSON.parse(output(flow(p, args, settings)))
+  assert.equal(result.state, 'reviewing')
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), sha)
+  assert.equal(git(p.origin, 'tag', '--list'), '')
+  assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /^pr-ready/m)
+})
+
+
+test('interactive development waits for human confirmation before checks, staging or review', () => {
+  const p = project()
+  const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+  raw.workflow.steering = 'interactive'
+  writeFileSync(p.file, JSON.stringify(raw))
+  const checks = join(p.work, 'scripts/ndev/workflow')
+  mkdirSync(checks, { recursive: true })
+  writeFileSync(join(checks, 'fast-checks.sh'), '#!/bin/sh\necho ran > "$CHECK_LOG"\n')
+  const fake = { ...services(p), CHECK_LOG: join(p.dir, 'check.log') }
+  const before = git(p.work, 'rev-parse', 'HEAD')
+  const record = readFileSync(p.file, 'utf8')
+  const result = flow(p, ['finished-development', '--issue', '7', '--file', 'next.txt'], fake)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /#7.*human confirmation/i)
+  assert.match(result.stderr, /preview/i)
+  assert.match(result.stderr, /--human-confirmation/)
+  assert.equal(existsSync(fake.CHECK_LOG), false)
+  assert.doesNotMatch(existsSync(fake.ORCA_LOG) ? readFileSync(fake.ORCA_LOG, 'utf8') : '', /worker-start/)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), before)
+  assert.equal(git(p.work, 'diff', '--cached', '--name-only'), '')
+  assert.equal(readFileSync(p.file, 'utf8'), record)
+})
+
+test('confirmed interactive development and auto development can enter review', () => {
+  for (const steering of ['interactive', 'auto']) {
+    const p = project()
+    const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+    raw.workflow.steering = steering
+    writeFileSync(p.file, JSON.stringify(raw))
+    const fake = services(p)
+    const args = ['finished-development', '--issue', '7', '--file', 'next.txt']
+    if (steering === 'interactive') args.push('--human-confirmation', 'Yes, this is done; start the checks.')
+    const result = JSON.parse(output(flow(p, args, fake)))
+    assert.equal(result.state, 'reviewing')
+    assert.match(readFileSync(fake.ORCA_LOG, 'utf8'), /worker-start/)
+    if (steering === 'interactive') assert.equal(result.workflow.developmentConfirmation, 'Yes, this is done; start the checks.')
+    else assert.equal(result.workflow.developmentConfirmation, undefined)
+  }
+})
+
+test('interactive development guidance requires a preview and done confirmation before final checks', () => {
+  for (const steering of ['interactive', 'auto']) {
+    const p = project()
+    const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+    raw.workflow.steering = steering
+    writeFileSync(p.file, JSON.stringify(raw))
+    const result = JSON.parse(output(flow(p, ['status', '--issue', '7'])))
+    if (steering === 'interactive') {
+      assert.match(result.next, /concrete development preview/)
+      assert.match(result.next, /ask whether the work is done/i)
+      assert.match(result.next, /before final checks or review/)
+      assert.match(result.next, /--human-confirmation/)
+    } else assert.doesNotMatch(result.next, /--human-confirmation/)
+  }
+})
+
+test('an interactive sibling prevents every selected issue from running finish checks', () => {
+  const p = project()
+  const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+  writeFileSync(join(p.work, '.neil-dev.issue-8.json'), JSON.stringify({ ...raw, issue: 8, workflow: { ...raw.workflow, issue: 8, steering: 'interactive' } }))
+  const fake = services(p)
+  const before = git(p.work, 'rev-parse', 'HEAD')
+  const result = flow(p, ['finished-development', '--issue', '7', '--issue', '8', '--file', 'next.txt'], fake)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /#8.*human confirmation/i)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), before)
+  assert.equal(JSON.parse(readFileSync(p.file, 'utf8')).workflow.state, 'developing')
+  assert.doesNotMatch(existsSync(fake.ORCA_LOG) ? readFileSync(fake.ORCA_LOG, 'utf8') : '', /worker-start/)
+})

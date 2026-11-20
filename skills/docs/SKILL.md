@@ -5,8 +5,6 @@ description: "Locate and maintain project documentation, wiki knowledge and huma
 
 # Project documentation
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the docs state project goals, rules, or public claims.
-
 The project's knowledge lives in its wiki: a compounding, interlinked, current-state knowledge base that agents keep. The plugin's `kb/llm-wiki.md` holds the method. Start at the project's wiki index file. Read the wiki's `AGENTS.md` (its schema) before you change a wiki file.
 
 ## The workflow
@@ -47,6 +45,8 @@ After a durable change, do an ingest:
 
 If the project has a human docs site, each page explains its topic to a reader with no project background. A page names the wiki pages it derives from, and links each first use of jargon to a real glossary entry. Check each code-backed claim against the code. Build the site and look at the output for rendering defects.
 
+For pages with product screenshots, follow `${CLAUDE_PLUGIN_ROOT}/kb/docs-screenshots.md`. Use the project's screenshot capture and freshness commands if it has them. Otherwise create a project-owned `docs-screenshots.json` with source inputs, capture commands and every published PNG output. Run `${CLAUDE_PLUGIN_ROOT}/scripts/docs/screenshots.mjs` with Node: `refresh <manifest>` captures stale images; `check <manifest>` rejects stale, missing or changed files. Add the check to the project's docs build or CI. Commit the manifest, screenshots and receipt together, then inspect the images in the rendered page.
+
 ## Readability lint
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/docs/readability.sh` lints prose against the House vale style in `${CLAUDE_PLUGIN_ROOT}/scripts/docs/vale/`. Run it on a plan, a comment, a wiki page or a docs page before you post or commit it.
@@ -68,4 +68,4 @@ The lint is only the mechanical half. A sentence can pass and still say nothing.
 
 Use `copy` for product interface wording.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

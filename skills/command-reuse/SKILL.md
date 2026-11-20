@@ -5,8 +5,6 @@ description: "Reuse tested commands for local checks, saved logs, PR waits, and 
 
 # Reuse commands
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if a saved command verifies a project rule and the rule has changed.
-
 Use a tested command for a known procedure. Keep the reasoning in the main agent and the repeated mechanics in scripts.
 This is a command guide, not a development workflow. Do not load every linked skill or audit history for each fix.
 
@@ -66,4 +64,4 @@ An exact repeat can show a repeated read or wait. It does not prove the call was
 - Keep a short task note: command, working folder, revision, evidence paths, result. Reuse evidence only while the code, dependencies, configuration and environment are unchanged.
 - Update stale recipes in place. Do not copy the same instructions into several skills.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

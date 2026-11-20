@@ -109,7 +109,7 @@ machine can be very wrong.** Read `verify-traps.md` before you quote a number or
 
 ## F5 — Knowledge ingest
 
-> **Timing:** this runs as the `r` skill's sweep at F4 step 1b, before the PR leaves draft, on the
+> **Timing:** this runs as the `remember` skill's sweep at F4 step 1b, before the PR leaves draft, on the
 > branch you have. `r` owns the routing table (wiki, product docs, a skill, `AGENTS.md`, memory). The
 > rest of this fragment is the wiki mechanics that `r` delegates to.
 >

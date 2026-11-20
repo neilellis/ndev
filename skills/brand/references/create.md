@@ -30,6 +30,8 @@ Read before you write. Use one bounded search for each item, and keep each value
 | Images | Photographs, product screenshots and illustrations, with their credits |
 | Film | A video project, script or rendered stills, if any |
 
+A violet-to-blue gradient, a glow or a sparkle is not a brand value, even in the logo, unless the user says that it is. List it as a finding, not as a token.
+
 If the project is new and has almost none of these, say so, and keep the defaults.
 
 ## 3. Make the site

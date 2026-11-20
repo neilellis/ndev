@@ -5,7 +5,7 @@ description: "The non-interactive heavyweight development skill (heavy mode, aut
 
 # Ready-board delivery
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if an issue changes project architecture or rules. Record each conflict as a blocker.
+Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Do one bounded pass: read the board, sort the startable issues, work each unit in its own worktree, branch and PR, verify it, smoke-test it where the project has a preview, and leave each PR for a human to merge. Never merge. Never push the base branch.
 
@@ -28,7 +28,7 @@ Take the typecheck, lint, test, E2E and preview commands from the project's `CLA
 
 ## Helpers
 
-`board.sh` is in `${CLAUDE_PLUGIN_ROOT}/scripts/board/`; `worktree_claim.sh`, `peer_activity.sh`, `gates.sh` and `pr_feedback.sh` are in `${CLAUDE_PLUGIN_ROOT}/scripts/work/`. `work_ready_workflow.js` and its two `.mjs` tests stay in this skill's `scripts/` folder. `${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+`board.sh` is in `${CLAUDE_PLUGIN_ROOT}/scripts/board/`; `worktree_claim.sh`, `peer_activity.sh`, `gates.sh` and `pr_feedback.sh` are in `${CLAUDE_PLUGIN_ROOT}/scripts/work/`. `work_ready_workflow.js` and its two `.mjs` tests stay in this skill's `scripts/` folder. The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
 
 | Script | Job | Exit codes |
 |---|---|---|

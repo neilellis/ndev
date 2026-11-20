@@ -1,6 +1,6 @@
 ---
 name: archify
-description: Create polished, validated architecture, workflow, sequence, data-flow, and lifecycle/state diagrams as explorable standalone HTML with inline SVG, dark/light themes, optional trace motion, and PNG/JPEG/WebP/SVG/WebM export. Accept plain-language requirements or pasted Mermaid flowchart, sequenceDiagram, and stateDiagram input; inspect repository evidence when the diagram must reflect real code. Use when the user asks to visualize system architecture, infrastructure, cloud/security/network topology, technical workflows, API call sequences, request lifecycles, data pipelines, ETL/ELT, data lineage, state machines, or to convert/beautify Mermaid.
+description: "Generate and validate architecture, workflow, sequence, data-flow and lifecycle diagrams from a typed specification or Mermaid. Export standalone HTML, SVG, images or WebM. Use diagram-design for other chart types and custom layouts."
 license: MIT
 metadata:
   version: "2.17"
@@ -13,8 +13,6 @@ Before you write or review diagram labels and captions, read the project's writi
 This is a vendored copy of the MIT-licensed Archify package (`tt-a1i/archify`). Run every `node bin/archify.mjs …` and `scripts/…` command from this skill's folder. The development generators and tests are not included.
 
 # Archify
-
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check for diagrams that show project architecture or domain rules.
 
 Create a self-contained, interactive HTML diagram from a small typed JSON specification. Static output is the default; enable motion only when the user asks for a demo or presentation.
 
