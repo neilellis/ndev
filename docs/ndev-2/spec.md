@@ -113,6 +113,8 @@ ndev hook <event> [--harness <harness>]
 ndev watch [--session <id>] [--worktree <selector>] [--once]
 ```
 
+`fix-prs` configures each repair worktree for `light` mode and `auto` steering before launching its Codex worker. This applies to existing and new worktrees. A new repair worktree is created without an agent first, so the session starts after its settings are saved. If configuration fails, no worker starts. The worker resumes an enabled workflow with the same mode and steering, and leaves disabled workflows off.
+
 When an owner needs to inspect a reviewed commit before a release prerequisite can be met, use `ndev flow push-draft` in the reviewing phase. Supply the full SHA and a summary of the independent review for that commit. It checks the clean worktree, runs `pre-push-check.sh` and pushes that SHA with Git hooks to the existing draft PR in the same repository. The workflow stays in review. Use `finished-review` to run the pre-ready check and mark the PR ready.
 
 Flow transitions with a single target accept `--issue` or `--pr` unless the tree gives the target form. `finished-plan` takes an issue. `finished-development` accepts both lists when the work spans issues and PRs. An agent can set issue steering to auto only with a reason that no human can answer. A human sets it back through the controls described below. A change of mode or steering that yields hack with auto fails before any write.
@@ -142,6 +144,8 @@ Keep draft PRs until their workflow gates are met. Follow the project merge sett
 
 An epic stores GitHub sub-issues and their blocker links. A child can start from a pushed open blocker PR when the frontier and capacity rules allow it. Record the stack in its brief and give Orca the base branch. After the blocker merges, tell the worker to rebase and retarget. Verify the child only once the blocker is merged and the child PR targets the default branch. Resolve remote worktrees by their server and repository ID. Carry the worker role, agent, and model in its brief. Keep local and remote workers on the same epic state rules.
 
+Workflow code reviews use GPT-6.1 Terra for Codex and Sonnet for Claude. `NDEV_REVIEW_AGENT` selects the Orca harness. Other harnesses use their configured model.
+
 To resume an existing plan from `slicing`, run `ndev epic import <epic> --issues-file <json> --evidence <text>`. Repeat the command in `coordinating` to refresh GitHub evidence. The manifest must name every child once, with a valid `key`, an explicit `kind` (`implementation` or `human`), and the full `blockedBy` list from GitHub. For example:
 
 ```json
@@ -151,7 +155,13 @@ To resume an existing plan from `slicing`, run `ndev epic import <epic> --issues
 ]
 ```
 
-Import reads GitHub without changing issues or other workflows. A closed implementation needs exactly one merged closing PR with a merge SHA. A timeline reference alone does not prove that a PR closes the child: import also checks its `closingIssuesReferences`. An open closing PR becomes `external`: its current owner keeps it, it consumes one parallel place, and no new worker can receive it. Refresh with import after its owner merges it. Import preserves workers and review state that this epic already owns and refuses conflicts with their saved PRs or dependencies.
+Import reads GitHub without changing issues or other workflows. A closed implementation needs exactly one merged closing PR with a merge SHA. A timeline reference alone does not prove that a PR closes the child: import also checks its `closingIssuesReferences`. An open closing PR becomes `external`: its current owner keeps it, it consumes one parallel place, and no new worker can receive it. Refresh with import after its owner merges it. Import preserves workers and review state that this epic already owns and refuses conflicts with their saved PRs or dependencies. When refresh records a managed blocker merge, it prepares and delivers the same durable rebase and retarget handoffs as `epic issue ... merged`. It also prepares missing handoffs for earlier saved merges. A repeated import preserves sent receipts and retries an uncertain delivery only with its saved Orca request ID. The import and pending handoffs are saved before delivery. Epic mutations hold a worktree-local lock through delivery and receipt saving. An overlapping writer must retry after that operation ends. Status and frontier reads remain available. A child that has merged or left the stack keeps its old handoff as evidence but receives no further rebase notification. Orca errors provide the durable ID in `error.data.orchestrationRequestId`. A delivery failure names that saved revision and the `ndev epic issue <epic> <blocker> merged` retry command when a durable request exists. A lookup failure before saving preserves the previous record and sends nothing.
+
+
+A first handoff attempt returns to `pending` only when the process result proves Orca never launched. The record keeps the structured launch error and PID. Restore Orca on PATH, check `orca --version`, and retry the supported merge command. A timeout or uncertain delivery stays `sending`. A launch failure while replaying a known request retains that request and its uncertain state.
+
+Each handoff recipient is a separate operation. A failed or uncertain recipient does not prevent delivery to independent recipients. Save every outcome, then fail the overall command with the saved revision, all failed issue and recipient IDs, and their repair commands. An uncertain recipient without a durable ID is never blindly resent. Sent siblings are not sent twice.
+
 
 A human child remains `human-pending`. It cannot receive an implementer, count as merged, or satisfy a blocker. Import cannot infer approval even if the human issue is closed. The human owner must resolve that decision with explicit evidence. Automatic completion of human decisions is not supported.
 
@@ -181,9 +191,9 @@ On a new session, instruct the agent to start the saved workflow before developm
 
 ### Native Orca chat guard
 
-Run `ndev chat-guard on` to enable the guard for local Codex and Claude Code native chats. The prompt hook blocks a send after five minutes above 200,000 context tokens, or after more than 50 minutes of inactivity. It uses the latest available provider transcript accounting, so the token count is approximate. The guard reads a bounded transcript tail. If only the age of a truncated transcript is known, it can still enforce the 50-minute rule.
+Run `ndev chat-guard on` to enable the guard for local Codex and Claude Code native chats. The prompt hook blocks a send after 20 minutes of inactivity above 200,000 context tokens, or after more than 50 minutes of inactivity. It uses the latest available provider transcript accounting, so the token count is approximate. The guard reads a bounded transcript tail. If only the age of a truncated transcript is known, it can still enforce the 50-minute rule.
 
-The guard saves the latest blocked message text locally for each chat. Reply `hand-off` to start a new Orca chat in the same workspace with up to three recent assistant excerpts and the saved message. Reply `new-session` to send just the saved message to a new chat. Attachments need to be added again. To stay in the current chat, run `/compact`, wait for it to finish, then resend the message. Run `ndev chat-guard off` to disable it or `ndev chat-guard status` to check whether it is enabled.
+The guard saves the latest blocked message text locally for each chat. Reply `continue` to pass that saved request to the current chat through the prompt hook's additional context, without compaction. This consumes the saved request once and keeps the guard enabled for later messages. Reply `hand-off` to start a new Orca chat in the same workspace with up to three recent assistant excerpts and the saved message. Reply `new-session` to send just the saved message to a new chat. Attachments need to be added again. To compact the current chat first, run `/compact`, wait for it to finish, then resend the message. When a new-chat launch has an uncertain delivery result, recover that launch before continuing here to avoid duplicate delivery. Run `ndev chat-guard off` to disable it or `ndev chat-guard status` to check whether it is enabled.
 
 Install one entry per native event for ndev so its checks run in order. Claude Code uses `~/.claude/settings.json`. Codex uses `~/.codex/hooks.json`, or the active Codex config directory, with hook trust set by the user. opencode uses a server plugin that calls the binary with an argument vector and sends JSON on stdin. Test the v2 event names and denial path with the installed v2 host. For Claude Code and Codex, the pre-tool adapter uses each host's denial JSON. Both hosts use a single native prompt hook to run both prompt handlers in order. Preserve other hook entries.
 
