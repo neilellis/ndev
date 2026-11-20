@@ -1,5 +1,5 @@
 // Workflow tests: done, merges, retries of a commit and issue ownership. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, RECORD, flow, held, engine, start, tool, command, turnEnds, finishing, inOrca, bodyFile, seven, twelve } from './workflow-harness'
 
 test('done records the remember result', async ($, on) => {

@@ -1,5 +1,5 @@
 // Workflow tests: The wait tools: waitFor, waitForURL, waitForSubAgent and their timing. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { held, engine, settle, start, tool, turnEnds, AGENT, startFollowUp, unblock, round } from './workflow-harness'
 
 test('waitFor checks until the command exits 0, holds the state "wait" meanwhile, and goes back', async ($, on) => {

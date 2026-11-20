@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import type { On } from 'claude-code'
 
 import type { RcProgress } from '../types'

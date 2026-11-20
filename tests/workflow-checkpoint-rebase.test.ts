@@ -1,5 +1,5 @@
 // Workflow tests: checkpoint after the branch moved to a new stack base. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { engine, start, tool } from './workflow-harness'
 
 const REJECTED = ' ! [rejected]        HEAD -> issue-7 (non-fast-forward)\nhint: Updates were rejected because the tip of your current branch is behind'

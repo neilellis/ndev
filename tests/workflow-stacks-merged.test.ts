@@ -1,5 +1,5 @@
 // Workflow tests: done and the stacks and dev servers, labels, and a PR that a human merged during ci. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, RECORD, flow, held, engine, start, tool, finishing, MERGED_PR, finished, DONE } from './workflow-harness'
 
 test('done stops the stacks and the dev servers of the worktree, and leaves the worktree to Orca', async ($, on) => {

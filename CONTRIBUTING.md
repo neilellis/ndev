@@ -10,3 +10,11 @@ This repository is a Claude Code plugin: the shared development methodology. Rea
   `python3 -m py_compile` or `node --check` after a change.
 - Prose follows ASD-STE100 (`simple-english`): British spelling, answer first, present tense only.
 - Bump `version` in `.claude-plugin/plugin.json` for each change, and run `claude plugin validate .`.
+
+## Tests
+
+Run `npm test` for the native CLI and installer tests. Run `claude plugin test .` for the retained SDK suite.
+
+SDK integration tests import `expect` and `test` from `./sdk-testing`. Async callbacks have a default execution allowance of 30 seconds, including fixture setup and calls to the SDK. A test can set `timeoutMs` explicitly. The adapter preserves that value. Synchronous callbacks keep the SDK's default, including in files that also have integration tests.
+
+This execution allowance differs from the workflow's time limits. Keep assertions about the simulated clock, process timeouts, the hook's own budget and workflow restoration. A longer runner deadline does not change those contracts. The forced low-budget tests retain their explicit deadlines and refusal assertions.

@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 
 // /dev remote create makes a Hetzner Cloud server for Orca: from the snapshot that /dev remote remove kept for that
 // name, else from the base image, prepared over SSH. /dev remote remove snapshots the server, then deletes it. The

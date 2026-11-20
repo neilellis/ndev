@@ -1,5 +1,5 @@
 // Workflow tests: The record of a wait: other writers, a dead session, status and /flow off. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, RECORD, CONFIG, flow, held, engine, settle, start, tool, command, turnEnds, idle, seven, unblock, expectBackIn, noIssue, talk } from './workflow-harness'
 
 test('a wait ends well when another writer gets in first', async ($, on) => {
