@@ -295,6 +295,39 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
   assert.equal(call('claude', 'draft', [oldLargeRecord], '1', new Date(stamp(51))).decision, 'block')
 })
 
+test('chat guard continue passes the saved request once without launching a new chat', t => {
+  const root = fixture(t)
+  const state = join(root, 'state')
+  mkdirSync(join(state, 'ndev'), { recursive: true })
+  writeFileSync(join(state, 'ndev', 'chat-guard'), '')
+  const transcript = join(root, 'conversation.jsonl')
+  const timestamp = '2000-01-01T00:00:00.000Z'
+  const draft = 'Check the release.\nKeep "$HOME" and `echo test` literal.'
+  for (const harness of ['claude', 'codex']) {
+    writeFileSync(transcript, JSON.stringify(harness === 'codex'
+      ? { timestamp, type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { total_tokens: 50 } } } }
+      : { timestamp, type: 'assistant', message: { usage: { input_tokens: 50 } } }))
+    const call = (session, prompt) => {
+      const result = spawnSync(ndev, ['hook', 'prompt-submit', '--harness', harness], {
+        cwd: root, encoding: 'utf8',
+        env: { HOME: root, PATH: process.env.PATH, XDG_STATE_HOME: state, ORCA_STRUCTURED_SESSION: '1', ORCA_CLI_COMMAND: '/nonexistent-orca' },
+        input: JSON.stringify({ cwd: root, session_id: session, transcript_path: transcript, prompt }),
+      })
+      assert.equal(result.status, 0, result.stderr)
+      return JSON.parse(result.stdout)
+    }
+    const blocked = call('one', draft)
+    assert.match(call('other', 'continue').reason, /no saved message/i)
+    const resumed = call('one', ' Continue ')
+    assert.notEqual(resumed.decision, 'block')
+    assert.match(blocked.reason, /continue/)
+    assert.equal(resumed.hookSpecificOutput.hookEventName, 'UserPromptSubmit')
+    assert.ok(resumed.hookSpecificOutput.additionalContext.endsWith(draft))
+    assert.match(call('one', 'continue').reason, /no saved message/i)
+    assert.equal(call('one', 'A new request').decision, 'block')
+  }
+})
+
 test('chat guard replies launch Orca with the saved prompt from the same chat', t => {
   const root = fixture(t)
   const state = join(root, 'state')
@@ -355,6 +388,7 @@ console.log(JSON.stringify({ ok: true, result }))
   call('four', 'Replay this draft.')
   assert.match(call('four', 'new-session', 'replay'), /reply new-session again/i)
   assert.match(call('four', 'hand-off'), /reply new-session again/i)
+  assert.match(call('four', 'continue'), /reply new-session again/i)
   assert.match(call('four', 'new-session'), /sent.*new Orca chat/i)
   call('five', 'Keep this draft after refusal.')
   assert.match(call('five', 'new-session', 'incompatible'), /incompatible_runtime.*update Orca/i)
