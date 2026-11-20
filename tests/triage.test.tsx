@@ -50,6 +50,7 @@ type Worktree = { id: string; projectId: string; path: string; isArchived: boole
 function world(on: On, opts: { environments?: { id: string; name: string }[]; repo?: string; board?: { owner: string; number: number }; issues?: Issue[]; cards?: unknown[]; worktrees?: Worktree[]; startFails?: boolean; readyReversed?: boolean; taskCreateFails?: boolean; runCreateAnswers?: unknown; merged?: number[]; workflowOff?: boolean; files?: Record<string, string>; env?: Record<string, string> } = {}) {
   // Each open pull request's merge state and checks, as GitHub answers pr-read and commit-checks; the test changes them.
   const prs: Record<number, Pr> = {}
+  const readErrors = { worktrees: '' }
   // Each period of `$.clock.every`, by its length, waits here until the test fires it.
   const timers = new Map<number, (() => void)[]>()
   const fire = (ms: number) => { const due = timers.get(ms) ?? []; timers.set(ms, []); due.forEach(f => f()); return due.length }
@@ -137,6 +138,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
     // A paired server's workspaces are listed only with its --environment, and this machine's only without one.
     const environment = a.includes('--environment') ? a[a.indexOf('--environment') + 1] : undefined
     if (args.startsWith('orca worktree list')) {
+      if (readErrors.worktrees) return result(1, '', readErrors.worktrees)
       const here = worktrees.filter(w => w.environment === environment)
       return reply({ worktrees: here, totalCount: here.length, truncated: false })
     }
@@ -226,7 +228,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
     workers.unshift({ dispatchId, taskId: task, workerState: 'ready', agentTerminalHandle: `term_${dispatchId.slice('ctx_'.length)}` })
     tasks.find(t => t.id === task)!.status = 'dispatched'
   }
-  return { ran, prompts, toasts, tasks, workers, deliver, orcaRan, linkPr, bash, prs, fire, clock, restart, registered, finished }
+  return { ran, prompts, toasts, tasks, workers, deliver, orcaRan, linkPr, bash, prs, readErrors, fire, clock, restart, registered, finished }
 }
 
 // A pull request as the fake GitHub answers it: REST's mergeable and mergeable_state, and its check runs as [name, status, conclusion].
@@ -1721,4 +1723,19 @@ test('a worker reporting success while PR checks run still alerts the coordinato
   w.deliver({ deliveryId: 'delivery_done', messages: [message('msg_done', 'worker_done', 'term_1', 'PR #41 is done.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
   await until(() => w.prompts.some(p => p.includes('PR #41') && p.includes('pending checks')), () => w.prompts)
   expect(w.prompts.find(p => p.includes('PR #41') && p.includes('pending checks'))).toContain('reported success')
+})
+
+test('workspace discovery failure after a worker stops reaches the coordinator with the known PR and cause', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 1, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  await $.command.run(command('refresh'))
+  w.readErrors.worktrees = 'Orca workspace list unavailable'
+  w.deliver({ deliveryId: 'delivery_failed_read', messages: [message('msg_failed_read', 'escalation', 'term_1', 'Turn ended.', { taskId: 'task_1', dispatchId: 'ctx_1', stopReason: 'finished' })] })
+  await until(() => w.ran.some(a => a.includes('--ack') && a.includes('delivery_failed_read')), () => w.ran)
+  expect(w.prompts.some(p => p.includes('PR #41') && p.includes('ctx_1') && p.includes('Orca workspace list unavailable'))).toBe(true)
 })

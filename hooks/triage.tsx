@@ -1099,22 +1099,26 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
 async function reportStoppedWorker($: EngineInterface, v: TriageView, g: TriageGroup | undefined, stopped = 'ended its turn'): Promise<void> {
   if (!g || !v.repo) return
   const run = runner($, 60_000)
-  const worktrees = await orcaWorktrees(run, '', v.remote?.id)
-  const pr = worktrees.find(w => w.id === g.worktree)?.linkedPR ?? g.pr
-  if (!pr) return
-  await setGroup($, g.lead, { pr })
+  let pr = g.pr
   let row: PrRow
   try {
+    const worktrees = await orcaWorktrees(run, '', v.remote?.id)
+    pr = worktrees.find(w => w.id === g.worktree)?.linkedPR ?? pr
+    if (!pr) return
+    await setGroup($, g.lead, { pr })
     row = await readPullRow(run, v.repo, pr)
   } catch (error) {
-    ask($, `the stopped worker of #${g.lead}`, `Triage: worker ${g.dispatchId} of #${g.lead} ${stopped}. PR #${pr} (${pullUrl(v.repo, pr)}) could not be checked: ${message(error)}. Repair: read the PR checks before treating the work as complete.`)
+    const target = pr ? `PR #${pr} (${pullUrl(v.repo, pr)})` : `workspace ${g.worktree}`
+    ask($, `the stopped worker of #${g.lead}`, `Triage: worker ${g.dispatchId} of #${g.lead} ${stopped}. ${target} could not be checked: ${message(error)}. Repair: read the workspace and PR checks before treating the work as complete.`)
     return
   }
   if (row.state !== 'OPEN' || !row.pending) return
   ask($, `the stopped worker of #${g.lead}`, [
     `Triage: worker ${g.dispatchId} of #${g.lead} (${g.title}) ${stopped} while PR #${pr} (${pullUrl(v.repo, pr)}) has ${row.pending} pending checks at ${row.head}.`,
     stopped === 'ended its turn' ? 'Its Dispatch stays open. This does not fail its Task or complete the work.' : 'The worker reported success, but its checks have not finished.',
-    `Check whether the workflow is watching CI. If it is not, resume the worker with one blocking wait: orca orchestration send --to dispatch:${g.dispatchId} --run ${v.runId} --subject "Wait for PR checks" --body "Follow the workflow and wait for the checks of PR #${pr}; escalate if you cannot finish." --json`,
+    v.remote && stopped === 'reported success'
+      ? `A finished worker on ${v.remote.name} can refuse mail. Inspect it with orca orchestration worker-show --dispatch ${g.dispatchId} --json, then restart it in its existing workspace if it cannot resume its check wait.`
+      : `Check whether the workflow is watching CI. If it is not, resume the worker with one blocking wait: orca orchestration send --to dispatch:${g.dispatchId} --run ${v.runId} --subject "Wait for PR checks" --body "Follow the workflow and wait for the checks of PR #${pr}; escalate if you cannot finish." --json`,
   ].join('\n'))
 }
 
