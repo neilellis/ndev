@@ -66,6 +66,8 @@ test('fix-prs starts existing and new worker sessions with light mode and auto s
     assert.deepEqual(JSON.parse(readFileSync(join(worker, '.neil-dev.json'), 'utf8')), { mode: 'heavy', steering: 'interactive' })
     const log = readFileSync(join(root, 'orca-log'), 'utf8')
     assert.match(log, /worker-start[\s\S]*--worktree id:worker-id[\s\S]*--agent codex/)
+    assert.match(log, /ndev flow repair --issue <issue> --pr 10/)
+    assert.doesNotMatch(log, /ndev flow start <issue>/)
     assert.equal(log.includes('worktree create'), !existing)
   }
 })

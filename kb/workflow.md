@@ -6,6 +6,14 @@
 
 To read this guide in a session, type `/flow guide`. A terminal shows the diagrams below as Mermaid source. A Markdown viewer draws them.
 
+## Repair an existing PR association
+
+Before resuming an existing PR, use `ndev flow start <issue> --pr <pr>`. It follows the same validation as `ndev flow repair --issue <issue> --pr <pr>` and opens no duplicate PR. After repair, `start --pr` follows the normal resume path. A confirmed conflict reopens an already repaired `done` workflow as `revising`. Unknown mergeability keeps that finished workflow in `done`.
+
+Run `repair` from the isolated checkout that will hold the work. It verifies the open, same-repository PR, its closing issue reference, a matching GitHub origin and that local HEAD contains the canonical remote head. Merge missing PR commits first with the repair command it prints. The workflow records the local branch separately from its canonical publishing branch. Checkpoint and draft pushes keep their existing checks and publish to the original PR branch. The repair neither moves existing local branch refs nor commits, pushes or discards files.
+
+The command keeps pre-development phases, migrations and follow-ups. A common Git directory lock serializes repairs of the same issue across linked worktrees. Converting a direct workflow clears its direct privileges, skipped-check exemption and old baseline check, so the ordinary PR checks must run. It clears verification evidence. A phase after development returns to development. A blocked workflow stays blocked and its saved phase is adjusted if needed. Another owner requires explicit `--take-over` and a confirmed finished state from Orca. Active, idle or unknown owners refuse takeover regardless of age. Shared workflows, pending operations and records in another worktree refuse repair with a named recovery. The command does not copy state across worktrees. Existing duplicate PRs require a separate, authorized closure.
+
 ## The states
 
 This diagram shows only the states and the moves between them. The flow chart below adds the checks and what each tool does.

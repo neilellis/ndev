@@ -108,7 +108,7 @@ test('a checkpoint refuses an unrelated staged path before committing', () => {
 })
 
 function flow(project, args, extra = {}) {
-  const script = `import * as flow from ${JSON.stringify(new URL('../flow/cli.ts', import.meta.url))}; try { console.log(JSON.stringify(flow.runFlow(process.argv.slice(1)))) } catch (error) { console.error(error.message); process.exitCode = error.code || 1 }`
+  const script = `import * as flow from ${JSON.stringify(new URL('../flow/cli.ts', import.meta.url))}; try { console.log(JSON.stringify(flow.runFlow(process.argv.slice(1)))) } catch (error) { console.error([error.message, error.repair].filter(Boolean).join(" Repair: ")); process.exitCode = error.code || 1 }`
   return run(project.work, process.execPath, ['--input-type=module', '-e', script, '--', ...args], extra)
 }
 test('status resolves the selected PR and refuses an unrelated PR without touching the record', () => {
@@ -161,8 +161,9 @@ issue-new) if [ -n "$ACCEPTED_BODY" ]; then cp "$5" "$ACCEPTED_BODY"; echo 'lost
 api) if [ -z "$SEARCH_DELAY" ]; then jq -n --rawfile body "$ACCEPTED_BODY" '[{number:40,body:$body},{number:55,body:"unrelated"},{number:67,body:$body,pull_request:{}}]' | jq -r "$5"; fi ;;
 pr-list) [ -z "$EXISTING_PR" ] || echo '{"number":9}' ;;
 pr-new) echo '{"url":"https://github.com/test/project/pull/9"}' ;;
-pr-read) if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
+pr-read) if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
 pr-edit) cp "$4" "$PR_BODY" ;;
+feedback) ;;
 comment|subissues|pr-ready) echo '{"ok":true}' ;;
 commit-checks) if [ -n "$MOVE_DURING_CHECKS" ]; then git commit --allow-empty -qm 'New head while reading checks'; git push -q origin HEAD:feature; fi; echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"success"}],"statuses":[]}' ;;
 *) echo "Unsupported gh command $*" >&2; exit 22 ;;
@@ -180,6 +181,7 @@ case "$1 $2" in
   echo "{\\"ok\\":true,\\"result\\":{\\"worktree\\":{\\"path\\":\\"$FAKE_BASE_DIR/$name\\"}}}" ;;
 'worktree set') echo '{"ok":true,"result":{"updated":true}}' ;;
 'orchestration worker-start') echo '{"ok":true,"result":{"state":"ready","runId":"run-1","dispatchId":"dispatch-1"}}' ;;
+'agent show') cat "$REPAIR_OWNER" ;;
 *) echo "Unsupported Orca command $*" >&2; exit 23 ;;
 esac
 `)
@@ -575,6 +577,237 @@ test('an interactive sibling prevents every selected issue from running finish c
   assert.doesNotMatch(existsSync(fake.ORCA_LOG) ? readFileSync(fake.ORCA_LOG, 'utf8') : '', /worker-start/)
 })
 
+function repairProject() {
+  const p = project()
+  const fake = services(p)
+  git(p.work, 'push', '-q', 'origin', 'HEAD:canonical')
+  git(p.work, 'branch', 'canonical')
+  const nativeGit = output(run(p.work, 'sh', ['-c', 'command -v git']))
+  const wrapper = join(p.dir, 'fake-bin/git')
+  writeFileSync(wrapper, `#!/bin/sh
+case "$*" in
+  'remote get-url --all origin'|'remote get-url --push --all origin') echo "\${REPAIR_ORIGIN:-https://github.com/test/project.git}" ;;
+  *) exec "${nativeGit}" "$@" ;;
+esac
+`)
+  chmodSync(wrapper, 0o755)
+  const prFile = join(p.dir, 'repair-pr.json')
+  const setPr = (patch = {}) => writeFileSync(prFile, JSON.stringify({ number: 10, state: 'open', merged: false, draft: true, body: 'Closes #7', base: { ref: 'main' }, head: { ref: 'canonical', sha: git(p.work, 'rev-parse', 'HEAD'), crossRepository: false }, ...patch }))
+  setPr()
+  const read = () => JSON.parse(readFileSync(p.file, 'utf8')).workflow
+  const setRecord = patch => { const all = JSON.parse(readFileSync(p.file, 'utf8')); all.workflow = { ...all.workflow, ...patch }; writeFileSync(p.file, JSON.stringify(all)) }
+  const repair = (args = [], extra = {}) => flow(p, ['repair', '--issue', '7', '--pr', '10', ...args], { ...fake, REPAIR_PR: prFile, ...extra })
+  return { ...p, fake: { ...fake, REPAIR_PR: prFile }, repair, read, setPr, setRecord }
+}
+
+test('repair adopts the canonical PR without moving refs or losing dirty work, and checkpoint publishes only its branch', () => {
+  const p = repairProject()
+  const refs = git(p.work, 'show-ref')
+  const before = git(p.work, 'rev-parse', 'HEAD')
+  writeFileSync(join(p.work, 'unknown.txt'), 'preserve unknown work')
+  p.setRecord({ state: 'ci', evidence: { checks: { sha: before } }, migrations: [{ path: 'keep.sql' }] })
+  const repaired = JSON.parse(output(p.repair())).workflow
+  assert.deepEqual(repaired.prs, [10])
+  assert.equal(repaired.branch, 'canonical')
+  assert.equal(repaired.localBranch, 'feature')
+  assert.equal(repaired.state, 'developing')
+  assert.deepEqual(repaired.evidence, {})
+  assert.deepEqual(repaired.migrations, [{ path: 'keep.sql' }])
+  assert.equal(git(p.work, 'show-ref'), refs)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), before)
+  assert.equal(readFileSync(join(p.work, 'unknown.txt'), 'utf8'), 'preserve unknown work')
+  const record = readFileSync(p.file, 'utf8')
+  output(p.repair())
+  assert.equal(readFileSync(p.file, 'utf8'), record, 'repair retry is idempotent')
+  const result = flow(p, ['checkpoint', '--issue', '7', '--message', 'Recovered work', '--file', 'next.txt'], p.fake)
+  output(result)
+  assert.equal(git(p.origin, 'rev-parse', 'canonical'), git(p.work, 'rev-parse', 'HEAD'))
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), before)
+  assert.equal(git(p.work, 'rev-parse', 'canonical'), before)
+  assert.equal(git(p.origin, 'rev-parse', 'main'), git(p.work, 'rev-parse', 'origin/main'))
+  assert.doesNotMatch(readFileSync(p.fake.GH_LOG, 'utf8'), /pr-new|pr-edit|pr-ready/)
+})
+
+test('start with an explicit PR uses repair instead of creating an alias-branch duplicate', () => {
+  const p = repairProject()
+  const result = flow(p, ['start', '7', '--pr', '10'], p.fake)
+  assert.deepEqual(JSON.parse(output(result)).workflow.prs, [10])
+  assert.doesNotMatch(readFileSync(p.fake.GH_LOG, 'utf8'), /pr-new/)
+})
+
+for (const [name, patch, error] of [
+  ['closed PR', { state: 'closed' }, /PR #10.*closed/],
+  ['fork PR', { head: { ref: 'canonical', sha: 'a'.repeat(40), crossRepository: true } }, /same.repository|fork/i],
+  ['base branch head', { head: { ref: 'main', sha: 'a'.repeat(40), crossRepository: false } }, /base branch/i],
+  ['unrelated issue', { body: 'Closes #8' }, /issue #7/i],
+]) {
+  test(`repair refuses ${name} without changing its record or files`, () => {
+    const p = repairProject()
+    p.setPr(patch)
+    const record = readFileSync(p.file, 'utf8')
+    const head = git(p.work, 'rev-parse', 'HEAD')
+    const result = p.repair()
+    assert.equal(result.status, 1, result.stdout + result.stderr)
+    assert.match(result.stderr, error)
+    assert.equal(readFileSync(p.file, 'utf8'), record)
+    assert.equal(git(p.work, 'rev-parse', 'HEAD'), head)
+    assert.equal(readFileSync(join(p.work, 'next.txt'), 'utf8'), 'next\n')
+  })
+}
+
+test('repair refuses an unexpected origin and a local head missing canonical commits', () => {
+  const p = repairProject()
+  const record = readFileSync(p.file, 'utf8')
+  const wrong = p.repair([], { REPAIR_ORIGIN: 'https://github.com/other/project.git' })
+  assert.equal(wrong.status, 1)
+  assert.match(wrong.stderr, /origin.*test\/project/i)
+  git(p.work, 'commit', '--allow-empty', '-qm', 'Canonical peer work')
+  const peer = git(p.work, 'rev-parse', 'HEAD')
+  git(p.work, 'push', '-q', 'origin', 'HEAD:canonical')
+  git(p.work, 'switch', '-qc', 'isolated', 'HEAD~1')
+  p.setPr({ head: { ref: 'canonical', sha: peer, crossRepository: false } })
+  const missing = p.repair()
+  assert.equal(missing.status, 1)
+  assert.match(missing.stderr, /canonical.*git merge origin\/canonical/i)
+  assert.equal(readFileSync(p.file, 'utf8'), record)
+})
+
+test('repair never treats an old foreign owner timestamp as permission to take over', () => {
+  const p = repairProject()
+  p.setRecord({ owner: { session: 'other-session', at: 1 } })
+  const record = readFileSync(p.file, 'utf8')
+  const result = p.repair()
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /other-session.*--take-over/)
+  assert.equal(readFileSync(p.file, 'utf8'), record)
+  const unknown = p.repair(['--take-over'])
+  assert.equal(unknown.status, 1)
+  assert.match(unknown.stderr, /other-session|agent show/)
+  assert.equal(readFileSync(p.file, 'utf8'), record)
+})
+
+test('repair accepts a confirmed finished owner only with explicit take-over, preserving interview state', () => {
+  const p = repairProject()
+  p.setRecord({ state: 'interviewing', owner: { session: 'ended-owner', at: 1 } })
+  const owner = join(p.dir, 'owner.json')
+  writeFileSync(owner, JSON.stringify({ ok: true, result: { orcaSessionId: 'ended-owner', places: [{ state: 'done' }] } }))
+  const repaired = JSON.parse(output(p.repair(['--take-over'], { REPAIR_OWNER: owner }))).workflow
+  assert.equal(repaired.owner.session, 'session-A')
+  assert.equal(repaired.state, 'interviewing')
+})
+
+for (const places of [[{ state: 'working' }], [{ state: 'idle' }], [{ state: 'unknown' }], []]) {
+  test(`repair refuses unconfirmed ended ownership: ${JSON.stringify(places)}`, () => {
+    const p = repairProject()
+    p.setRecord({ owner: { session: 'other-owner', at: 1 } })
+    const original = readFileSync(p.file, 'utf8')
+    const owner = join(p.dir, 'owner.json')
+    writeFileSync(owner, JSON.stringify({ ok: true, result: { orcaSessionId: 'other-owner', places } }))
+    const result = p.repair(['--take-over'], { REPAIR_OWNER: owner })
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /other-owner.*not been confirmed finished/)
+    assert.equal(readFileSync(p.file, 'utf8'), original)
+  })
+}
+
+test('repair can initialize the association in a fresh alias worktree without a duplicate PR', () => {
+  const p = repairProject()
+  rmSync(p.file)
+  const result = JSON.parse(output(p.repair())).workflow
+  assert.equal(result.branch, 'canonical')
+  assert.equal(result.localBranch, 'feature')
+  assert.deepEqual(result.prs, [10])
+  assert.equal(result.state, 'interviewing')
+  assert.doesNotMatch(readFileSync(p.fake.GH_LOG, 'utf8'), /pr-new/)
+})
+
+test('repair refuses to copy a workflow from another worktree and preserves its owner and record', () => {
+  const p = repairProject()
+  const other = join(p.dir, 'other-worktree')
+  git(p.work, 'worktree', 'add', '-qb', 'other', other)
+  const held = join(other, '.neil-dev.issue-7.json')
+  const original = readFileSync(p.file, 'utf8')
+  writeFileSync(held, original)
+  const result = p.repair()
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /already has a workflow.*other-worktree/)
+  assert.equal(readFileSync(p.file, 'utf8'), original)
+  assert.equal(readFileSync(held, 'utf8'), original)
+})
+
+test('repair respects a disabled project workflow and keeps shared or pending workflows intact', () => {
+  const p = repairProject()
+  const original = readFileSync(p.file, 'utf8')
+  writeFileSync(join(p.work, '.neil-dev.json'), JSON.stringify({ workflow: false }))
+  assert.match(p.repair().stderr, /Workflow is off/)
+  assert.equal(readFileSync(p.file, 'utf8'), original)
+  writeFileSync(join(p.work, '.neil-dev.json'), '{}')
+  for (const patch of [{ prs: [9, 11] }, { prs: [9], op: { tool: 'checkpoint', id: 'held-op' } }]) {
+    p.setRecord(patch)
+    const record = readFileSync(p.file, 'utf8')
+    const result = p.repair()
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /shared, pending, waiting or mismatched/)
+    assert.equal(readFileSync(p.file, 'utf8'), record)
+  }
+})
+
+test('a repaired alias can finish development and push its reviewed draft without switching local branches', () => {
+  const p = repairProject()
+  output(p.repair())
+  const check = 'scripts/ndev/workflow/pre-push-check.sh'
+  mkdirSync(join(p.work, 'scripts/ndev/workflow'), { recursive: true })
+  writeFileSync(join(p.work, check), '#!/bin/sh\nexit 0\n')
+  const canonical = git(p.work, 'rev-parse', 'canonical')
+  const developed = flow(p, ['finished-development', '--issue', '7', '--message', 'Finish recovered work', '--file', 'next.txt', '--file', check], p.fake)
+  assert.equal(JSON.parse(output(developed)).state, 'reviewing')
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  output(flow(p, ['push-draft', '--pr', '10', '--sha', sha, '--review', 'Independent review evidence.'], p.fake))
+  assert.equal(git(p.work, 'branch', '--show-current'), 'feature')
+  assert.equal(git(p.work, 'rev-parse', 'canonical'), canonical)
+  assert.equal(git(p.origin, 'rev-parse', 'canonical'), sha)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), canonical)
+})
+
+test('repair revalidates the closing issue even when the stale record already names that PR', () => {
+  const p = repairProject()
+  p.setRecord({ prs: [10] })
+  p.setPr({ body: 'Closes #8' })
+  const before = readFileSync(p.file, 'utf8')
+  const refs = git(p.work, 'show-ref')
+  const result = p.repair()
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /PR #10 does not close issue #7/)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  assert.equal(git(p.work, 'show-ref'), refs)
+})
+
+test('repair converts a direct record to ordinary PR gates and requires a new base check', () => {
+  const p = repairProject()
+  p.setRecord({ direct: true, branch: 'main', prs: [], noChecks: true })
+  const repaired = JSON.parse(output(p.repair())).workflow
+  assert.equal(repaired.direct, undefined)
+  assert.equal(repaired.noChecks, undefined)
+  assert.equal(repaired.baseCheck, undefined)
+  assert.equal(repaired.branch, 'canonical')
+  const developed = flow(p, ['finished-development', '--issue', '7', '--message', 'Must check baseline', '--file', 'next.txt'], p.fake)
+  assert.equal(developed.status, 1)
+  assert.match(developed.stderr, /needs its base check/)
+})
+
+test('repairs serialize issue acquisition across linked worktrees', () => {
+  const p = repairProject()
+  const lock = join(git(p.work, 'rev-parse', '--path-format=absolute', '--git-common-dir'), 'ndev-repair-issue-7.ndev-lock')
+  mkdirSync(lock)
+  const before = readFileSync(p.file, 'utf8')
+  const held = p.repair()
+  assert.equal(held.status, 5)
+  assert.match(held.stderr, /Another write holds.*ndev-repair-issue-7/)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  rmSync(lock, { recursive: true })
+  output(p.repair())
+})
+
 test('issue 26: resuming a conflicted finished PR persists revising without an idle owner', () => {
   const p = project()
   const fake = services(p)
@@ -621,4 +854,94 @@ test('issue 26: a failed finished-PR refresh names the PR and leaves the record 
   assert.match(result.stderr, /exited 37/)
   assert.match(result.stderr, /GitHub temporarily unavailable/)
   assert.equal(readFileSync(p.file, 'utf8'), before)
+})
+
+test('explicit-PR start refreshes conflicts after an idempotent repair', () => {
+  const p = repairProject()
+  output(p.repair())
+  p.setRecord({ state: 'done' })
+  p.setPr({ mergeable: false })
+  const result = JSON.parse(output(flow(p, ['start', '7', '--pr', '10'], p.fake)))
+  assert.equal(result.state, 'revising')
+  assert.ok(p.read().history.some(entry => entry.tool === 'started' && entry.from === 'done' && entry.to === 'revising'))
+  assert.match(result.text, /PR #10.*conflicts/)
+  assert.equal(p.read().branch, 'canonical')
+  assert.equal(p.read().localBranch, 'feature')
+})
+
+test('explicit-PR start preserves done while GitHub computes mergeability', () => {
+  const p = repairProject()
+  output(p.repair())
+  p.setRecord({ state: 'done' })
+  p.setPr({ mergeable: null })
+  const result = JSON.parse(output(flow(p, ['start', '7', '--pr', '10'], p.fake)))
+  assert.equal(result.state, 'done')
+  assert.equal(p.read().state, 'done')
+  assert.equal(p.read().history.some(entry => entry.from === 'done' && entry.to === 'revising'), false)
+})
+
+test('repair refreshes a retargeted PR base even when its head is unchanged', () => {
+  const p = repairProject()
+  output(p.repair())
+  p.setRecord({ state: 'done', baseCheck: { exitCode: 0, sha: git(p.work, 'rev-parse', 'HEAD') } })
+  git(p.work, 'push', '-q', 'origin', 'refs/remotes/origin/main:refs/heads/release')
+  p.setPr({ base: { ref: 'release' } })
+  const result = JSON.parse(output(p.repair())).workflow
+  assert.equal(result.base, 'release')
+  assert.equal(result.baseCheck, undefined)
+  assert.equal(p.read().base, 'release')
+  assert.equal(p.read().state, 'developing')
+})
+
+
+test('repair refuses actual shared PR carriers without changing either association', () => {
+  for (const issue of [7, 8]) {
+    const p = repairProject()
+    const all = JSON.parse(readFileSync(p.file, 'utf8'))
+    all.workflow.state = 'developed'
+    all.prs = { 9: { ...all.workflow, issue, pr: 9, issues: [7, 8], state: 'reviewing' } }
+    writeFileSync(p.file, JSON.stringify(all))
+    const before = readFileSync(p.file, 'utf8')
+    const result = p.repair()
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /shared.*PR #9/i)
+    assert.equal(readFileSync(p.file, 'utf8'), before)
+  }
+})
+
+test('repair closing references accept supported same-repository forms and reject unrelated links', () => {
+  for (const body of ['Closes: #7', 'Closes test/project#7', 'Fixes https://github.com/test/project/issues/7', 'Encloses #7', 'Closes other/project#7', 'Closes https://github.com/test/elsewhere/issues/7', 'Closes #70']) {
+    const p = repairProject()
+    p.setPr({ body })
+    const before = readFileSync(p.file, 'utf8')
+    const result = p.repair()
+    const valid = body.startsWith('Closes:') || body.startsWith('Closes test/') || body.startsWith('Fixes ')
+    assert.equal(result.status, valid ? 0 : 1, `${body}: ${result.stderr}`)
+    if (!valid) {
+      assert.match(result.stderr, /does not close issue #7/)
+      assert.equal(readFileSync(p.file, 'utf8'), before)
+    }
+  }
+})
+
+test('repaired alias completion refuses local and canonical stashes and passes when cleared', () => {
+  const p = repairProject()
+  output(p.repair())
+  rmSync(join(p.work, 'next.txt'))
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  p.setRecord({ state: 'finishing', evidence: { checks: { sha } } })
+  p.setPr({ draft: false, mergeable: true, created_at: '2020-01-01T00:00:00Z' })
+  const args = ['done', '--issue', '7', '--message', 'Finished repair', '--remembered', 'nothing: regression fixture']
+  for (const branch of ['feature', 'canonical']) {
+    git(p.work, 'switch', '-q', branch)
+    writeFileSync(join(p.work, 'feature.txt'), 'stashed work')
+    git(p.work, 'stash', 'push', '-qm', 'Preserve work')
+    git(p.work, 'switch', '-q', 'feature')
+    const result = flow(p, args, p.fake)
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, new RegExp(`A stash of ${branch} remains`))
+    assert.equal(p.read().state, 'finishing')
+    git(p.work, 'stash', 'drop', '-q')
+  }
+  assert.equal(JSON.parse(output(flow(p, args, p.fake))).state, 'done')
 })
