@@ -1674,3 +1674,51 @@ test('/dev triage start names the epic record that is not JSON, with a repair', 
   await until(() => w.toasts.some(t => /\/w\/epic\/\.neil-dev\.epic-5\.json is not valid JSON.*Repair: fix or delete the file, then run \/dev triage start again/.test(t)), () => w.toasts)
   expect(w.prompts).toHaveLength(0)
 })
+
+test('a worker ending its turn with queued PR checks tells the coordinator and keeps dependent groups waiting', async ($, on) => {
+  const w = world(on, { issues: [issue(3), issue(9)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple'), group([9], 'simple', { after: [3] })] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 1, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  w.prs[41] = { mergeable: true, state: 'blocked', checks: [['ci', 'queued', null]] }
+  w.deliver({ deliveryId: 'delivery_stop', messages: [message('msg_stop', 'escalation', 'term_1', 'Turn ended.', { taskId: 'task_1', dispatchId: 'ctx_1', stopReason: 'finished' })] })
+  await until(() => w.prompts.some(p => p.includes('PR #41') && p.includes('pending checks')), () => w.prompts)
+  const notice = w.prompts.find(p => p.includes('PR #41') && p.includes('pending checks'))!
+  expect(notice).toContain('ctx_1')
+  expect(notice).toContain('https://github.com/acme/widgets/pull/41')
+  expect(notice).toContain('orca orchestration send')
+  expect(w.orcaRan('orchestration worker-start')).toHaveLength(1)
+  expect(w.tasks[0]!.status).toBe('dispatched')
+})
+
+test('a worker ending its turn with green PR checks gives no pending-check alert', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 1, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  w.prs[41] = { mergeable: true, state: 'clean', checks: [['ci', 'completed', 'success']] }
+  w.deliver({ deliveryId: 'delivery_green', messages: [message('msg_green', 'escalation', 'term_1', 'Turn ended.', { taskId: 'task_1', dispatchId: 'ctx_1', stopReason: 'finished' })] })
+  await until(() => w.ran.some(a => a.includes('--ack') && a.includes('delivery_green')), () => w.ran)
+  expect(w.prompts.some(p => p.includes('pending checks'))).toBe(false)
+  expect(w.tasks[0]!.status).toBe('dispatched')
+})
+
+test('a worker reporting success while PR checks run still alerts the coordinator', async ($, on) => {
+  const w = world(on, { issues: [issue(3)] })
+  await started($)
+  await $.command.run(command('start'))
+  await until(() => w.prompts.length > 0)
+  await $.tool.call({ tool: TOOL, groups: [group([3], 'simple')] } as never)
+  await until(() => w.orcaRan('orchestration worker-start').length === 1, () => w.ran)
+  w.linkPr('/w/issue-3', 41)
+  w.prs[41] = { mergeable: true, state: 'blocked', checks: [['ci', 'in_progress', null]] }
+  w.deliver({ deliveryId: 'delivery_done', messages: [message('msg_done', 'worker_done', 'term_1', 'PR #41 is done.', { taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'succeeded' })] })
+  await until(() => w.prompts.some(p => p.includes('PR #41') && p.includes('pending checks')), () => w.prompts)
+  expect(w.prompts.find(p => p.includes('PR #41') && p.includes('pending checks'))).toContain('reported success')
+})

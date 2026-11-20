@@ -729,6 +729,7 @@ function spec(repo: string, g: TriageGroup, issues: TriageIssue[], agent: Triage
       : []),
     '- Save work with mcp__ndev__checkpoint and not with git commit or git push. The workflow opens the pull request and links it to this workspace. Merge only when mcp__ndev__done does it.',
     `- The pull request body ends with these lines: Model: ${g.model} and Effort: ${g.effort}.`,
+    '- Do not report worker_done while pull request checks are queued or running. Follow mcp__ndev__finishedChecks and the workflow’s wait instructions with one blocking wait. If you cannot keep waiting, escalate to the coordinator with the PR number and the check state.',
     '- When you need a product or scope decision, ask the coordinator and never guess. Run `orca orchestration ask --question "<question>" --wait --timeout-ms 540000 --json` in the foreground, with a command timeout of 600000 ms. After a timeout, run `orca orchestration ask --resume <message_id> --wait --timeout-ms 540000 --json`. Do not end your turn while a question is open, because the workflow counts that as no progress.',
     '- Call mcp__ndev__blocked only when a person must act on this machine, such as a sign-in.',
     `- If the workflow blocks this issue, for example on an open blocked-by issue, read the message. ${g.after.length ? `When it names only issues of the groups that this group follows (${g.after.map(a => `#${a}`).join(', ')}), their change is in your branch, so call mcp__ndev__unblocked and go on. ` : ''}Ask the coordinator about any other block, and call mcp__ndev__unblocked when it is clear. If nobody can clear it, send worker_done with --outcome failed and the block message.`,
@@ -1070,6 +1071,7 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
     const reported = /\bPR #(\d+)/.exec(m.body)
     if (g) await setGroup($, g.lead, { summary: firstLine(m.body), question: undefined, ...(reported ? { pr: Number(reported[1]) } : {}), ...(isDone ? {} : { error: `the worker reported ${payload.outcome ?? 'no outcome'}: ${m.body}` }) })
     await note($, `${who}: worker done, ${payload.outcome ?? 'no outcome'}`)
+    if (isDone) await reportStoppedWorker($, v, g && { ...g, ...(reported ? { pr: Number(reported[1]) } : {}) }, 'reported success')
     if (!isDone) askToDecide($, `the failure of ${who}`, `Triage: the Orca worker for ${who} ended with ${payload.outcome ?? 'no outcome'}:`, m.body, g, v.runId)
     // Keep the worker's terminal open for review.
     if (payload.dispatchId) {
@@ -1080,13 +1082,40 @@ async function handle($: EngineInterface, m: Message): Promise<void> {
   } else if (m.type === 'escalation') {
     // Orca writes this when a turn ends with no worker_done, and the workflow ends the turn of a worker that waits for
     // its checks. The workflow wakes that worker, and its own reminders catch a worker that has stopped.
-    if (payload.stopReason === 'finished') { await note($, `${who} ended a turn and its Dispatch stays open`); return }
+    if (payload.stopReason === 'finished') {
+      await note($, `${who} ended a turn and its Dispatch stays open`)
+      await reportStoppedWorker($, v, g)
+      return
+    }
     // Its Dispatch stays open, so this settles nothing: only worker_done or the Task's status ends a group.
     if (g) await setGroup($, g.lead, { summary: `Needs a decision: ${firstLine(m.body)}` })
     await note($, `${who} escalated: ${firstLine(m.body)}`)
     $.ui.toast(`/dev triage: ${who} escalated: ${firstLine(m.body)}`)
     askToDecide($, `the escalation from ${who}`, `Triage: the Orca worker for ${who} escalated:`, m.body, g, v.runId)
   }
+}
+
+
+async function reportStoppedWorker($: EngineInterface, v: TriageView, g: TriageGroup | undefined, stopped = 'ended its turn'): Promise<void> {
+  if (!g || !v.repo) return
+  const run = runner($, 60_000)
+  const worktrees = await orcaWorktrees(run, '', v.remote?.id)
+  const pr = worktrees.find(w => w.id === g.worktree)?.linkedPR ?? g.pr
+  if (!pr) return
+  await setGroup($, g.lead, { pr })
+  let row: PrRow
+  try {
+    row = await readPullRow(run, v.repo, pr)
+  } catch (error) {
+    ask($, `the stopped worker of #${g.lead}`, `Triage: worker ${g.dispatchId} of #${g.lead} ${stopped}. PR #${pr} (${pullUrl(v.repo, pr)}) could not be checked: ${message(error)}. Repair: read the PR checks before treating the work as complete.`)
+    return
+  }
+  if (row.state !== 'OPEN' || !row.pending) return
+  ask($, `the stopped worker of #${g.lead}`, [
+    `Triage: worker ${g.dispatchId} of #${g.lead} (${g.title}) ${stopped} while PR #${pr} (${pullUrl(v.repo, pr)}) has ${row.pending} pending checks at ${row.head}.`,
+    stopped === 'ended its turn' ? 'Its Dispatch stays open. This does not fail its Task or complete the work.' : 'The worker reported success, but its checks have not finished.',
+    `Check whether the workflow is watching CI. If it is not, resume the worker with one blocking wait: orca orchestration send --to dispatch:${g.dispatchId} --run ${v.runId} --subject "Wait for PR checks" --body "Follow the workflow and wait for the checks of PR #${pr}; escalate if you cannot finish." --json`,
+  ].join('\n'))
 }
 
 type Worker = { dispatchId: string; taskId?: string; workerState?: string; agentTerminalHandle?: string | null; projection?: { liveness?: { verdict?: string } } }
