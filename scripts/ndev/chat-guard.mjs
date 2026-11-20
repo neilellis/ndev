@@ -193,7 +193,7 @@ export function blockedNativePrompt(harness, payload) {
   const idle = Math.floor(elapsed / minutes)
   const explanation = elapsed > 50 * minutes
     ? `This chat has been idle for ${idle} minutes.`
-    : elapsed >= 5 * minutes && activity.tokens > threshold
+    : elapsed >= 20 * minutes && activity.tokens > threshold
       ? `This chat has about ${activity.tokens.toLocaleString('en-GB')} tokens and has been idle for ${idle} minutes.`
       : undefined
   if (!explanation) {

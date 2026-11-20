@@ -274,12 +274,13 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
     timestamp: stamp(minutes), type: 'event_msg',
     payload: { type: 'token_count', info: { last_token_usage: { total_tokens: tokens } } },
   })
-  const stale = [codex(6, 200_001)]
+  const stale = [codex(21, 200_001)]
   assert.notEqual(call('codex', 'draft', stale).decision, 'block')
   writeFileSync(enabled, '')
   assert.notEqual(call('codex', 'draft', stale, '').decision, 'block')
-  assert.notEqual(call('codex', 'draft', [codex(6, 200_000)]).decision, 'block')
-  assert.notEqual(call('codex', 'draft', [codex(4, 300_000)]).decision, 'block')
+  assert.notEqual(call('codex', 'draft', [codex(21, 200_000)]).decision, 'block')
+  assert.notEqual(call('codex', 'draft', [codex(6, 300_000)]).decision, 'block')
+  assert.notEqual(call('codex', 'draft', [codex(19, 300_000)]).decision, 'block')
   const blocked = call('codex', 'draft', stale)
   assert.equal(blocked.decision, 'block')
   assert.match(blocked.reason, /200,001 tokens.*\/compact/)
