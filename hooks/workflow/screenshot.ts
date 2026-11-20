@@ -4,6 +4,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import { SCREENSHOT_SCHEMES, SCREENSHOT_VIEWPORTS } from './change-types'
+import { INNER_SCROLL_PROBE } from './screenshot-scroll'
 import { Refuse, head, must, paths, run, said } from './effects'
 
 const REPAIR = 'Repair: start Orca with `orca open`, then call screenshot again. Without Orca, use the matrix script of the ndev:responsive-check skill.'
@@ -81,25 +82,45 @@ async function scrollPage($: EngineInterface, root: string, page: string, top: n
   return { y, height, total }
 }
 
+async function innerScroller($: EngineInterface, root: string, page: string): Promise<{ element: string; height: number; total: number } | undefined> {
+  const answer = await pageValue($, root, page, INNER_SCROLL_PROBE)
+  const invalid = () => new Refuse(`Orca returned invalid inner-scroll measurements for page ${page}: ${answer.slice(0, 200)}. No more images were saved.`)
+  let measured: unknown
+  try {
+    measured = JSON.parse(answer)
+  } catch {
+    throw invalid()
+  }
+  if (measured === null) return undefined
+  if (typeof measured !== 'object' || Array.isArray(measured)) throw invalid()
+  const value = measured as Record<string, unknown>
+  if (typeof value.element !== 'string' || !value.element || typeof value.height !== 'number' || !Number.isFinite(value.height) || value.height <= 0 || typeof value.total !== 'number' || !Number.isFinite(value.total) || value.total <= value.height) throw invalid()
+  return { element: value.element, height: value.height, total: value.total }
+}
+
 async function copyShot($: EngineInterface, root: string, shot: Record<string, unknown>, url: string, view: string, file: string): Promise<void> {
   if (typeof shot.path !== 'string') throw new Refuse(`orca screenshot gave no file path for ${url} at ${view}: ${JSON.stringify(shot).slice(0, 200)}. The Orca version may differ from what this tool expects.`)
   const copied = await run($, ['cp', shot.path, file], { cwd: root })
   if (copied.exitCode !== 0) throw new Refuse(`cp ${shot.path} ${file} exited ${copied.exitCode}: ${said(copied)}`)
 }
 
-async function shootFullPage($: EngineInterface, root: string, page: string, asked: Asked, view: string, base: string): Promise<{ files: string[]; warning?: string }> {
+async function shootFullPage($: EngineInterface, root: string, page: string, asked: Asked, view: string, base: string): Promise<{ files: string[]; warnings: string[] }> {
   const files: string[] = []
+  const warnings = new Set<string>()
+  const result = (warning?: string) => ({ files, warnings: [...(warning ? [warning] : []), ...warnings] })
   let top = 0
   let last = -1
   for (let part = 1; ; part++) {
     const { y, height, total } = await scrollPage($, root, page, top)
+    const inner = await innerScroller($, root, page)
+    if (inner) warnings.add(`${base}: ${inner.element} scrolls inside the page (${inner.height} px pane, ${inner.total} px content). Only its visible portion was captured, so these images are not the whole page.`)
     const atEnd = y + height >= total - 1
-    if (y <= last && !atEnd) return { files, warning: `${base}: the page stopped at ${y + height} px of ${total} px and would not scroll on, so the images are not the whole page. Its content may scroll inside an element and not in the page.` }
+    if (y <= last && !atEnd) return result(`${base}: the page stopped at ${y + height} px of ${total} px and would not scroll on, so the images are not the whole page. Its content may scroll inside an element and not in the page.`)
     const file = part === 1 && atEnd ? `${base}.png` : `${base}-part${part}.png`
     await copyShot($, root, await browser($, root, ['screenshot', '--page', page, '--format', 'png']), asked.url, view, file)
     files.push(file)
-    if (atEnd) return { files }
-    if (part === PAGE_IMAGE_LIMIT) return { files, warning: `${base}: the limit of ${PAGE_IMAGE_LIMIT} images ended at ${y + height} px of ${total} px, so these images are not the whole page.` }
+    if (atEnd) return result()
+    if (part === PAGE_IMAGE_LIMIT) return result(`${base}: the limit of ${PAGE_IMAGE_LIMIT} images ended at ${y + height} px of ${total} px, so these images are not the whole page.`)
     last = y
     top = y + Math.floor(height * PAGE_STEP)
   }
@@ -147,9 +168,9 @@ async function shootEach($: EngineInterface, root: string, page: string, asked: 
       if (seen !== width) throw new Refuse(`Orca did not apply the viewport ${view} to ${asked.url}: the page is ${seen} wide, not ${width}. No image of it was saved. ${REPAIR}`)
       const base = `${folder}/${slugOf(asked.url)}-${view}-${scheme}`
       if (asked.fullPage) {
-        const { files, warning } = await shootFullPage($, root, page, asked, view, base)
+        const { files, warnings: partial } = await shootFullPage($, root, page, asked, view, base)
         files.forEach((file, index) => shots.push({ view, scheme, part: index + 1, file }))
-        if (warning) warnings.push(warning)
+        warnings.push(...partial)
         continue
       }
       await copyShot($, root, await browser($, root, ['screenshot', '--page', page, '--format', 'png']), asked.url, view, `${base}.png`)
