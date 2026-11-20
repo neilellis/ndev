@@ -93,7 +93,7 @@ function fitted(live: WorkflowLive): string {
   return out
 }
 
-async function writeNow($: EngineInterface, root: string, name: string, change: (live: WorkflowLive) => WorkflowLive): Promise<void> {
+async function writeNow($: EngineInterface, root: string, name: string, change: (live: WorkflowLive) => WorkflowLive, at?: number): Promise<void> {
   try {
     const path = livePath(await liveGitDir($, root), name)
     let was: WorkflowLive = { at: 0 }
@@ -105,7 +105,7 @@ async function writeNow($: EngineInterface, root: string, name: string, change: 
         was = { at: 0 }
       }
     }
-    await $.fs.write(path, fitted({ ...change(was), at: await $.clock.now() }))
+    await $.fs.write(path, fitted({ ...change(was), at: at ?? await $.clock.now() }))
   } catch (error) {
     const key = `${root}:${name}`
     if (toasted.has(key)) return
@@ -115,9 +115,9 @@ async function writeNow($: EngineInterface, root: string, name: string, change: 
 }
 
 // Writes for one file go one at a time, or a tool call and a wait in the same worktree lose a line.
-export async function writeLive($: EngineInterface, root: string, name: string, change: (live: WorkflowLive) => WorkflowLive): Promise<void> {
+export async function writeLive($: EngineInterface, root: string, name: string, change: (live: WorkflowLive) => WorkflowLive, at?: number): Promise<void> {
   const key = `${root}:${name}`
-  const next = (queues.get(key) ?? Promise.resolve()).then(() => writeNow($, root, name, change))
+  const next = (queues.get(key) ?? Promise.resolve()).then(() => writeNow($, root, name, change, at))
   queues.set(key, next)
   await next
 }
@@ -134,6 +134,17 @@ export async function liveCallEnd($: EngineInterface, root: string, name: string
     ...live,
     calls: (live.calls ?? []).map(c => (c.tool === tool && c.at === at ? { ...c, outcome, endedAt, note: shownValue('note', result) } : c)),
   }))
+}
+
+export async function liveCallFailed($: EngineInterface, root: string, name: string, tool: string, args: Record<string, unknown>, result: string, startedAt?: number): Promise<void> {
+  const endedAt = Date.now()
+  await writeLive($, root, name, live => {
+    const calls = live.calls ?? []
+    const failed = { tool, args: shownArgs(args), at: startedAt ?? endedAt, outcome: 'failed' as const, endedAt, note: shownValue('note', result) }
+    return { ...live, calls: startedAt !== undefined && calls.some(c => c.tool === tool && c.at === startedAt)
+      ? calls.map(c => c.tool === tool && c.at === startedAt ? { ...c, ...failed } : c)
+      : [...calls, failed] }
+  }, endedAt)
 }
 
 export async function readLive($: EngineInterface, path: string): Promise<{ live?: WorkflowLive; error?: string }> {
