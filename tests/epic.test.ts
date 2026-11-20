@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 
 import { EPIC_STATES, addedMigrations, epicHumanStep, epicLineOf, epicStep, frontier, implementerBrief, nextEpicState, reviewerBrief, shellQuote, sliceProblems, stackPlan, unlistedMigrations, workerStartCommand } from '../hooks/workflow/epic'
 import type { Epic, SubIssue } from '../hooks/workflow/epic'

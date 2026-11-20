@@ -1,5 +1,5 @@
 // Workflow tests: The base branch, a merged or closed branch, skips and the evidence of a commit. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, SHA, CHECKS, engine, start, tool, command, turnEnds, idle, finishing, noChecks, remark, MERGED_PR } from './workflow-harness'
 
 test('started does not claim a branch whose PR has merged, and names the repair', async ($, on) => {

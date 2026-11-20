@@ -1,5 +1,5 @@
 // Workflow tests: started, the first commits, done, an issue closed or merged outside the workflow, and the turn-end reminders. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, CHECKS, engine, settle, start, tool, command, turnEnds, finishing, alreadyFixed } from './workflow-harness'
 
 // ---- started ----

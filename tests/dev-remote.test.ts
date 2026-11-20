@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 
 // /dev remote saves which of Orca's saved servers this project uses as its remote machine. The setting lives on this
 // machine (the server is an entry in this machine's Orca), keyed by the project's GitHub repository.

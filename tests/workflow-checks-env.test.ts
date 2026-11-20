@@ -1,5 +1,5 @@
 // Workflow tests: requestSecret, the check scripts and their env, finishedReview and the push hook. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, CONFIG, engine, settle, start, tool, command, finishing, QUALITY, hookCall, OLD_BASE, NEW_BASE, noChecks } from './workflow-harness'
 
 // ---- requestSecret and addMigration ----

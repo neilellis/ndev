@@ -1,4 +1,4 @@
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock, test } from './sdk-testing'
 import type { On } from 'claude-code'
 
 import { MACHINES, fixture, fixtureWithout } from './walk-doc-fixture'

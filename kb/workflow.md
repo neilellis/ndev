@@ -8,7 +8,7 @@ To read this guide in a session, type `/flow guide`. A terminal shows the diagra
 
 ## Repair an existing PR association
 
-Before resuming an existing PR, use `ndev flow start <issue> --pr <pr>`. It follows the same validation as `ndev flow repair --issue <issue> --pr <pr>` and opens no duplicate PR.
+Before resuming an existing PR, use `ndev flow start <issue> --pr <pr>`. It follows the same validation as `ndev flow repair --issue <issue> --pr <pr>` and opens no duplicate PR. After repair, `start --pr` follows the normal resume path. A confirmed conflict reopens an already repaired `done` workflow as `revising`. Unknown mergeability keeps that finished workflow in `done`.
 
 Run `repair` from the isolated checkout that will hold the work. It verifies the open, same-repository PR, its closing issue reference, a matching GitHub origin and that local HEAD contains the canonical remote head. Merge missing PR commits first with the repair command it prints. The workflow records the local branch separately from its canonical publishing branch. Checkpoint and draft pushes keep their existing checks and publish to the original PR branch. The repair neither moves existing local branch refs nor commits, pushes or discards files.
 
@@ -122,7 +122,7 @@ flowchart TD
     smoke -->|"finishedSmoke(report or skip reason)"| finishing[finishing]
     finishing -->|"done(message)<br/>all done checks pass"| done([done<br/>merged, or ready for a human])
     finishing -->|"unanswered feedback found"| revising
-    done -->|"heartbeat finds a conflict or red checks,<br/>or started(issue) with new feedback"| revising[revising<br/>answer the feedback]
+    done -->|"heartbeat finds a conflict or red checks,<br/>or started(issue) finds<br/>new feedback or a confirmed conflict"| revising[revising<br/>answer the feedback]
     done -->|"checkpoint, while the PR is open"| ci
     revising -->|"checkpoint, then<br/>finishedRevision()"| ci
 
@@ -456,6 +456,8 @@ After 20 minutes with no activity, the plugin compacts the session and prompts t
 The heartbeat also watches a `done` PR until the PR merges. A clean PR makes no prompt and no compaction. A conflict or red checks moves the state to `revising`, and the agent is prompted. An agent that finds the conflict first calls `checkpoint`, which goes back to `ci`. A PR that closes in an active state blocks the workflow.
 
 A session that has died does not restart, because the heartbeat runs inside the session. A new session resumes with `started`.
+
+When `started` resumes a finished workflow with an open PR, it checks mergeability. A confirmed conflict moves the record from `done` to `revising`, without an idle heartbeat. Unknown mergeability alone keeps the record in `done`. The native `ndev flow start` command applies the same rule.
 
 A resumed session (`claude --resume`) finds its workflow itself. At start it reads the worktrees of the repository, and it takes the one that it owns or last released. A session that never had the workflow does not take it.
 

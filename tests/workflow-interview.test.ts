@@ -1,5 +1,5 @@
 // Workflow tests: The interview pane, its rounds and setSteering. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, RECORD, flow, held, engine, start, tool, command, idle, seven, INTERVIEW_FILE, INTERVIEW_PANE, ROUND, asking, human, round, answersIn, interviewFile, POSTED_ONCE } from './workflow-harness'
 
 test('a hand-over gives the worker the answers of the parent and not its workflow', async ($, on) => {

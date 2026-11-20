@@ -161,7 +161,7 @@ issue-new) if [ -n "$ACCEPTED_BODY" ]; then cp "$5" "$ACCEPTED_BODY"; echo 'lost
 api) if [ -z "$SEARCH_DELAY" ]; then jq -n --rawfile body "$ACCEPTED_BODY" '[{number:40,body:$body},{number:55,body:"unrelated"},{number:67,body:$body,pull_request:{}}]' | jq -r "$5"; fi ;;
 pr-list) [ -z "$EXISTING_PR" ] || echo '{"number":9}' ;;
 pr-new) echo '{"url":"https://github.com/test/project/pull/9"}' ;;
-pr-read) if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
+pr-read) if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
 pr-edit) cp "$4" "$PR_BODY" ;;
 comment|subissues|pr-ready) echo '{"ok":true}' ;;
 commit-checks) if [ -n "$MOVE_DURING_CHECKS" ]; then git commit --allow-empty -qm 'New head while reading checks'; git push -q origin HEAD:feature; fi; echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"success"}],"statuses":[]}' ;;
@@ -805,4 +805,89 @@ test('repairs serialize issue acquisition across linked worktrees', () => {
   assert.equal(readFileSync(p.file, 'utf8'), before)
   rmSync(lock, { recursive: true })
   output(p.repair())
+})
+
+test('issue 26: resuming a conflicted finished PR persists revising without an idle owner', () => {
+  const p = project()
+  const fake = services(p)
+  const record = JSON.parse(readFileSync(p.file, 'utf8'))
+  record.workflow.state = 'done'
+  delete record.workflow.owner
+  writeFileSync(p.file, JSON.stringify(record))
+  const result = JSON.parse(output(flow(p, ['start', '7'], { ...fake, PR_MERGEABLE: 'false' })))
+  assert.equal(result.state, 'revising')
+  const stored = JSON.parse(readFileSync(p.file, 'utf8')).workflow
+  assert.equal(stored.state, 'revising')
+  assert.ok(stored.history.some(entry => entry.tool === 'started' && entry.from === 'done' && entry.to === 'revising'))
+  assert.match(result.text, /PR #9.*conflicts/)
+  assert.match(result.text, /origin\/main/)
+  assert.match(result.text, /checkpoint/)
+})
+
+test('issue 26: unknown or clean mergeability leaves a resumed finished PR done', () => {
+  for (const mergeable of ['null', 'true']) {
+    const p = project()
+    const fake = services(p)
+    const record = JSON.parse(readFileSync(p.file, 'utf8'))
+    record.workflow.state = 'done'
+    delete record.workflow.owner
+    writeFileSync(p.file, JSON.stringify(record))
+    const result = JSON.parse(output(flow(p, ['start', '7'], { ...fake, PR_MERGEABLE: mergeable })))
+    assert.equal(result.state, 'done')
+    assert.equal(JSON.parse(readFileSync(p.file, 'utf8')).workflow.state, 'done')
+    assert.match(readFileSync(fake.GH_LOG, 'utf8'), /^pr-read 9$/m)
+  }
+})
+
+test('issue 26: a failed finished-PR refresh names the PR and leaves the record unchanged', () => {
+  const p = project()
+  const fake = services(p)
+  const record = JSON.parse(readFileSync(p.file, 'utf8'))
+  record.workflow.state = 'done'
+  delete record.workflow.owner
+  writeFileSync(p.file, JSON.stringify(record))
+  const before = readFileSync(p.file, 'utf8')
+  const result = flow(p, ['start', '7'], { ...fake, PR_READ_FAIL: 'GitHub temporarily unavailable' })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /pr-read 9/)
+  assert.match(result.stderr, /exited 37/)
+  assert.match(result.stderr, /GitHub temporarily unavailable/)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+})
+
+test('explicit-PR start refreshes conflicts after an idempotent repair', () => {
+  const p = repairProject()
+  output(p.repair())
+  p.setRecord({ state: 'done' })
+  p.setPr({ mergeable: false })
+  const result = JSON.parse(output(flow(p, ['start', '7', '--pr', '10'], p.fake)))
+  assert.equal(result.state, 'revising')
+  assert.ok(p.read().history.some(entry => entry.tool === 'started' && entry.from === 'done' && entry.to === 'revising'))
+  assert.match(result.text, /PR #10.*conflicts/)
+  assert.equal(p.read().branch, 'canonical')
+  assert.equal(p.read().localBranch, 'feature')
+})
+
+test('explicit-PR start preserves done while GitHub computes mergeability', () => {
+  const p = repairProject()
+  output(p.repair())
+  p.setRecord({ state: 'done' })
+  p.setPr({ mergeable: null })
+  const result = JSON.parse(output(flow(p, ['start', '7', '--pr', '10'], p.fake)))
+  assert.equal(result.state, 'done')
+  assert.equal(p.read().state, 'done')
+  assert.equal(p.read().history.some(entry => entry.from === 'done' && entry.to === 'revising'), false)
+})
+
+test('repair refreshes a retargeted PR base even when its head is unchanged', () => {
+  const p = repairProject()
+  output(p.repair())
+  p.setRecord({ state: 'done', baseCheck: { exitCode: 0, sha: git(p.work, 'rev-parse', 'HEAD') } })
+  git(p.work, 'push', '-q', 'origin', 'refs/remotes/origin/main:refs/heads/release')
+  p.setPr({ base: { ref: 'release' } })
+  const result = JSON.parse(output(p.repair())).workflow
+  assert.equal(result.base, 'release')
+  assert.equal(result.baseCheck, undefined)
+  assert.equal(p.read().base, 'release')
+  assert.equal(p.read().state, 'developing')
 })

@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 
 // /dev triage clean: code gathers a fact record for every open issue, in batches, before the model is asked anything,
 // and mcp__ndev__clean_verdicts refuses an answer that leaves an issue without a verdict.

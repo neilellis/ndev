@@ -160,7 +160,7 @@ function save(wf: Workflow) {
 function ghRun(root: string, repo: string | undefined, args: string[]): string {
   const script = process.env.NDEV_FLOW_GH || `${HOME}/scripts/github/gh.sh`
   const r = run('bash', [script, ...args], { cwd: root, env: repo ? { GH_REPO: repo } : {}, timeout: 300_000 })
-  if (r.status !== 0) throw new Fail(1, `ndev-flow: gh.sh ${args[0]} exited ${r.status}: ${said(r)}`)
+  if (r.status !== 0) throw new Fail(1, `ndev-flow: gh.sh ${args.slice(0, 2).join(' ')} exited ${r.status}: ${said(r)}`)
   return r.stdout.trim()
 }
 function ghJson<T>(root: string, repo: string | undefined, args: string[]): T {
@@ -593,7 +593,10 @@ function started(root: string, config: Config, args: Args) {
       setUpPr(wf, ghJson<{ title: string }>(root, wf.repo, ['issue-read', String(issue)]).title)
       if (wf.prs.length) notes.push(`Opened ${prUrl(wf)}.`)
     }
-    const to = afterStarted({ state: wf.state as any, previous: wf.previous as any }, { mode: wf.mode as any, steering: wf.steering as any })
+    const pr = wf.state === 'done' && !wf.direct && wf.prs.length ? readPr(wf, prOf(wf)) : undefined
+    const prConflict = pr?.state === 'open' && pr.mergeable === false
+    if (prConflict) notes.push(`PR #${pr.number} has conflicts with ${wf.base}. Merge origin/${wf.base} into this branch, resolve the conflicts, and run ${FLOW} checkpoint.`)
+    const to = afterStarted({ state: wf.state as any, previous: wf.previous as any }, { mode: wf.mode as any, steering: wf.steering as any, prConflict })
     if (to.state !== wf.state) apply(wf, to, 'started', notes)
     wf.owner = { session: session(), at: now() }
     save(wf)
@@ -1378,7 +1381,7 @@ function repairFlow(root: string, config: Config, args: Args) {
   const remote = gitOk(root, 'rev-parse', `origin/${pr.head.ref}`)
   if (remote !== pr.head.sha) throw new Fail(1, `PR #${number} head ${pr.head.sha} differs from origin/${pr.head.ref}@${remote}. Refresh the PR and retry the repair.`)
   if (git(root, 'merge-base', '--is-ancestor', remote, sha).status !== 0) throw new Fail(1, `HEAD ${sha} is missing commits from PR #${number} on canonical branch ${pr.head.ref}@${remote}. Repair: git merge origin/${pr.head.ref}, resolve conflicts, then retry ndev flow repair --issue ${issue} --pr ${number}.`)
-  if (held?.branch === pr.head.ref && (held.localBranch || held.branch) === localBranch && held.prs[0] === number && held.owner?.session === session() && held.lastRepair?.head === sha && held.lastRepair?.remote === remote) return report(held, config, ['Association already repaired; nothing changed.'])
+  if (held?.branch === pr.head.ref && held.base === pr.base.ref && (held.localBranch || held.branch) === localBranch && held.prs[0] === number && held.owner?.session === session() && held.lastRepair?.head === sha && held.lastRepair?.remote === remote) return report(held, config, ['Association already repaired; nothing changed.'])
   const wf: Workflow = held || { issue, root, repo, base: pr.base.ref, branch: localBranch, prs: [], state: (config.steering || 'interactive') === 'interactive' ? 'interviewing' : 'developing', mode: args.mode || config.mode || 'light', steering: config.steering || 'interactive', history: [], evidence: {}, followUps: [], migrations: [], attempts: 0, nudges: { count: 0 }, shortName: `repair-pr-${number}` }
   const previous = { branch: wf.branch, localBranch: wf.localBranch, base: wf.base, prs: wf.prs, state: wf.state }
   wf.branch = pr.head.ref
@@ -1523,7 +1526,15 @@ function dispatchFlow(argv: string[], options: { json?: boolean }) {
   if (epic && !['status', 'guide', 'mode', 'steering'].includes(command)) throw new Fail(1, `Session ${session()} coordinates epic #${epic.epic}. Run ndev epic status. To resume issue work, use ndev epic off first.`)
   if (command === 'repair' || command === 'start' && args.pr) {
     if (config.workflow === false) throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
-    return publicCli!.repairLocked(root, Number(need(args, 'issue')), () => repairFlow(root, config, args))
+    return publicCli!.repairLocked(root, Number(need(args, 'issue')), () => {
+      const repaired = repairFlow(root, config, args)
+      if (command === 'repair') return repaired
+      const resumed = started(root, config, args)
+      publicCli!.bind(root, resumed.issue, session())
+      const notes = [...repaired.notes, ...resumed.notes]
+      if (inOrca() && !resumed.workflow.direct) syncWorkspace(resumed.workflow, notes)
+      return report(resumed.workflow, config, notes)
+    })
   }
   if (['create', 'hotfix', 'start'].includes(command)) {
     if (config.workflow === false) throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)

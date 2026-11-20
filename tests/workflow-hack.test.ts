@@ -1,5 +1,5 @@
 // Workflow tests: Hack mode: the hack, hardening and its refusals. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { engine, start, tool, command, HACK } from './workflow-harness'
 
 test('in the hack, checkpoint commits with no push and no base check, and a failed fast check only reports', async ($, on) => {

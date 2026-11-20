@@ -1009,12 +1009,17 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   if (chosen) record.mode = chosen as IssueSettings['mode']
 
   let feedback: string[] = []
+  let prConflict = false
   if (record.state === 'done' && record.prs[0]) {
     const pr = await readPr($, root, repo, record.prs[0])
-    if (pr.state === 'open') feedback = await newFeedback($, root, repo, issue, pr, record.feedbackAt ?? 0)
+    if (pr.state === 'open') {
+      feedback = await newFeedback($, root, repo, issue, pr, record.feedbackAt ?? 0)
+      prConflict = pr.mergeable === false
+    }
   }
-  const to = afterStarted(isNew ? undefined : { state: record.state, previous: record.previous }, { mode: facts.mode, steering: facts.steering, scriptsMissing: missing.length > 0, blockerOpen: blockers.length > 0, feedback: feedback.length > 0 })
+  const to = afterStarted(isNew ? undefined : { state: record.state, previous: record.previous }, { mode: facts.mode, steering: facts.steering, scriptsMissing: missing.length > 0, blockerOpen: blockers.length > 0, feedback: feedback.length > 0, prConflict })
   const notes: string[] = [...(claimFromMain ? [claimFromMain] : []), ...(claimNote ? [claimNote] : []), ...(deadPr ? [deadPr] : []), ...claimNotes]
+  if (prConflict) notes.push(`PR #${record.prs[0]} has conflicts with ${record.base}. Merge origin/${record.base} into this branch, resolve the conflicts, and call checkpoint.`)
   notes.push(`Mode: ${facts.mode}, steering: ${facts.steering}, for issue #${issue}.`)
   notes.push('If this issue has the label "incomprehensible", a human could not understand it: rewrite it for clarity before any other work (work-heavy F0c).')
   if (active && !sameRecord(active, record)) {

@@ -1,5 +1,5 @@
 // Workflow tests: New-issue questions, reportWorkflowBug and iNeedA. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, RECORD, engine, settle, start, tool, command, workflowSection, noIssue, talk, launches, promptOf } from './workflow-harness'
 
 test('use an existing issue puts the start of the request in the prompt box', async ($, on) => {

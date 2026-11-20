@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 
 declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
 
