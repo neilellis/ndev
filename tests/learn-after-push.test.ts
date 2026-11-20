@@ -1,5 +1,5 @@
 import type { On } from 'claude-code'
-import { expect, test, type Engine } from 'claude-code/testing'
+import { expect, test, type Engine } from './sdk-testing'
 
 const ran = (stdout = '') => ({
   value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },

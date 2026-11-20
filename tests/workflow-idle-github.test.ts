@@ -1,5 +1,5 @@
 // Workflow tests: The idle reads of GitHub: the PR, its checks and the person typing. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { SHA, pull, CHECKS, engine, start, tool, command, turnEnds, idle, poll, RUNNING, hookCall } from './workflow-harness'
 
 // ---- the idle heartbeat ----

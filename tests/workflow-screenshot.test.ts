@@ -1,5 +1,5 @@
 // Workflow tests: screenshot, the check log cap, waitForPR and the status line. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { held, engine, settle, start, tool, poll, orcaVerbs, SHOTS } from './workflow-harness'
 
 test('screenshot follows the viewports, schemes, fullPage and waitSeconds that it gets', async ($, on) => {

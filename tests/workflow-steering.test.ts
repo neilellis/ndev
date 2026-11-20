@@ -1,5 +1,5 @@
 // Workflow tests: Steering and mode, and the copy editor. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { strictest } from '../hooks/workflow/tools'
 import { ROOT, RECORD, flow, held, engine, settle, start, tool, command, hookCall, seven, twelve, toReview, PROSE, NOT_PROSE, EDITING, live, INTERVIEW_FILE, human } from './workflow-harness'
 

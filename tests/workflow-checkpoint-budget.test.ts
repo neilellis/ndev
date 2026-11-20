@@ -1,5 +1,5 @@
 // Workflow tests: a workflow tool call and the host's time budget for one hook. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { engine, settle, start, tool } from './workflow-harness'
 
 const realMs = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))

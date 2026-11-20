@@ -1,5 +1,5 @@
 // Workflow tests: the Bash guard on raw git commits and pushes, read as the shell reads them. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { engine, start, tool } from './workflow-harness'
 
 for (const command of [

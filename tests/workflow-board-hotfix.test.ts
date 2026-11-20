@@ -1,5 +1,5 @@
 // Workflow tests: The board, the base check, the dead-code sweep and hotfixes. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { boardColumn } from '../hooks/workflow/machine'
 import { ROOT, RECORD, CONFIG, REPO, SHA, pull, CHECKS, engine, settle, start, tool, command, finishing, RUNNING, CLAIMED, noChecks, toReview, BOARD, moves, finished, DONE } from './workflow-harness'
 

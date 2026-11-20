@@ -1,5 +1,5 @@
 // Workflow tests: The reviewer, the remember hook and the change types. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, engine, settle, start, tool, command, toReview, TWO_AXES, orcaVerbs, SHOTS } from './workflow-harness'
 
 test('finishedDevelopment starts the reviewer before it answers, on the worktree and the base branch', async ($, on) => {

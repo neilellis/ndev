@@ -1,5 +1,5 @@
 // Workflow tests: waitForState, create, several issues on one PR and migrations. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, RECORD, REPO, flow, onPr, held, pull, registeredTools, engine, settle, start, STATE_TOOLS, tool, finishing, bodyFile, seven, twelve, OTHER, RECORD_BASE, putIssue, startForState, mine } from './workflow-harness'
 
 test('waitForState holds until an issue in another worktree reaches the state, with no GitHub call, and the state goes back', async ($, on) => {

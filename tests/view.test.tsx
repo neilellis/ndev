@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { linked } from '../hooks/view-layout'
 import { shownFull, shownValue } from '../hooks/workflow/live'
 

@@ -1,5 +1,5 @@
 // Workflow tests: Orca workspaces, blocked, and followUp. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { ROOT, SHA, ok, flow, engine, start, tool, command, idle, RUNNING, arg, inOrca, workerStarts, onDeveloping, CLAIMED, AGENT, startFollowUp } from './workflow-harness'
 
 test('started refuses a short name that is not lower-case words, or that repeats the issue number', async ($, on) => {

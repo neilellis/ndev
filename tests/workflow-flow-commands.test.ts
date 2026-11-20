@@ -1,5 +1,5 @@
 // Workflow tests: The /flow commands and /unblock. The shared harness is in tests/workflow-harness.ts.
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 import { CHECKS, engine, start, tool, command, unblock } from './workflow-harness'
 
 // ---- /flow ----

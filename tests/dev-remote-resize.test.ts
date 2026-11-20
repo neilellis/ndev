@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, test } from './sdk-testing'
 
 // /dev remote resize changes the Hetzner server type of the box that the project's Orca workers run on. It finds the
 // box from the Orca server (its SSH host, then the Hetzner instance id), asks a person, pauses each live worker there
