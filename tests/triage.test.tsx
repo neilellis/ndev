@@ -1734,8 +1734,9 @@ test('workspace discovery failure after a worker stops reaches the coordinator w
   await until(() => w.orcaRan('orchestration worker-start').length === 1, () => w.ran)
   w.linkPr('/w/issue-3', 41)
   await $.command.run(command('refresh'))
+  await until(async () => String(((await $.command.run(command('status'))) as { text: string }).text).includes('/pull/41'))
   w.readErrors.worktrees = 'Orca workspace list unavailable'
   w.deliver({ deliveryId: 'delivery_failed_read', messages: [message('msg_failed_read', 'escalation', 'term_1', 'Turn ended.', { taskId: 'task_1', dispatchId: 'ctx_1', stopReason: 'finished' })] })
   await until(() => w.ran.some(a => a.includes('--ack') && a.includes('delivery_failed_read')), () => w.ran)
-  expect(w.prompts.some(p => p.includes('PR #41') && p.includes('ctx_1') && p.includes('Orca workspace list unavailable'))).toBe(true)
+  await until(() => w.prompts.some(p => p.includes('PR #41') && p.includes('ctx_1') && p.includes('Orca workspace list unavailable')), () => w.prompts)
 })
