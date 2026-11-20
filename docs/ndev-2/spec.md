@@ -113,6 +113,8 @@ ndev hook <event> [--harness <harness>]
 ndev watch [--session <id>] [--worktree <selector>] [--once]
 ```
 
+`fix-prs` configures each repair worktree for `light` mode and `auto` steering before launching its Codex worker. This applies to existing and new worktrees. A new repair worktree is created without an agent first, so the session starts after its settings are saved. If configuration fails, no worker starts. The worker resumes an enabled workflow with the same mode and steering, and leaves disabled workflows off.
+
 When an owner needs to inspect a reviewed commit before a release prerequisite can be met, use `ndev flow push-draft` in the reviewing phase. Supply the full SHA and a summary of the independent review for that commit. It checks the clean worktree, runs `pre-push-check.sh` and pushes that SHA with Git hooks to the existing draft PR in the same repository. The workflow stays in review. Use `finished-review` to run the pre-ready check and mark the PR ready.
 
 Flow transitions with a single target accept `--issue` or `--pr` unless the tree gives the target form. `finished-plan` takes an issue. `finished-development` accepts both lists when the work spans issues and PRs. An agent can set issue steering to auto only with a reason that no human can answer. A human sets it back through the controls described below. A change of mode or steering that yields hack with auto fails before any write.

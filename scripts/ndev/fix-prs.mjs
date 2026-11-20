@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { mayMerge } from '../../hooks/workflow/machine.ts'
-import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, stateRoot } from './common.mjs'
+import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, stateRoot } from './common.mjs'
 import { publishPanel, renderPanel } from './panes.mjs'
 import { readProject } from './project.mjs'
 
@@ -145,19 +145,30 @@ function performMerge(root, file, state, pr) {
 
 function dispatch(root, file, state, pr, summary) {
   const listed = orca(root, ['worktree', 'list'])
-  const workspace = listed.worktrees?.find(tree => tree.projectId === `github:${state.repo.toLowerCase()}` && (tree.branch?.replace(/^refs\/heads\//, '') === pr.headRefName || tree.linkedPR === pr.number))
+  let workspace = listed.worktrees?.find(tree => tree.projectId === `github:${state.repo.toLowerCase()}` && (tree.branch?.replace(/^refs\/heads\//, '') === pr.headRefName || tree.linkedPR === pr.number))
   if (!workspace?.id && !pr.headRefName) throw new CliError(1, `PR #${pr.number} has no branch for an Orca worker.`)
-  const placement = workspace?.id
-    ? ['--worktree', `id:${workspace.id}`]
-    : ['--worktree', 'new-child', '--name', `pr-${pr.number}-repair`, '--base-branch', `origin/${pr.headRefName}`]
   const spec = [
     `Repair PR #${pr.number} in ${state.repo} at head ${pr.headRefOid}. Its branch is ${pr.headRefName}.`,
     summary,
+    'Use light mode and auto steering. When resuming an enabled workflow, use ndev flow start <issue> --mode light and ndev flow steering auto --reason "Fix PRs runs unattended". Keep disabled workflows off.',
     'Use the existing pull request branch. Keep tests and checks tied to the new commit. Do not merge the pull request.',
     `Report with ndev fix-prs report ${pr.number} pushed --worktree ${JSON.stringify(root)}, or blocked --reason <text> with the same worktree.`,
   ].join('\n')
   const started = openOperation(file, state, pr, 'dispatching')
-  const result = orca(root, ['orchestration', 'worker-start', '--spec', spec, '--task-title', `Fix PR #${pr.number}`, ...placement, '--agent', 'codex'])
+  try {
+    if (!workspace?.id) workspace = orca(root, ['worktree', 'create', '--name', `pr-${pr.number}-repair`, '--base-branch', `origin/${pr.headRefName}`, '--pr', String(pr.number), '--parent-worktree', `path:${root}`]).worktree
+    if (!workspace?.id || !workspace.path) throw new CliError(1, `PR #${pr.number}: Orca returned no repair worktree ID or path.`, { repair: 'Run orca worktree list --json and inspect the repair worktree before retrying.' })
+    for (const [key, value] of [['mode', 'light'], ['steering', 'auto']]) {
+      checked(process.execPath, [join(releaseRoot, 'scripts/cli.mjs'), 'project', key, value], {
+        cwd: workspace.path,
+        repair: `Run ndev project ${key} ${value} in ${workspace.path}, then retry PR #${pr.number}.`,
+      })
+    }
+  } catch (error) {
+    recordOperation(file, started, current => ({ ...current, operation: null, phase: 'paused' }))
+    throw error
+  }
+  const result = orca(root, ['orchestration', 'worker-start', '--spec', spec, '--task-title', `Fix PR #${pr.number}`, '--worktree', `id:${workspace.id}`, '--agent', 'codex'])
   if (!result.dispatchId) throw new CliError(1, `Orca did not return a dispatch ID for PR #${pr.number}.`, { details: result })
   return recordOperation(file, started, current => ({
     ...current, operation: null, step: 'fixing', worker: result.dispatchId, workerHead: pr.headRefOid, workerAt: Date.now(),
