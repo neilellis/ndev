@@ -57,7 +57,7 @@ If a local workflow already names an alias branch or an accidental duplicate PR,
 ndev flow repair --issue 1401 --pr 1402
 ```
 
-The repair checks the open PR, issue link, origin, canonical head and local ancestry. It keeps the local branch, files, commits and existing canonical branch intact. Future checkpoints publish `HEAD` to the canonical PR branch. Prior review, CI and smoke evidence is cleared; renew it on the resulting head. A pending operation, shared workflow or record in another worktree refuses repair and names the recovery. To take over from another owner, add `--take-over` only after that owner finishes. The command requires Orca to confirm that owner finished; an old timestamp or absent status is insufficient. It does not close duplicate PRs or merge anything.
+The repair checks the open PR, issue link, origin, canonical head and local ancestry. It keeps the local branch, files, commits and existing canonical branch intact. Future checkpoints publish `HEAD` to the canonical PR branch. Prior review, CI and smoke evidence is cleared. Renew it on the resulting head. A pending operation, shared workflow or record in another worktree refuses repair and names the recovery. To take over from another owner, add `--take-over` only after that owner finishes. The command requires Orca to confirm that owner finished. An old timestamp or absent status is insufficient. It does not close duplicate PRs or merge anything.
 
 `ndev flow` gives the current phase and the next step. Use `ndev flow checkpoint` to commit named files and run the workflow checks. Use `ndev wait` for one blocking wait. In Orca, the watcher checks the current PR head and sends an update when a check fails or the checks finish.
 
