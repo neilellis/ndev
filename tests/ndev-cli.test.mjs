@@ -114,3 +114,13 @@ test('guidance returns project files and the bundled catalogue for a library cho
   assert.ok(guidance.sources.some(source => source.endsWith('kb/libraries.md')))
   assert.ok(guidance.sources.some(source => source.endsWith('package.json')))
 })
+
+test('draft push reaches the workflow handler through the public CLI', t => {
+  const help = run(['flow', 'push-draft', '--help'])
+  assert.equal(help.status, 0, help.stderr)
+  assert.match(help.stdout, /ndev flow push-draft .*--sha .*--review/)
+  const command = run(['flow', 'push-draft', '--issue', '79', '--json'], worktree(t))
+  assert.equal(command.status, 2, command.stdout)
+  const { error } = JSON.parse(command.stdout)
+  assert.match(error.message, /issue #79 has no workflow/)
+})
