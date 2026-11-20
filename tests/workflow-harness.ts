@@ -416,7 +416,7 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'exec') { s.dark = a.join(' ').includes('set media dark'); return answer({ set: true }) }
       if (a[1] === 'eval') {
         const expression = a[a.indexOf('--expression') + 1] as string
-        if (expression.includes('document.querySelectorAll')) return answer({ result: JSON.stringify(s.innerScroller ?? null) })
+        if (expression.includes('.querySelectorAll')) return answer({ result: JSON.stringify(s.innerScroller ?? null) })
         if (expression.includes('scrollTo')) {
           const total = s.pageHeight ?? s.viewportHeight
           s.scrollY = Math.min(Number(/top:\s*(\d+)/.exec(expression)![1]), total - s.viewportHeight, s.stuckAt ?? Infinity)
