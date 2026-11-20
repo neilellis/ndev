@@ -41,3 +41,17 @@ test('a dropped running call closes its own live entry and leaves no running rec
   expect(calls[0]?.outcome).toBe('failed')
   expect(calls[0]?.note).toContain('clock.now')
 })
+
+
+test('a body failure without target arguments names and logs the bound issue', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  Object.defineProperty(w.s, 'now', { get: () => { throw new Error('the clock broke') } })
+  const result = await $.tool.call({ tool: 'mcp__ndev__status' } as never) as { result: string; isError?: boolean }
+  expect(result.isError).toBe(true)
+  expect(result.result).toContain('issue #7')
+  expect(result.result).toContain('kind=throw')
+  expect(result.result).toContain('clock.now')
+  expect(result.result).toContain('Repair: call status')
+  expect(liveFile(w, 'issue-7')?.calls?.some(call => call.tool === 'status' && call.outcome === 'failed')).toBe(true)
+})

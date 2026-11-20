@@ -3576,13 +3576,19 @@ async function liveEnd($: EngineInterface, logged: { root: string; name: string;
   if (logged) await liveCallEnd($, logged.root, logged.name, tool, logged.at, outcome, result)
 }
 
+const failureRepairs = new Map(SPECS.map(s => [s.name, 'status']))
+export function registerWorkflowFailure(name: string, recovery: string): void {
+  failureRepairs.set(name, recovery)
+}
+
 const HOOK_BUDGET_S = 10
 // What each workflow tool call in flight does now, so that the answer for a lost hook can say it. An entry goes
 // when its call answers.
 const callsNow = new Map<string, 'waiting' | 'running'>()
 export function workflowToolLost(tool: string, error: { kind: string; message?: string }, args: Args = {}): { result: string; isError: true } | undefined {
   const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
-  if (!SPECS.some(s => s.name === name)) return undefined
+  const recovery = failureRepairs.get(name)
+  if (!recovery) return undefined
   const context = workflowTarget(name, args)
   const target = context ? ` for ${context.label}` : ''
   const cause = error.kind === 'timeout'
@@ -3592,20 +3598,30 @@ export function workflowToolLost(tool: string, error: { kind: string; message?: 
   callsNow.delete(name)
   const holder = runningNow()
   const doing = now === 'waiting' ? ` It was waiting for its turn${holder ? ` behind ${holder}` : ''}: workflow tool calls run one at a time.` : now === 'running' ? ` It had its turn and was running${holder ? ` (${holder})` : ''}.` : ''
-  return { result: `workflow ${name} gave no answer${target}, because ${cause} (kind=${error.kind}).${doing} The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call status and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
+  return { result: `workflow ${name} gave no answer${target}, because ${cause} (kind=${error.kind}).${doing} The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call ${recovery} and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
 }
 
 const failedCalls = new WeakMap<object, Awaited<ReturnType<typeof liveStart>>>()
 
 export async function workflowToolFailed($: EngineInterface, tool: string, error: { kind: string; message?: string }, args: Args): Promise<{ result: string; isError: true } | undefined> {
+  const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
+  if (!failureRepairs.has(name)) return undefined
   const logged = failedCalls.get(args)
   failedCalls.delete(args)
-  const result = workflowToolLost(tool, error, args)
-  if (!result) return undefined
-  const name = tool.slice('mcp__ndev__'.length)
+  let context = args
+  let contextFailure = ''
+  if (name === 'status' && !workflowTarget(name, args)) {
+    try {
+      context = { ...args, issue: await read($, workflowIssue) }
+    } catch (failure) {
+      contextFailure = ` The bound issue could not be read: ${failure instanceof Error ? failure.message : String(failure)}.`
+    }
+  }
+  const result = workflowToolLost(tool, error, context)!
+  result.result += contextFailure
   try {
     const root = logged?.root || text(args, 'worktree') || await boundRoot($) || await $.session.cwd()
-    const target = workflowTarget(name, args)
+    const target = workflowTarget(name, context)
     if (root && (logged?.name || target)) await liveCallFailed($, root, logged?.name || target!.name, name, args, `kind=${error.kind}: ${error.message ?? 'no message'}. ${result.result}`, logged?.at)
   } catch (failure) {
     result.result += ` Failure evidence could not be recorded: ${failure instanceof Error ? failure.message : String(failure)}.`
@@ -3654,10 +3670,8 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
           return { result: error.message, isError: true as const }
         }
         const message = `workflow ${s.name} failed: ${error instanceof Error ? error.message : String(error)}`
-        await liveEnd($, logged, s.name, 'failed', message)
-        callsNow.delete(name)
-        failedCalls.delete(e)
-        return { result: message + (await reportFault($, `workflow tool ${s.name}`, message, `the project ${project()?.root ?? 'unknown'}`)), isError: true as const }
+        const failure = (await workflowToolFailed($, e.tool, { kind: 'throw', message: error instanceof Error ? error.message : String(error) }, args))!
+        return { ...failure, result: failure.result + (await reportFault($, `workflow tool ${s.name}`, message, `the project ${project()?.root ?? 'unknown'}`)) }
       }
     }).catch(($, e, next) => workflowToolFailed($, e.tool, next.error, e as unknown as Args))
   }

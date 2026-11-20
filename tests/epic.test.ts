@@ -1128,3 +1128,23 @@ test('verified refuses a stacked PR while its blocker is not merged in the recor
   setIssues(w, ...subs('merged'))
   expect((await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'verified', verdict: 'approve' })).isError).toBe(false)
 })
+
+
+for (const name of ['epicStarted', 'epicPhase']) {
+  test(`${name} reports its epic and repair when the workflow body fails`, async ($, on) => {
+    const w = engine(on)
+    await start($)
+    await tool($, 'epicStarted', { issue: 40 })
+    Object.defineProperty(w.s, 'now', { get: () => { throw new Error('the clock broke') } })
+    const args = name === 'epicPhase' ? { issue: 40, finished: 'framing', evidence: 'Notes', aim: 'Finish the epic' } : { issue: 40 }
+    const result = await tool($, name, args)
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('issue #40')
+    expect(result.text).toContain('kind=throw')
+    expect(result.text).toContain('clock.now')
+    expect(result.text).toContain('Repair: call epicStatus')
+    const entry = [...w.files.entries()].find(([path]) => path.endsWith('/ndev-live-issue-40.json'))
+    const calls = JSON.parse(entry?.[1] ?? '{}').calls ?? []
+    expect(calls.some((call: { tool: string; outcome: string }) => call.tool === name && call.outcome === 'failed')).toBe(true)
+  })
+}
