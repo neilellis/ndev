@@ -5,8 +5,6 @@ description: "Write and review a how-to video that shows one task from start to 
 
 # How-to videos
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
-
 A how-to video shows one task, from its start to a result the viewer can check. It is documentation in moving form. It must be accurate enough that a viewer can follow it with the product open beside it. The shared rules are in `video-types`.
 
 ## The workflow

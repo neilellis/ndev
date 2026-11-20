@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { execFile, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
@@ -56,20 +57,17 @@ test('the Codex profile installs the CLI and triage skills for dollar invocation
   }
 })
 
-test('installed SDLC skills link to the shared North Star guide and require full reads at epic gates', t => {
+test('installed skills mention the North Star only briefly in work skills', t => {
   const { home, env, prefix, install } = fixture(t)
   install('all')
   const guide = join(prefix, 'share/ndev/kb/north-star.md')
   for (const skills of [join(env.CLAUDE_CONFIG_DIR, 'skills'), join(home, '.agents/skills'), join(env.XDG_CONFIG_HOME, 'opencode/skills')]) {
-    const body = name => readFileSync(join(skills, `ndev-${name}/SKILL.md`), 'utf8')
-    for (const name of ['epic-plan', 'epic-coordinate', 'work-light', 'work-heavy', 'work-heavy-auto', 'implement-spec', 'interview', 'testing', 'adversarial-review', 'docs', 'publish']) {
-      assert.ok(body(name).includes(guide), `ndev-${name} in ${skills} must link to ${guide}`)
-      assert.match(body(name), /NORTH_STAR\.md/)
+    for (const name of readdirSync(skills)) {
+      const body = readFileSync(join(skills, name, 'SKILL.md'), 'utf8')
+      assert.ok(!body.includes('kb/north-star.md'), `${name} still links the boilerplate guide`)
+      if (name.startsWith('ndev-work-')) assert.match(body, /NORTH_STAR\.md/)
+      else assert.doesNotMatch(body, /NORTH_STAR\.md/, name)
     }
-    assert.match(body('epic-plan'), /read all of `NORTH_STAR\.md` before you frame/i)
-    assert.match(body('epic-coordinate'), /read all of `NORTH_STAR\.md` again from the default branch/i)
-    assert.match(body('epic-coordinate'), /approval before you run `ndev epic phase`/)
-    assert.doesNotMatch(body('work-light'), /read all of `NORTH_STAR\.md`/i)
   }
   const policy = readFileSync(guide, 'utf8')
   assert.match(policy, /keep the phase open/i)
@@ -254,4 +252,77 @@ test('opencode delivers lifecycle, prompt and post-tool context once to the orig
   assert.deepEqual(await context('other'), ['session-start/other', 'prompt-context/other'])
   assert.deepEqual(await context('first'), ['session-start/first', 'prompt-submit/first', 'post-tool-use/first', 'prompt-context/first'])
   assert.deepEqual(await context('first'), ['prompt-context/first'])
+})
+
+
+test('reinstall keeps an active skill when an old manifest path aliases the same file', t => {
+  const { home, env, install } = fixture(t)
+  const first = install('claude')
+  const skill = join(env.CLAUDE_CONFIG_DIR, 'skills/ndev-work-light/SKILL.md')
+  const oldDirectory = join(env.CLAUDE_CONFIG_DIR, 'skills/ndev-old-profile')
+  symlinkSync(join(env.CLAUDE_CONFIG_DIR, 'skills/ndev-work-light'), oldDirectory, 'dir')
+  const oldSkill = join(oldDirectory, 'SKILL.md')
+  const manifest = read(first.manifest)
+  manifest.files[oldSkill] = { ...manifest.files[skill] }
+  writeFileSync(first.manifest, JSON.stringify(manifest))
+  rmSync(skill)
+  const result = install('claude')
+  assert.equal(existsSync(skill), true, 'stale alias cleanup must keep the active skill')
+  assert.equal(existsSync(oldSkill), true)
+  assert.equal(result.removed.includes(oldSkill), false)
+  assert.equal(Object.hasOwn(read(first.manifest).files, oldSkill), false)
+  assert.match(readFileSync(skill, 'utf8'), /name: ndev-work-light/)
+})
+
+
+test('skill discovery has one entry for each consolidated task in both harnesses', t => {
+  const { home, env, install } = fixture(t)
+  for (const [profile, skillsDir] of [['claude', join(env.CLAUDE_CONFIG_DIR, 'skills')], ['codex', join(home, '.agents/skills')]]) {
+    const { files } = install(profile, '--dry-run')
+    for (const name of ['i', 'r', 'for-codex', 'mobile-testing']) {
+      assert.ok(!files.includes(join(skillsDir, `ndev-${name}/SKILL.md`)), `${profile} still advertises ndev-${name}`)
+    }
+    for (const name of ['issue', 'remember', 'responsive-check']) {
+      assert.ok(files.includes(join(skillsDir, `ndev-${name}/SKILL.md`)), `${profile} lost ndev-${name}`)
+    }
+    assert.ok(files.includes(join(skillsDir, 'ndev-responsive-check/scripts/mobile-shots.mjs')))
+  }
+})
+
+test('reinstall retires owned aliases and mobile capture while preserving unrelated skills', t => {
+  const { home, env, run, install } = fixture(t)
+  install('claude')
+  const { manifest } = install('codex')
+  const record = read(manifest)
+  const retired = []
+  const foreign = []
+  for (const [owner, skillsDir] of [['claude', join(env.CLAUDE_CONFIG_DIR, 'skills')], ['codex', join(home, '.agents/skills')]]) {
+    for (const name of ['i/SKILL.md', 'r/SKILL.md', 'mobile-testing/SKILL.md', 'mobile-testing/scripts/mobile-shots.mjs', 'for-codex/SKILL.md', 'for-codex/scripts/link.sh']) {
+      const path = join(skillsDir, `ndev-${name}`)
+      const text = `old ${name} skill\n`
+      mkdirSync(join(path, '..'), { recursive: true })
+      writeFileSync(path, text, { mode: 0o644 })
+      record.files[path] = { owner, mode: 0o644, sha256: createHash('sha256').update(text).digest('hex') }
+      retired.push(path)
+    }
+    const path = join(skillsDir, 'my-skill/SKILL.md')
+    mkdirSync(join(skillsDir, 'my-skill'))
+    writeFileSync(path, 'user skill')
+    foreign.push(path)
+  }
+  writeFileSync(manifest, JSON.stringify(record))
+  const changed = retired[0]
+  const original = readFileSync(changed, 'utf8')
+  writeFileSync(changed, 'local edit')
+  const refusal = run('claude')
+  assert.notEqual(refusal.status, 0)
+  assert.ok(refusal.stderr.includes(changed), refusal.stderr)
+  assert.equal(readFileSync(changed, 'utf8'), 'local edit')
+  assert.deepEqual(read(manifest), record)
+  writeFileSync(changed, original)
+  install('claude')
+  install('codex')
+  for (const path of retired) assert.equal(existsSync(path), false, path)
+  for (const path of foreign) assert.equal(readFileSync(path, 'utf8'), 'user skill')
+  for (const path of retired) assert.equal(read(manifest).files[path], undefined)
 })

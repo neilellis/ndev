@@ -142,6 +142,8 @@ Keep draft PRs until their workflow gates are met. Follow the project merge sett
 
 An epic stores GitHub sub-issues and their blocker links. A child can start from a pushed open blocker PR when the frontier and capacity rules allow it. Record the stack in its brief and give Orca the base branch. After the blocker merges, tell the worker to rebase and retarget. Verify the child only once the blocker is merged and the child PR targets the default branch. Resolve remote worktrees by their server and repository ID. Carry the worker role, agent, and model in its brief. Keep local and remote workers on the same epic state rules.
 
+Workflow code reviews use GPT-6.1 Terra for Codex and Sonnet for Claude. `NDEV_REVIEW_AGENT` selects the Orca harness. Other harnesses use their configured model.
+
 To resume an existing plan from `slicing`, run `ndev epic import <epic> --issues-file <json> --evidence <text>`. Repeat the command in `coordinating` to refresh GitHub evidence. The manifest must name every child once, with a valid `key`, an explicit `kind` (`implementation` or `human`), and the full `blockedBy` list from GitHub. For example:
 
 ```json

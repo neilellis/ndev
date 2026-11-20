@@ -4,8 +4,6 @@ description: "Do the requested work directly on the main branch in the main chec
 disable-model-invocation: true
 ---
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if a fix changes behaviour governed by the project.
-
 Use this skill only when the user invokes it by name for the current task. Never load it on your own judgement. Never carry it into a later task.
 
 ## The exception

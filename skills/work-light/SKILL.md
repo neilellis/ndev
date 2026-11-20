@@ -1,11 +1,11 @@
 ---
 name: work-light
-description: "The interactive lightweight development skill (light mode, the default). Implement fixes and features with a light solo workflow. Use for focused TDD, safe worktree isolation, and concurrent independent fixes without repeated planning, reviews, or status work."
+description: "Implement focused fixes and small features in light mode, the default. One owner handles diagnosis, TDD, verification and the PR. Use work-heavy for larger or risky changes."
 ---
 
 # Light work
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the change affects project goals, rules, or behaviour.
+Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 One main agent owns each fix from diagnosis to PR. Small helpers keep its context focused.
 This is the everyday coding workflow. Use the `work-heavy` skill for multi-step features, cross-cutting or high-risk changes that need a plan, reviews and staged verification.
@@ -18,7 +18,7 @@ While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp
 
 | Stage | Tool | What the tool does |
 |---|---|---|
-| Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree and opens the draft PR. Call it first. |
+| Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree. The first push of a real change opens the draft PR. Call it first. |
 | Interview (interactive) | `mcp__ndev__interview(interviewJson)`, then `mcp__ndev__interview()` | Asks the human in a pane, then goes on. Load the `interview` skill. |
 | Plan (heavy) | `mcp__ndev__finishedPlan(markdown_file)` | Puts the plan in the PR body and runs `pre-push-check.sh` on the base. |
 | Base check (light, auto) | `mcp__ndev__finishedInterview()` | With no interview, call it before any code. It runs `pre-commit-check.sh` on the base. `interview()` runs the same check when it goes on to development. A failure does not stop you: fix it if small, or use `followUp` or `blocked`. |
@@ -101,6 +101,10 @@ If baseline health matters, check it once on the base commit. An unrelated basel
 - Every error message prints the failed identifier and useful diagnostics. When the repair is known, the message names it.
 - Do not write comments in code. The only exception is a fact that took a lot of research or trial and error to find; if you are not sure, leave it out. The rule is `${CLAUDE_PLUGIN_ROOT}/kb/comments.md`.
 
+## Confirm development is done
+
+Under interactive steering, show a concrete development preview when relevant and keep taking design feedback. Ask whether the work is done before final checks or review. Wait for the human to confirm. If they request changes, keep developing and ask again when those changes are ready. Only then call `ndev flow finished-development` with `--human-confirmation` containing the human’s answer. The CLI refuses an interactive finish without this answer, before staging files, checks or review. Auto steering continues without this confirmation.
+
 ## Finish once
 
 Inspect the final diff for scope, accidental changes and missing acceptance criteria.
@@ -118,7 +122,7 @@ Choose the checks from the affected behaviour. Use the commands named in the pro
 
 Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states, in a comment on the PR. With no PR, put them in the commit message.
 
-One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `r` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
+One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `remember` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
 
 While a workflow runs, push with `mcp__ndev__checkpoint`. Otherwise push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Hooks run. Never use `--no-verify` and never change the hooks path to skip them. Resolve base conflicts and commit before you continue.
 
@@ -165,4 +169,4 @@ Waiting belongs in scripts, also inside a helper. Tell an editing helper which f
 - Keep unrelated discoveries out of the diff.
 - Keep the main agent on the user's chosen model. Reserve Astra (the escalation model) for an unresolved diagnosis, a consequential design decision or a risky review. Give it a bounded brief with the evidence and the decision needed.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

@@ -1,12 +1,10 @@
 ---
 name: issue
-description: "Create a GitHub issue from a short description, add it to the project board in Backlog, and fill in the issue and board fields that the description supports. Use when the user types /issue or /i, or asks to file or raise an issue. Also invoked as /i. With --orca, also opens the issue in a new Orca workspace."
+description: "Create a GitHub issue from a description, add it to Backlog and fill supported fields. Use when asked to file an issue. With --orca, open it in a new Orca workspace."
 argument-hint: "[--orca] <description of the issue>"
 ---
 
 # Create an issue in Backlog
-
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the issue changes project goals, rules, or public claims.
 
 The description is: $ARGUMENTS
 

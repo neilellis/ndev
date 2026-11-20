@@ -5,8 +5,6 @@ description: "Check a local, preview or live copy of a website for broken links,
 
 # Site check
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when verification includes a project rule for how the site must behave.
-
 There are two checks. Both work on a local server, a Vercel preview or the live site. Run them in the project root: the scripts load their packages from the project's `node_modules`.
 
 - **Link check.** `node "${CLAUDE_PLUGIN_ROOT}/skills/site-check/scripts/links.mjs" <url>` uses linkinator to visit every page on the site: every page in the sitemap and every page reachable by links. It checks every link and image on those pages, including links to other sites. Sites that turn checkers away (401, 403, 429, 999) are listed as warnings.
@@ -67,4 +65,4 @@ Fix the cause of each problem: a wrong address, a missing page, a failing script
 
 A check that is part of the smoke stage goes to `mcp__ndev__finishedSmoke(report)`, and the report names the HEAD commit. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder, so the scripts are at `<skill folder>/scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Skill-local scripts stay in this skill’s `scripts/` folder.

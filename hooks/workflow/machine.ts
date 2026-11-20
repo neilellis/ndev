@@ -119,6 +119,7 @@ type ModeMachine = {
   interview: string
   // Two reviewers, one for the standards and one for the specification, in place of one.
   twoAxisReview: boolean
+  reviewScreenshots: boolean
   // What the reviewer checks besides the diff, when the mode has a skill with its own finish.
   reviewBrief?: string
   // finishedDevelopment runs gates.sh for each issue of this mode.
@@ -156,6 +157,7 @@ const LIGHT: ModeMachine = {
   reopen: 'developing',
   interview: 'Ask at most 5 pertinent questions and 5 follow-ups, or none if none is pertinent.',
   twoAxisReview: false,
+  reviewScreenshots: false,
   gates: false,
   smokeOnPreview: false,
 }
@@ -176,6 +178,7 @@ const HEAVY: ModeMachine = {
   reopen: 'developing',
   interview: 'Go through the whole design tree, round by round, and let the last round confirm the shared understanding.',
   twoAxisReview: true,
+  reviewScreenshots: true,
   reviewBrief: 'The change follows the work-heavy skill, so check what a finished change of that skill must include.',
   gates: true,
   smokeOnPreview: true,
@@ -199,6 +202,7 @@ const HACK: ModeMachine = {
   validNow: { developing: 'finishedHacking, when the human agrees that the hack works. finishedDevelopment comes after hardening' },
   interview: 'Hack mode has no interview.',
   twoAxisReview: true,
+  reviewScreenshots: true,
   reviewBrief: 'The change follows the work-hack skill: it was hacked, then hardened, so check that its tests pin each behaviour of the diff and that no spike code, debug output or dead end is left.',
   gates: true,
   smokeOnPreview: true,
@@ -342,10 +346,10 @@ export function boardColumn(w: { state: State; merged?: boolean; closedNoChange?
 export const baseCheckScript = (mode: Mode) => MACHINES[mode].baseCheck
 
 // What the accumulated change types add to the next step of the review and the smoke test.
-function reviewStep(full: string, facts: Pick<Facts, 'changeTypes' | 'webFiles'>): string {
+function reviewStep(full: string, facts: Pick<Facts, 'mode' | 'changeTypes' | 'webFiles'>): string {
   const types = facts.changeTypes ?? []
   if (isDocsOnly(types)) return REVIEW_DOCS_ONLY_STEP
-  return [full, types.includes('web') ? reviewWebStep(facts.webFiles ?? []) : '', types.includes('database') ? REVIEW_DATABASE_STEP : ''].filter(Boolean).join(' ')
+  return [full, types.includes('web') && MACHINES[facts.mode].reviewScreenshots ? reviewWebStep(facts.webFiles ?? []) : '', types.includes('database') ? REVIEW_DATABASE_STEP : ''].filter(Boolean).join(' ')
 }
 
 function stepText(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level' | 'merged' | 'remembered' | 'changeTypes' | 'webFiles' | 'baseChecked'>): string {
@@ -359,9 +363,9 @@ function stepText(state: State, facts: Pick<Facts, 'mode' | 'steering' | 'level'
       return 'Read the interview answers in the .neil-dev.issue-*.json files of this worktree. Write the plan (work-heavy F2) in a markdown file with a "Test entry point:" line. Then call finishedPlan with the file name.'
     case 'developing':
       if (MACHINES[facts.mode].localOnly?.includes('developing')) return 'Hack: find a solution that works, by trial and error with the human. Test first is not required here, and spike code is allowed. Do not write comments in code: the only exception is a fact that took a lot of research or trial and error to find (kb/comments.md). First write the goal of the issue in one line in the PR body (gh pr edit <pr> --body-file <file>). Commit through checkpoint as often as is useful: in this state it commits on this computer only, with no push and no CI, and fast-checks.sh only advises. Do not push or merge in any other way. When the human agrees that the solution works, call finishedHacking.'
-      return `${facts.baseChecked === false ? `Before any code, call finishedInterview. It runs ${baseCheckScript(facts.mode)} on the base, so a base that is already broken shows while nothing depends on it. Then: ` : ''}Develop test first. Do not write comments in code: the only exception is a fact that took a lot of research or trial and error to find (kb/comments.md). For a quick answer on your changes, run scripts/ndev/workflow/fast-checks.sh with the changed files; each commit also runs it. Commit and push through checkpoint when a step is coherent. When the work is complete, call finishedDevelopment with the PR numbers, the commit message and each changed file.`
+      return `${facts.baseChecked === false ? `Before any code, call finishedInterview. It runs ${baseCheckScript(facts.mode)} on the base, so a base that is already broken shows while nothing depends on it. Then: ` : ''}Develop test first. Do not write comments in code: the only exception is a fact that took a lot of research or trial and error to find (kb/comments.md). For a quick answer on your changes, run scripts/ndev/workflow/fast-checks.sh with the changed files; each commit also runs it. Commit and push through checkpoint when a step is coherent. ${facts.steering === 'interactive' ? 'Show a concrete development preview when relevant, keep taking design feedback, and ask whether the work is done before final checks or review. Wait for the human to confirm; a request for changes means keep developing. Only after that confirmation, call finishedDevelopment with --human-confirmation containing the human’s answer, the PR numbers, the commit message and each changed file.' : 'When the work is complete, call finishedDevelopment with the PR numbers, the commit message and each changed file.'}`
     case 'hardening':
-      return 'Hardening: the hack must now meet the rules of heavy mode before anything is pushed. Load the ndev:work-hack skill and follow "Harden". Read the whole diff against the base and list each behaviour that it adds or alters. Pin each one with a test through a public interface. Each test must fail on the base for the intended reason and pass on HEAD: show both, and an import error is not proof. Remove spike code, debug output and dead ends. Do not write comments in code: the only exception is a fact that took a lot of research or trial and error to find (kb/comments.md). Commit with checkpoint: in this state each commit runs fast-checks.sh and pre-commit-check.sh, a failure stops it, and nothing is pushed. Then call finishedDevelopment with hardening: each test, the command and failing line on the base, and its pass on HEAD. It runs pre-push-check.sh and gates.sh and puts the evidence on the PR.'
+      return 'Hardening: the hack must now meet the rules of heavy mode before anything is pushed. Load the ndev:work-hack skill and follow "Harden". Read the whole diff against the base and list each behaviour that it adds or alters. Pin each one with a test through a public interface. Each test must fail on the base for the intended reason and pass on HEAD: show both, and an import error is not proof. Remove spike code, debug output and dead ends. Do not write comments in code: the only exception is a fact that took a lot of research or trial and error to find (kb/comments.md). Commit with checkpoint: in this state each commit runs fast-checks.sh and pre-commit-check.sh, a failure stops it, and nothing is pushed. Before final checks or review, show a concrete development preview when relevant, keep taking design feedback, and ask whether the work is done. Wait for the human to confirm, then call finishedDevelopment with --human-confirmation containing the human’s answer and with hardening: each test, the command and failing line on the base, and its pass on HEAD. It runs pre-push-check.sh and gates.sh and puts the evidence on the PR.'
     case 'developed':
       return 'This issue has finished development, and another issue on its PR has not. The last issue to finish calls finishedDevelopment, which starts the review of the PR. If this agent takes that issue, call started with its number. Else end your turn. For more work on this issue, commit with checkpoint.'
     case 'reviewing':
@@ -390,7 +394,7 @@ export function humanStep(state: State, facts: Pick<Facts, 'mode' | 'steering' |
     case 'setup': return 'The agent is setting up the workflow. Wait, or run /flow off <reason> to work on this issue without the workflow.'
     case 'interviewing': return facts.steering === 'auto' ? 'Steering is auto, so the agent skips the interview. Run /flow steering interactive to take part.' : 'Answer the questions in the interview pane or in the chat. Or run /flow skip <reason> to go on without the interview.'
     case 'planning': return 'Wait for the plan in the draft PR. Then say go, or ask for changes.'
-    case 'developing': return facts.mode === 'hack' ? 'Try the change with the agent, and say when the solution works: the agent then hardens it with tests. Or send a correction.' : `The agent develops test first. Wait, or send a correction. Run /flow status to see progress.${facts.mode === 'light' ? ' If the work has grown, run /flow mode heavy.' : ''}`
+    case 'developing': return facts.mode === 'hack' ? 'Try the change with the agent, and say when the solution works: the agent then hardens it with tests. Or send a correction.' : `The agent develops test first. ${facts.steering === 'interactive' ? 'Try the development preview when relevant and send design feedback. When asked whether the work is done, confirm or request changes before final checks and review.' : 'Wait, or send a correction.'} Run /flow status to see progress.${facts.mode === 'light' ? ' If the work has grown, run /flow mode heavy.' : ''}`
     case 'hardening': return 'The agent pins the hack with tests. Wait, or send a correction. Run /flow status to see progress.'
     case 'developed': return 'This issue waits for the other issues on its PR. Wait, or tell the agent to take one of them.'
     case 'reviewing': return 'An independent review of the change runs. Wait, then read the findings and the fixes on the PR.'

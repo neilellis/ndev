@@ -5,8 +5,6 @@ description: "Bring user-facing docs pages back in line with code or wiki change
 
 # docs-sync: keep the docs site true to the code
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when a change affects the facts or rules a page describes.
-
 Before you write or review documentation, read the project's writing rules if `CLAUDE.md` or `AGENTS.md` names them.
 
 ## The workflow
@@ -60,7 +58,7 @@ If `<project root>/.neil-dev.json` has a `branding` key, read `branding.guide` (
 
    *Done when* every file on the no-page list fits one of these three cases.
 4. **Rebuild and check.** Run the project's docs-map build and docs tests, if it has them. Then run `check`. *Done when* all pass. Zero pages found is a failure, not a pass.
-5. **Review dependent media.** If videos, screenshots or diagrams show a changed page, check that they are still accurate. Metadata-only edits need no new media when the explanation and visuals stay accurate.
+5. **Review dependent media.** If videos, screenshots or diagrams show a changed page, check that they are still accurate. For screenshots, follow `${CLAUDE_PLUGIN_ROOT}/kb/docs-screenshots.md`: run the project's refresh and freshness commands. With `docs-screenshots.json`, run `node ${CLAUDE_PLUGIN_ROOT}/scripts/docs/screenshots.mjs refresh docs-screenshots.json`, then the same command with `check`. Add missing source inputs or published copies to the manifest, and inspect the resulting images in the rendered page. Metadata-only edits need no new media when the explanation and visuals stay accurate.
 6. **Record durable facts.** Record a doc and code disagreement that you found and could not resolve in the page in the place the project names (for example a "docs-site" wiki page). Commit the page and front-matter edits. Pages you confirmed still true appear in the list again on the next run. That is expected.
 
 ## Metadata merges

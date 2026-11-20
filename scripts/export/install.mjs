@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +30,11 @@ const json = value => `${JSON.stringify(value, null, 2)}\n`
 const hash = value => createHash('sha256').update(value).digest('hex')
 const pathInfo = path => lstatSync(path, { throwIfNoEntry: false })
 const object = value => !!value && typeof value === 'object' && !Array.isArray(value)
+const targetPath = path => {
+  let ancestor = path
+  while (!existsSync(ancestor)) ancestor = dirname(ancestor)
+  return resolve(realpathSync(ancestor), relative(ancestor, path))
+}
 
 function fail(code, message, repair, details) {
   throw Object.assign(new Error(message), { code, repair, details })
@@ -85,7 +90,7 @@ function profilesFor(opts, home, before) {
       : name === 'codex' ? (process.env.CODEX_HOME || join(home, '.codex')) : join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode')
     const config = resolve(dir)
     return { name, skillsDir: name === 'codex' ? join(home, '.agents/skills') : join(config, 'skills'),
-      agentsDir: join(config, 'agents'), agentFormat: base.agentFormat,
+      agentsDir: join(config, 'agents'), agentFormat: base.agentFormat, agentModels: base.agentModels,
       ...(name === 'opencode' ? { adapter: join(config, 'plugins/ndev/index.ts') } : { config: join(config, name === 'codex' ? 'hooks.json' : 'settings.json') }) }
   })
 }
@@ -273,12 +278,14 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
     }
   }
   const selected = new Set(['release', ...profiles.map(p => p.name)])
-  const stale = Object.keys(before.files).filter(path => selected.has(before.files[path].owner) && !files.has(path))
+  const retired = Object.keys(before.files).filter(path => selected.has(before.files[path].owner) && !files.has(path))
+  const activeTargets = new Set([...files.keys()].map(targetPath))
+  const stale = retired.filter(path => !activeTargets.has(targetPath(path)))
   const owned = { ...before.files }
+  for (const path of retired) delete owned[path]
   for (const path of stale) {
     const info = pathInfo(path)
     if (info && (!info.isFile() || hash(readFileSync(path)) !== before.files[path].sha256)) conflicts.push(path)
-    delete owned[path]
   }
   for (const [path, entry] of files) {
     const info = pathInfo(path)

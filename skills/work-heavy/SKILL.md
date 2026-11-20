@@ -1,16 +1,20 @@
 ---
 name: work-heavy
-description: "The interactive heavyweight development skill (heavy mode). The heavyweight staged development method for larger or riskier changes: multi-step features, cross-cutting changes, high-risk work such as schema, auth or migrations, and any change that needs a written plan, independent reviews and staged verification. Uses worktrees, a draft PR as the plan of record, TDD, a two-axis review, verification, knowledge ingest and continuation state. Use `work-light` instead for focused fixes and small features; `work-light` is the default. Load `work-heavy` when the user or an orchestrator (`work-heavy-auto`, `work-light-auto`, `goal-work`, a preloading agent) names it."
+description: "Implement larger or risky changes in heavy mode with a written plan, independent reviews and staged verification. Load when selected by the user or orchestrator. Use work-light for focused fixes; use an auto skill for a Ready-board pass."
 ---
 
 # Development method (staged)
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you plan architecture or change project rules.
+Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Use this skill for one larger or riskier development task. For a focused fix or a small feature, use
 `work-light`, which is the default. Choose `work-heavy` when the change has several steps, crosses
 modules, touches schema, auth or migrations, or needs a plan, independent reviews and staged
 verification.
+
+## Confirm development is done
+
+Under interactive steering, show a concrete development preview when relevant and keep taking design feedback. Ask whether the work is done before final checks or review. Wait for the human to confirm. If they request changes, keep developing and ask again when those changes are ready. Only then call `ndev flow finished-development` with `--human-confirmation` containing the human’s answer. The CLI refuses an interactive finish without this answer, before staging files, checks or review. Auto steering continues without this confirmation.
 
 ## The workflow
 
@@ -18,7 +22,7 @@ While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp
 
 | Stage | Tool | What the tool does |
 |---|---|---|
-| Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree and opens the draft PR. Call it first. |
+| Start or resume | `mcp__ndev__started(issue, shortName, mode)` | Claims the worktree. The first push of a real change opens the draft PR. Call it first. |
 | Interview (interactive) | `mcp__ndev__interview(interviewJson)`, then `mcp__ndev__interview()` | Asks the human in a pane, then goes on. Load the `interview` skill. |
 | Plan (heavy) | `mcp__ndev__finishedPlan(markdown_file)` | Puts the plan in the PR body. |
 | Save work | `mcp__ndev__checkpoint(message, files, changeTypes)` | Runs the checks, commits the named files, and pushes. `changeTypes` adds to the types that set the review instructions. Use it and not `git commit` or `git push`. |
@@ -142,4 +146,4 @@ references again after every PR body edit. Details: `references/prs.md`.
 
 When a procedure changes, update the reference that owns it and keep this file short.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
