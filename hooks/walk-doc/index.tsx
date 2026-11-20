@@ -16,6 +16,7 @@ import {
 import type { Config, Run } from './walk'
 import { showIdleStatus } from '../workflow/progress'
 import { workflowToolFailed } from '../workflow/tools'
+import { epicFailureScope } from '../workflow/epic'
 
 const PANE = 'walk-doc'
 // The first page compile takes minutes on a loaded machine; each probe is bounded so the loop keeps its own deadline, inside the host's 600 s limit on one process.run.
@@ -627,7 +628,8 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     if (next.called) return next(e)
     const why = `${next.error.kind}: ${next.error.message ?? 'no message'}`
     log($, `guard failed on ${e.tool} (agent ${e.agentId ?? 'main'}): ${why}`)
-    const workflowFailure = await workflowToolFailed($, e.tool, next.error, e as unknown as Record<string, unknown>)
+    const scope = e.tool.startsWith('mcp__ndev__epic') && e.tool !== 'mcp__ndev__epicStarted' ? await epicFailureScope($) : undefined
+    const workflowFailure = await workflowToolFailed($, e.tool, next.error, e as unknown as Record<string, unknown>, scope)
     if (workflowFailure) return workflowFailure
     if (e.agentId === undefined) return next(e)
     return { deny: `walk-doc: the guard failed (${why}), so the call is refused. Run /walk-doc stop, fix the cause, then /walk-doc again.` }

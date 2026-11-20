@@ -3558,7 +3558,7 @@ export async function whenTurnsFree($: EngineInterface, untilMs?: number): Promi
 // Each state tool call shows in the /view pane, with its arguments and how it ended.
 function workflowTarget(tool: string, args: Args): { name: string; label: string } | undefined {
   const valid = (value: unknown) => (typeof value === 'number' || typeof value === 'string' && value !== '') && Number.isSafeInteger(Number(value)) && Number(value) > 0
-  if (tool !== 'waitForPR' && valid(args.pr)) return { name: `pr-${Number(args.pr)}`, label: `PR #${Number(args.pr)}` }
+  if (tool !== 'waitForPR' && !tool.startsWith('epic') && valid(args.pr)) return { name: `pr-${Number(args.pr)}`, label: `PR #${Number(args.pr)}` }
   const issues = Array.isArray(args.issues) ? args.issues : [args.issue]
   if (!issues.length || !issues.every(valid)) return undefined
   return { name: `issue-${Number(issues[0])}`, label: issues.length === 1 ? `issue #${Number(issues[0])}` : `issues ${issues.map(n => '#' + Number(n)).join(', ')}` }
@@ -3576,6 +3576,7 @@ async function liveEnd($: EngineInterface, logged: { root: string; name: string;
   if (logged) await liveCallEnd($, logged.root, logged.name, tool, logged.at, outcome, result)
 }
 
+type FailureScope = { root?: string; issue?: number | null; error?: string }
 const failureRepairs = new Map(SPECS.map(s => [s.name, 'status']))
 export function registerWorkflowFailure(name: string, recovery: string): void {
   failureRepairs.set(name, recovery)
@@ -3603,24 +3604,27 @@ export function workflowToolLost(tool: string, error: { kind: string; message?: 
 
 const failedCalls = new WeakMap<object, Awaited<ReturnType<typeof liveStart>>>()
 
-export async function workflowToolFailed($: EngineInterface, tool: string, error: { kind: string; message?: string }, args: Args): Promise<{ result: string; isError: true } | undefined> {
+export async function workflowToolFailed($: EngineInterface, tool: string, error: { kind: string; message?: string }, args: Args, scope?: FailureScope | null): Promise<{ result: string; isError: true } | undefined> {
   const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
   if (!failureRepairs.has(name)) return undefined
   const logged = failedCalls.get(args)
   failedCalls.delete(args)
   let context = args
-  let contextFailure = ''
-  if (name === 'status' && !workflowTarget(name, args)) {
-    try {
-      context = { ...args, issue: await read($, workflowIssue) }
-    } catch (failure) {
-      contextFailure = ` The bound issue could not be read: ${failure instanceof Error ? failure.message : String(failure)}.`
+  let contextFailure = scope?.error ? ` The bound issue could not be read: ${scope.error}.` : ''
+  if (!workflowTarget(name, args)) {
+    if (scope?.issue) context = { ...args, issue: scope.issue }
+    else if (name === 'status') {
+      try {
+        context = { ...args, issue: await read($, workflowIssue) }
+      } catch (failure) {
+        contextFailure = ` The bound issue could not be read: ${failure instanceof Error ? failure.message : String(failure)}.`
+      }
     }
   }
   const result = workflowToolLost(tool, error, context)!
   result.result += contextFailure
   try {
-    const root = logged?.root || text(args, 'worktree') || await boundRoot($) || await $.session.cwd()
+    const root = logged?.root || text(args, 'worktree') || scope?.root || await boundRoot($) || await $.session.cwd()
     const target = workflowTarget(name, context)
     if (root && (logged?.name || target)) await liveCallFailed($, root, logged?.name || target!.name, name, args, `kind=${error.kind}: ${error.message ?? 'no message'}. ${result.result}`, logged?.at)
   } catch (failure) {

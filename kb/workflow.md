@@ -875,7 +875,7 @@ You can add an issue to a PR until the PR is merged. `started` with a new issue,
 
 The tools write these values to `<git dir>/ndev-live-<issue|pr>-<n>.json`, and not to the record. A poll must not change the revision of the record. The file holds at most 4 KB, with secrets masked and each value on one line of at most 120 characters. A failed write shows one toast and does not stop the tool. A value that is too old is marked stale.
 
-A workflow hook failure answers both main agents and helpers with the tool, its issue or PR, the host error and a repair. The live log puts the cause first so its text limit keeps useful evidence. A dropped call marks its own running entry as failed, or adds a failed entry if it had not started logging. Failure logging uses the wall clock so a clock API failure can still be recorded. Epic failures name `epicStatus` as the recovery tool. An argument-free `status` failure identifies its bound issue. `waitForPR` records the active issue, because its PR argument names the PR being waited on.
+A workflow hook failure answers both main agents and helpers with the tool, its issue or PR, the host error and a repair. The live log puts the cause first so its text limit keeps useful evidence. A dropped call marks its own running entry as failed, or adds a failed entry if it had not started logging. Failure logging uses the wall clock so a clock API failure can still be recorded. Epic failures name `epicStatus` as the recovery tool. Failures of argument-free `status` and `epicStatus` identify their bound issue. Epic failures name the owning epic when an argument names a sub-issue PR. `waitForPR` records the active issue, because its PR argument names the PR being waited on.
 
 ## Rules that the tools enforce
 

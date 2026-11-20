@@ -17,4 +17,7 @@ Run `npm test` for the native CLI and installer tests. Run `claude plugin test .
 
 SDK integration tests import `expect` and `test` from `./sdk-testing`. Async callbacks have a default execution allowance of 30 seconds, including fixture setup and calls to the SDK. A test can set `timeoutMs` explicitly. The adapter preserves that value. Synchronous callbacks keep the SDK's default, including in files that also have integration tests.
 
+The SDK compiler follows `$` calls only into named top-level helpers or functions imported from the plugin. Resolve context through those helpers and pass the resulting data to shared handlers. A registry of callbacks that receive `$` prevents the hooks module from loading.
+
+
 This execution allowance differs from the workflow's time limits. Keep assertions about the simulated clock, process timeouts, the hook's own budget and workflow restoration. A longer runner deadline does not change those contracts. The forced low-budget tests retain their explicit deadlines and refusal assertions.

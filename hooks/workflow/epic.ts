@@ -745,6 +745,14 @@ export async function startEpic($: EngineInterface): Promise<void> {
   for (const s of SPECS) await $.tool.register({ name: s.name, description: s.description, inputSchema: { type: 'object', properties: s.properties, required: s.required }, isDeferred: false })
 }
 
+export async function epicFailureScope($: EngineInterface): Promise<{ root?: string; issue?: number; error?: string } | null> {
+  try {
+    return await read($, epicBound)
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export const epicTools = (on: Parameters<Register>[0], project: () => Project) => {
   for (const s of SPECS) {
     registerWorkflowFailure(s.name, 'epicStatus')
@@ -755,9 +763,9 @@ export const epicTools = (on: Parameters<Register>[0], project: () => Project) =
         return { result: await inTurn(() => dispatch($, s.name, { args, project: project() })) }
       } catch (error) {
         if (error instanceof Refuse) return { result: error.message, isError: true as const }
-        return (await workflowToolFailed($, e.tool, { kind: 'throw', message: error instanceof Error ? error.message : String(error) }, args))!
+        return (await workflowToolFailed($, e.tool, { kind: 'throw', message: error instanceof Error ? error.message : String(error) }, args, s.name === 'epicStarted' ? undefined : await epicFailureScope($)))!
       }
-    }).catch(($, e, next) => workflowToolFailed($, e.tool, next.error, e as unknown as Args))
+    }).catch(async ($, e, next) => workflowToolFailed($, e.tool, next.error, e as unknown as Args, s.name === 'epicStarted' ? undefined : await epicFailureScope($)))
   }
 }
 
