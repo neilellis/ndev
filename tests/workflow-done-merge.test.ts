@@ -113,6 +113,7 @@ test('a retry after a failed pre-push commits the fix and pushes it', async ($, 
   expect((await tool($, 'checkpoint', { message: 'one', files: ['a.ts'] })).isError).toBe(true)
   expect(w.pushes.length).toBe(0)
   w.s.failCheck = ''
+  w.s.dirty = [' M a.ts']
   const r = await tool($, 'checkpoint', { message: 'fix', files: ['a.ts'] })
   expect(r.isError).toBe(false)
   expect(w.commits.length).toBe(2)
@@ -126,6 +127,7 @@ test('a retry with an unnamed fix in the tree pushes nothing and names the file'
   w.s.dirty = [' M a.ts']
   await tool($, 'checkpoint', { message: 'one', files: ['a.ts'] })
   w.s.failCheck = ''
+  w.s.dirty = [' M a.ts']
   const r = await tool($, 'checkpoint', { message: 'again', files: ['b.ts'].slice(1) })
   expect(r.isError).toBe(true)
   expect(r.text).toContain('a.ts')
