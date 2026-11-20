@@ -123,17 +123,26 @@ test('/unblock when nothing is blocked says so and changes nothing', async ($, o
 })
 
 // ---- the wait tools ----
-test('a wait with a long period answers before its own time runs out between two checks', { timeoutMs: 60_000 }, async ($, on) => {
+test('a long-period wait reports its limiting deadline or hook budget and restores the workflow', { timeoutMs: 60_000 }, async ($, on) => {
   const w = engine(on)
   await start($, w)
   w.s.sleepAdvances = true
   // Each pause costs the hook some of its own time, as a busy host does between two $ calls.
   w.s.sleepSpinMs = 150
   w.s.probe = () => ({ exitCode: 1 })
+  const began = w.s.now
   const r = await tool($, 'waitFor', { shell_command: 'false', period: 300 })
   expect(r.text).not.toContain('no tool.call hook')
   expect(r.isError).toBe(true)
-  expect(r.text).toContain("the host's time budget for one hook is nearly spent")
+  if (r.text.includes("the host's time budget for one hook is nearly spent")) {
+    expect(r.text).toMatch(/^waitFor stopped its wait for `false` to exit 0 after \d+ attempts and \d+ s, because the host's time budget for one hook is nearly spent: \d+ ms are left of 10000 ms/)
+    expect(r.text).toContain('Repair: call waitFor again')
+  } else {
+    expect(r.text).toMatch(/^waitFor gave up on `false` to exit 0 within its timeout of 1200 s, after \d+ attempts\. The last check: exit code 1\./)
+    expect(r.text).toContain('Repair: call it again, for at most 1200 s more')
+    expect(w.s.now - began).toBeGreaterThanOrEqual(1_180_000)
+  }
+  expect(w.s.now - began).toBeLessThanOrEqual(1_200_000)
   expect(w.state()?.state).toBe('developing')
 })
 
