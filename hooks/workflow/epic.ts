@@ -8,7 +8,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { LoadedConfig } from '../config'
 import { type Server, triageRemote } from '../remote'
 import { Refuse, defaultBranch, gh, ghOne, gitOut, git, paths, readChecks, readPr, repoFromOrigin, run } from './effects'
-import { SECTION, boundRoot, inTurn, loadWorkflow, registerWorkflowFailure, setDeclined, workflowToolFailed } from './tools'
+import { SECTION, boundRoot, inFreeTurn, loadWorkflow, registerWorkflowFailure, setDeclined, workflowToolFailed } from './tools'
 
 import { EPIC_STATES, nextEpicState, sliceProblems, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
 export * from '../../scripts/ndev/epic-model'
@@ -760,7 +760,7 @@ export const epicTools = (on: Parameters<Register>[0], project: () => Project) =
       const args = e as unknown as Args
       if (args.agentId) return { result: `Refused: only the main agent calls ${s.name}. A helper does not move the epic. Report to the main agent.`, isError: true as const }
       try {
-        return { result: await inTurn(() => dispatch($, s.name, { args, project: project() })) }
+        return { result: await inFreeTurn($, () => dispatch($, s.name, { args, project: project() })) }
       } catch (error) {
         if (error instanceof Refuse) return { result: error.message, isError: true as const }
         return (await workflowToolFailed($, e.tool, { kind: 'throw', message: error instanceof Error ? error.message : String(error) }, args, s.name === 'epicStarted' ? undefined : await epicFailureScope($)))!

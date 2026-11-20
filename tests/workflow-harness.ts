@@ -72,10 +72,10 @@ export const engine = (on: On, opts: Opts = {}) => {
   }))
   const s = {
     agentCwd: undefined as string | undefined, spawnedAtSweep: -1, ahead: undefined as string | undefined, claimFails: '', boardFails: '', boardCards: [{ number: 7, itemId: 'I7' }] as { number: number; itemId: string }[], sweepExit: 0, sweepOutput: 'base 2, head 2', stopFails: '', now: 0, sha: SHA, upstream: SHA, dirty: [] as string[], untracked: [] as string[], staged: false, failCheck: '', hugeCheck: '', hugeExit: 0, scripts: opts.scripts ?? true, agents: [] as { id: string; status: string }[],
-    otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined, checkMs: {} as Record<string, number>, checkStops: [] as string[],
+    otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined, onCheck: undefined as (() => void) | undefined, checkMs: {} as Record<string, number>, checkStops: [] as string[],
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, env: {} as Record<string, string>, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
-    probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, sleepYields: false, sleepSpinMs: 0, clockSleeps: 0, staleSaves: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
+    probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, onRead: undefined as ((path: string) => void | Promise<void>) | undefined, sleepYields: false, sleepSpinMs: 0, onSleep: undefined as ((seconds: number) => void) | undefined, clockSleeps: 0, staleSaves: 0, staleSaveMs: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, innerScroller: undefined as { element: string; height: number; total: number } | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, unchanged: [] as string[], removed: [] as string[], renamedFrom: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
@@ -142,8 +142,12 @@ export const engine = (on: On, opts: Opts = {}) => {
   on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) || isFolder(e.path) || guide(e.path) !== undefined }))
   on('fs.list', (_, e) => ({ value: [...files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => {
-    if (s.failRead?.(e.path)) throw new Error(`no permission: ${e.path}`)
-    return { value: guide(e.path) ?? files.get(e.path) ?? '' }
+    const answer = () => {
+      if (s.failRead?.(e.path)) throw new Error(`no permission: ${e.path}`)
+      return { value: guide(e.path) ?? files.get(e.path) ?? '' }
+    }
+    const hold = s.onRead?.(e.path)
+    return hold ? hold.then(answer) : answer()
   })
   on('fs.write', (_, e) => {
     if (s.failWrite?.(e.path)) throw new Error(`disk full: ${e.path}`)
@@ -164,6 +168,7 @@ export const engine = (on: On, opts: Opts = {}) => {
   type Answer = { value: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean; isStderrTruncated: boolean } }
   const checkAnswer = async (script: string): Promise<Answer> => {
     if (s.hugeCheck && script.includes(s.hugeCheck)) return { value: { exitCode: s.hugeExit, stdout: `${'x'.repeat(STREAM_CAP - 5)}\nlast`, stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }
+    s.onCheck?.()
     if (s.checkHold) await s.checkHold
     return s.failCheck && script.includes(s.failCheck) ? ok('lint: broken line', 3) : ok('passed')
   }
@@ -182,7 +187,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     if (a[0] === 'sleep' && s.sleepFails) throw new Error(s.sleepFails)
     // A pause of 0.2 s is a call that waits for its turn (whenTurnsFree). A real sleep lets the call that has the
     // turn go on, so this one yields too: a loop of pauses that resolve at once would hold the event loop.
-    if (a[0] === 'sleep') return (async () => { if (s.sleepYields || a[1] === '0.2') await new Promise(r => setTimeout(r, 1)); await s.sleepHold; if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); if (s.sleepSpinMs) spinAfter(s.sleepSpinMs); return ok() })() as never
+    if (a[0] === 'sleep') return (async () => { if (s.sleepYields || a[1] === '0.2') await new Promise(r => setTimeout(r, 1)); await s.sleepHold; s.onSleep?.(Number(a[1])); if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); if (s.sleepSpinMs) spinAfter(s.sleepSpinMs); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
       s.probeLimits.push(e.init?.timeoutMs)
@@ -273,6 +278,7 @@ export const engine = (on: On, opts: Opts = {}) => {
         s.saves += 1
         if (s.staleSaves > 0) {
           s.staleSaves -= 1
+          s.now += s.staleSaveMs
           return ok('', 5, 'another writer got in first')
         }
         // As the real script: a writer that expected another revision changes nothing, and exits 5.

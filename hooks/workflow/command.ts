@@ -8,7 +8,7 @@ import type { LoadedConfig } from '../config'
 import { comment, git, head, markReady, readPr, withdrawAlert } from './effects'
 import { afterSkip } from './machine'
 import type { State } from './machine'
-import { boundRoot, endAsking, factsFor, inTurn, isStaleWrite, isWaitRunning, labelOf, loadWorkflow, readEffective, readHeld, waitHolder, whenTurnsFree, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
+import { boundRoot, endAsking, factsFor, inFreeTurn, isStaleWrite, isWaitRunning, labelOf, loadWorkflow, readEffective, readHeld, waitHolder, moved, saveWorkflow, hasDeclined, setDeclined, startReview, stepOf } from './tools'
 import type { Workflow } from './tools'
 import { EPIC_HELP, epicCommand } from './epic'
 import { watcherNote } from './watchdog'
@@ -262,7 +262,7 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
 
 async function answerCommand($: EngineInterface, args: string, getProject: () => Project, setProject: (p: LoadedConfig) => void) {
   try {
-    return { text: await inTurn(() => run($, args, getProject, setProject)) }
+    return { text: await inFreeTurn($, () => run($, args, getProject, setProject)) }
   } catch (error) {
     return { text: `/flow ${args} failed: ${error instanceof Error ? error.message : String(error)}` }
   }
@@ -272,8 +272,7 @@ async function answerCommand($: EngineInterface, args: string, getProject: () =>
 async function answerUnblock($: EngineInterface, args: string, getProject: () => Project, setProject: (p: LoadedConfig) => void) {
   try {
     if (args.trim()) {
-      await whenTurnsFree($)
-      return { text: await inTurn(() => run($, `unblock ${args}`, getProject, setProject)) }
+      return { text: await inFreeTurn($, () => run($, `unblock ${args}`, getProject, setProject)) }
     }
     const project = getProject()
     const root = (await boundRoot($)) ?? project?.root

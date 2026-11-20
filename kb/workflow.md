@@ -610,6 +610,8 @@ A closed or unreadable issue refuses the call by number, and nothing starts. An 
 The name is `/flow`, not `/ndev:workflow` or `/workflow`. The engine refuses a colon in a command that a plugin registers, and the Vercel plugin owns `workflow`. `status` also shows the last thing that the heartbeat did and how long ago.
 
 
+A `/flow` command waits for any tool call that holds the turn. It waits through sleep processes before it joins the queue, so that wait does not spend the command hook’s time budget.
+
 | Command                                     | What it does                                                                                                              |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `/flow guide`                      | Shows this guide.                                                                                                         |
