@@ -10,14 +10,18 @@ Where an agent has already worked on a PR, work with that agent. It has context 
 
 ## Start the recorded queue
 
-Run the queue from the coordinator's worktree before you list PRs or launch a worker:
+Read the repository's CLAUDE.md and AGENTS.md first. Check their merge requirements and select the queue's merge option before starting it: `start` can merge a green PR immediately.
+
+Inspect existing workers before `start` or `resume`. If a worker already edits an open PR, complete its handoff or stop its editing before starting the queue. The command can dispatch a worker immediately.
+
+Run the queue from the coordinator's worktree before you launch a worker:
 
 ```bash
 ndev fix-prs status --json
 ndev fix-prs start --json
 ```
 
-Use `start` only when no run is recorded. For a paused run, use `ndev fix-prs resume --json`. Keep an existing running queue. Do not restart it. The run belongs to this worktree. `start` records the queue, publishes the **Fix all PRs** panel and dispatches its worker. A manual PR list, an Orca message or a separately launched worker does not register this run.
+Use `start` when no run is recorded or the recorded phase is `done`. For a paused run, use `ndev fix-prs resume --json`. Keep an existing running queue. Do not restart it. The run belongs to this worktree. `start` records the queue, publishes the **Fix all PRs** panel and dispatches its worker. A manual PR list, an Orca message or a separately launched worker does not register this run.
 
 Use `ndev fix-prs start --no-merge --json` when the user wants repairs only. Use it also when the repository requires a merge procedure the queue cannot perform. For example, migrations can require the merge skill. Complete those merges through that procedure.
 
