@@ -15,7 +15,8 @@ import {
 } from './walk'
 import type { Config, Run } from './walk'
 import { showIdleStatus } from '../workflow/progress'
-import { workflowToolLost } from '../workflow/tools'
+import { workflowToolFailed } from '../workflow/tools'
+import { epicFailureScope } from '../workflow/epic'
 
 const PANE = 'walk-doc'
 // The first page compile takes minutes on a loaded machine; each probe is bounded so the loop keeps its own deadline, inside the host's 600 s limit on one process.run.
@@ -623,13 +624,14 @@ export const walkDoc = (on: On, options: PluginOptions) => {
     if (denial === null) return next(e)
     await update($, runAtom, r => (r === null ? r : { ...r, denials: [...r.denials, { tool, detail: denial, at: Date.now() }] }))
     return { deny: denial }
-  }).catch(($, e, next) => {
+  }).catch(async ($, e, next) => {
     if (next.called) return next(e)
     const why = `${next.error.kind}: ${next.error.message ?? 'no message'}`
     log($, `guard failed on ${e.tool} (agent ${e.agentId ?? 'main'}): ${why}`)
-    // The guard is for Walk agents: its own failure never blocks the main agent. This handler also gets the
-    // failure of each tool.call hook beneath the guard, and a workflow tool has nothing beneath it to pass to.
-    if (e.agentId === undefined) return workflowToolLost(e.tool, next.error) ?? next(e)
+    const scope = e.tool.startsWith('mcp__ndev__epic') && e.tool !== 'mcp__ndev__epicStarted' ? await epicFailureScope($) : undefined
+    const workflowFailure = await workflowToolFailed($, e.tool, next.error, e as unknown as Record<string, unknown>, scope)
+    if (workflowFailure) return workflowFailure
+    if (e.agentId === undefined) return next(e)
     return { deny: `walk-doc: the guard failed (${why}), so the call is refused. Run /walk-doc stop, fix the cause, then /walk-doc again.` }
   })
 

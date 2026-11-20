@@ -19,7 +19,7 @@ import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath
 import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } from './change-map'
 import { takeScreenshots } from './screenshot'
 import { gitCode, gitFolder, OWN_WAIT, pushNames, pushesOnly, RAW_GIT } from './git-guard.ts'
-import { liveCallEnd, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
+import { liveCallEnd, liveCallFailed, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
 import { ATTEMPT_LIMIT, BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
 import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseChatAnswers, parseRound, resultOf, roundMarkdown, startingAnswers } from './interview-model'
@@ -3556,32 +3556,42 @@ export async function whenTurnsFree($: EngineInterface, untilMs?: number): Promi
 }
 
 // Each state tool call shows in the /view pane, with its arguments and how it ended.
+function workflowTarget(tool: string, args: Args): { name: string; label: string } | undefined {
+  const valid = (value: unknown) => (typeof value === 'number' || typeof value === 'string' && value !== '') && Number.isSafeInteger(Number(value)) && Number(value) > 0
+  if (tool !== 'waitForPR' && !tool.startsWith('epic') && valid(args.pr)) return { name: `pr-${Number(args.pr)}`, label: `PR #${Number(args.pr)}` }
+  const issues = Array.isArray(args.issues) ? args.issues : [args.issue]
+  if (!issues.length || !issues.every(valid)) return undefined
+  return { name: `issue-${Number(issues[0])}`, label: issues.length === 1 ? `issue #${Number(issues[0])}` : `issues ${issues.map(n => '#' + Number(n)).join(', ')}` }
+}
+
 async function liveStart($: EngineInterface, tool: string, args: Args, project: LoadedConfig | undefined): Promise<{ root: string; name: string; at: number } | undefined> {
   if (tool === 'status' || project?.config.workflow === false) return undefined
-  // The pr of waitForPR is the PR it waits for, and not the thing that this agent is on.
-  const own = tool === 'waitForPR' ? undefined : args.pr
-  const number = own ?? args.issue ?? (Array.isArray(args.issues) ? args.issues[0] : undefined)
+  const target = workflowTarget(tool, args)
   const root = text(args, 'worktree') || (await boundRoot($)) || project?.root
-  if (!root || number === undefined || number === null) return undefined
-  const name = own ? `pr-${String(own)}` : `issue-${String(number)}`
-  return { root, name, at: await liveCallStart($, root, name, tool, args) }
+  if (!root || !target) return undefined
+  return { root, name: target.name, at: await liveCallStart($, root, target.name, tool, args) }
 }
 
 async function liveEnd($: EngineInterface, logged: { root: string; name: string; at: number } | undefined, tool: string, outcome: 'ok' | 'refused' | 'failed', result: string): Promise<void> {
   if (logged) await liveCallEnd($, logged.root, logged.name, tool, logged.at, outcome, result)
 }
 
-// The host drops a hook that throws or that runs past its budget. The failure goes to the handler of the
-// outer tool.call hook, the walk-doc guard, which passes a call of the main agent on. Nothing beneath the plugin
-// answers a workflow tool, so the agent then reads only "no tool.call hook answered this call". The guard asks
-// here first: for a workflow tool, the answer names the tool, the cause and the repair.
+type FailureScope = { root?: string; issue?: number | null; error?: string }
+const failureRepairs = new Map(SPECS.map(s => [s.name, 'status']))
+export function registerWorkflowFailure(name: string, recovery: string): void {
+  failureRepairs.set(name, recovery)
+}
+
 const HOOK_BUDGET_S = 10
 // What each workflow tool call in flight does now, so that the answer for a lost hook can say it. An entry goes
 // when its call answers.
 const callsNow = new Map<string, 'waiting' | 'running'>()
-export function workflowToolLost(tool: string, error: { kind: 'throw' | 'timeout'; message?: string }): { result: string; isError: true } | undefined {
+export function workflowToolLost(tool: string, error: { kind: string; message?: string }, args: Args = {}): { result: string; isError: true } | undefined {
   const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
-  if (!SPECS.some(s => s.name === name)) return undefined
+  const recovery = failureRepairs.get(name)
+  if (!recovery) return undefined
+  const context = workflowTarget(name, args)
+  const target = context ? ` for ${context.label}` : ''
   const cause = error.kind === 'timeout'
     ? `its hook ran past the host's time budget for one hook (${HOOK_BUDGET_S} s of its own running time, which a busy computer spends sooner)${error.message ? `: ${error.message}` : ''}`
     : `its hook failed outside its own error handling: ${error.message ?? 'no message'}`
@@ -3589,7 +3599,39 @@ export function workflowToolLost(tool: string, error: { kind: 'throw' | 'timeout
   callsNow.delete(name)
   const holder = runningNow()
   const doing = now === 'waiting' ? ` It was waiting for its turn${holder ? ` behind ${holder}` : ''}: workflow tool calls run one at a time.` : now === 'running' ? ` It had its turn and was running${holder ? ` (${holder})` : ''}.` : ''
-  return { result: `workflow ${name} gave no answer, because ${cause}.${doing} The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call status and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
+  return { result: `workflow ${name} gave no answer${target}, because ${cause} (kind=${error.kind}).${doing} The call may have stopped part way, so the workflow record can show a step that did not finish. Repair: call ${recovery} and read the state, then call ${name} again. If it fails again when the computer is not busy, call reportWorkflowBug with this message.`, isError: true }
+}
+
+const failedCalls = new WeakMap<object, Awaited<ReturnType<typeof liveStart>>>()
+
+export async function workflowToolFailed($: EngineInterface, tool: string, error: { kind: string; message?: string }, args: Args, scope?: FailureScope | null): Promise<{ result: string; isError: true } | undefined> {
+  const name = tool.startsWith('mcp__ndev__') ? tool.slice('mcp__ndev__'.length) : ''
+  if (!failureRepairs.has(name)) return undefined
+  const logged = failedCalls.get(args)
+  failedCalls.delete(args)
+  let context = args
+  let contextFailure = scope?.error ? ` The bound issue could not be read: ${scope.error}.` : ''
+  if (!workflowTarget(name, args)) {
+    if (scope?.issue) context = { ...args, issue: scope.issue }
+    else if (name === 'status') {
+      try {
+        context = { ...args, issue: await read($, workflowIssue) }
+      } catch (failure) {
+        contextFailure = ` The bound issue could not be read: ${failure instanceof Error ? failure.message : String(failure)}.`
+      }
+    }
+  }
+  const result = workflowToolLost(tool, error, context)!
+  result.result += contextFailure
+  try {
+    const root = logged?.root || text(args, 'worktree') || scope?.root || await boundRoot($) || await $.session.cwd()
+    const target = workflowTarget(name, context)
+    if (root && (logged?.name || target)) await liveCallFailed($, root, logged?.name || target!.name, name, args, `kind=${error.kind}: ${error.message ?? 'no message'}. ${result.result}`, logged?.at)
+  } catch (failure) {
+    result.result += ` Failure evidence could not be recorded: ${failure instanceof Error ? failure.message : String(failure)}.`
+  }
+  $.ui.log(result.result, { to: 'debug' })
+  return result
 }
 
 export const workflowTools = (on: Parameters<Register>[0], project: () => LoadedConfig | undefined) => {
@@ -3606,6 +3648,7 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
         if (!isNumber(args.issue) && (issueOnly || !isNumber(args.pr))) return { result: `Refused: ${s.name} needs ${issueOnly ? 'issue, the number of the issue this call is for' : 'issue or pr, the number that this call is for'}, and it got ${JSON.stringify(issueOnly ? args.issue : { issue: args.issue, pr: args.pr })}. Nothing changed.`, isError: true as const }
       }
       const logged = await liveStart($, s.name, args, project())
+      failedCalls.set(e, logged)
       const name = s.name
       const isHeld = WAIT_TOOLS.includes(name) || (name === 'interview' && args.interviewJson !== undefined)
       // A hook's time runs on while it awaits the turn of another call, and a check script there can run for an
@@ -3621,19 +3664,20 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
         const result = WAIT_TOOLS.includes(name) ? await waitTool($, name, { args, project: project(), tool: name }, next) : isHeld ? await askInterview($, { args, project: project(), tool: name }, next) : await inTurn(() => withToolProgress($, name, () => dispatch($, name, { args, project: project(), tool: name })))
         await liveEnd($, logged, s.name, 'ok', result)
         callsNow.delete(name)
+        failedCalls.delete(e)
         return { result }
       } catch (error) {
         if (error instanceof Refuse) {
           await liveEnd($, logged, s.name, 'refused', error.message)
           callsNow.delete(name)
+          failedCalls.delete(e)
           return { result: error.message, isError: true as const }
         }
         const message = `workflow ${s.name} failed: ${error instanceof Error ? error.message : String(error)}`
-        await liveEnd($, logged, s.name, 'failed', message)
-        callsNow.delete(name)
-        return { result: message + (await reportFault($, `workflow tool ${s.name}`, message, `the project ${project()?.root ?? 'unknown'}`)), isError: true as const }
+        const failure = (await workflowToolFailed($, e.tool, { kind: 'throw', message: error instanceof Error ? error.message : String(error) }, args))!
+        return { ...failure, result: failure.result + (await reportFault($, `workflow tool ${s.name}`, message, `the project ${project()?.root ?? 'unknown'}`)) }
       }
-    })
+    }).catch(($, e, next) => workflowToolFailed($, e.tool, next.error, e as unknown as Args))
   }
 }
 

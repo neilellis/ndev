@@ -8,7 +8,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { LoadedConfig } from '../config'
 import { type Server, triageRemote } from '../remote'
 import { Refuse, defaultBranch, gh, ghOne, gitOut, git, paths, readChecks, readPr, repoFromOrigin, run } from './effects'
-import { SECTION, boundRoot, inTurn, loadWorkflow, setDeclined } from './tools'
+import { SECTION, boundRoot, inTurn, loadWorkflow, registerWorkflowFailure, setDeclined, workflowToolFailed } from './tools'
 
 import { EPIC_STATES, nextEpicState, sliceProblems, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
 export * from '../../scripts/ndev/epic-model'
@@ -745,8 +745,17 @@ export async function startEpic($: EngineInterface): Promise<void> {
   for (const s of SPECS) await $.tool.register({ name: s.name, description: s.description, inputSchema: { type: 'object', properties: s.properties, required: s.required }, isDeferred: false })
 }
 
+export async function epicFailureScope($: EngineInterface): Promise<{ root?: string; issue?: number; error?: string } | null> {
+  try {
+    return await read($, epicBound)
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export const epicTools = (on: Parameters<Register>[0], project: () => Project) => {
   for (const s of SPECS) {
+    registerWorkflowFailure(s.name, 'epicStatus')
     on('tool.call', { tool: `mcp__ndev__${s.name}` }, async ($, e): Promise<{ result: string; isError?: true }> => {
       const args = e as unknown as Args
       if (args.agentId) return { result: `Refused: only the main agent calls ${s.name}. A helper does not move the epic. Report to the main agent.`, isError: true as const }
@@ -754,9 +763,9 @@ export const epicTools = (on: Parameters<Register>[0], project: () => Project) =
         return { result: await inTurn(() => dispatch($, s.name, { args, project: project() })) }
       } catch (error) {
         if (error instanceof Refuse) return { result: error.message, isError: true as const }
-        return { result: `epic ${s.name} failed: ${error instanceof Error ? error.message : String(error)}`, isError: true as const }
+        return (await workflowToolFailed($, e.tool, { kind: 'throw', message: error instanceof Error ? error.message : String(error) }, args, s.name === 'epicStarted' ? undefined : await epicFailureScope($)))!
       }
-    })
+    }).catch(async ($, e, next) => workflowToolFailed($, e.tool, next.error, e as unknown as Args, s.name === 'epicStarted' ? undefined : await epicFailureScope($)))
   }
 }
 
