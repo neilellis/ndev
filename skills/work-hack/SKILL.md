@@ -5,7 +5,7 @@ description: "The interactive hack development skill (hack mode). Find a solutio
 
 # Hack work
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when you plan architecture or change project rules.
+Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Hack mode has two parts. First, the human and the agent hack at a solution with few rules. Then the agent makes the change strict before any of it is pushed. A human steers hack mode at every step, so it is interactive only: auto steering refuses it.
 
@@ -52,7 +52,7 @@ Now the change must meet the rules of heavy mode. The hack skipped test first, s
 3. Prove that each test fails on the base for the intended reason: put the new tests on a copy of the base (for example `git worktree add <tmp> origin/<base>`, copy the test files in, and run them), and keep the output. An import error or a missing file is not proof. Then show that each test passes on HEAD. Remove the temporary worktree after.
 4. Remove the spike code, debug output, commented-out code, dead ends, the prototype surface of a UI exploration (unless the human asks to keep it) and every comment that fails `${CLAUDE_PLUGIN_ROOT}/kb/comments.md` (keep only a fact that the trial and error found and the next editor needs). Keep the diff to the goal. Put unrelated discoveries in `mcp__ndev__followUp` with `issue_only`.
 5. Commit through `checkpoint`. In `hardening`, each commit runs `fast-checks.sh` and `pre-commit-check.sh`, and a failure stops it. Nothing is pushed yet.
-6. Call `mcp__ndev__finishedDevelopment` with `hardening`: each test, its failure on the base (the command and the failing line) and its pass on HEAD. The tool runs `pre-push-check.sh` and `gates.sh`, and puts the evidence on the PR.
+6. Show a concrete development preview when relevant and ask whether the work is done before final checks or review. Keep taking design feedback until the human confirms. Then call `ndev flow finished-development` with `--human-confirmation` containing the human’s answer and `--hardening`: each test, its failure on the base (the command and the failing line) and its pass on HEAD. The tool runs `pre-push-check.sh` and `gates.sh`, and puts the evidence on the PR.
 
 ## Review and after
 

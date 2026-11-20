@@ -5,8 +5,6 @@ description: "Make any change to a narrated video built with the video kit, from
 
 # Changing a video
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the video makes a product claim or teaches behaviour governed by a project rule.
-
 The `video-*` skills hold the method. The project's instructions (`CLAUDE.md`, `AGENTS.md`) hold the facts about each video: its type, its voices, its sources and any scene-specific code.
 
 1. **Understand the request.** Translate it into the kinds of change it needs:

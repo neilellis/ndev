@@ -5,8 +5,6 @@ description: "Push the current change in a website or app project and keep fixin
 
 # Finish the current change
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when the change affects project rules or user behaviour.
-
 The user may not be technical. Tell them what is happening in plain English, with clear links. Never merge. Merging needs `/publish` or "Approve and publish" (see `publish`).
 
 ## The workflow
@@ -74,4 +72,4 @@ Show the pull request URL as soon as it is known, and again at the end. The read
 
 `node --test tests/*.test.mjs` in `skills/finish/scripts/` runs the decision tests offline. `node scripts/finish.mjs --help` and `bash scripts/push-checked.sh --help` print the usage.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

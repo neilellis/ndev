@@ -51,6 +51,8 @@ export type Workflow = {
   branch: string
   direct?: boolean
   prs: number[]
+  prTitle?: string
+  prBody?: string
   // Two to five lower-case words from the agent. The Orca workspace is <issue>-<shortName>, and <PR>-<shortName> once a PR is added.
   shortName?: string
   // What Orca shows now, so that a save sends only a change.
@@ -406,6 +408,7 @@ export const stepOf = (wf: Workflow, facts: Facts) => nextStep(wf.state, { ...fa
 async function answer($: EngineInterface, wf: Workflow, facts: Facts, detail: string[] = [], next?: string): Promise<string> {
   const lines = [`State: ${wf.state}. ${whoOf(wf)}. Worktree: ${wf.root}.`, ...detail.filter(Boolean)]
   if (wf.prs[0]) lines.push(`PR: https://github.com/${wf.repo}/pull/${wf.prs[0]}`)
+  else if (wf.prTitle) lines.push('PR: none yet. The first push opens the draft PR.')
   const others = (await readEffective($, wf.root)).filter(o => !sameRecord(o, wf) && o.state !== 'done')
   if (others.length) lines.push(`Other issues in this worktree: ${others.map(o => `${o.pr ? `PR #${o.pr}` : `#${o.issue}`} ("${o.state}"${!o.pr && o.prs[0] && o.prs[0] === wf.prs[0] ? `, same PR #${o.prs[0]}` : ''})`).join(', ')}.`)
   lines.push(`Next: ${next ?? stepOf(wf, facts)}`)
@@ -507,6 +510,10 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
       if (!/\[rejected\]|non-fast-forward|fetch first/.test(`${pushed.stdout}\n${pushed.stderr}`)) throw new Refuse(`git push of ${branch} exited ${pushed.exitCode}: ${said(pushed)}\nThe commit is local. Fix the cause and call the tool again.`)
       notes.push(await pushRebased($, root, branch, said(pushed)))
     }
+  }
+  if (push) {
+    const opened = await openPendingPr($, wf)
+    if (opened) notes.push(`${opened}, after the first push.`)
   }
   wf.op = undefined
   return notes
@@ -632,23 +639,48 @@ async function setUpPr($: EngineInterface, wf: Workflow, title: string, shared?:
   const open = shared ? [] : await ghLines<{ number: number }>($, wf.root, wf.repo, ['pr-list', '--head', wf.branch, '--state', 'open'])
   if (shared ?? open[0]) {
     wf.prs = [(shared ?? open[0]!.number)]
+    const pending = wf.prBody
+    wf.prTitle = wf.prBody = undefined
     // The branch's PR can carry several issues, and each one closes by it.
-    await editBody($, wf, old => (hasIssueRef(old, wf.issue) ? old : `${old.trimEnd()}\n\nCloses #${wf.issue}\n`))
+    await editBody($, wf, old => {
+      const body = pending && !old.trim() ? pending : old
+      return hasIssueRef(body, wf.issue) ? body : `${body.trimEnd()}\n\nCloses #${wf.issue}\n`
+    })
     return
   }
   const ahead = await gitOut(wf.root, $, 'rev-list', '--count', `origin/${wf.base}..HEAD`)
-  if (ahead === '0') await must($, ['git', 'commit', '--allow-empty', '-m', `Start work on #${wf.issue}`, '--trailer', `Ndev-Op: start-${wf.issue}`], { cwd: wf.root })
-  await must($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${wf.branch}`], { cwd: wf.root, timeoutMs: 300_000 })
+  if (ahead === '0') {
+    wf.prTitle = title
+    return
+  }
+  const remote = await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)
+  if (remote.exitCode !== 0 || remote.stdout.trim() !== await head(wf.root, $)) {
+    await checked($, wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
+    await must($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${wf.branch}`], { cwd: wf.root, timeoutMs: 300_000 })
+  }
   const { gitDir } = await paths($, wf.root)
   const bodyFile = `${gitDir}/ndev-pr-body.md`
-  await $.fs.write(bodyFile, `Plan incoming.\n\nCloses #${wf.issue}\n`)
+  await $.fs.write(bodyFile, wf.prBody ?? `Plan incoming.\n\nCloses #${wf.issue}\n`)
   const made = await gh($, wf.root, wf.repo, ['pr-new', '--title', title, '--body-file', bodyFile, '--base', wf.base, '--head', wf.branch])
   const number = /\/pull\/(\d+)/.exec(made)?.[1]
   if (!number) throw new Error(`gh.sh pr-new printed no pull request URL: ${made.slice(0, 200)}`)
   wf.prs = [Number(number)]
+  wf.prTitle = wf.prBody = undefined
+}
+
+async function openPendingPr($: EngineInterface, wf: Workflow): Promise<string | undefined> {
+  if (!wf.prTitle || wf.prs.length) return undefined
+  await setUpPr($, wf, wf.prTitle)
+  if (!wf.prs.length) throw new Refuse(`Issue #${wf.issue} on ${wf.branch} has no commits beyond ${wf.base}. Repair: make a real change and call checkpoint before opening its draft PR.`)
+  await saveWorkflow($, wf)
+  return `Opened draft PR #${wf.prs[0]}: https://github.com/${wf.repo}/pull/${wf.prs[0]}`
 }
 
 async function editBody($: EngineInterface, wf: Workflow, edit: (body: string) => string) {
+  if (!wf.prs[0] && wf.prTitle) {
+    wf.prBody = edit(wf.prBody ?? `Plan incoming.\n\nCloses #${wf.issue}\n`)
+    return
+  }
   const pr = await readPr($, wf.root, wf.repo, wf.prs[0]!)
   const { gitDir } = await paths($, wf.root)
   const file = `${gitDir}/ndev-pr-body.md`
@@ -661,7 +693,7 @@ async function editBody($: EngineInterface, wf: Workflow, edit: (body: string) =
 // Before the push, so that the event of the push carries the map. The map names its sha, so a map that
 // was not written here does not match the next push, and CI runs everything: this never stops the push.
 async function writeChangeMap($: EngineInterface, wf: Workflow, declared: readonly ChangeType[]): Promise<string | undefined> {
-  if (wf.direct || !wf.prs[0]) return undefined
+  if (wf.direct || (!wf.prs[0] && !wf.prTitle)) return undefined
   const sha = await head(wf.root, $)
   const range = `origin/${wf.base}...HEAD`
   // With no rename detection, the old path of a moved file is in the map too.
@@ -1075,20 +1107,18 @@ async function finishedPlan($: EngineInterface, c: Ctx): Promise<string> {
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, project, wf)
   legal(wf, 'finishedPlan', facts)
-  havePr(wf)
+  havePr(wf, true)
   const name = text(args, 'markdown_file')
   const path = name.startsWith('/') ? name : `${wf.root}/${name}`
   if (!name || !(await $.fs.exists(path))) throw new Refuse(`Refused: the plan file ${path || '(none given)'} does not exist. Nothing changed.`)
   const plan = await $.fs.read(path)
   if (!/^\W*(Test entry point|Seam):/im.test(plan)) throw new Refuse(`Refused: ${path} has no "Test entry point:" line. Name the public interface that the tests go through, and call finishedPlan again.`)
-  if (wf.prs[0]) {
-    await editBody($, wf, old => planBody(old, wf.issue, plan))
-  }
+  await editBody($, wf, old => planBody(old, wf.issue, plan))
   // Before the sign-off, so that the human reads the plan and the state of the base together.
   const base = await runBaseCheck($, wf, facts)
   const to = afterTool({ state: wf.state }, 'finishedPlan', facts) as Position
   const notes: string[] = [...base.notes]
-  if (to.state === 'blocked') notes.push(...(await enterBlocked($, wf, `The plan for #${wf.issue} waits for your sign-off in the PR body.${base.failed ? ` Also: ${base.failed}` : ''}`, to.previous!, 'finishedPlan')))
+  if (to.state === 'blocked') notes.push(...(await enterBlocked($, wf, `The plan for #${wf.issue} waits for your sign-off in ${wf.prs[0] ? 'the PR body' : path}.${base.failed ? ` Also: ${base.failed}` : ''}`, to.previous!, 'finishedPlan')))
   else moved(wf, 'finishedPlan', to, await $.clock.now())
   await saveWorkflow($, wf)
   return answer($, wf, facts, notes)
@@ -1141,9 +1171,8 @@ async function onlyDocsBetween($: EngineInterface, wf: Workflow, from: string, t
   return r.exitCode === 0 && r.stdout.split('\n').filter(Boolean).every(isDocsPath)
 }
 
-// A skip of setup leaves a workflow with no PR. Only started opens it.
-function havePr(wf: Workflow) {
-  if (!wf.direct && !wf.prs.length) throw new Refuse(`Refused: the workflow of #${wf.issue} has no PR. Nothing changed. Call started with issue ${wf.issue}: it opens the draft PR.`)
+function havePr(wf: Workflow, pending = false) {
+  if (!wf.direct && !wf.prs.length && !(pending && wf.prTitle)) throw new Refuse(`Refused: the workflow of #${wf.issue} has no PR. Nothing changed. Call started with issue ${wf.issue}: it opens the draft PR.`)
 }
 
 // A human can merge the PR while the workflow is still in review, ci, smoke or revising. Its branch then takes no
@@ -1203,7 +1232,7 @@ async function checkpointOnce($: EngineInterface, c: Ctx): Promise<string> {
   if (mergedPr) throw new Refuse(mergedRefusal(mergedPr, 'checkpoint', await head(wf.root, $)))
   legal(wf, 'checkpoint', { ...facts, prOpen })
   refuseBeforeBaseCheck(wf, 'checkpoint', facts.mode)
-  havePr(wf)
+  havePr(wf, true)
   const before = await head(wf.root, $)
   // An issue that finished development holds its commit for the review of the PR, so this one must not push it.
   const holders: Workflow[] = []
@@ -1212,7 +1241,7 @@ async function checkpointOnce($: EngineInterface, c: Ctx): Promise<string> {
   const hold = holdsForReview(wf.state) || local || holders.length > 0
   // With no files, a checkpoint only pushes a held commit, such as after a human skips the review.
   const held = (await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)).stdout.trim() !== before
-  if (!files.length && !held) throw new Refuse(`Refused: checkpoint needs the files to commit, each by name.${wf.state === 'reviewing' ? ' With nothing more to commit, finishedReview goes on.' : ''}`)
+  if (!files.length && !held && !(wf.prTitle && wf.op?.tool === 'checkpoint')) throw new Refuse(`Refused: checkpoint needs the files to commit, each by name.${wf.state === 'reviewing' ? ' With nothing more to commit, finishedReview goes on.' : ''}`)
   if (!files.length && local) throw new Refuse(`Refused: ${labelOf(wf)} is ${wf.state === 'hardening' ? 'in hardening' : 'in the hack'}, so its commits stay on this computer until the review, and checkpoint with no files does not push commit ${before.slice(0, 8)}. Nothing was pushed. Repair: ${LOCAL_PUSH_ROUTES(wf.state)}`)
   if (!files.length && hold) {
     const why = holdsForReview(wf.state) ? `issue #${wf.issue} is in the state "${wf.state}"` : `${holders.map(o => `#${o.issue}`).join(', ')} on this PR finished development and holds a commit for the review`
@@ -1397,8 +1426,8 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
     if (pr.head.ref !== wf.branch) throw new Refuse(`Refused: PR #${n} is on ${pr.head.ref}, and this workflow is on ${wf.branch}.`)
     if (!wf.prs.includes(n)) wf.prs.push(n)
   }
-  havePr(wf)
-  const n = wf.prs[0]!
+  havePr(wf, true)
+  let n = wf.prs[0]!
   const session = await $.session.id()
   const now = await $.clock.now()
   const held = await readHeld($, wf.root)
@@ -1421,6 +1450,13 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
   const finishing = listed as Workflow[]
 
   const notes = finishing.every(o => o.state === 'developed') && !files.length ? [] : await commitAndPush($, wf, 'finishedDevelopment', message, files, false, declared)
+  if (!n) {
+    if (prBody !== undefined) await editBody($, wf, old => withBodySection(old, wf.issue, prBody))
+    const opened = await openPendingPr($, wf)
+    if (opened) notes.push(opened)
+    n = wf.prs[0]!
+    for (const o of finishing) o.prs = [n]
+  }
   const hardened = finishing.filter((o, at) => o.state !== 'developed' && MACHINES[modes[at]!].hardens)
   if (hardened.length) {
     notes.push(...(await prePushForHardening($, wf, declared)))
@@ -1666,6 +1702,7 @@ async function finishedReview($: EngineInterface, c: Ctx): Promise<string> {
   const wf = await current($, c)
   const facts = await factsFor($, wf.root, project, wf)
   legal(wf, 'finishedReview', facts)
+  await openPendingPr($, wf)
   havePr(wf)
   await noAgentsRunning($)
   const fields = ['review', 'deadcode', 'remembered'].map(k => [k, text(args, k)] as const)
@@ -1861,6 +1898,7 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
     return answer($, wf, facts, [...ended, ...(await stopResources($, wf, project))])
   }
   const sha = await head(wf.root, $)
+  await openPendingPr($, wf)
   havePr(wf)
   const pr = mergedEarly ?? (!wf.direct && wf.prs[0] ? await readPr($, wf.root, wf.repo, wf.prs[0]) : undefined)
   const { problems, feedback } = pr?.merged ? { problems: [], feedback: [] } : await doneProblems($, wf, sha, pr)
@@ -2150,6 +2188,7 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
   const tool: Tool = mode === 'this_agent' ? 'followUpThisAgent' : mode === 'issue_only' ? 'followUpIssue' : 'followUpOther'
   legal(wf, tool, facts)
   if (mode === 'this_agent' && wf.direct) throw new Refuse('Refused: a project that commits directly to the base branch has no PR to carry a sub-issue. Use issue_only, or do the work and commit it.')
+  if (mode === 'this_agent') await openPendingPr($, wf)
   if (mode === 'this_agent' && wf.prs[0]) {
     const prState = wf.merged ? 'merged' : (await readPr($, wf.root, wf.repo, wf.prs[0])).state
     if (prState !== 'open') throw new Refuse(`Refused: PR #${wf.prs[0]} is ${prState}, so it cannot carry a new issue. Nothing was filed. Repair: use the mode issue_only, or worktree to start the work in its own worktree.`)
@@ -2232,7 +2271,7 @@ async function addMigration($: EngineInterface, c: Ctx): Promise<string> {
   const facts = await factsFor($, wf.root, project, wf)
   const name = text(args, 'name')
   if (!/^[a-z0-9_]+$/.test(name)) throw new Refuse(`Refused: the migration name ${JSON.stringify(name)} must hold only lower-case letters, digits and underscores.`)
-  if (wf.direct || !wf.prs[0]) throw new Refuse('Refused: this workflow has no PR, so nothing runs a migration after a merge. Add it with supabase migration new, and run it yourself.')
+  if (wf.direct || (!wf.prs[0] && !wf.prTitle)) throw new Refuse('Refused: this workflow has no PR, so nothing runs a migration after a merge. Add it with supabase migration new, and run it yourself.')
   if (['setup', 'done', 'blocked', 'wait'].includes(wf.state)) throw new Refuse(`Refused: addMigration is not valid in the state "${wf.state}".`)
   const workdir = text(args, 'workdir').replace(/\/$/, '')
   const prefix = workdir ? `${workdir}/` : ''
@@ -3199,7 +3238,7 @@ async function postInterview($: EngineInterface, wf: Workflow, file: InterviewFi
       problems.push(`scripts/github/gh.sh ${id ? `comment-edit ${id}` : `comment ${n}`} for the interview on #${n} failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  if (!wf.direct && !wf.prs[0]) problems.push(`#${wf.issue} has no PR yet, so the interview is not on a PR. Repair: call started with issue ${wf.issue}: it opens the draft PR. Then call interview with no arguments.`)
+  if (!wf.direct && !wf.prs[0] && !wf.prTitle) problems.push(`#${wf.issue} has no PR yet, so the interview is not on a PR. Repair: call started with issue ${wf.issue}: it opens the draft PR. Then call interview with no arguments.`)
   file.commentIds = ids
   file.posted = !problems.length
   await writeInterview($, wf.root, file)

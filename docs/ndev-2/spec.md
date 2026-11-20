@@ -68,6 +68,7 @@ ndev wait issue <open|closed> <target-issue>...
 ndev wait state <target-issue> <state>
 ndev epic start [<issue>|--title <text>] [--short-name <slug>] [--parallel <n>] [--implementer <agent>] [--implementer-model <model>] [--reviewer <agent>] [--reviewer-model <model>] [--run <id>] [--repo-id <id>] [--remote [<server>]|--local] [--remote-repo <selector>] [--take-over]
 ndev epic phase <epic> <phase> --evidence <text> [--file <path>]... [--aim <text>] [--issues-file <json>]
+ndev epic import <epic> --issues-file <json> --evidence <text>
 ndev epic next <epic>
 ndev epic brief <epic> <sub> <implementer|reviewer> [--pr <n>]
 ndev epic issue <epic> <sub> <state> [--pr <n>] [--worker <id>] [--workspace <selector>] [--verdict <approve|changes>] [--note <text>]
@@ -140,6 +141,25 @@ Use `git` and `gh` for Git and GitHub. Use Orca for worktrees, worker dispatch, 
 Keep draft PRs until their workflow gates are met. Follow the project merge setting. For this repository a human merges. Check the PR head SHA when recording check, review, or smoke evidence. Keep the checkpoint retry after a rebase. Read the expected remote SHA and prove each remote-only commit has a patch match in HEAD or is reachable from another remote branch. Then use a lease with that SHA. Refuse a new remote commit or a changed lease and keep the local commit.
 
 An epic stores GitHub sub-issues and their blocker links. A child can start from a pushed open blocker PR when the frontier and capacity rules allow it. Record the stack in its brief and give Orca the base branch. After the blocker merges, tell the worker to rebase and retarget. Verify the child only once the blocker is merged and the child PR targets the default branch. Resolve remote worktrees by their server and repository ID. Carry the worker role, agent, and model in its brief. Keep local and remote workers on the same epic state rules.
+
+Workflow code reviews use GPT-6.1 Terra for Codex and Sonnet for Claude. `NDEV_REVIEW_AGENT` selects the Orca harness. Other harnesses use their configured model.
+
+To resume an existing plan from `slicing`, run `ndev epic import <epic> --issues-file <json> --evidence <text>`. Repeat the command in `coordinating` to refresh GitHub evidence. The manifest must name every child once, with a valid `key`, an explicit `kind` (`implementation` or `human`), and the full `blockedBy` list from GitHub. For example:
+
+```json
+[
+  { "issue": 41, "key": "graph-records", "kind": "implementation", "blockedBy": [39] },
+  { "issue": 42, "key": "policy-decision", "kind": "human", "blockedBy": [] }
+]
+```
+
+Import reads GitHub without changing issues or other workflows. A closed implementation needs exactly one merged closing PR with a merge SHA. A timeline reference alone does not prove that a PR closes the child: import also checks its `closingIssuesReferences`. An open closing PR becomes `external`: its current owner keeps it, it consumes one parallel place, and no new worker can receive it. Refresh with import after its owner merges it. Import preserves workers and review state that this epic already owns and refuses conflicts with their saved PRs or dependencies.
+
+A human child remains `human-pending`. It cannot receive an implementer, count as merged, or satisfy a blocker. Import cannot infer approval even if the human issue is closed. The human owner must resolve that decision with explicit evidence. Automatic completion of human decisions is not supported.
+
+External blockers keep their real issue numbers in `blockedBy` and have separate evidence in `externalBlockers`. They do not become epic children or consume a parallel place. An unresolved external blocker cannot carry a stack. Only a closed issue with a verified merged closing PR releases that gate. Refresh import before using changed external evidence. An uncertain lookup, ambiguous PR, removed child or dependency mismatch refuses the whole import and preserves the saved record.
+
+The returned frontier reserves capacity for existing PRs as well as this epic's workers. With parallel limit 3 and one existing PR, at most two new implementations can start. Human and external dependency gates remain enforced. Agent coordinator notifications use Orca orchestration session addresses. A failed notification reports the saved revision separately. Read `ndev epic status <epic>` before retrying.
 
 ## Hooks and watcher
 

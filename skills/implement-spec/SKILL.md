@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Implement a spec
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Check the spec against the applicable sections before you implement changes to project rules or architecture.
-
 Treat the spec as a dependency graph of tickets. Read the spec, the tickets and the relevant repository guidance first. Point to those files; do not copy long explanations.
 
 1. Find the frontier (tickets with no open blocker) and the dependencies. Explore code or external documentation only as needed. Save large findings outside the repository.
@@ -22,4 +20,4 @@ Use the `work-heavy` and `testing` skills for the worktree, PR, TDD, test-tier, 
 
 Call `mcp__ndev__started(issue, shortName)` first, and follow each answer until `mcp__ndev__done`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

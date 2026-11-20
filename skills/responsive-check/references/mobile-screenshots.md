@@ -1,13 +1,6 @@
----
-name: mobile-testing
-description: "Capture and inspect the web app with Playwright mobile device emulation."
----
-
 # Mobile screenshots
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the project sets rules for the layout or behaviour you review.
-
-Run `scripts/mobile-shots.mjs` in this skill's folder with an explicit target. Then open the PNGs that it prints.
+Run `scripts/mobile-shots.mjs` in the responsive-check skill's folder with an explicit target. Then open the PNGs that it prints.
 
 ```bash
 WEB_DIR=<web app dir> node <this skill>/scripts/mobile-shots.mjs --base http://localhost:3000 / /about
@@ -39,8 +32,4 @@ Start the local web server first if needed. `--base` is required: the script has
 - An authenticated page needs a session set up first.
 - `networkidle` plus a short wait does not prove that every client-rendered state is ready.
 
-Browser extensions often cannot change the CSS layout viewport, so they cannot emulate a device. Use this script for mobile screenshots. For a quick look at a signed-in page, use Orca's browser when Orca runs: `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> --viewport 390x844`. It has no touch and no WebKit. For a full check (phones, tablets and desktops, light and dark, each defect with its element), use `responsive-check`.
-
-## The workflow
-
-While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+Browser extensions often cannot change the CSS layout viewport, so they cannot emulate a device. Use this script for mobile screenshots. For a quick look at a signed-in page, use Orca's browser when Orca runs: `${CLAUDE_PLUGIN_ROOT}/scripts/browser/orca-shot.sh <url> <out.png> --viewport 390x844`. It has no touch and no WebKit. For a full check, follow the [responsive matrix](../SKILL.md).

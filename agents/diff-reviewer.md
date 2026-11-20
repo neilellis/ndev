@@ -1,8 +1,8 @@
 ---
 name: diff-reviewer
 description: "Use for a read-only code review of a diff (for example origin/main..HEAD) before a PR goes ready: report Critical and Important correctness, security and simplification findings for the caller to fix. Reports only; never edits code, commits or merges."
-model: opus
-effort: high
+model: sonnet
+effort: medium
 color: orange
 tools: Read, Grep, Glob, Bash
 skills:

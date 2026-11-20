@@ -1,7 +1,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -276,7 +276,7 @@ test('the code review checks the base North Star without copying it into reviewe
     git(p.work, 'commit', '-qm', 'Record the project North Star')
     git(p.work, 'push', '-q', 'origin', 'main')
     git(p.work, 'switch', '-q', 'feature')
-    const fake = services(p)
+    const fake = { ...services(p), NDEV_REVIEW_AGENT: mode === 'heavy' ? 'claude' : 'codex' }
     if (mode === 'heavy') {
       const gh = join(p.dir, 'fake-bin/gh')
       writeFileSync(gh, '#!/bin/sh\n[ "$1 $2" = "pr view" ] || exit 22\njq -n --rawfile body "$PR_BODY" \'{body: $body, state: "OPEN", mergeStateStatus: "CLEAN"}\'\n', { mode: 0o755 })
@@ -301,11 +301,12 @@ test('the code review checks the base North Star without copying it into reviewe
     assert.match(standard, /when the file is absent, use the remaining project guidance/i)
     if (mode === 'heavy') assert.doesNotMatch(briefs.get('specification'), /NORTH_STAR\.md/)
     const dispatched = readFileSync(fake.ORCA_LOG, 'utf8')
+    assert.ok(dispatched.includes(mode === 'heavy' ? '--model sonnet' : '--model gpt-6.1-terra'), dispatched)
     assert.match(dispatched, /origin\/main:NORTH_STAR\.md/)
     assert.doesNotMatch(dispatched, /Fixture statement kept out/)
   }
 })
-test('starting from the base uses the Orca worktree receipt and resumes one draft PR', () => {
+test('starting from the base uses the Orca worktree receipt and defers the draft PR', () => {
   const p = project()
   const fake = services(p)
   rmSync(p.file)
@@ -320,12 +321,12 @@ test('starting from the base uses the Orca worktree receipt and resumes one draf
   const start = JSON.parse(output(flow(p, args, fake)))
   assert.match(start.root, /7-test-claim$/)
   assert.equal(start.workflow.owner.session, 'session-A')
-  assert.deepEqual(start.workflow.prs, [9])
+  assert.deepEqual(start.workflow.prs, [])
   const status = output(run(p.work, join(repo, 'bin/ndev'), ['flow', 'status', '--json'], fake))
   assert.equal(JSON.parse(status).result.root, start.root)
   const resumed = JSON.parse(output(flow(p, args, fake)))
   assert.equal(resumed.root, start.root)
-  assert.equal(readFileSync(fake.GH_LOG, 'utf8').match(/^pr-new /gm).length, 1)
+  assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /^pr-new /m)
   assert.equal(readFileSync(fake.ORCA_LOG, 'utf8').match(/worktree create/g).length, 1)
   const denied = flow(p, args, { ...fake, ORCA_AGENT_SESSION_ID: 'another-owner' })
   assert.equal(denied.status, 1)
@@ -501,4 +502,75 @@ exec command_git "\$@"
   assert.equal(git(p.origin, 'rev-parse', 'feature'), sha)
   assert.equal(git(p.origin, 'tag', '--list'), '')
   assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /^pr-ready/m)
+})
+
+
+test('interactive development waits for human confirmation before checks, staging or review', () => {
+  const p = project()
+  const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+  raw.workflow.steering = 'interactive'
+  writeFileSync(p.file, JSON.stringify(raw))
+  const checks = join(p.work, 'scripts/ndev/workflow')
+  mkdirSync(checks, { recursive: true })
+  writeFileSync(join(checks, 'fast-checks.sh'), '#!/bin/sh\necho ran > "$CHECK_LOG"\n')
+  const fake = { ...services(p), CHECK_LOG: join(p.dir, 'check.log') }
+  const before = git(p.work, 'rev-parse', 'HEAD')
+  const record = readFileSync(p.file, 'utf8')
+  const result = flow(p, ['finished-development', '--issue', '7', '--file', 'next.txt'], fake)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /#7.*human confirmation/i)
+  assert.match(result.stderr, /preview/i)
+  assert.match(result.stderr, /--human-confirmation/)
+  assert.equal(existsSync(fake.CHECK_LOG), false)
+  assert.doesNotMatch(existsSync(fake.ORCA_LOG) ? readFileSync(fake.ORCA_LOG, 'utf8') : '', /worker-start/)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), before)
+  assert.equal(git(p.work, 'diff', '--cached', '--name-only'), '')
+  assert.equal(readFileSync(p.file, 'utf8'), record)
+})
+
+test('confirmed interactive development and auto development can enter review', () => {
+  for (const steering of ['interactive', 'auto']) {
+    const p = project()
+    const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+    raw.workflow.steering = steering
+    writeFileSync(p.file, JSON.stringify(raw))
+    const fake = services(p)
+    const args = ['finished-development', '--issue', '7', '--file', 'next.txt']
+    if (steering === 'interactive') args.push('--human-confirmation', 'Yes, this is done; start the checks.')
+    const result = JSON.parse(output(flow(p, args, fake)))
+    assert.equal(result.state, 'reviewing')
+    assert.match(readFileSync(fake.ORCA_LOG, 'utf8'), /worker-start/)
+    if (steering === 'interactive') assert.equal(result.workflow.developmentConfirmation, 'Yes, this is done; start the checks.')
+    else assert.equal(result.workflow.developmentConfirmation, undefined)
+  }
+})
+
+test('interactive development guidance requires a preview and done confirmation before final checks', () => {
+  for (const steering of ['interactive', 'auto']) {
+    const p = project()
+    const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+    raw.workflow.steering = steering
+    writeFileSync(p.file, JSON.stringify(raw))
+    const result = JSON.parse(output(flow(p, ['status', '--issue', '7'])))
+    if (steering === 'interactive') {
+      assert.match(result.next, /concrete development preview/)
+      assert.match(result.next, /ask whether the work is done/i)
+      assert.match(result.next, /before final checks or review/)
+      assert.match(result.next, /--human-confirmation/)
+    } else assert.doesNotMatch(result.next, /--human-confirmation/)
+  }
+})
+
+test('an interactive sibling prevents every selected issue from running finish checks', () => {
+  const p = project()
+  const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+  writeFileSync(join(p.work, '.neil-dev.issue-8.json'), JSON.stringify({ ...raw, issue: 8, workflow: { ...raw.workflow, issue: 8, steering: 'interactive' } }))
+  const fake = services(p)
+  const before = git(p.work, 'rev-parse', 'HEAD')
+  const result = flow(p, ['finished-development', '--issue', '7', '--issue', '8', '--file', 'next.txt'], fake)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /#8.*human confirmation/i)
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), before)
+  assert.equal(JSON.parse(readFileSync(p.file, 'utf8')).workflow.state, 'developing')
+  assert.doesNotMatch(existsSync(fake.ORCA_LOG) ? readFileSync(fake.ORCA_LOG, 'utf8') : '', /worker-start/)
 })

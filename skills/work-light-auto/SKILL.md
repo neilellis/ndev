@@ -5,7 +5,7 @@ description: "The non-interactive lightweight development skill (light mode, aut
 
 # Ready-board delivery, one unit at a time
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the change affects project goals, rules, or behaviour.
+Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 This is the attended, native-dispatch form of `work-heavy-auto`. Survey and order the Ready column, then give each independent issue or dependency batch to one disposable worker. Report one line per unit. A human merges.
 
@@ -42,4 +42,4 @@ Dispatch one `issue-implementer` agent per unit (named `issue-<lead>`). Size the
 
 Return the worker's one-line result or its blocking question. Never open a second PR, wait silently, merge, or push the base branch.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

@@ -598,7 +598,7 @@ function ciBlock(n) {
   return [
     'VERIFY (CI is a machine — you DO wait for it; only humans trigger drop-out). gh pr commands',
     'take the BRANCH (the PR number differs from the issue number):',
-    '0. **RECORD WHAT YOU LEARNED — BEFORE the PR leaves draft.** Invoke the `r` skill (Skill tool,',
+    '0. **RECORD WHAT YOU LEARNED — BEFORE the PR leaves draft.** Invoke the `remember` skill (Skill tool,',
     '   name "r"; if it is not installed, write the facts into the docs CLAUDE.md names yourself).',
     '   Harvest the durable, non-obvious facts this work taught you, route each to its ONE home',
     '   (the wiki or docs, a skill, CLAUDE.md, or memory), and COMMIT THE REPO ONES ON THIS BRANCH —',

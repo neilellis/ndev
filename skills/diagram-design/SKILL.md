@@ -1,6 +1,6 @@
 ---
 name: diagram-design
-description: Create architecture, architecture delta, IT current-state, flowchart, sequence, state machine, ER/data model, timeline, swimlane, quadrant, radar/spider, polar chart (polar/radial lollipop), loop/flywheel, nested, tree, org chart, layer stack, exploded axonometric, axonometric plan, Venn, pyramid/funnel, treemap and marimekko, heatmap, bar and dumbbell, waterfall, line (slopegraph, ridgeline, streamgraph, bump), Gantt and scatter charts (bubble, beeswarm), high-level, process, medallion, data flow, DP integration, DP security matrix, Sankey, fishbone, Wardley map, kanban, user journey, service blueprint, deployment, dependency graph, UML class, story map, or database schema diagrams as HTML/SVG/PNG, with .drawio, Mermaid, and .excalidraw import, plus lifecycle phase maps, block decomposition trees, and onboarding guidance.
+description: "Create custom HTML/SVG diagrams and charts, including org charts, timelines, data models and imported draw.io or Excalidraw files. Use archify for validated architecture, workflow, sequence, data-flow and lifecycle diagrams; use infographic for raster artwork."
 license: MIT
 metadata:
   version: "2.6"
@@ -9,8 +9,6 @@ metadata:
 Before you write or review diagram labels and captions, read the project's writing rules if `CLAUDE.md` or `AGENTS.md` names them.
 
 # Diagram Design
-
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the diagram defines project architecture, domain rules, or user behaviour.
 
 Create diagrams as self-contained HTML files with inline SVG and an editorial design system.
 

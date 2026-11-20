@@ -5,8 +5,6 @@ description: "Add, audit or fix animation in a React or Next.js site with the Mo
 
 # Animate with Motion
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if motion affects an interaction or accessibility rule of the project.
-
 Movement must feel calm and professional. Use `work-light` for the change and `testing` for the checks.
 
 If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`) before you add movement. Follow its motion pages: durations, easing, and what can move. Where they differ from the rules below, the guide wins. Otherwise skip this section.

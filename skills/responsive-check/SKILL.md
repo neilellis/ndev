@@ -1,15 +1,15 @@
 ---
 name: responsive-check
-description: "Check a website's layout on phones, tablets and desktops, in light and dark mode, and report each defect with its element. Use when the user asks to check a site on mobile, iPad, other widths or dark mode, for a responsive or reflow review, before a public page ships, or after a layout or theme change. Also use to stress-test a component with worst-case data (long names, unbreakable emails, empty and huge lists). Also maintains the breakpoint and layout rules on the project's brand site."
+description: "Review layouts on phones, tablets and desktops in light and dark mode, with defects tied to elements. Capture quick mobile screenshots, test worst-case content and maintain brand-site layout rules."
 ---
 
 # Responsive check
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the project sets rules for the layout or behaviour you review.
-
 The check runs a matrix: **routes × viewports × colour schemes**. Each cell loads one route at one viewport in one scheme, in the engine of the real device (WebKit for Apple devices, Chromium for the rest). The probe measures the page and the script reports each defect with a CSS selector.
 
 The ndev pane **Responsive matrix** follows the run live. It opens when the runner starts. `/responsive-matrix` opens it again and shows the newest run.
+
+For quick mobile screenshots of named routes, use the [mobile capture helper](references/mobile-screenshots.md). Use the matrix below for a layout review.
 
 ## 1. Run the matrix
 

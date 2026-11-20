@@ -5,8 +5,6 @@ description: "Merge a pull request and run its Supabase migrations. Use for /nde
 
 # Merge a pull request and run its migrations
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the change affects project rules or goals. Confirm the review cites the applicable sections.
-
 The `addMigration` workflow tool lists each migration in a marked section of the PR body. This skill merges the PR, then applies those migrations.
 
 ## The workflow
