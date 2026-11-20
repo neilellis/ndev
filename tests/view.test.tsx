@@ -578,7 +578,8 @@ test('the history shows newest first, and a bar shows how far the flow has come'
   const ui = await start($)
   const rows = (await ui.findAll({ type: 'Text', text: /ago +(started|finishedPlan) / })).map(t => t.text)
   expect(rows.findIndex(t => t.includes('finishedPlan'))).toBeLessThan(rows.findIndex(t => t.includes('started')))
-  expect(await ui.find({ type: 'Text', text: /^█+░+ 2\/9 .*developing for 1m 0s/ })).toBeTruthy()
+  const progress = await ui.find({ type: 'Text', text: /^█+░+/ })
+  expect(progress?.text).toMatch(/^█+░+ 2\/10 .*developing for 1m 0s/)
   await ui.unmount()
 })
 
