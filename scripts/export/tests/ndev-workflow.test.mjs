@@ -163,6 +163,7 @@ pr-list) [ -z "$EXISTING_PR" ] || echo '{"number":9}' ;;
 pr-new) echo '{"url":"https://github.com/test/project/pull/9"}' ;;
 pr-read) if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
 pr-edit) cp "$4" "$PR_BODY" ;;
+feedback) ;;
 comment|subissues|pr-ready) echo '{"ok":true}' ;;
 commit-checks) if [ -n "$MOVE_DURING_CHECKS" ]; then git commit --allow-empty -qm 'New head while reading checks'; git push -q origin HEAD:feature; fi; echo '{"check_runs":[{"name":"ci","status":"completed","conclusion":"success"}],"statuses":[]}' ;;
 *) echo "Unsupported gh command $*" >&2; exit 22 ;;
@@ -890,4 +891,57 @@ test('repair refreshes a retargeted PR base even when its head is unchanged', ()
   assert.equal(result.baseCheck, undefined)
   assert.equal(p.read().base, 'release')
   assert.equal(p.read().state, 'developing')
+})
+
+
+test('repair refuses actual shared PR carriers without changing either association', () => {
+  for (const issue of [7, 8]) {
+    const p = repairProject()
+    const all = JSON.parse(readFileSync(p.file, 'utf8'))
+    all.workflow.state = 'developed'
+    all.prs = { 9: { ...all.workflow, issue, pr: 9, issues: [7, 8], state: 'reviewing' } }
+    writeFileSync(p.file, JSON.stringify(all))
+    const before = readFileSync(p.file, 'utf8')
+    const result = p.repair()
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /shared.*PR #9/i)
+    assert.equal(readFileSync(p.file, 'utf8'), before)
+  }
+})
+
+test('repair closing references accept supported same-repository forms and reject unrelated links', () => {
+  for (const body of ['Closes: #7', 'Closes test/project#7', 'Fixes https://github.com/test/project/issues/7', 'Encloses #7', 'Closes other/project#7', 'Closes https://github.com/test/elsewhere/issues/7', 'Closes #70']) {
+    const p = repairProject()
+    p.setPr({ body })
+    const before = readFileSync(p.file, 'utf8')
+    const result = p.repair()
+    const valid = body.startsWith('Closes:') || body.startsWith('Closes test/') || body.startsWith('Fixes ')
+    assert.equal(result.status, valid ? 0 : 1, `${body}: ${result.stderr}`)
+    if (!valid) {
+      assert.match(result.stderr, /does not close issue #7/)
+      assert.equal(readFileSync(p.file, 'utf8'), before)
+    }
+  }
+})
+
+test('repaired alias completion refuses local and canonical stashes and passes when cleared', () => {
+  const p = repairProject()
+  output(p.repair())
+  rmSync(join(p.work, 'next.txt'))
+  const sha = git(p.work, 'rev-parse', 'HEAD')
+  p.setRecord({ state: 'finishing', evidence: { checks: { sha } } })
+  p.setPr({ draft: false, mergeable: true, created_at: '2020-01-01T00:00:00Z' })
+  const args = ['done', '--issue', '7', '--message', 'Finished repair', '--remembered', 'nothing: regression fixture']
+  for (const branch of ['feature', 'canonical']) {
+    git(p.work, 'switch', '-q', branch)
+    writeFileSync(join(p.work, 'feature.txt'), 'stashed work')
+    git(p.work, 'stash', 'push', '-qm', 'Preserve work')
+    git(p.work, 'switch', '-q', 'feature')
+    const result = flow(p, args, p.fake)
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, new RegExp(`A stash of ${branch} remains`))
+    assert.equal(p.read().state, 'finishing')
+    git(p.work, 'stash', 'drop', '-q')
+  }
+  assert.equal(JSON.parse(output(flow(p, args, p.fake))).state, 'done')
 })

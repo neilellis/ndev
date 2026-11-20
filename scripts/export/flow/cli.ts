@@ -900,7 +900,9 @@ function doneProblems(wf: Workflow, sha: string, pr: Pr): { problems: string[]; 
   const unlisted = changedPaths(wf).filter(f => /(^|\/)supabase\/migrations\/[^/]+\.sql$/.test(f) && !listed.has(f))
   if (unlisted.length) problems.push(`Nothing will run these migration files after the merge: ${unlisted.join(', ')}. Repair: run ndev-flow addMigration --name <name>, move the SQL into the file it makes, and delete the old file.`)
   const stash = git(wf.root, 'stash', 'list').stdout
-  if (stash.includes(`on ${wf.branch}:`) || stash.includes(`On ${wf.branch}:`)) problems.push(`A stash of ${wf.branch} remains. Apply or drop it.`)
+  for (const branch of new Set([wf.branch, wf.localBranch].filter(Boolean))) {
+    if (stash.includes(`on ${branch}:`) || stash.includes(`On ${branch}:`)) problems.push(`A stash of ${branch} remains. Apply or drop it.`)
+  }
   const humanSkip = wf.evidence?.checks?.byHuman && wf.evidence.checks.sha === sha
   if (!humanSkip) {
     const checks = readChecks(wf, sha)
@@ -1350,6 +1352,9 @@ function repairFlow(root: string, config: Config, args: Args) {
   const number = Number(need(args, 'pr'))
   const repo = resolveRepo(root, config)
   const held = readRecord(root, issue)
+  const records = publicCli!.readWorkflowRecords(root) as Workflow[]
+  const shared = records.find(wf => wf.pr && (wf.issue === issue || wf.issues?.includes(issue)))
+  if (shared) throw new Fail(1, `Issue #${issue} belongs to shared PR #${shared.pr}. Finish that shared workflow before repairing its association. Nothing was rebound.`)
   if (held && (resolve(held.root) !== root || held.repo.toLowerCase() !== repo.toLowerCase() || held.pr || held.prs.length > 1 || held.op || held.state === 'wait')) {
     throw new Fail(1, `Issue #${issue} has a shared, pending, waiting or mismatched workflow in ${held.root}; repair it there after its operation finishes. Nothing was rebound.`)
   }
@@ -1359,7 +1364,7 @@ function repairFlow(root: string, config: Config, args: Args) {
   if (held?.off) throw new Fail(1, `Workflow of #${issue} is off: ${held.off.reason}. Run ndev flow on --issue ${issue} before repairing it.`)
   if ((args.mode || held?.mode || config.mode) === 'hack' && (held?.steering || config.steering) === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
   if (held) repairOwner(held, args)
-  const foreign = (publicCli!.readWorkflowRecords(root) as Workflow[]).find(wf => wf.issue !== issue && !['done', 'setup'].includes(wf.state) && !wf.off)
+  const foreign = records.find(wf => wf.issue !== issue && !['done', 'setup'].includes(wf.state) && !wf.off)
   if (foreign) throw new Fail(1, `Issue #${foreign.issue} already uses ${root}. Finish that workflow before repairing #${issue}.`)
   const info = ghJson<{ title: string; state: string }>(root, repo, ['issue-read', String(issue)])
   if (info.state !== 'open') throw new Fail(1, `Issue #${issue} is ${info.state}; reopen it before repairing its PR association.`)
@@ -1370,7 +1375,8 @@ function repairFlow(root: string, config: Config, args: Args) {
   const localBranch = gitOk(root, 'branch', '--show-current')
   if (!localBranch || localBranch === base || localBranch === pr.base?.ref || !pr.head.ref || pr.head.ref === base || pr.head.ref === pr.base?.ref) throw new Fail(1, `PR #${number} repair refuses a detached checkout or a base branch head (${localBranch}, ${pr.head.ref}).`)
   if (!pr.base?.ref || git(root, 'check-ref-format', '--branch', pr.head.ref).status !== 0 || git(root, 'check-ref-format', '--branch', pr.base.ref).status !== 0 || !/^[0-9a-f]{40}$/.test(pr.head.sha)) throw new Fail(1, `PR #${number} has an invalid head/base reference or commit: ${JSON.stringify(pr)}.`)
-  const linked = new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+(?:#${issue}\\b|https://github\\.com/${repo}/issues/${issue}\\b)`, 'i').test(pr.body || '')
+  const quotedRepo = repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const linked = new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\\s+(?:(?:${quotedRepo})?#${issue}\\b|https://github\\.com/${quotedRepo}/issues/${issue}\\b)`, 'i').test(pr.body || '')
   if (!linked) throw new Fail(1, `PR #${number} does not close issue #${issue}. Add the correct closing reference to that PR before repairing its association.`)
   const fetchUrl = gitOk(root, 'remote', 'get-url', '--all', 'origin')
   const pushUrl = gitOk(root, 'remote', 'get-url', '--push', '--all', 'origin')
