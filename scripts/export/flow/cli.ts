@@ -172,7 +172,7 @@ function ghJson<T>(root: string, repo: string | undefined, args: string[]): T {
   }
 }
 const gh = (wf: Workflow, args: string[]) => ghRun(wf.root, wf.repo, args)
-type Pr = { number: number; state: string; merged?: boolean; draft?: boolean; mergeable?: boolean | null; body?: string | null; created_at: string; head: { sha: string; ref: string; crossRepository?: boolean } }
+type Pr = { number: number; state: string; merged?: boolean; draft?: boolean; mergeable?: boolean | null; body?: string | null; created_at: string; base?: { ref: string }; head: { sha: string; ref: string; crossRepository?: boolean } }
 const readPr = (wf: Workflow, n: number) => ghJson<Pr>(wf.root, wf.repo, ['pr-read', String(n)])
 const prOf = (wf: Workflow) => {
   const pr = wf.prs[0]
@@ -644,7 +644,8 @@ function checkpoint(wf: Workflow, config: Config, args: Args) {
   const localOnly = !!MACHINES[wf.mode as 'light'].localOnly?.includes(wf.state as any)
   const pushes = !localOnly && wf.state !== 'reviewing' && wf.state !== 'hardening'
   const branch = gitOk(wf.root, 'branch', '--show-current')
-  if (branch !== wf.branch || (branch === wf.base && !wf.direct)) throw new Fail(1, `Checkpoint for #${wf.issue} expects ${wf.branch}, found ${branch || 'detached HEAD'} (base ${wf.base}). Repair: git switch ${wf.branch}.`)
+  const localBranch = wf.localBranch || wf.branch
+  if (branch !== localBranch || (branch === wf.base && !wf.direct)) throw new Fail(1, `Checkpoint for #${wf.issue} expects ${localBranch}, found ${branch || 'detached HEAD'} (base ${wf.base}). Repair: git switch ${localBranch}.`)
   const op = wf.op?.tool === 'checkpoint' ? wf.op : { id: opId(wf, 'checkpoint'), tool: 'checkpoint' }
   wf.op = op
   save(wf)
@@ -753,8 +754,8 @@ function pushDraft(wf: Workflow, config: Config, args: Args) {
     }
   }
   const assertLocal = () => {
-    if (sha !== headSha(wf.root) || gitOk(wf.root, 'branch', '--show-current') !== wf.branch) {
-      throw new Fail(1, `Expected reviewed commit ${sha} at HEAD on ${wf.branch}. Check out the workflow branch and supply its full reviewed SHA.`)
+    if (sha !== headSha(wf.root) || gitOk(wf.root, 'branch', '--show-current') !== (wf.localBranch || wf.branch)) {
+      throw new Fail(1, `Expected reviewed commit ${sha} at HEAD on ${wf.localBranch || wf.branch}. Check out the workflow branch and supply its full reviewed SHA.`)
     }
     if (gitOk(wf.root, 'status', '--porcelain', '--untracked-files=all')) {
       throw new Fail(1, `Issue #${wf.issue} needs a clean worktree to check the reviewed commit ${sha}. Save local changes separately before retrying.`)
@@ -1332,6 +1333,82 @@ function syncWorkspace(wf: Workflow, notes: string[]) {
   try { orca(wf.root, orcaEnvironment(), args) }
   catch (error) { notes.push(`Workspace update for #${wf.issue} failed: ${(error as Error).message}`) }
 }
+function repairOwner(wf: Workflow, args: Args) {
+  const owner = wf.owner?.session
+  if (!owner || owner === session()) return
+  if (args['take-over'] !== 'true') throw new Fail(1, `Session ${owner} owns issue #${wf.issue} in ${wf.root}. Repair: after that owner has finished, run ndev flow repair --issue ${wf.issue} --pr ${args.pr} --take-over.`)
+  const status = orca(wf.root, orcaEnvironment(), ['agent', 'show', owner])
+  if (status.orcaSessionId !== owner || !Array.isArray(status.places) || !status.places.length || status.places.some((place: { state?: string }) => !['done', 'closed', 'exited'].includes(place.state || ''))) {
+    throw new Fail(1, `Session ${owner} has not been confirmed finished for issue #${wf.issue}: ${JSON.stringify(status)}. Leave its work intact and retry after the owner finishes.`)
+  }
+}
+function repairFlow(root: string, config: Config, args: Args) {
+  const issue = Number(need(args, 'issue'))
+  const number = Number(need(args, 'pr'))
+  const repo = resolveRepo(root, config)
+  const held = readRecord(root, issue)
+  if (held && (resolve(held.root) !== root || held.repo.toLowerCase() !== repo.toLowerCase() || held.pr || held.prs.length > 1 || held.op || held.state === 'wait')) {
+    throw new Fail(1, `Issue #${issue} has a shared, pending, waiting or mismatched workflow in ${held.root}; repair it there after its operation finishes. Nothing was rebound.`)
+  }
+  const roots = gitOk(root, 'worktree', 'list', '--porcelain', '-z').split('\0').filter(line => line.startsWith('worktree ')).map(line => line.slice(9))
+  const elsewhere = roots.filter(path => path !== root).find(path => readRecord(path, issue))
+  if (elsewhere) throw new Fail(1, `Issue #${issue} already has a workflow in ${elsewhere}. Nothing was copied or rebound. Repair: run ndev flow repair --issue ${issue} --pr ${number} from that worktree.`)
+  if (held?.off) throw new Fail(1, `Workflow of #${issue} is off: ${held.off.reason}. Run ndev flow on --issue ${issue} before repairing it.`)
+  if ((args.mode || held?.mode || config.mode) === 'hack' && (held?.steering || config.steering) === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
+  if (held) repairOwner(held, args)
+  const foreign = (publicCli!.readWorkflowRecords(root) as Workflow[]).find(wf => wf.issue !== issue && !['done', 'setup'].includes(wf.state) && !wf.off)
+  if (foreign) throw new Fail(1, `Issue #${foreign.issue} already uses ${root}. Finish that workflow before repairing #${issue}.`)
+  const info = ghJson<{ title: string; state: string }>(root, repo, ['issue-read', String(issue)])
+  if (info.state !== 'open') throw new Fail(1, `Issue #${issue} is ${info.state}; reopen it before repairing its PR association.`)
+  const pr = ghJson<Pr>(root, repo, ['pr-read', String(number)])
+  if (pr.number !== number || pr.state !== 'open' || pr.merged) throw new Fail(1, `PR #${number} is ${pr.state}${pr.merged ? ' (merged)' : ''}; repair needs an open PR.`)
+  if (pr.head?.crossRepository !== false) throw new Fail(1, `PR #${number} must be a confirmed same-repository PR; fork or unknown heads cannot be rebound.`)
+  const base = ghJson<{ default_branch: string }>(root, repo, ['default-branch']).default_branch
+  const localBranch = gitOk(root, 'branch', '--show-current')
+  if (!localBranch || localBranch === base || localBranch === pr.base?.ref || !pr.head.ref || pr.head.ref === base || pr.head.ref === pr.base?.ref) throw new Fail(1, `PR #${number} repair refuses a detached checkout or a base branch head (${localBranch}, ${pr.head.ref}).`)
+  if (!pr.base?.ref || git(root, 'check-ref-format', '--branch', pr.head.ref).status !== 0 || git(root, 'check-ref-format', '--branch', pr.base.ref).status !== 0 || !/^[0-9a-f]{40}$/.test(pr.head.sha)) throw new Fail(1, `PR #${number} has an invalid head/base reference or commit: ${JSON.stringify(pr)}.`)
+  const linked = new RegExp(`(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+(?:#${issue}\\b|https://github\\.com/${repo}/issues/${issue}\\b)`, 'i').test(pr.body || '')
+  if (!linked) throw new Fail(1, `PR #${number} does not close issue #${issue}. Add the correct closing reference to that PR before repairing its association.`)
+  const fetchUrl = gitOk(root, 'remote', 'get-url', '--all', 'origin')
+  const pushUrl = gitOk(root, 'remote', 'get-url', '--push', '--all', 'origin')
+  const originRepo = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/|ssh:\/\/git@ssh\.github\.com:443\/)([^/\s]+\/[^/\s]+)\/?$/i.exec(pushUrl)?.[1]?.replace(/\.git$/i, '')
+  if (!fetchUrl || fetchUrl.includes('\n') || fetchUrl !== pushUrl || originRepo?.toLowerCase() !== repo.toLowerCase()) throw new Fail(1, `PR #${number} repair requires one matching origin fetch/push URL for ${repo}; found fetch=${fetchUrl}, push=${pushUrl}. Repair: inspect git remote get-url --all origin and git remote get-url --push --all origin.`)
+  const sha = headSha(root)
+  gitOk(root, 'fetch', '--no-tags', 'origin', `+refs/heads/${pr.head.ref}:refs/remotes/origin/${pr.head.ref}`)
+  const remote = gitOk(root, 'rev-parse', `origin/${pr.head.ref}`)
+  if (remote !== pr.head.sha) throw new Fail(1, `PR #${number} head ${pr.head.sha} differs from origin/${pr.head.ref}@${remote}. Refresh the PR and retry the repair.`)
+  if (git(root, 'merge-base', '--is-ancestor', remote, sha).status !== 0) throw new Fail(1, `HEAD ${sha} is missing commits from PR #${number} on canonical branch ${pr.head.ref}@${remote}. Repair: git merge origin/${pr.head.ref}, resolve conflicts, then retry ndev flow repair --issue ${issue} --pr ${number}.`)
+  if (held?.branch === pr.head.ref && (held.localBranch || held.branch) === localBranch && held.prs[0] === number && held.owner?.session === session() && held.lastRepair?.head === sha && held.lastRepair?.remote === remote) return report(held, config, ['Association already repaired; nothing changed.'])
+  const wf: Workflow = held || { issue, root, repo, base: pr.base.ref, branch: localBranch, prs: [], state: (config.steering || 'interactive') === 'interactive' ? 'interviewing' : 'developing', mode: args.mode || config.mode || 'light', steering: config.steering || 'interactive', history: [], evidence: {}, followUps: [], migrations: [], attempts: 0, nudges: { count: 0 }, shortName: `repair-pr-${number}` }
+  const previous = { branch: wf.branch, localBranch: wf.localBranch, base: wf.base, prs: wf.prs, state: wf.state }
+  wf.branch = pr.head.ref
+  wf.localBranch = localBranch
+  if (wf.base !== pr.base.ref) delete wf.baseCheck
+  wf.base = pr.base.ref
+  wf.prs = [number]
+  wf.owner = { session: session(), at: now() }
+  wf.lastRepair = { ...previous, head: sha, remote, at: now() }
+  wf.evidence = {}
+  if (wf.direct) {
+    delete wf.direct
+    delete wf.noChecks
+    delete wf.baseCheck
+  }
+  for (const key of ['exportReview', 'deadcode', 'hooks', 'reviewRounds', 'prTitle', 'prBody', 'doneWaitsFor']) delete wf[key]
+  const phase = wf.state === 'blocked' ? wf.previous : wf.state
+  if (!['setup', 'interviewing', 'planning', 'developing', 'hardening'].includes(phase || '')) {
+    if (wf.state === 'blocked') wf.previous = 'developing'
+    else wf.state = 'developing'
+  }
+  wf.history.push({ at: now(), tool: 'repair', from: previous.state, to: wf.state })
+  assertHead(wf, sha)
+  if (gitOk(root, 'branch', '--show-current') !== localBranch) throw new Fail(1, `The local branch changed during PR #${number} repair. Retry from the intended checkout.`)
+  save(wf)
+  publicCli!.bind(root, issue, session())
+  const notes = [`Repaired issue #${issue} to PR #${number}. Local branch ${localBranch}; publish target HEAD:refs/heads/${pr.head.ref}. Existing files and local branch refs were preserved. Review, checks and smoke evidence must be renewed.`]
+  if (inOrca()) syncWorkspace(wf, notes)
+  return report(wf, config, notes)
+}
 function publicStart(root: string, config: Config, args: Args, hotfix: boolean) {
   const issue = findIssue(root, args)
   const roots = gitOk(root, 'worktree', 'list', '--porcelain', '-z').split('\0').filter(line => line.startsWith('worktree ')).map(line => line.slice(9))
@@ -1431,7 +1508,7 @@ function dispatchFlow(argv: string[], options: { json?: boolean }) {
   if (!command || !args) throw new Fail(2, 'Run ndev flow help.')
   if (command === 'guide') return { text: modernText(readFileSync(join(HOME, 'kb/workflow.md'), 'utf8')) }
   const here = topLevel(args.worktree || process.cwd())
-  const scope = args.worktree || ['start', 'create', 'hotfix', 'comment', 'request-secret'].includes(command) || args.project ? undefined : publicCli!.binding(here, session())
+  const scope = args.worktree || ['start', 'repair', 'create', 'hotfix', 'comment', 'request-secret'].includes(command) || args.project ? undefined : publicCli!.binding(here, session())
   const root = scope?.root || here
   if (scope && !args.issue && !args.pr) args.issue = String(scope.issue)
   if (command === 'request-secret') return requestSecret(root, args)
@@ -1444,6 +1521,10 @@ function dispatchFlow(argv: string[], options: { json?: boolean }) {
   }
   const epic = epicCli!.activeEpic(root, session())
   if (epic && !['status', 'guide', 'mode', 'steering'].includes(command)) throw new Fail(1, `Session ${session()} coordinates epic #${epic.epic}. Run ndev epic status. To resume issue work, use ndev epic off first.`)
+  if (command === 'repair' || command === 'start' && args.pr) {
+    if (config.workflow === false) throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
+    return publicCli!.repairLocked(root, Number(need(args, 'issue')), () => repairFlow(root, config, args))
+  }
   if (['create', 'hotfix', 'start'].includes(command)) {
     if (config.workflow === false) throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
     if ((args.mode || config.mode) === 'hack' && config.steering === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
@@ -1540,7 +1621,7 @@ function publicFollowUp(wf: Workflow, config: Config, args: Args, existing: numb
     const pr = readPr(wf, prOf(wf))
     gh(wf, ['subissues', 'link', String(wf.issue), String(entry.issue)])
     if (!hasIssueRef(pr.body || '', entry.issue)) gh(wf, ['pr-edit', String(pr.number), '--body-file', writeTemp(wf, 'pr-body.md', `${(pr.body || '').trimEnd()}\n\nCloses #${entry.issue}\n`)])
-    if (!readRecord(wf.root, entry.issue)) save({ issue: entry.issue, root: wf.root, repo: wf.repo, base: wf.base, branch: wf.branch, prs: [pr.number], mode: wf.mode, steering: wf.steering, owner: wf.owner, state: 'developing', baseCheck: wf.baseCheck, evidence: {}, history: [], followUps: [], migrations: [] })
+    if (!readRecord(wf.root, entry.issue)) save({ issue: entry.issue, root: wf.root, repo: wf.repo, base: wf.base, branch: wf.branch, ...(wf.localBranch ? { localBranch: wf.localBranch } : {}), prs: [pr.number], mode: wf.mode, steering: wf.steering, owner: wf.owner, state: 'developing', baseCheck: wf.baseCheck, evidence: {}, history: [], followUps: [], migrations: [] })
   }
   if ((mode === 'worktree' || mode === 'subagent') && !entry.dispatchId) {
     const main = gitOk(wf.root, 'worktree', 'list', '--porcelain', '-z').split('\0')[0]!.slice(9)
@@ -1627,7 +1708,7 @@ function developMembers(root: string, config: Config, args: Args, numbers: Recor
     }
     return wf
   })
-  if (gitOk(root, 'branch', '--show-current') !== lead.branch) throw new Fail(1, `The workflow expects branch ${lead.branch}. Switch to it before committing.`)
+  if (gitOk(root, 'branch', '--show-current') !== (lead.localBranch || lead.branch)) throw new Fail(1, `The workflow expects branch ${lead.localBranch || lead.branch}. Switch to it before committing.`)
   args.message ||= `Finish work on ${targets.map(n => '#' + n).join(', ')}`
   lead.prs = [...new Set([...lead.prs, ...prs])]
   const members = local.filter(record => record.prs[0] === pr && !record.direct)

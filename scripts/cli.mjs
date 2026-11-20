@@ -18,7 +18,8 @@ const groups = {
     module: './export/flow/cli.ts', run: 'runFlow',
     commands: {
       help: '', guide: '', status: '[--issue <n>|--pr <n>]',
-      start: '<issue> [--short-name <slug>] [--mode <mode>] [--take-over]',
+      start: '<issue> [--pr <n>] [--short-name <slug>] [--mode <mode>] [--take-over]',
+      repair: '--issue <n> --pr <n> [--take-over]',
       create: '<short-name> --description-file <file> [--mode <mode>]',
       hotfix: '<short-name> [--issue <n>] [--description-file <file>]',
       comment: '--issue <n>|--pr <n> --message-file <file>',

@@ -34,6 +34,10 @@ export function rememberIssue(path: string, id: string, issue: number) {
   return issue
 }
 
+export function repairLocked<T>(root: string, issue: number, repair: () => T): T {
+  return locked(join(gitWorkspace(root).commonDir, `ndev-repair-issue-${issue}`), repair)
+}
+
 export function settings(root: string) {
   const config = readProject(root)
   const path = join(root, '.neil-dev.worktree.json')
@@ -45,7 +49,8 @@ const commands: Record<string, [string, string]> = {
   help: ['', ''],
   guide: ['', ''],
   status: ['', 'issue pr'],
-  start: ['issue', 'short-name mode take-over'],
+  start: ['issue', 'short-name mode take-over pr'],
+  repair: ['', 'issue pr take-over'],
   create: ['short-name', 'description-file mode'],
   hotfix: ['short-name', 'issue description-file'],
   comment: ['', 'issue pr message-file'],
@@ -119,7 +124,7 @@ export function parse(argv: string[]) {
     if (key === 'file' || key === 'change-type') args[key === 'file' ? 'files' : 'change-types'] = '\0' + items.join('\0')
     else args[key] = items[0]!
   }
-  if (command !== 'finished-development' && args.issue && args.pr) throw inputError('Choose one target, --issue or --pr.', command)
+  if (!['finished-development', 'repair', 'start'].includes(command) && args.issue && args.pr) throw inputError('Choose one target, --issue or --pr.', command)
   if (args.project && (args.issue || args.pr)) throw inputError('--project conflicts with an issue or PR target.', command)
   if (args.mode && !['follow-up'].includes(command) && !['light', 'heavy', 'hack'].includes(args.mode)) throw inputError(`Unknown workflow mode "${args.mode}".`, command)
   for (const name of ['message', 'report']) {

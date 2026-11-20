@@ -150,7 +150,7 @@ function dispatch(root, file, state, pr, summary) {
   const spec = [
     `Repair PR #${pr.number} in ${state.repo} at head ${pr.headRefOid}. Its branch is ${pr.headRefName}.`,
     summary,
-    'Use light mode and auto steering. When resuming an enabled workflow, use ndev flow start <issue> --mode light and ndev flow steering auto --reason "Fix PRs runs unattended". Keep disabled workflows off.',
+    `Use light mode and auto steering. When resuming an enabled workflow, read the PR body for its linked issue, then use ndev flow repair --issue <issue> --pr ${pr.number} and ndev flow steering auto --reason "Fix PRs runs unattended". Keep disabled workflows off.`,
     'Use the existing pull request branch. Keep tests and checks tied to the new commit. Do not merge the pull request.',
     `Report with ndev fix-prs report ${pr.number} pushed --worktree ${JSON.stringify(root)}, or blocked --reason <text> with the same worktree.`,
   ].join('\n')
