@@ -152,7 +152,8 @@ function agentFile(ctx, source, text, name) {
   }
   if (ctx.profile.agentFormat === 'codex-toml') {
     if (body.includes("'''")) throw new Fail(1, `export: the agent ${source} holds ''' and cannot be a TOML literal string. Repair: remove it from the agent text.`)
-    return { path: `ndev-${name}.toml`, text: [`# ${stampText(ctx, how)}`, `name = "ndev-${name}"`, `description = ${JSON.stringify(fm.fields.description)}`, ...(ctx.binary && fm.fields.tools ? ['sandbox_mode = "read-only"'] : []), `developer_instructions = '''`, `${body}'''`, ''].join('\n') }
+    const model = ctx.profile.agentModels?.[name]
+    return { path: `ndev-${name}.toml`, text: [`# ${stampText(ctx, how)}`, `name = "ndev-${name}"`, `description = ${JSON.stringify(fm.fields.description)}`, ...(model ? [`model = ${JSON.stringify(model)}`] : []), ...(ctx.binary && fm.fields.tools ? ['sandbox_mode = "read-only"'] : []), `developer_instructions = '''`, `${body}'''`, ''].join('\n') }
   }
   const permissions = []
   if (ctx.binary && ctx.profile.agentFormat === 'opencode-md') {
