@@ -141,10 +141,13 @@ export const engine = (on: On, opts: Opts = {}) => {
   const isFolder = (path: string) => [...files.keys()].some(k => k.startsWith(`${path}/`))
   on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) || isFolder(e.path) || guide(e.path) !== undefined }))
   on('fs.list', (_, e) => ({ value: [...files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
-  on('fs.read', async (_, e) => {
-    await s.onRead?.(e.path)
-    if (s.failRead?.(e.path)) throw new Error(`no permission: ${e.path}`)
-    return { value: guide(e.path) ?? files.get(e.path) ?? '' }
+  on('fs.read', (_, e) => {
+    const answer = () => {
+      if (s.failRead?.(e.path)) throw new Error(`no permission: ${e.path}`)
+      return { value: guide(e.path) ?? files.get(e.path) ?? '' }
+    }
+    const hold = s.onRead?.(e.path)
+    return hold ? hold.then(answer) : answer()
   })
   on('fs.write', (_, e) => {
     if (s.failWrite?.(e.path)) throw new Error(`disk full: ${e.path}`)
