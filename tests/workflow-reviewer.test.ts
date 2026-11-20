@@ -253,19 +253,27 @@ test('a type that is not in the list is refused, and nothing is committed', asyn
   expect(w.state()?.state).toBe('developing')
 })
 
-test('finishedDevelopment takes types too, and the reviewer and the next step follow them', async ($, on) => {
-  const w = engine(on, { names: ['app/cart/page.tsx', 'server/api.py'] })
-  await start($, w)
-  w.s.dirty = [' M app/cart/page.tsx']
-  const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['app/cart/page.tsx'], changeTypes: ['database'] })
-  expect(w.state()?.changeTypes).toEqual(['database', 'web', 'backend'])
-  expect(w.spawns[0]!.prompt).toContain('Web:')
-  expect(w.spawns[0]!.prompt).toContain('Backend:')
-  expect(w.spawns[0]!.prompt).toContain('Database:')
-  expect(r.text).toContain('screenshot tool')
-  expect(r.text).toContain('/cart')
-  expect(r.text).toContain('local database')
-})
+for (const mode of ['light', 'heavy'] as const) {
+  test(`finishedDevelopment in ${mode} mode gives the reviewer and the next step the change types`, async ($, on) => {
+    const w = engine(on, { config: { mode }, names: ['app/cart/page.tsx', 'server/api.py'] })
+    await start($, w)
+    w.s.dirty = [' M app/cart/page.tsx']
+    const r = await tool($, 'finishedDevelopment', { prs: [12], message: 'm', files: ['app/cart/page.tsx'], changeTypes: ['database'] })
+    expect(r.isError).toBe(false)
+    expect(w.state()?.changeTypes).toEqual(['database', 'web', 'backend'])
+    expect(w.spawns[0]!.prompt).toContain('Web:')
+    expect(w.spawns[0]!.prompt).toContain('Backend:')
+    expect(w.spawns[0]!.prompt).toContain('Database:')
+    if (mode === 'heavy') {
+      expect(r.text).toContain('screenshot tool')
+      expect(r.text).toContain('/cart')
+    } else {
+      expect(r.text).not.toContain('screenshot tool')
+      expect(r.text).not.toContain('mcp__ndev__screenshot')
+    }
+    expect(r.text).toContain('local database')
+  })
+}
 
 test('a documents-only change gets the short review, and a code change that declares docs does not', async ($, on) => {
   const w = engine(on, { names: ['README.md'] })
