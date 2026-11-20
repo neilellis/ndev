@@ -79,7 +79,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, unchanged: [] as string[], removed: [] as string[], renamedFrom: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
-    ops: new Set<string>(), pushFails: '', leaseOk: false, remoteOnly: ['cccc9'] as string[], replaced: [] as string[], leases: [] as string[], noOpenPr: false, prNewFails: '', prBodies: [] as string[], diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[],
+    ops: new Set<string>(), pushFails: '', leaseOk: false, remoteOnly: ['cccc9'] as string[], replaced: [] as string[], leases: [] as string[], noOpenPr: false, prNewFails: '', prBodies: [] as string[], diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[], duringSpawn: undefined as (() => void) | undefined,
   }
   const gh: string[] = []
   const ready: string[] = []
@@ -233,7 +233,7 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'cat-file') return s.blobSize ? ok(`${s.blobSize}\n`) : ok('', 1)
       if (a[1] === 'worktree') return s.worktreeListFails ? ok('', 128, s.worktreeListFails) : ok([ROOT, ...s.otherWorktrees].map(path => `worktree ${path}\n`).join(''))
       // As real git does: git add of a file that equals its HEAD version stages nothing.
-      if (a[1] === 'add' && a.slice(a.indexOf('--') + 1).every(f => s.unchanged.includes(f))) return ok()
+      if (a[1] === 'add' && a.slice(a.indexOf('--') + 1).every(f => s.unchanged.includes(f) && !s.dirty.some(line => line.slice(3) === f))) return ok()
       // As real git does: a path whose deletion is already staged is in neither the tree nor the index, so no pathspec matches it.
       if (a[1] === 'add') { const gone = a.slice(a.indexOf('--') + 1).find(f => s.removed.includes(f) || s.renamedFrom.includes(f)); if (gone) return ok('', 128, `fatal: pathspec '${gone}' did not match any files`); s.staged = true; return ok() }
       if (s.copyDiffFails && line.includes('--name-only --diff-filter=d origin/')) return ok('', 128, s.copyDiffFails)
@@ -245,7 +245,18 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'diff' && a[2] === 'HEAD' && s.duringDiff) { const hold = s.duringDiff; s.duringDiff = undefined; return hold().then(() => ok(s.diffText)) as never }
       if (a[1] === 'diff' && a[2] === 'HEAD') return ok(s.diffText)
       if (a[1] === 'diff') return ok('', s.staged ? 1 : 0)
-      if (a[1] === 'commit') { s.commitDirs.push(e.init?.cwd); const op = /Ndev-Op: (\S+)/.exec(line)?.[1]; if (op) s.ops.add(op); steps.push('commit'); commits.push(line); s.staged = false; s.sha = `bbbb${commits.length}`; return ok() }
+      if (a[1] === 'commit') {
+        s.commitDirs.push(e.init?.cwd)
+        const op = /Ndev-Op: (\S+)/.exec(line)?.[1]
+        if (op) s.ops.add(op)
+        steps.push('commit')
+        commits.push(line)
+        s.staged = false
+        s.unchanged = [...new Set([...s.unchanged, ...s.names])]
+        s.dirty = s.dirty.filter(line => !s.names.includes(line.slice(3)))
+        s.sha = `bbbb${commits.length}`
+        return ok()
+      }
       if (a[1] === 'push' && line.includes('--force-with-lease')) s.leases.push(line)
       if (a[1] === 'push' && s.pushFails && !(s.leaseOk && line.includes('--force-with-lease'))) return ok('', 1, s.pushFails)
       if (a[1] === 'push') { pushes.push(line); s.upstream = s.sha; return ok() }
@@ -437,6 +448,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     // The engine hands this hook the Agent call's own spelling, and only core can set the agentId of a result.
     const r = e as unknown as { subagent_type?: string; prompt: string; cwd?: string }
     spawns.push({ ...r, subagentType: r.subagent_type })
+    s.duringSpawn?.()
     return (s.spawnDeny ? { deny: s.spawnDeny } : { model: 'opus' }) as never
   })
   on('model.complete', (_, e) => {

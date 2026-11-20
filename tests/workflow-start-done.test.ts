@@ -137,6 +137,74 @@ test('finishedDevelopment names its retries when another writer changes the reco
   expect(r.text).toContain('Ndev-Op')
 })
 
+for (const direct of [false, true]) {
+  test(`finishedDevelopment retains one reviewer after a concurrent save during review launch (${direct ? 'direct' : 'PR'})`, async ($, on) => {
+    const w = engine(on, { wf: direct ? { direct: true, prs: [] } : {} })
+    await start($, w)
+    w.s.dirty = [' M a.ts']
+    w.s.duringSpawn = () => {
+      w.s.duringSpawn = undefined
+      const path = `${ROOT}/.neil-dev.issue-7.json`
+      const file = JSON.parse(w.files.get(path)!)
+      const record = direct ? file.workflow : file.prs[12]
+      record.rev += 1
+      record.otherWriter = 'kept after review launch'
+      w.files.set(path, JSON.stringify(file))
+    }
+    const result = await tool($, 'finishedDevelopment', { prs: direct ? [] : [12], message: 'Finish once', files: ['a.ts'] })
+    expect(result.isError).toBe(false)
+    expect(w.spawns).toHaveLength(1)
+    expect(w.commits).toHaveLength(1)
+    expect(w.state()?.state).toBe('reviewing')
+    expect(w.state()?.otherWriter).toBe('kept after review launch')
+    expect(w.state()?.hooks?.review?.firedAt).toBeDefined()
+  })
+}
+
+test('finishedDevelopment persists the classification inferred when review starts', async ($, on) => {
+  const path = 'app/cart/page.tsx'
+  const w = engine(on, { wf: { typesUnread: 'earlier read failed' }, names: [path] })
+  await start($, w)
+  w.s.dirty = [` M ${path}`]
+  const result = await tool($, 'finishedDevelopment', { prs: [12], message: 'Finish UI', files: [path], changeTypes: ['docs'] })
+  expect(result.isError).toBe(false)
+  expect(w.state()?.changeTypes).toContain('web')
+  expect(w.state()?.webFiles).toContain(path)
+  expect(w.state()?.typesUnread).toBeUndefined()
+})
+
+for (const conflict of ['state', 'receipt', 'stale']) {
+  test(`finishedDevelopment reports launched review receipts without replay on ${conflict} conflicts`, async ($, on) => {
+    const w = engine(on)
+    await start($, w)
+    w.s.dirty = [' M a.ts']
+    w.s.duringSpawn = () => {
+      w.s.duringSpawn = undefined
+      if (conflict === 'stale') {
+        w.s.staleSaves = 99
+        return
+      }
+      const path = `${ROOT}/.neil-dev.issue-7.json`
+      const file = JSON.parse(w.files.get(path)!)
+      const record = file.prs[12]
+      record.rev += 1
+      if (conflict === 'state') record.state = 'blocked'
+      else record.hooks = { review: { firedAt: 99, agentId: 'other-reviewer' } }
+      w.files.set(path, JSON.stringify(file))
+    }
+    const result = await tool($, 'finishedDevelopment', { prs: [12], message: 'Finish once', files: ['a.ts'] })
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('Review already started for PR #12')
+    expect(result.text).toContain('Receipts:')
+    expect(result.text).toContain('reconcile these receipts with the running reviewers')
+    expect(w.spawns).toHaveLength(1)
+    expect(w.commits).toHaveLength(1)
+    if (conflict === 'state') expect(w.state()?.state).toBe('blocked')
+    if (conflict === 'receipt') expect(w.state()?.hooks?.review?.agentId).toBe('other-reviewer')
+    if (conflict === 'stale') expect(result.text).toContain('finishedDevelopment read the record again 3 times')
+  })
+}
+
 test('finishedDevelopment takes a new file in an untracked folder when the file is named', async ($, on) => {
   const w = engine(on)
   await start($, w)

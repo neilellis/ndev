@@ -1156,8 +1156,16 @@ async function finishedInterview($: EngineInterface, c: Ctx): Promise<string> {
   const facts = await factsFor($, wf.root, c.project, wf)
   if (wf.state !== 'developing') throw new Refuse(`Refused: finishedInterview is valid only in the state "developing", and ${labelOf(wf)} is in the state "${wf.state}". No check ran. Next: ${stepOf(wf, facts)}`)
   const { notes } = await runBaseCheck($, wf, facts)
-  await saveWorkflow($, wf)
-  return answer($, wf, facts, notes)
+  const receipt = wf.baseCheck
+  return retryWorkflowSave('finishedInterview', async () => {
+    const latest = await current($, c)
+    const latestFacts = await factsFor($, latest.root, c.project, latest)
+    if (latest.state !== 'developing') throw new Refuse(`Refused: finishedInterview cannot save the base check for ${labelOf(latest)} in state "${latest.state}". Repair: call status and follow its next step.`)
+    if (receipt && (receipt.sha !== await head(latest.root, $) || receipt.script !== baseCheckScript(latestFacts.mode))) throw new Refuse(`Refused: the base check for ${labelOf(latest)} no longer matches its commit or mode. Repair: call finishedInterview again to check the current commit.`)
+    latest.baseCheck = receipt
+    await saveWorkflow($, latest)
+    return answer($, latest, latestFacts, notes)
+  })
 }
 
 // Development starts with the base check. The refusal comes before any commit.
@@ -1209,12 +1217,16 @@ const REVIEW_PUSH_ROUTES = 'finishedReview runs pre-ready-check.sh and pushes it
 const reviewPushRoutes = (state: string) => (state === 'reviewing' ? REVIEW_PUSH_ROUTES : `the review starts once each issue on the PR has called finishedDevelopment, and then ${REVIEW_PUSH_ROUTES}`)
 
 async function checkpoint($: EngineInterface, c: Ctx): Promise<string> {
+  return retryWorkflowSave('checkpoint', () => checkpointOnce($, c))
+}
+
+async function retryWorkflowSave<T>(tool: string, step: () => Promise<T>, canRetry = () => true): Promise<T> {
   for (let tries = 1; ; tries += 1) {
     try {
-      return await checkpointOnce($, c)
+      return await step()
     } catch (error) {
-      if (!isStaleWrite(error)) throw error
-      if (tries >= CHECKPOINT_TRIES) throw new Error(`${(error as Error).message} checkpoint read the record again ${tries} times, and each time another writer saved it first. A commit that a try made carries its Ndev-Op trailer, so a new call of checkpoint does not commit it twice. Repair: call status, then checkpoint again with the same files.`)
+      if (!isStaleWrite(error) || !canRetry()) throw error
+      if (tries >= CHECKPOINT_TRIES) throw new Error(`${(error as Error).message} ${tool} read the record again ${tries} times, and each time another writer saved it first. A commit that a try made carries its Ndev-Op trailer. Repair: call status, then ${tool} again with the same arguments.`)
     }
   }
 }
@@ -1351,7 +1363,7 @@ async function sweepDeadCode($: EngineInterface, wf: Workflow): Promise<string> 
   return sweepText(wf.deadcode)
 }
 
-async function intoReview($: EngineInterface, c: Ctx, wf: Workflow, facts: Facts, notes: string[]): Promise<string> {
+async function intoReview($: EngineInterface, c: Ctx, wf: Workflow, facts: Facts, notes: string[], reviewStarted: () => void): Promise<string> {
   await move($, c, wf, 'finishedDevelopment', facts)
   await flagForHuman($, wf, notes)
   await saveWorkflow($, wf)
@@ -1359,8 +1371,25 @@ async function intoReview($: EngineInterface, c: Ctx, wf: Workflow, facts: Facts
   if (unlisted.length) notes.push(migrationText(unlisted))
   const ui = await componentNote($, wf)
   if (ui) notes.push(ui)
+  const before = structuredClone(wf)
+  reviewStarted()
   notes.push(await startReview($, wf, facts, ui))
-  await saveWorkflow($, wf)
+  const fields = (Object.keys({ ...before, ...wf }) as (keyof Workflow)[]).filter(key => key !== 'rev' && JSON.stringify(before[key]) !== JSON.stringify(wf[key]))
+  const guarded = new Set<keyof Workflow>([...fields, 'hooks', 'reviewSpec', 'reviewCopy'])
+  try {
+    await retryWorkflowSave('finishedDevelopment', async () => {
+      const latest = wf.pr ? await loadPrRecord($, wf.root, wf.pr) : await loadWorkflow($, wf.root, wf.issue)
+      if (!latest || latest.state !== wf.state || latest.off) throw new Refuse(`Review started for ${labelOf(wf)} in ${wf.root}, but its current workflow changed.`)
+      for (const key of guarded) {
+        if (JSON.stringify(latest[key]) !== JSON.stringify(before[key]) && JSON.stringify(latest[key]) !== JSON.stringify(wf[key])) throw new Refuse(`Review field ${key} changed for ${labelOf(wf)} in ${wf.root}. Pending value: ${JSON.stringify(wf[key])}.`)
+      }
+      Object.assign(latest, Object.fromEntries(fields.map(key => [key, wf[key]])))
+      await saveWorkflow($, latest)
+      Object.assign(wf, latest)
+    })
+  } catch (error) {
+    throw new Refuse(`${error instanceof Error ? error.message : String(error)} Review already started for ${labelOf(wf)} in ${wf.root}. Receipts: ${JSON.stringify({ review: wf.hooks?.review, specification: wf.reviewSpec, copy: wf.reviewCopy })}. Repair: call status and reconcile these receipts with the running reviewers before continuing.`)
+  }
   return answer($, wf, facts, notes)
 }
 
@@ -1384,6 +1413,11 @@ async function prePushForHardening($: EngineInterface, wf: Workflow, declared: r
 // The merge point. Each named issue finishes here. When no issue on the PR is still in development, the
 // PR record takes over: from here on the PR, and not one issue, goes through review, the checks and done.
 async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> {
+  const review = { started: false }
+  return retryWorkflowSave('finishedDevelopment', () => finishedDevelopmentOnce($, c, review), () => !review.started)
+}
+
+async function finishedDevelopmentOnce($: EngineInterface, c: Ctx, review: { started: boolean }): Promise<string> {
   const { args, project } = c
   const named = args.issues as number[]
   const root = (await read($, workflowRoot)) ?? project?.root
@@ -1418,7 +1452,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
     if (hardening) notes.push(...(await prePushForHardening($, wf, declared)), `Hardening: ${hardening}`)
     if (prBody !== undefined) notes.push(`This project commits directly to the base branch, so it has no PR and ${bodyPath} was not used.`)
     addTypes(wf, declared)
-    return intoReview($, c, wf, facts, notes)
+    return intoReview($, c, wf, facts, notes, () => { review.started = true })
   }
 
   for (const n of list(args, 'prs').map(Number)) {
@@ -1520,7 +1554,7 @@ async function finishedDevelopment($: EngineInterface, c: Ctx): Promise<string> 
     typesUnread: all.find(o => o.typesUnread)?.typesUnread,
   }
   notes.push(`From here on PR #${n} goes through the review, the checks and done: give pr ${n} to each tool. It carries ${issues.map(i => `#${i}`).join(', ')}.`)
-  return intoReview($, c, record, await factsFor($, wf.root, project, record), notes)
+  return intoReview($, c, record, await factsFor($, wf.root, project, record), notes, () => { review.started = true })
 }
 
 // An issue joins a PR, which goes back to its developers, because what was reviewed and tested is no
