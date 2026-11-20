@@ -161,6 +161,50 @@ test('hook ignores words passed as data and allows a commit in a distinct reposi
   assert.equal(outside, null)
 })
 
+test('native Git guards follow the PR workflow after issue development', t => {
+  const root = fixture(t)
+  const path = join(root, '.neil-dev.issue-17.json')
+  const issue = { issue: 17, root, state: 'developed', branch: 'topic', base: 'main', prs: [18] }
+  for (const state of ['blocked', 'ci', 'done']) {
+    for (const off of [undefined, { at: 1, reason: 'human disabled workflow' }]) {
+      writeFileSync(path, JSON.stringify({ version: 1, issue: 17, workflow: issue, prs: {
+        18: { ...issue, pr: 18, state, off },
+      } }))
+      for (const [harness, tool] of [['claude', 'Bash'], ['codex', 'exec_command'], ['opencode', 'shell']]) {
+        for (const command of ['git commit -m test', 'git push origin topic']) {
+          const decision = hook(root, harness, tool, command)
+          const permission = decision?.hookSpecificOutput?.permissionDecision ?? decision?.decision
+          assert.equal(permission, off || state === 'done' ? undefined : 'deny', `${harness}: ${state}, off=${!!off}: ${command}`)
+        }
+      }
+    }
+  }
+})
+
+test('native Git guards allow disabled issue and project workflows', t => {
+  const root = fixture(t)
+  const path = join(root, '.neil-dev.issue-17.json')
+  const held = JSON.parse(readFileSync(path, 'utf8'))
+  for (const scope of ['issue', 'project']) {
+    writeFileSync(path, JSON.stringify({ ...held, workflow: { ...held.workflow, off: scope === 'issue' ? { at: 1 } : undefined } }))
+    writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ workflow: scope !== 'project' }))
+    for (const [harness, tool] of [['claude', 'Bash'], ['codex', 'exec_command'], ['opencode', 'shell']]) {
+      for (const command of ['git commit -m test', 'git push origin topic']) {
+        assert.equal(hook(root, harness, tool, command), null, `${harness}: ${scope}: ${command}`)
+      }
+    }
+  }
+})
+
+test('a developing issue keeps its guard while an earlier PR workflow is off', t => {
+  const root = fixture(t)
+  const issue = { issue: 17, root, state: 'developing', branch: 'topic', base: 'main', prs: [18] }
+  writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({ version: 1, issue: 17, workflow: issue, prs: {
+    18: { ...issue, pr: 18, state: 'blocked', off: { at: 1 } },
+  } }))
+  assert.equal(hook(root, 'codex', 'exec_command', 'git commit -m test')?.hookSpecificOutput?.permissionDecision, 'deny')
+})
+
 test('session clear keeps the owned issue and a true end releases it', t => {
   const root = fixture(t)
   const path = join(root, '.neil-dev.issue-17.json')
