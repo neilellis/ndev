@@ -1,7 +1,8 @@
 export const INNER_SCROLL_PROBE = String.raw`(() => {
   let largest = null;
   let area = 0;
-  for (const element of document.querySelectorAll('*')) {
+  const elements = root => Array.from(root.querySelectorAll('*')).flatMap(element => [element, ...(element.shadowRoot ? elements(element.shadowRoot) : [])]);
+  for (const element of elements(document)) {
     if (element === document.scrollingElement || element === document.documentElement) continue;
     const style = getComputedStyle(element);
     if (style.visibility !== 'visible' || !['auto', 'scroll', 'overlay'].includes(style.overflowY) || element.clientHeight <= 0 || element.scrollHeight <= element.clientHeight + 1) continue;
@@ -11,7 +12,7 @@ export const INNER_SCROLL_PROBE = String.raw`(() => {
     let top = Math.max(box.top, 0);
     let bottom = Math.min(box.bottom, innerHeight);
     let visible = true;
-    for (let parent = element; parent; parent = parent.parentElement) {
+    for (let parent = element; parent; parent = parent.parentElement || parent.getRootNode?.().host) {
       const ancestor = getComputedStyle(parent);
       if (ancestor.display === 'none' || Number(ancestor.opacity) === 0 || ancestor.contentVisibility === 'hidden') { visible = false; break; }
       if (parent === element) continue;

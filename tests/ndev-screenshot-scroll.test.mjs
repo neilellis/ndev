@@ -57,3 +57,13 @@ test('inner scroll probe includes a visible child overriding ancestor visibility
   const hidden = element('ancestor', { height: 600, total: 600, style: { visibility: 'hidden' } })
   assert.deepEqual(probe([hidden, element('content', { parent: hidden, style: { visibility: 'visible' } })]), { element: 'main#content', height: 500, total: 2000 })
 })
+
+test('inner scroll probe finds a pane inside an open shadow root', () => {
+  const host = element('app', { tag: 'app-shell', total: 500, style: { overflowY: 'visible' } })
+  const content = element('content')
+  host.shadowRoot = { querySelectorAll: () => [content] }
+  content.getRootNode = () => ({ host })
+  assert.deepEqual(probe([host]), { element: 'main#content', height: 500, total: 2000 })
+  host.style.opacity = '0'
+  assert.equal(probe([host]), null)
+})
