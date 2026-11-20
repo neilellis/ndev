@@ -475,3 +475,73 @@ test('progress resets the count of reminders', async ($, on) => {
   expect(w.state()?.state).toBe('developing')
   expect(w.prompts.length).toBe(4)
 })
+
+test('started defers the PR until the first real push, and retries a failed PR creation without another push', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.ahead = '0'
+  w.s.noOpenPr = true
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.prs).toEqual([])
+  expect(w.gh.some(c => c.includes('pr-new'))).toBe(false)
+  expect(w.pushes).toEqual([])
+  expect(w.commits.some(c => c.includes('Start work'))).toBe(false)
+  expect(r.text).toContain('The first push opens the draft PR')
+  await tool($, 'finishedInterview')
+  w.s.ahead = '1'
+  w.s.prNewFails = 'network down'
+  const first = await tool($, 'checkpoint', { message: 'one', files: ['a.ts'] })
+  expect(first.isError).toBe(true)
+  expect(first.text).toContain('network down')
+  expect(w.pushes.length).toBe(1)
+  w.s.prNewFails = ''
+  const retry = await tool($, 'checkpoint', { message: 'one', files: [] })
+  expect(retry.isError).toBe(false)
+  expect(w.pushes.length).toBe(1)
+  expect(w.state()?.prs).toEqual([13])
+  expect(retry.text).toContain('Opened draft PR #13')
+})
+
+test('a hack start also waits for a real change before its draft PR', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on, { wf: null, config: { steering: 'interactive' } })
+  await start($, w)
+  w.s.ahead = '0'
+  w.s.noOpenPr = true
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub', mode: 'hack' })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.prs).toEqual([])
+  expect(w.gh.some(c => c.includes('pr-new'))).toBe(false)
+  expect(w.pushes).toEqual([])
+})
+
+
+test('a plan is saved until the first push opens the deferred PR', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on, { wf: null, config: { mode: 'heavy' }, files: { '/proj/plan.md': 'The saved plan.\n\nTest entry point: the public tool.\n' } })
+  await start($, w)
+  w.s.ahead = '0'
+  w.s.noOpenPr = true
+  expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
+  expect((await tool($, 'finishedPlan', { markdown_file: '/proj/plan.md' })).isError).toBe(false)
+  expect(w.gh.some(c => c.includes('pr-edit'))).toBe(false)
+  w.s.ahead = '1'
+  expect((await tool($, 'checkpoint', { message: 'one', files: ['a.ts'] })).isError).toBe(false)
+  expect(w.s.prBodies[0]).toContain('The saved plan.')
+  expect(w.s.prBodies[0]).toContain('Closes #7')
+})
+
+test('finishing without a checkpoint pushes the real commit before opening the draft PR', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  w.s.ahead = '0'
+  w.s.noOpenPr = true
+  await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  await tool($, 'finishedInterview')
+  w.s.ahead = '1'
+  const r = await tool($, 'finishedDevelopment', { issues: [7], prs: [], message: 'one', files: ['a.ts'] })
+  expect(r).toMatchObject({ isError: false })
+  expect(w.commits.length).toBe(1)
+  expect(w.pushes.length).toBe(1)
+  expect(w.s.upstream).toBe(w.s.sha)
+  expect(w.state()?.prs).toEqual([13])
+})

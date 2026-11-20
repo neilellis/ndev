@@ -527,7 +527,7 @@ function report(wf: Workflow, config: Config, notes: string[]) {
     wf.off ? `Off for this issue: ${wf.off.reason}.` : '',
     wf.blocked?.message ? `Blocked: ${wf.blocked.message}` : '',
     `State: ${wf.state}${wf.previous ? ` (then ${wf.previous})` : ''}. Issue #${wf.issue}, mode ${wf.mode}, steering ${wf.steering}.`,
-    wf.prs[0] ? `PR: ${prUrl(wf)}` : '',
+    wf.prs[0] ? `PR: ${prUrl(wf)}` : wf.prTitle ? 'PR: none yet. The first push opens the draft PR.' : '',
     ...notes.filter(Boolean),
     `Next: ${rewrite(nextStep(wf.state as any, facts(wf, config) as any), wf)}`,
     standalone ? `ndev-flow is ${FLOW}. Each tool named above is one of its commands: ndev-flow <tool> --name value. Run ndev-flow help for the flags.` : '',
@@ -543,7 +543,7 @@ function resolveRepo(root: string, config: Config): string {
 }
 
 function setUpPr(wf: Workflow, title: string) {
-  if (wf.direct) return
+  if (wf.direct || wf.prs.length) return
   const open = ghRun(wf.root, wf.repo, ['pr-list', '--head', wf.branch, '--state', 'open']).split('\n').filter(Boolean).map(line => JSON.parse(line) as { number: number })
   if (open[0]) {
     wf.prs = [open[0].number]
@@ -554,13 +554,28 @@ function setUpPr(wf: Workflow, title: string) {
     }
     return
   }
-  if (gitOk(wf.root, 'rev-list', '--count', `origin/${wf.base}..HEAD`) === '0') commit(wf, `Start work on #${wf.issue}`, `start-${wf.issue}`, true)
-  push(wf)
-  const body = writeTemp(wf, 'pr-body.md', `Plan incoming.\n\nCloses #${wf.issue}\n`)
+  if (gitOk(wf.root, 'rev-list', '--count', `origin/${wf.base}..HEAD`) === '0') {
+    wf.prTitle = title
+    return
+  }
+  if (git(wf.root, 'rev-parse', `origin/${wf.branch}`).stdout.trim() !== headSha(wf.root)) {
+    runCheck(wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
+    push(wf)
+  }
+  const body = writeTemp(wf, 'pr-body.md', wf.prBody ?? `Plan incoming.\n\nCloses #${wf.issue}\n`)
   const made = ghRun(wf.root, wf.repo, ['pr-new', '--title', title, '--body-file', body, '--base', wf.base, '--head', wf.branch])
   const number = /\/pull\/(\d+)/.exec(made)?.[1]
   if (!number) throw new Fail(1, `ndev-flow: gh.sh pr-new printed no pull request URL: ${made.slice(0, 200)}`)
   wf.prs = [Number(number)]
+  delete wf.prTitle
+  delete wf.prBody
+}
+
+function openPendingPr(wf: Workflow) {
+  if (!wf.prTitle || wf.prs.length) return
+  setUpPr(wf, wf.prTitle)
+  if (!wf.prs.length) throw new Fail(1, `Issue #${wf.issue} on ${wf.branch} has no commits beyond ${wf.base}. Repair: make a real change and run ndev flow checkpoint.`)
+  save(wf)
 }
 
 function started(root: string, config: Config, args: Args) {
@@ -576,7 +591,7 @@ function started(root: string, config: Config, args: Args) {
   if (wf && wf.state !== 'setup') {
     if (!wf.prs.length && !wf.direct && wf.state !== 'done') {
       setUpPr(wf, ghJson<{ title: string }>(root, wf.repo, ['issue-read', String(issue)]).title)
-      notes.push(`Opened ${prUrl(wf)}.`)
+      if (wf.prs.length) notes.push(`Opened ${prUrl(wf)}.`)
     }
     const to = afterStarted({ state: wf.state as any, previous: wf.previous as any }, { mode: wf.mode as any, steering: wf.steering as any })
     if (to.state !== wf.state) apply(wf, to, 'started', notes)
@@ -659,6 +674,7 @@ function checkpoint(wf: Workflow, config: Config, args: Args) {
     if (note) notes.push(note)
     const lease = push(wf, true)
     if (lease) notes.push(lease)
+    openPendingPr(wf)
     notes.push(`Committed and pushed ${headSha(wf.root).slice(0, 8)}.`)
   } else notes.push(`Committed ${headSha(wf.root).slice(0, 8)} on this computer only: in the state "${wf.state}" nothing is pushed.`)
   delete wf.op
@@ -669,7 +685,14 @@ function checkpoint(wf: Workflow, config: Config, args: Args) {
   return report(wf, config, notes)
 }
 
+function requireDevelopmentConfirmation(wf: Workflow, config: Config, args: Args) {
+  if ((wf.steering ?? config.steering ?? 'interactive') === 'interactive' && !args['human-confirmation']?.trim()) {
+    throw new Fail(1, `Issue #${wf.issue} needs human confirmation before final checks or review. Show a concrete development preview when relevant, ask whether the work is done, and keep developing if the human requests changes. Only after the human confirms, run ndev flow finished-development --issue ${wf.issue} --human-confirmation "<the human's confirmation>" with the changed files and commit message.`)
+  }
+}
+
 function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = false) {
+  requireDevelopmentConfirmation(wf, config, args)
   const machine = MACHINES[wf.mode as 'light']
   const to = moveFor(wf, config, 'finishedDevelopment')
   const files = list(args.files)
@@ -682,8 +705,10 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = 
     commit(wf, need(args, 'message'), opId(wf, 'finishedDevelopment'))
     notes.push(`Committed ${headSha(wf.root).slice(0, 8)}. It is not pushed until finishedReview.`)
   }
+  if ((wf.steering ?? config.steering ?? 'interactive') === 'interactive') wf.developmentConfirmation = args['human-confirmation'].trim()
   addTypes(wf, files, declared)
   if (machine.hardens) runCheck(wf, 'pre-push-check.sh', [], declared)
+  openPendingPr(wf)
   if (machine.gates && !wf.direct) {
     const gates = run('bash', [`${HOME}/scripts/work/gates.sh`, String(wf.issue), 'HEAD', String(prOf(wf))], { cwd: wf.root, env: { GH_REPO: wf.repo } })
     if (gates.status !== 0) throw new Fail(1, `gates.sh exited ${gates.status} for #${wf.issue}: ${said(gates)}\nThe commit is held here and not pushed. Add what is missing, then run ndev-flow finishedDevelopment again.`)
@@ -991,9 +1016,12 @@ function finishedPlan(wf: Workflow, config: Config, args: Args) {
   const to = moveFor(wf, config, 'finishedPlan')
   const text = standalone ? readFileSync(file, 'utf8') : publicCli!.inputFile(file)
   if (!/Test entry point:/i.test(text)) throw new Fail(2, `ndev-flow: the plan ${file} has no "Test entry point:" line. Repair: add one, then run the command again.`)
-  gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', `${text.trimEnd()}\n\nCloses #${wf.issue}\n`)])
-  const notes = [`The plan is in the body of ${prUrl(wf)}.`]
-  if (to.state === 'blocked') wf.blocked = { message: `Sign off the plan in ${prUrl(wf)}, then run ndev-flow unblocked --message go.`, at: now(), group: 'plan' }
+  const body = `${text.trimEnd()}\n\nCloses #${wf.issue}\n`
+  if (wf.prTitle && !wf.prs.length) wf.prBody = body
+  else gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', body)])
+  const location = wf.prs.length ? prUrl(wf) : file
+  const notes = [`The plan is saved for the body of the draft PR: ${location}.`]
+  if (to.state === 'blocked') wf.blocked = { message: `Sign off the plan in ${location}, then run ndev-flow unblocked --message go.`, at: now(), group: 'plan' }
   if (to.state === 'blocked') notes.push(wf.blocked.message)
   apply(wf, to, 'finishedPlan', notes)
   save(wf)
@@ -1187,7 +1215,7 @@ Agent commands:
   finishedPlan --file <plan.md>                  heavy: put the plan in the PR body
   checkpoint --message <m> --files <a,b> [--change-types <t,..>]   checks, commit, push
   finishedHacking                                hack: the human agrees that the hack works
-  finishedDevelopment --message <m> --files <a,b> [--body-file <f>] [--hardening <t>]   commit, start the review and the dead-code sweep
+  finishedDevelopment --message <m> --files <a,b> [--body-file <f>] [--hardening <t>] [--human-confirmation <text>]   commit, start the review and the dead-code sweep
   pushDraft --sha <full-reviewed-sha> --review <r>   checked push to the open draft, stay in review
   finishedReview (--review <r> | --waive-review <reason>) --deadcode <d> --remembered <w>   pre-ready check, push, mark the PR ready
   finishedChecks                                 read the checks of HEAD
@@ -1592,6 +1620,7 @@ function developMembers(root: string, config: Config, args: Args, numbers: Recor
     const other = ownedElsewhere(wf)
     if (other) throw new Fail(1, other)
     if (wf.state !== 'developed') {
+      requireDevelopmentConfirmation(wf, config, args)
       moveFor(wf, config, 'finishedDevelopment')
       if (wf.state === 'developing' && baseCheckScript(wf.mode) && !wf.baseCheck) throw new Fail(1, `#${n} needs its base check. Run ndev flow finished-interview --issue ${n}.`)
       if (MACHINES[wf.mode].hardens && !args.hardening) throw new Fail(2, `#${n} needs --hardening evidence.`)
@@ -1651,9 +1680,11 @@ function dispatchWorker(wf: Workflow, entry: Record<string, any>, command: strin
   save(wf)
 }
 function ensureReviewWorkers(wf: Workflow) {
+  const agent = process.env.NDEV_REVIEW_AGENT || (process.env.CLAUDECODE === '1' ? 'claude' : 'codex')
+  const model = agent === 'claude' ? 'sonnet' : agent === 'codex' ? 'gpt-6.1-terra' : undefined
   for (const reviewer of wf.exportReview.runs) {
     const spec = readFileSync(reviewer.brief, 'utf8')
-    const command = ['orchestration', 'worker-start', '--spec', spec, '--task-title', `Review #${wf.issue} (${reviewer.axis})`, '--worktree', `path:${wf.root}`, '--agent', process.env.NDEV_REVIEW_AGENT || 'codex', '--full']
+    const command = ['orchestration', 'worker-start', '--spec', spec, '--task-title', `Review #${wf.issue} (${reviewer.axis})`, '--worktree', `path:${wf.root}`, '--agent', agent, ...(model ? ['--model', model] : []), '--full']
     dispatchWorker(wf, reviewer, command, `review of #${wf.issue} (${reviewer.axis})`)
   }
 }

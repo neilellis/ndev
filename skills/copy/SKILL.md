@@ -5,8 +5,6 @@ description: "Write or review user-visible copy: interface text, labels, errors,
 
 # Interface copy
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before writing copy that changes a product promise or a domain term.
-
 Write for the product's real reader, who has no project or insider background. Read the project's CLAUDE.md or wiki for the audience, house vocabulary and spelling. If they state nothing, use British English.
 
 ## The workflow

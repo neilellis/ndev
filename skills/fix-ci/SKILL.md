@@ -5,8 +5,6 @@ description: "Fix failed checks and merge conflicts on the associated pull reque
 
 # Fix CI on the associated PR
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when a fix changes a rule that a test or guard checks.
-
 Keep working until the associated PR is out of draft, green and mergeable. A human merges. Never merge the PR and never push to the base branch.
 Use `work-light` for development and `github` for PR operations. Keep diagnosis and design in one main agent context. Keep the original task, closing issue references and session constraints.
 
@@ -48,7 +46,7 @@ For a local command, use `${CLAUDE_PLUGIN_ROOT}/scripts/work/wait_for_process_en
 
 ## Complete with current evidence
 
-Follow the `r` skill before the PR leaves draft. If a preview needs a ready PR, meet the gates, mark it ready (`finishedReview` does this while a workflow runs), then verify the real deployment. An ignored deployment is not preview evidence.
+Follow the `remember` skill before the PR leaves draft. If a preview needs a ready PR, meet the gates, mark it ready (`finishedReview` does this while a workflow runs), then verify the real deployment. An ignored deployment is not preview evidence.
 
 Completion needs all of these:
 
@@ -60,4 +58,4 @@ Completion needs all of these:
 
 Report the PR URL, head SHA and short evidence, with excluded checks named. If access, an external service or a user decision blocks progress, name the blocker and leave a pickup note: completed evidence, pending checks, exact next action. Never report a draft, red or unverified PR as done.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

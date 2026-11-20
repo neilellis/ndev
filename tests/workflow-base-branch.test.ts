@@ -62,7 +62,7 @@ test('a failed PR step in started keeps the record, so a retry resumes and does 
 })
 
 // GitHub marks a PR merged when another PR lands its head commit. The issue can still be open, and its work goes on.
-test('started on a record whose PR GitHub merged opens a new draft PR, and says why', async ($, on) => {
+test('started after GitHub merged its PR defers the next draft until a real change', async ($, on) => {
   const w = engine(on, { pr: { state: 'closed', merged: true, mergeable: null } })
   await start($, w)
   w.s.noOpenPr = true
@@ -70,10 +70,10 @@ test('started on a record whose PR GitHub merged opens a new draft PR, and says 
   const r = await tool($, 'started', { issue: 7 })
   expect(r.isError).toBe(false)
   expect(w.state()?.state).toBe('developing')
-  expect(w.state()?.prs).toEqual([13])
+  expect(w.state()?.prs).toEqual([])
   expect(r.text).toContain('PR #12 is merged')
-  expect(w.gh.some(c => c.includes('pr-new'))).toBe(true)
-  expect(w.pushes.length).toBe(1)
+  expect(w.gh.some(c => c.includes('pr-new'))).toBe(false)
+  expect(w.pushes).toEqual([])
 })
 
 test('started on a record whose PR was closed with no merge refuses and names the reopen', async ($, on) => {

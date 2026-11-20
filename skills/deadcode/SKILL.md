@@ -5,8 +5,6 @@ description: "Find unused Python and TypeScript names introduced by the current 
 
 # Branch dead-code sweep
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check when removing code can remove a check of a project rule.
-
 Run the sweep for each language that the branch changes. The scripts are in this skill's `scripts/` folder:
 
 ```bash

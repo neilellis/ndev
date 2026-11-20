@@ -5,8 +5,6 @@ description: "Fix and merge every outstanding open pull request one at a time, o
 
 # Fix all pull requests
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check for each fix that changes behaviour governed by the project.
-
 Fix each open PR one at a time, oldest first. Merge it when it is fixed. Then merge `origin/<base>` into the next PR, fix it and merge it. Repeat until no open PRs remain.
 Where an agent has already worked on a PR, work with that agent. It has context that you do not have.
 
@@ -54,4 +52,4 @@ List each PR in the queue as merged (with the merge SHA), blocked (with the reas
 
 Once you have user feedback that unblocks you start on that PR(s) in the same sequential manner.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

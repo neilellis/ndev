@@ -154,7 +154,7 @@ Each tool is `mcp__ndev__<name>`. A call in the wrong state changes nothing, and
 
 | Tool                                                          | What it does                                                                                                                                                                  | It refuses when                                                                                                                                  |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `started(issue, shortName, mode)`                                   | Records the state, or resumes it. A new workflow needs `shortName`, and a resume does not. Claims the worktree, initialises its submodules and opens the draft PR.            | The issue is closed. Another live session owns the record.                                                                                       |
+| `started(issue, shortName, mode)`                                   | Records the state, or resumes it. A new workflow needs `shortName`, and a resume does not. Claims the worktree and initialises its submodules. The first push of a real change opens the draft PR.            | The issue is closed. Another live session owns the record.                                                                                       |
 | `create(shortName, description, mode)` | Files a new issue and calls `started` for it. The answer gives the issue number. It adds no board card. |
 | `comment(issue or pr, message)` | Adds a comment to the issue or the PR. It works with or without a workflow. |
 | `interview(interviewJson)` | With `interviewJson`, shows one round in the interview pane, holds until the human answers, and returns the answers and notes. With no arguments, ends the interview and goes on. See [The interview](#the-interview). |
@@ -824,6 +824,8 @@ A new issue joins the unfinished issue of the agent. It uses the same worktree, 
 - `done` counts the migrations of all issues on the PR. It leaves the merge to the `ndev:merge` skill if there are any.
 
 ### The issue and the PR
+
+Under interactive steering, the agent shows a concrete development preview when relevant and keeps taking design feedback. It asks whether the work is done before final checks or review. A request for changes keeps development open. The human must confirm before the agent calls `ndev flow finished-development --human-confirmation "<the human’s answer>"`. The CLI refuses an interactive finish without this answer before it stages files, runs checks or starts review. The issue record stores this confirmation. Auto steering needs no confirmation. Development tests and checkpoints still run as work proceeds.
 
 `finishedDevelopment` is the merge point. Each issue has a record for development, and the PR has a record for what comes after.
 

@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Publish a milestone release
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check if the release changes project goals, rules, or public claims.
-
 This is an outward-facing write. Use it only when the user invokes it. Confirm the exact release with the user just before you publish. Do not commit, push code or edit the release notes here.
 
 The helper is `scripts/gh_release.sh` in this skill's folder. It takes one notes file:

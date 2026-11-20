@@ -5,8 +5,6 @@ description: "Read and grow the living development wiki at ~/dev-wiki. Use at th
 
 # dev-wiki
 
-For the project’s `NORTH_STAR.md`, follow `${CLAUDE_PLUGIN_ROOT}/kb/north-star.md`. Use this check before adding or changing a claim about how the project must work.
-
 `~/dev-wiki` is the living development wiki. The plugin creates it from its `kb/` the first time
 a session starts. It is a git repository on this computer. Its rules are in `~/dev-wiki/AGENTS.md`.
 
@@ -78,4 +76,4 @@ or as a suggestion at the end of a `/learn` review.
 The plugin creates it at session start. To create it by hand, run
 `${CLAUDE_PLUGIN_ROOT}/scripts/wiki/init.sh ~/dev-wiki`. The script refuses a folder that exists and is not empty.
 
-`${CLAUDE_PLUGIN_ROOT}` is this plugin's root. Outside Claude Code (for example Codex through `for-codex`), use the folder two levels above this skill's folder: `<skill folder>/../../scripts/...`.
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
