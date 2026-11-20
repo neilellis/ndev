@@ -262,6 +262,7 @@ async function run($: EngineInterface, args: string, getProject: () => Project, 
 
 async function answerCommand($: EngineInterface, args: string, getProject: () => Project, setProject: (p: LoadedConfig) => void) {
   try {
+    await whenTurnsFree($)
     return { text: await inTurn(() => run($, args, getProject, setProject)) }
   } catch (error) {
     return { text: `/flow ${args} failed: ${error instanceof Error ? error.message : String(error)}` }
