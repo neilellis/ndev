@@ -11,7 +11,7 @@ const providers = new Set(['claude', 'codex'])
 const preLaunchErrors = new Set([
   'incompatible_runtime', 'worktree_host_unresolved', 'selector_not_found', 'LINEAGE_PARENT_AMBIGUOUS',
 ])
-const chatReplies = new Set(['hand-off', 'new-session'])
+const chatReplies = new Set(['hand-off', 'new-session', 'continue'])
 const contextCommands = /^\s*\/(?:compact|clear)(?:\s|$)/i
 
 function transcriptTail(path) {
@@ -140,7 +140,8 @@ function launchSavedPrompt(harness, payload, reply, file, pending) {
 
 function withPendingDraft(harness, file, update) {
   try {
-    return block(harness, locked(file, update))
+    const result = locked(file, update)
+    return typeof result === 'string' ? block(harness, result) : result
   } catch (error) {
     if (error instanceof CliError && error.code === 5) {
       return block(harness, 'An Orca chat guard action is already in progress. Wait for it to finish before replying.')
@@ -172,6 +173,14 @@ export function blockedNativePrompt(harness, payload) {
   if (isReply && existsSync(file)) {
     return withPendingDraft(harness, file, () => {
       const pending = readObject(file, { missing: {} })
+      if (reply === 'continue' && pending.draft) {
+        if (pending.attempt) return recoverLaunch(pending.attempt)
+        rmSync(file)
+        return { hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+          additionalContext: `The user chose to continue in this chat. Carry out their saved request:\n\n${pending.draft}`,
+        } }
+      }
       return pending.draft
         ? launchSavedPrompt(harness, payload, reply, file, pending)
         : 'There is no saved message for this chat. Send the original message again first.'
@@ -184,7 +193,7 @@ export function blockedNativePrompt(harness, payload) {
   const idle = Math.floor(elapsed / minutes)
   const explanation = elapsed > 50 * minutes
     ? `This chat has been idle for ${idle} minutes.`
-    : elapsed >= 5 * minutes && activity.tokens > threshold
+    : elapsed >= 20 * minutes && activity.tokens > threshold
       ? `This chat has about ${activity.tokens.toLocaleString('en-GB')} tokens and has been idle for ${idle} minutes.`
       : undefined
   if (!explanation) {
@@ -197,7 +206,7 @@ export function blockedNativePrompt(harness, payload) {
     const { attempt } = readObject(file, { missing: {} })
     if (attempt) return recoverLaunch(attempt)
     atomicJson(file, { draft: payload.prompt, cwd: payload.cwd ?? process.cwd() })
-    return `${explanation} Reply hand-off to carry recent context into a new chat, or new-session to send just your saved message. To stay here, run /compact, then resend when it finishes.`
+    return `${explanation} Reply continue to send your saved message here anyway, hand-off to carry recent context into a new chat, or new-session to send just your saved message. You can also run /compact, then resend when it finishes.`
   })
 }
 

@@ -8,12 +8,23 @@ import { fileURLToPath } from 'node:url'
 
 const ndev = fileURLToPath(new URL('../bin/ndev', import.meta.url))
 
-function fixture(t, { red = false } = {}) {
+function fixture(t, { red = false, existing = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ndev-queue-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const env = { HOME: root, PATH: `${root}${delimiter}${process.env.PATH}`, ORCA_CLI_COMMAND: join(root, 'orca') }
   const git = spawnSync('git', ['init', '-q', root], { env, encoding: 'utf8' })
   assert.equal(git.status, 0, git.stderr)
+  writeFileSync(join(root, '.git/info/exclude'), '.neil-dev.worktree.json\n')
+  const worker = join(root, 'repair')
+  for (const args of [
+    ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty', '-qm', 'fixture'],
+    ['worktree', 'add', '-qb', 'fix/ten', worker],
+  ]) {
+    const result = spawnSync('git', args, { cwd: root, env, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+  }
+  writeFileSync(join(worker, '.neil-dev.json'), '{"mode":"heavy","steering":"interactive"}')
+  writeFileSync(join(worker, '.neil-dev.worktree.json'), JSON.stringify({ version: 2, settings: { mode: 'heavy', steering: 'interactive' }, resources: { docker: [], 'dev-servers': {} } }))
   writeFileSync(join(root, '.neil-dev.json'), '{"github":{"repo":"fixture/demo","board":null}}')
   writeFileSync(join(root, 'gh'), `#!/bin/sh
 printf '%s\n' "$*" >> "${root}/gh-log"
@@ -28,9 +39,11 @@ case "$1 $2" in
 esac
 `, { mode: 0o755 })
   writeFileSync(join(root, 'orca'), `#!/bin/sh
+printf '%s\\n' "$*" >> "${root}/orca-log"
 case "$1 $2" in
-  'worktree list') printf '%s\n' '{"ok":true,"result":{"worktrees":[]}}' ;;
-  'orchestration worker-start') printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_active"}}' ;;
+  'worktree list') printf '%s\n' '${JSON.stringify({ ok: true, result: { worktrees: existing ? [{ id: 'worker-id', path: worker, projectId: 'github:fixture/demo', branch: 'fix/ten' }] : [] } })}' ;;
+  'worktree create') printf '%s\n' '${JSON.stringify({ ok: true, result: { worktree: { id: 'worker-id', path: worker } } })}' ;;
+  'orchestration worker-start') cp "${worker}/.neil-dev.worktree.json" "${root}/launch-settings.json"; printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_active"}}' ;;
   'orchestration worker-show') printf '%s\n' '{"ok":true,"result":{"liveness":"live","state":"ready"}}' ;;
   *) exit 1 ;;
 esac
@@ -39,8 +52,39 @@ esac
     const result = spawnSync(ndev, ['fix-prs', ...argv, '--json'], { cwd: root, env, encoding: 'utf8' })
     return { status: result.status, response: JSON.parse(result.stdout) }
   }
-  return { root, run }
+  return { root, worker, run }
 }
+
+test('fix-prs starts existing and new worker sessions with light mode and auto steering', t => {
+  for (const existing of [false, true]) {
+    const { root, worker, run } = fixture(t, { red: true, existing })
+    const started = run('start', '--no-merge')
+    assert.equal(started.status, 0, JSON.stringify(started.response))
+    const settings = JSON.parse(readFileSync(join(root, 'launch-settings.json'), 'utf8'))
+    assert.deepEqual(settings.settings, { mode: 'light', steering: 'auto' })
+    assert.deepEqual(settings.resources, { docker: [], 'dev-servers': {} })
+    assert.deepEqual(JSON.parse(readFileSync(join(worker, '.neil-dev.json'), 'utf8')), { mode: 'heavy', steering: 'interactive' })
+    const log = readFileSync(join(root, 'orca-log'), 'utf8')
+    assert.match(log, /worker-start[\s\S]*--worktree id:worker-id[\s\S]*--agent codex/)
+    assert.equal(log.includes('worktree create'), !existing)
+  }
+})
+
+test('fix-prs does not launch a worker when its settings cannot be configured', t => {
+  const { root, worker, run } = fixture(t, { red: true, existing: true })
+  writeFileSync(join(worker, '.neil-dev.worktree.json'), '{"settings":{"mode":"invalid"}}')
+  const started = run('start', '--no-merge')
+  assert.equal(started.status, 1)
+  assert.match(started.response.error.message, /mode|settings/)
+  assert.doesNotMatch(readFileSync(join(root, 'orca-log'), 'utf8'), /worker-start/)
+  assert.equal(run('status').response.result.operation, null)
+  writeFileSync(join(worker, '.neil-dev.worktree.json'), '{"version":2,"settings":{"mode":"heavy","steering":"interactive"},"resources":{"docker":[],"dev-servers":{}}}')
+  const retry = run('retry', '10')
+  assert.equal(retry.status, 0, JSON.stringify(retry.response))
+  const resumed = run('resume')
+  assert.equal(resumed.status, 0, JSON.stringify(resumed.response))
+  assert.equal(resumed.response.result.worker, 'ctx_active')
+})
 
 test('fix-prs persists its queue and checks the oldest PR first without merging', t => {
   const { root, run } = fixture(t)

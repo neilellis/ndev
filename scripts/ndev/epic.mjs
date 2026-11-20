@@ -83,7 +83,12 @@ function epicResult(epic) {
   return result
 }
 
+function mutate(workspace, n, work) {
+  return locked(join(workspace.gitDir, `ndev-epic-${n}-mutation`), () => work({ ...workspace, mutation: n }))
+}
+
 function save(workspace, e, before, action, from, to) {
+  if (workspace.mutation !== e.epic) return mutate(workspace, e.epic, scoped => save(scoped, e, before, action, from, to))
   const file = pathFor(workspace.root, e.epic)
   ignore(workspace, file)
   locked(file, () => {
@@ -286,7 +291,11 @@ function importEpic(workspace, e, before, v) {
   e.externalBlockers = externalBlockers
   e.evidence.import = { text: v.evidence, at: Date.now(), files: file === '-' ? [] : [resolve(workspace.root, file)] }
   e.state = 'coordinating'
-  return { ...save(workspace, e, before, 'epicImport', before.state, e.state), frontier: frontier(e) }
+  const merged = Object.values(e.issues).filter(sub => sub.state === 'merged')
+  for (const sub of merged) prepareMergeHandoffs(e, sub)
+  save(workspace, e, before, 'epicImport', before.state, e.state)
+  handoffs(workspace, e, merged)
+  return { ...epicResult(e), frontier: frontier(e) }
 }
 
 function phase(workspace, e, before, finished, v) {
@@ -397,29 +406,51 @@ function verify(e, sub) {
   return { sha, base: main, checks: rollup.map(check => [check.workflowName, check.name ?? check.context].filter(Boolean).join('/')) }
 }
 
-function handoffs(workspace, e, sub) {
-  for (const child of Object.values(e.issues).filter(item => item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
-    const h = child.handoff
-    if (!child.implementer) continue
-    if (h.state === 'sending' && !h.requestId) refuse(`Delivery to ${child.implementer} is uncertain for #${child.issue}.`, 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.')
-    const before = structuredClone(e)
-    h.state = 'sending'
-    save(workspace, e, before, 'handoff-start', sub.state, sub.state)
-    const recorded = structuredClone(e)
-    const args = ['orchestration','send','--to',`dispatch:${child.implementer}`,'--subject',`Rebase #${child.issue} after #${sub.issue} merged`,'--body',h.message,...(e.run ? ['--run',e.run] : []),...(h.requestId ? ['--retry-request',h.requestId] : []),'--full','--json']
-    const out = run('orca', args, { cwd: workspace.root })
-    let receipt
-    try { receipt = JSON.parse(out.stdout) } catch {}
-    if (out.status !== 0 || receipt?.ok !== true || receipt.result?.accepted === false || receipt.result?.delivered === false || !receipt.result) {
-      h.requestId = receipt?.error?.data?.requestId
-      h.error = receipt?.error ?? (out.stderr.trim() || out.stdout.trim())
-      save(workspace,e,recorded,'handoff-uncertain',sub.state,sub.state)
-      throw new CliError(1, `Orca send to dispatch:${child.implementer} exited ${out.status}: ${JSON.stringify(h.error)}`, { details: { receipt, requestId: h.requestId }, repair: h.requestId ? `Retry ndev epic issue ${e.epic} ${sub.issue} merged.` : 'Inspect the Run mailbox before attempting another delivery.' })
+function prepareMergeHandoffs(e, sub) {
+  const children = Object.values(e.issues).filter(item => item.stackedOn === sub.issue && item.state !== 'merged' && item.handoff?.blocker !== sub.issue)
+  const main = children.length && branchFor(e)
+  for (const child of children) child.handoff = { state: 'pending', blocker: sub.issue, message: `PR #${sub.pr} is merged. Rebase #${child.issue} onto origin/${main}, checkpoint the rebased branch, and retarget ${child.pr ? `PR #${child.pr}` : 'your PR'} to ${main}. Report the new PR head.` }
+}
+
+function handoffs(workspace, e, parents) {
+  const failures = []
+  const inspect = 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.'
+  for (const sub of Array.isArray(parents) ? parents : [parents]) {
+    for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.stackedOn === sub.issue && item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
+      const h = child.handoff
+      if (!child.implementer) continue
+      const recipient = `dispatch:${child.implementer}`
+      if (h.state === 'sending' && !h.requestId) {
+        failures.push({ issue: child.issue, recipient, message: `Delivery to ${child.implementer} is uncertain for #${child.issue}.`, repair: inspect })
+        continue
+      }
+      const firstAttempt = h.state === 'pending' && !h.requestId
+      const before = structuredClone(e)
+      h.state = 'sending'
+      save(workspace, e, before, 'handoff-start', sub.state, sub.state)
+      const recorded = structuredClone(e)
+      const args = ['orchestration','send','--to',recipient,'--subject',`Rebase #${child.issue} after #${sub.issue} merged`,'--body',h.message,...(e.run ? ['--run',e.run] : []),...(h.requestId ? ['--retry-request',h.requestId] : []),'--full','--json']
+      const out = run('orca', args, { cwd: workspace.root })
+      let receipt
+      try { receipt = JSON.parse(out.stdout) } catch {}
+      if (out.status !== 0 || receipt?.ok !== true || receipt.result?.accepted === false || receipt.result?.delivered === false || !receipt.result) {
+        const launchFailed = out.pid === 0 && ['ENOENT', 'EACCES', 'ENOTDIR', 'ENOEXEC', 'E2BIG'].includes(out.error?.code)
+        const requestId = receipt?.error?.data?.orchestrationRequestId ?? receipt?.error?.data?.requestId ?? h.requestId
+        if (requestId !== undefined) h.requestId = requestId
+        h.error = receipt?.error ?? (out.error ? { ...out.error, ...(out.pid !== undefined ? { pid: out.pid } : {}) } : out.stderr.trim() || out.stdout.trim())
+        if (firstAttempt && launchFailed && !h.requestId) h.state = 'pending'
+        save(workspace,e,recorded,h.state === 'pending' ? 'handoff-not-launched' : 'handoff-uncertain',sub.state,sub.state)
+        const retry = `Retry ndev epic issue ${e.epic} ${sub.issue} merged.`
+        const repair = launchFailed ? `Restore orca on PATH, run orca --version, then ${retry}` : h.requestId ? retry : inspect
+        failures.push({ issue: child.issue, recipient, message: `Orca send to ${recipient} exited ${out.status}: ${JSON.stringify(h.error)}`, exitCode: out.status, error: h.error, receipt, requestId: h.requestId, repair })
+        continue
+      }
+      h.state = 'sent'
+      h.receipt = receipt.result
+      save(workspace,e,recorded,'handoff-sent',sub.state,sub.state)
     }
-    h.state = 'sent'
-    h.receipt = receipt.result
-    save(workspace,e,recorded,'handoff-sent',sub.state,sub.state)
   }
+  if (failures.length) throw new CliError(1, `Epic #${e.epic} is saved at revision ${e.revision}. Handoff delivery failed: ${failures.map(f => `#${f.issue} (${f.recipient}): ${f.message}`).join('; ')}`, { details: { revision: e.revision, failures }, repair: [...new Set(failures.map(f => f.repair))].join(' ') })
   return epicResult(e)
 }
 
@@ -463,9 +494,7 @@ function move(workspace, e, before, sub, to, v) {
     if (pr.merged !== true) refuse(`GitHub has not merged PR #${sub.pr}.`)
     if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
     if (from !== 'verified' || (sub.verification && sub.verification.sha !== pr.head.sha)) sub.mergedUnverified = true
-    const children = Object.values(e.issues).filter(item => item.stackedOn === sub.issue && item.state !== 'merged')
-    const main = children.length && branchFor(e)
-    for (const child of children) child.handoff = { state: 'pending', blocker: sub.issue, message: `PR #${sub.pr} is merged. Rebase #${child.issue} onto origin/${main}, checkpoint the rebased branch, and retarget ${child.pr ? `PR #${child.pr}` : 'your PR'} to ${main}. Report the new PR head.` }
+    prepareMergeHandoffs(e, sub)
   } else refuse(`Issue #${sub.issue} cannot move from ${from} to ${to}.`)
   if (v.workspace) sub.workspace = v.workspace
   if (v.note) sub.note = v.note
@@ -508,25 +537,28 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
     if (verb === 'status') return { epic: null }
     bad('Name the epic number.')
   }
-  const before = load(workspace.root, n)
-  const e = structuredClone(before)
-  if (verb === 'status') return { ...epicResult(e), ...(e.state === 'coordinating' ? { frontier: frontier(e) } : {}) }
-  if (!override && (e.off || e.owner?.session !== session())) refuse(`This session does not coordinate #${n}.`, `Run ndev epic start ${n}.`)
-  if (verb === 'next') return { epic: n, state: e.state, frontier: e.state === 'coordinating' ? frontier(e) : null }
-  if (verb === 'import') return importEpic(workspace,e,before,v)
-  if (verb === 'phase') return phase(workspace,e,before,pos[1],v)
-  if (override) {
-    const from = e.state
-    const to = verb === 'goto' ? pos[0] : nextEpicState(from)
-    if (verb !== 'off' && !EPIC_STATES.includes(to)) bad(`Invalid target phase for ${verb}: ${to}.`)
-    const revision = createHash('sha256').update(JSON.stringify(e)).digest('hex').slice(0, 12)
-    const action = confirm(`epic ${verb}${verb === 'goto' ? ' ' + to : ''}`, String(n), revision, workspace.root, json)
-    if (action) return action
-    if (verb === 'off') { e.off = true; delete e.owner }
-    else { e.state = to; e.evidence[from] = { at: Date.now(), text: pos[verb === 'goto' ? 1 : 0] ?? 'Human override' } }
-    return notifyCoordinator(workspace, e, save(workspace,e,before,`human:${verb}`,from,e.state), from)
+  const execute = workspace => {
+    const before = load(workspace.root, n)
+    const e = structuredClone(before)
+    if (verb === 'status') return { ...epicResult(e), ...(e.state === 'coordinating' ? { frontier: frontier(e) } : {}) }
+    if (!override && (e.off || e.owner?.session !== session())) refuse(`This session does not coordinate #${n}.`, `Run ndev epic start ${n}.`)
+    if (verb === 'next') return { epic: n, state: e.state, frontier: e.state === 'coordinating' ? frontier(e) : null }
+    if (verb === 'import') return importEpic(workspace,e,before,v)
+    if (verb === 'phase') return phase(workspace,e,before,pos[1],v)
+    if (override) {
+      const from = e.state
+      const to = verb === 'goto' ? pos[0] : nextEpicState(from)
+      if (verb !== 'off' && !EPIC_STATES.includes(to)) bad(`Invalid target phase for ${verb}: ${to}.`)
+      const revision = createHash('sha256').update(JSON.stringify(e)).digest('hex').slice(0, 12)
+      const action = confirm(`epic ${verb}${verb === 'goto' ? ' ' + to : ''}`, String(n), revision, workspace.root, json)
+      if (action) return action
+      if (verb === 'off') { e.off = true; delete e.owner }
+      else { e.state = to; e.evidence[from] = { at: Date.now(), text: pos[verb === 'goto' ? 1 : 0] ?? 'Human override' } }
+      return notifyCoordinator(workspace, e, save(workspace,e,before,`human:${verb}`,from,e.state), from)
+    }
+    const sub = e.issues[number(pos[1], 'sub-issue')]
+    if (!sub) refuse(`#${pos[1]} is outside epic #${n}.`)
+    return verb === 'brief' ? brief(workspace,e,before,sub,pos[2],v.pr && number(v.pr,'PR')) : move(workspace,e,before,sub,pos[2],v)
   }
-  const sub = e.issues[number(pos[1], 'sub-issue')]
-  if (!sub) refuse(`#${pos[1]} is outside epic #${n}.`)
-  return verb === 'brief' ? brief(workspace,e,before,sub,pos[2],v.pr && number(v.pr,'PR')) : move(workspace,e,before,sub,pos[2],v)
+  return ['status', 'next'].includes(verb) ? execute(workspace) : mutate(workspace, n, execute)
 }
