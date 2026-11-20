@@ -2916,11 +2916,10 @@ export const isStaleWrite = (error: unknown) => error instanceof Error && error.
 
 // A save of a record that another writer changed first exits 5 and changes nothing. The change is read and made again.
 // After the last try the error names the record and both revisions, and its repair.
-async function retryStale<T>($: EngineInterface, step: () => Promise<T>): Promise<T> {
+async function retryStale<T>($: EngineInterface, step: () => Promise<T>, deadline?: TurnDeadline): Promise<T> {
   for (let tries = 1; ; tries += 1) {
-    await whenTurnsFree($)
     try {
-      return await step()
+      return await inFreeTurn($, step, deadline)
     } catch (error) {
       if (tries >= 3 || !isStaleWrite(error)) throw error
     }
@@ -3012,7 +3011,6 @@ async function waitGoesOn($: EngineInterface, root: string, who: WaitWho, id: st
 // The wait's time includes this. Past untilMs it does not wait for the queue: the save refuses a record that another writer changed.
 async function waitEnds($: EngineInterface, c: Ctx, root: string, who: WaitWho, id: string, label: string, untilMs: number): Promise<string> {
   for (let tries = 1; ; tries += 1) {
-    const isFree = await whenTurnsFree($, untilMs)
     try {
       const end = async () => {
         const wf = await waitRecord($, root, who)
@@ -3024,7 +3022,13 @@ async function waitEnds($: EngineInterface, c: Ctx, root: string, who: WaitWho, 
         const said = given ? `The human ended the wait and says: ${given}\n` : isHeld ? '' : `A human moved the workflow to the state "${wf.state}", so the wait ended.\n`
         return said + (await answer($, wf, await factsFor($, wf.root, c.project, wf)))
       }
-      return await (isFree ? inTurn(end) : end())
+      const expired = new Error('The wait reached its ending deadline')
+      try {
+        return await inFreeTurn($, end, { untilMs, expired })
+      } catch (error) {
+        if (error !== expired) throw error
+        return await end()
+      }
     } catch (error) {
       if (tries >= 3 || !isStaleWrite(error)) throw error
     }
@@ -3047,8 +3051,8 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
   const lastCheckAt = checksEndAt - endMs
   // A set time is not a retry, so waitForSeconds never raises the notice.
   const most = name === 'waitForSeconds' ? Infinity : Math.min(attempts, Math.ceil((lastCheckAt - startedAt) / (spec.period * 1000)) + 1)
-  if (!(await whenTurnsFree($, checksEndAt))) throw new Refuse(`${name} did not start its wait for ${spec.what}, because other tool calls held the queue for its timeout of ${timeoutS} s. Nothing changed. Repair: call it again when they end.`)
-  const { root, live, who } = await retryStale($, () => inTurn(async () => {
+  const expired = new Refuse(`${name} did not start its wait for ${spec.what}, because starting it or other tool calls used its timeout of ${timeoutS} s. Nothing changed. Repair: call it again when they end.`)
+  const { root, live, who } = await retryStale($, async () => {
     const wf = await current($, c)
     if (name === 'waitForState' && issuesOf(wf).includes(Number(c.args.issue_id))) throw new Refuse(`Refused: waitForState cannot watch issue #${String(c.args.issue_id)}, because this agent is on it and its state stays "wait" while the wait holds it. Nothing changed. Repair: name another issue.`)
     legal(wf, 'wait', await factsFor($, wf.root, c.project, wf))
@@ -3057,7 +3061,7 @@ async function waitTool($: EngineInterface, name: string, c: Ctx, limits: WaitLi
     moved(wf, name, { state: 'wait', previous: wf.state }, startedAt)
     await saveWorkflow($, wf)
     return { root: wf.root, live: liveName(wf), who: { issue: wf.issue, pr: wf.pr } }
-  }))
+  }, { untilMs: checksEndAt, expired })
   activeWaits.add(id)
   let alert: { group: string; pid?: number } | undefined
   let problem: string | undefined
@@ -3144,14 +3148,18 @@ async function waitAlert($: EngineInterface, root: string, who: WaitWho, id: str
   const raised = await raiseAlert($, root, issue, `${name} for ${what} has run ${tries} of ${most} checks. Last: ${last} /unblock ends the wait.`, `ndev: #${issue}: a wait is past half its retries`)
   const alert = { group: raised.group, pid: raised.pid }
   // The record lets a later session withdraw the notice if this process dies. It does not hold the wait past its time.
-  if (!(await whenTurnsFree($, untilMs))) return { alert, problem: raised.problem }
-  await retryStale($, () => inTurn(async () => {
-    const wf = await readWaitRecord($, root, who)
-    if (wf?.waiting?.id === id) {
-      wf.waiting.alert = alert
-      await saveWorkflow($, wf)
-    }
-  }))
+  const expired = new Error('The wait alert reached its deadline')
+  try {
+    await retryStale($, async () => {
+      const wf = await readWaitRecord($, root, who)
+      if (wf?.waiting?.id === id) {
+        wf.waiting.alert = alert
+        await saveWorkflow($, wf)
+      }
+    }, { untilMs, expired })
+  } catch (error) {
+    if (error !== expired) throw error
+  }
   return { alert, problem: raised.problem }
 }
 
@@ -3553,6 +3561,16 @@ export async function whenTurnsFree($: EngineInterface, untilMs?: number): Promi
     await $.process.run(['sleep', '0.2'])
   }
   return true
+}
+
+type TurnDeadline = { untilMs: number; expired: Error }
+
+export async function inFreeTurn<T>($: EngineInterface, fn: () => Promise<T>, deadline?: TurnDeadline): Promise<T> {
+  do {
+    if (!(await whenTurnsFree($, deadline?.untilMs))) throw deadline!.expired
+    if (deadline && (await $.clock.now()) >= deadline.untilMs) throw deadline.expired
+  } while (turnsQueued)
+  return inTurn(fn)
 }
 
 // Each state tool call shows in the /view pane, with its arguments and how it ended.
