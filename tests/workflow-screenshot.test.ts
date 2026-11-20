@@ -26,6 +26,7 @@ test('a full page taller than the viewport is taken in scrolled images that reac
   expect(w.copies).toEqual([1, 2, 3, 4].map(n => `${SHOTS}/x-test-home-320x640-light-part${n}.png`))
   expect(r.text).toContain('Saved 4 images')
   expect(r.text).toContain('-part4.png')
+  expect(r.text).not.toContain('WARNING')
 })
 
 test('a full page with no end stops at the limit and says how much it did not take', async ($, on) => {
@@ -357,4 +358,31 @@ test('a tool call that fails puts the line back too, and a wait tool has its own
   const before = w.statuses.length
   await tool($, 'waitForSeconds', { secs: 1 })
   expect(w.statuses.length).toBe(before)
+})
+
+
+test('fullPage warns when an inner scrolling pane has content outside the captured view', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.pageHeight = 640
+  w.s.innerScroller = { element: 'main#content', height: 500, total: 2000 }
+  const result = await tool($, 'screenshot', { url: 'https://x.test/app', viewports: ['320x640'], schemes: ['light'], fullPage: true })
+  expect(result.isError).toBe(false)
+  expect(w.copies).toHaveLength(1)
+  expect(result.text).toContain('WARNING')
+  expect(result.text).toContain('main#content')
+  expect(result.text).toContain('2000')
+  expect(result.text).toMatch(/only.*visible (?:portion|view)/i)
+  expect(result.text).toContain('not the whole page')
+  expect(orcaVerbs(w).at(-1)).toBe('tab close')
+})
+
+test('a viewport screenshot of an inner pane does not claim or warn about a full page', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.innerScroller = { element: 'main#content', height: 500, total: 2000 }
+  const result = await tool($, 'screenshot', { url: 'https://x.test/app', viewports: ['320x640'], schemes: ['light'], fullPage: false })
+  expect(result.isError).toBe(false)
+  expect(w.copies).toHaveLength(1)
+  expect(result.text).not.toContain('WARNING')
 })
