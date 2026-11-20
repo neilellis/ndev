@@ -273,14 +273,14 @@ export function afterSkip(position: Position, mode: Mode, steering: Steering): M
 
 export function afterStarted(
   position: Position | undefined,
-  facts: { mode: Mode; steering: Steering; scriptsMissing?: boolean; blockerOpen?: boolean; feedback?: boolean },
+  facts: { mode: Mode; steering: Steering; scriptsMissing?: boolean; blockerOpen?: boolean; feedback?: boolean; prConflict?: boolean },
 ): Position {
   const first = firstState(facts.mode, facts.steering)
   if (!position || position.state === 'setup') {
     if (facts.scriptsMissing) return { state: 'setup' }
     return facts.blockerOpen ? { state: 'blocked', previous: first } : { state: first }
   }
-  if (position.state === 'done' && facts.feedback) return { state: 'revising' }
+  if (position.state === 'done' && (facts.feedback || facts.prConflict)) return { state: 'revising' }
   // A wait lives in the tool call that made it, so a new session finds no one waiting.
   if (position.state === 'wait') return { state: position.previous ?? first }
   return position

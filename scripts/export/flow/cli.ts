@@ -160,7 +160,7 @@ function save(wf: Workflow) {
 function ghRun(root: string, repo: string | undefined, args: string[]): string {
   const script = process.env.NDEV_FLOW_GH || `${HOME}/scripts/github/gh.sh`
   const r = run('bash', [script, ...args], { cwd: root, env: repo ? { GH_REPO: repo } : {}, timeout: 300_000 })
-  if (r.status !== 0) throw new Fail(1, `ndev-flow: gh.sh ${args[0]} exited ${r.status}: ${said(r)}`)
+  if (r.status !== 0) throw new Fail(1, `ndev-flow: gh.sh ${args.slice(0, 2).join(' ')} exited ${r.status}: ${said(r)}`)
   return r.stdout.trim()
 }
 function ghJson<T>(root: string, repo: string | undefined, args: string[]): T {
@@ -593,7 +593,10 @@ function started(root: string, config: Config, args: Args) {
       setUpPr(wf, ghJson<{ title: string }>(root, wf.repo, ['issue-read', String(issue)]).title)
       if (wf.prs.length) notes.push(`Opened ${prUrl(wf)}.`)
     }
-    const to = afterStarted({ state: wf.state as any, previous: wf.previous as any }, { mode: wf.mode as any, steering: wf.steering as any })
+    const pr = wf.state === 'done' && !wf.direct && wf.prs.length ? readPr(wf, prOf(wf)) : undefined
+    const prConflict = pr?.state === 'open' && pr.mergeable === false
+    if (prConflict) notes.push(`PR #${pr.number} has conflicts with ${wf.base}. Merge origin/${wf.base} into this branch, resolve the conflicts, and run ${FLOW} checkpoint.`)
+    const to = afterStarted({ state: wf.state as any, previous: wf.previous as any }, { mode: wf.mode as any, steering: wf.steering as any, prConflict })
     if (to.state !== wf.state) apply(wf, to, 'started', notes)
     wf.owner = { session: session(), at: now() }
     save(wf)

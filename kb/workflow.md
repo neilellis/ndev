@@ -114,7 +114,7 @@ flowchart TD
     smoke -->|"finishedSmoke(report or skip reason)"| finishing[finishing]
     finishing -->|"done(message)<br/>all done checks pass"| done([done<br/>merged, or ready for a human])
     finishing -->|"unanswered feedback found"| revising
-    done -->|"heartbeat finds a conflict or red checks,<br/>or started(issue) with new feedback"| revising[revising<br/>answer the feedback]
+    done -->|"heartbeat finds a conflict or red checks,<br/>or started(issue) finds<br/>new feedback or a confirmed conflict"| revising[revising<br/>answer the feedback]
     done -->|"checkpoint, while the PR is open"| ci
     revising -->|"checkpoint, then<br/>finishedRevision()"| ci
 
@@ -448,6 +448,8 @@ After 20 minutes with no activity, the plugin compacts the session and prompts t
 The heartbeat also watches a `done` PR until the PR merges. A clean PR makes no prompt and no compaction. A conflict or red checks moves the state to `revising`, and the agent is prompted. An agent that finds the conflict first calls `checkpoint`, which goes back to `ci`. A PR that closes in an active state blocks the workflow.
 
 A session that has died does not restart, because the heartbeat runs inside the session. A new session resumes with `started`.
+
+When `started` resumes a finished workflow with an open PR, it checks mergeability. A confirmed conflict moves the record from `done` to `revising`, without an idle heartbeat. Unknown mergeability alone keeps the record in `done`. The native `ndev flow start` command applies the same rule.
 
 A resumed session (`claude --resume`) finds its workflow itself. At start it reads the worktrees of the repository, and it takes the one that it owns or last released. A session that never had the workflow does not take it.
 
