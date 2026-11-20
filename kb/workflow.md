@@ -867,6 +867,8 @@ The tools write these values to `<git dir>/ndev-live-<issue|pr>-<n>.json`, and n
 
 While the workflow owns the checks, a raw `git commit` or `git push` is refused. Use `checkpoint`, also to end a merge. With no files, `checkpoint` pushes a held commit, except in `reviewing` and `developed`, where the commit waits for `finishedReview`; the refusal then names that route. The rule does not apply in `setup`, in `done`, when the workflow is off, or when a human skipped the setup of the check scripts.
 
+After an issue reaches `developed`, its PR record supplies the current workflow state, unless that PR is still in `developing`. Turning that PR workflow off permits ordinary Git commits and pushes. The old issue snapshot must not restore the checkpoint requirement.
+
 The guard reads what the command runs, not the text that it only passes on. A quoted heredoc body, a comment and a quoted word do not count. These do count: a heredoc that a shell can read, a substitution in a heredoc with no quotes on its tag, a string after a shell's or an interpreter's `-c` or `-e`, a string after `eval`, a string piped to a shell, and each command substitution.
 
 The guard applies to the workflow's own worktree, the worktrees that `followUp` started and the main checkout. A helper's own worktree of the same repository passes, and so does another repository. From a helper's worktree, a push does not pass if it names the workflow's branch or the base branch, uses `--all`, `--mirror` or a `*`, or has a variable in its target.

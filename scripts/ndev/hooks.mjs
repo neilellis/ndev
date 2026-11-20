@@ -35,7 +35,10 @@ function changeSession(root, id, change) {
 
 export function currentWorkflow(root, ids = []) {
   const records = readWorkflowRecords(root)
-  const ordered = records.filter(wf => !wf.off && !wf.noChecks && !['done', 'setup'].includes(wf.state))
+  const effective = records.map(wf => (wf.state === 'developed' && !wf.pr
+    ? records.find(pr => pr.pr === wf.prs?.[0] && pr.state !== 'developing')
+    : undefined) ?? wf)
+  const ordered = [...new Set(effective)].filter(wf => !wf.off && !wf.noChecks && !['done', 'setup'].includes(wf.state))
   const own = ordered.filter(wf => ids.includes(wf.owner?.session))
   return own.find(wf => wf.pr) ?? own[0] ?? ordered.find(wf => wf.pr) ?? ordered[0]
 }
