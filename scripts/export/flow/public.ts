@@ -149,11 +149,13 @@ export function projectSwitch(root: string, enabled: boolean, json: boolean) {
   const current = () => readObject(file, { missing: {} })
   const revision = (config: object) => createHash('sha256').update(JSON.stringify(config)).digest('hex').slice(0, 12)
   const before = revision(current())
-  const action = confirm(enabled ? 'on' : 'off', 'project', before, root, json)
-  if (action) return action
+  if (enabled) {
+    const action = confirm('on', 'project', before, root, json)
+    if (action) return action
+  }
   locked(file, () => {
     const config = current()
-    if (revision(config) !== before) throw new CliError(5, `${file} changed since confirmation. Read the settings and retry.`)
+    if (revision(config) !== before) throw new CliError(5, `${file} changed before workflow ${enabled ? 'on' : 'off'} was saved. Read the settings and retry ndev flow ${enabled ? 'on' : 'off'} --project.`)
     atomicJson(file, { ...config, workflow: enabled })
   })
   return { root, enabled, text: `Project workflow is ${enabled ? 'on' : 'off'} in ${root}.` }

@@ -968,7 +968,7 @@ test('start in a reused worktree refuses a merged carrier with its record and re
   }
 })
 
-test('the stale carrier repair confirms off, retains the record and permits the next issue', () => {
+test('the stale carrier repair turns off without terminal input, retains the record and permits the next issue', () => {
   const p = project()
   const fake = services(p)
   const checks = join(p.work, 'scripts/ndev/workflow')
@@ -979,9 +979,10 @@ test('the stale carrier repair confirms off, retains the record and permits the 
   writeFileSync(p.file, JSON.stringify(record))
   const command = `import { runFlow } from ${JSON.stringify(new URL('../flow/cli.ts', import.meta.url))}; Object.defineProperty(process.stdin, 'isTTY', {value:true}); Object.defineProperty(process.stderr, 'isTTY', {value:true}); console.log(JSON.stringify(runFlow(['off','--pr','9'])))`
   const disabled = spawnSync(process.execPath, ['--input-type=module', '-e', command], {
-    cwd: p.work, env: { ...env, ...fake }, encoding: 'utf8', input: 'confirm off #7 1\n',
+    cwd: p.work, env: { ...env, ...fake }, encoding: 'utf8', input: '',
   })
   output(disabled)
+  assert.equal(disabled.stderr, '')
   const kept = JSON.parse(readFileSync(p.file, 'utf8'))
   assert.deepEqual(kept.workflow.prs, [9])
   assert.ok(kept.workflow.off)
@@ -989,6 +990,26 @@ test('the stale carrier repair confirms off, retains the record and permits the 
   assert.equal(started.issue, 19)
   assert.deepEqual(started.workflow.prs, [10])
   assert.ok(JSON.parse(readFileSync(p.file, 'utf8')).workflow.off)
+})
+
+test('off applies immediately to issue, PR and project targets in JSON mode', () => {
+  for (const target of [['--issue', '7'], ['--pr', '9'], ['--project']]) {
+    const p = project()
+    writeFileSync(join(p.work, '.neil-dev.json'), JSON.stringify({ workflow: true, mode: 'light' }))
+    const before = JSON.parse(readFileSync(p.file, 'utf8'))
+    const result = JSON.parse(output(flow(p, ['off', ...target])))
+    assert.equal(result.nextAction, undefined)
+    const after = JSON.parse(readFileSync(p.file, 'utf8'))
+    if (target[0] === '--project') {
+      assert.deepEqual(JSON.parse(readFileSync(join(p.work, '.neil-dev.json'), 'utf8')), { workflow: false, mode: 'light' })
+      assert.deepEqual(after, before)
+    } else {
+      assert.ok(after.workflow.off)
+      assert.equal(after.workflow.state, before.workflow.state)
+      assert.deepEqual(after.workflow.prs, before.workflow.prs)
+      assert.equal(after.workflow.rev, before.workflow.rev + 1)
+    }
+  }
 })
 
 test('restarting the reopened issue refuses its merged PR with a new-PR repair', () => {

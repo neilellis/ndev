@@ -16,7 +16,7 @@ The command keeps pre-development phases, migrations and follow-ups. A common Gi
 
 ## Reuse a worktree after a PR closes
 
-Before starting another issue, `ndev flow start` checks active PR carriers in the target worktree. The command refuses a start that still names a closed or merged PR. The message names the issue, PR state, record path and repair. Run `ndev flow off --pr <old-pr>` in that worktree, confirm the change, then start the new issue. This preserves the old record and local files. Finished and disabled records do not block a different issue.
+Before starting another issue, `ndev flow start` checks active PR carriers in the target worktree. The command refuses a start that still names a closed or merged PR. The message names the issue, PR state, record path and repair. Run `ndev flow off --pr <old-pr>` in that worktree, then start the new issue. The off command applies immediately without a confirmation prompt, including with `--issue`, `--project` or `--json`. This preserves the old record and local files. Finished and disabled records do not block a different issue.
 
 For a reopened issue, create a new open PR that closes that issue, then use `ndev flow repair --issue <issue> --pr <new-pr>`. Disable a shared old carrier first with `ndev flow off --pr <old-pr>`. If the issue workflow itself is off, turn it on before repair. Repair validates the new PR and preserves the disabled shared carrier. A subsequent start uses the new association. Issue-targeted commands and waits select that current PR, including after development. Retained carriers remain available through their explicit PR number.
 
