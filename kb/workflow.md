@@ -683,7 +683,7 @@ An epic is one issue that is planned once and built as many sub-issues. One sess
 | `spec-review` | Each finding of a review by a different model has a ruling | `files`, `evidence` |
 | `slicing` | Each sub-issue is filed with its blockers | `issues` |
 | `coordinating` | Every sub-issue is merged | |
-| `closing` | The epic is checked end to end | `evidence` |
+| `closing` | Full suites and whole-epic review cover the current default-branch SHA; all debt has rulings | `evidence`, `closingFile` |
 
 A sub-issue goes `waiting → implementing → reviewing → verified → merged`, with `reviewing ⇄ fixing` for each round of findings and `blocked` from any state. After three rounds the answer says to narrow the issue, split it or ask the human. A sub-issue starts when each blocker is merged, or **stacked**: on the PR branch of a blocker that is not merged yet (below).
 
@@ -695,6 +695,42 @@ A sub-issue goes `waiting → implementing → reviewing → verified → merged
 | `epicBrief` | Writes the implementer or reviewer brief to a file outside the worktree and answers with the filled `orca orchestration worker-start` command. The reviewer command works in the implementer's workspace and is refused while the record has none. For an implementer that starts stacked, it reads the blocker's PR from GitHub, gives `--base-branch origin/<head branch of that PR>`, adds the stack rules to the brief and records `stackedOn`. It refuses an implementer brief for a waiting sub-issue that can start neither way. The tool starts no worker: the coordinator runs the command. |
 | `epicIssue` | Records one move of a sub-issue. A start must be on the frontier, and a stacked start needs the stacked brief first. `reviewing → verified` runs the verify checks. `verified → merged` needs GitHub to say the PR is merged, and answers with the new frontier and with each sub-issue stacked on the merged one. | When a human merged the PR while the sub-issue was in `reviewing` or `fixing`, `merged` is accepted from there too: the record keeps the merge commit and says that the verify checks did not run.
 | `epicStatus` | Read-only. The state, the next step and the sub-issues by state. |
+
+**Closing evidence and debt.** Keep merging sub-issues into the default branch. Record the original `baseSha`, `coordinatorModel`, `fullSuites` (command argument arrays) and `posture` (`standard` or `deadline`) with `epicStarted`. Native callers use `ndev epic start <epic> --base-sha <40-character-sha> --coordinator-model <model> --full-suites-file <json> --posture standard`. The base and model cannot change. Commands can be added to the roster but not removed. Older records need their actual original base supplied explicitly.
+
+On a clean checkout of the live default branch, run every planned suite and ask another model and reviewer to review original base..closing SHA against the committed spec files from `specifying`. Write this JSON outside the checkout, replacing the example values with actual evidence:
+
+```json
+{
+  "sha": "<40-character-default-branch-sha>",
+  "branch": "main",
+  "suites": [{
+    "command": ["npm", "test"],
+    "exitCode": 0,
+    "sha": "<same-sha>",
+    "log": "/absolute/path/full-suite.log",
+    "skippedChecks": []
+  }],
+  "review": {
+    "baseSha": "<original-full-base-sha>",
+    "sha": "<same-closing-sha>",
+    "model": "<different-model>",
+    "reviewer": "<different-session-or-dispatch>",
+    "requirements": [{"id": "R1", "status": "done", "evidence": "<file, test or other evidence>"}],
+    "findings": []
+  }
+}
+```
+
+Include every committed R1 or R-1 identifier exactly once. Status is `done`, `changed` or `missing`. Each row needs evidence. Changed and missing rows also need `ruling`. Each finding is `{ "id": "F1", "evidence": "...", "ruling": {...} }`. A ruling is `{ "verdict": "accepted", "reason": "..." }`, `fixed` with reason and evidence, or `issue-filed` with reason and a real issue number in the same repository. The phase tool validates Git identity, log existence and recorded evidence; it does not run tests, establish the log's provenance or launch a model. The coordinator and independent reviewer remain responsible for truthful receipts. A moving branch requires fresh suites and review.
+
+Record debt through `epicDebt(issue, key, kind, note, sub?, check?)` or `ndev epic debt <epic> --file <json>`, with a stable event key. Kinds are `skipped-check` (requires `check`), `merge-without-review` (requires `sub`) and `gate-override`. Example: `{ "key": "deadline-integration", "kind": "skipped-check", "check": "integration", "note": "Deferred at the deadline" }`. Rule on it through `epicDebtRuling(issue, key, ruling)` or `ndev epic ruling <epic> <key> --file <json>`. The ruling file holds the ruling object itself. Issue-filed debt rulings require an open issue when recorded. Closing verifies that filed issues exist. Status lists debt, including unresolved items.
+
+An unreviewed merged sub-issue needs `override` (`--override <reason>` natively) and its actual merged PR; this records review, verification and override debt. A merge without current verification records skipped verification debt. Skipped CI checks, absent checks after the grace period and successful phase overrides also create debt. Record other omitted checks explicitly, including any Docs-Unchanged decision that waives a required documentation check. Each full-suite receipt lists its skipped checks, with matching debt. Deadline posture keeps these requirements. Closing refuses until every item has a fixed, issue-filed or accepted ruling with a reason.
+
+For each closing suite skip, use debt key `closing:<full-sha>:suite:<suite-index>:skip:<skip-index>`, with zero-based indexes into the closing receipt arrays, the matching `check`, and no `sub`. This binds the ruling to the current closing event; a prior PR omission cannot waive a new skip.
+
+Finish with `epicPhase(issue, finished: "closing", evidence, closingFile)` or `ndev epic phase <epic> closing --evidence "<report>" --closing-file <json>`. The branch and SHA must match GitHub's current default branch, the checkout must be clean, every suite must exit zero, and the review must cover the original base..closing SHA on a different model. Skip and goto cannot move directly to done.
 
 **Workers on the saved Orca server.** `epicStarted` with `remote` is the one switch: `true` takes the server that `/dev remote <server>` saved for the project, else the only server Orca has; a string names a saved server by its name, its recipe id, its id or the start of its id; `false` goes back to this machine. With no `remote` in the call nothing changes, so a saved server alone never makes an epic remote. The server is resolved once, at that call, with the matcher of `/dev triage start --remote`, and the record keeps its id and name (`remote`). A server that is not found, several with none named, or a saved one that Orca no longer has is refused with the list of saved servers and the repair; the epic never switches to this machine or to another server by itself. With a remote, the implementer command is `orca orchestration worker-start … --on <server id> --worktree new-top-level --repo <remoteRepo> --name <issue>-<key> --base-branch origin/<base>`. `remoteRepo` is the selector of the repository on that server (`id:<id>` or `name:<name>`, from `orca repo list --environment <server id> --json`), set with `epicStarted`; the repository id of this machine's Orca (`repoId`) is not sent to a server, and without `remoteRepo` the brief is refused. `epicBrief` records on the sub-issue where its implementer starts. Its `workspace` is then the worktree id on the server (`<repoId>::<path>`, the `id` that `orca worktree list --environment <server id> --json` lists), and the reviewer command is `… --on <server id> --worktree id:<workspace>`; a path alone is refused, because with `--on` Orca takes only an exact selector of the server. A sub-issue in flight keeps its place: one with a workspace on this machine gets `--worktree path:<workspace>` and no `--on` after the epic gets a remote, and one on the server keeps `--on` after `remote: false`. The Run, its Tasks and its mail stay on this machine's Orca. The briefs for a server name each spec file by its path in the repository, so the spec must be pushed; the server also needs the plugin and the project's credentials file, and each agent of the roles enabled there.
 

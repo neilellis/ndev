@@ -136,7 +136,7 @@ test('remote routing selects a repository on the requested server and keeps the 
   assert.ok(review.argv.includes('id:away::/repo') && review.argv.includes('host-1'))
   assert.ok(review.argv.includes('test-model'))
   assert.match(readFileSync(review.path, 'utf8'), /Read only the cited sections of `NORTH_STAR\.md`/)
-  assert.equal(ok('goto','done','--issue','40').nextAction.confirmation,'terminal')
+  assert.match(call('goto','done','--issue','40').error.message, /closing gate cannot be skipped/)
   assert.equal(ok('status','40').epic.state,'coordinating')
   e.state = 'closing'
   writeFileSync(file, JSON.stringify(e))
@@ -658,4 +658,203 @@ test('handoff failure reports every recipient and retries an independent durable
   assert.equal(f.ok('status', '40').epic.issues[43].handoff.state, 'sent')
   assert.ok(f.deliveries()[2].includes('sibling-request'))
   assert.equal(f.deliveries().length, 3)
+})
+
+test('closing refuses prose without exact-sha suite and whole-epic review evidence', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'closing'
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  const result = f.call('phase', '40', 'closing', '--evidence', 'everything passed')
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /closing.*structured|closing-file/i)
+  assert.equal(f.ok('status', '40').epic.state, 'closing')
+})
+
+test('an unverified merge records skipped verification as structured debt', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'reviewing', pr: 61, reviewer: 'review-1' } }
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merge_commit_sha: 'b'.repeat(40) })
+  f.save()
+  const merged = f.ok('issue', '40', '41', 'merged').epic
+  assert.equal(merged.debts?.length, 2)
+  assert.equal(merged.debts[0].kind, 'merge-without-review')
+  assert.equal(merged.debts[1].kind, 'skipped-check')
+  assert.equal(merged.debts[1].sub, 41)
+  assert.equal(merged.debts[1].check, 'verification')
+  assert.equal(merged.debts[1].ruling, undefined)
+})
+
+function closingFixture(t) {
+  const f = fixture(t)
+  const git = (...args) => {
+    const out = spawnSync('git', args, { cwd: f.root, env: f.env, encoding: 'utf8' })
+    assert.equal(out.status, 0, out.stderr)
+    return out.stdout.trim()
+  }
+  git('config', 'user.name', 'Epic Test')
+  git('config', 'user.email', 'epic@example.test')
+  git('checkout', '-qb', 'main')
+  mkdirSync(join(f.root, 'tests'))
+  writeFileSync(join(f.root, 'tests/all.test.mjs'), "import { test } from 'node:test'; import assert from 'node:assert/strict'; test('the full fixture suite',()=>assert.equal(2+2,4))\n")
+  writeFileSync(join(f.root, 'spec.md'), '# Spec\nR1: First requirement.\nR-2: Second requirement.\n')
+  git('add', '.')
+  git('commit', '-qm', 'Original baseline')
+  const base = git('rev-parse', 'HEAD')
+  const command = [process.execPath, '--test']
+  const suitesFile = join(f.home, 'suites.json')
+  writeFileSync(suitesFile, JSON.stringify([command]))
+  const e = f.ok('start', '40', '--base-sha', base, '--coordinator-model', 'author-model', '--posture', 'deadline', '--full-suites-file', suitesFile).epic
+  writeFileSync(join(f.root, 'feature.txt'), 'implemented\n')
+  git('add', 'feature.txt')
+  git('commit', '-qm', 'Combined implementation')
+  const sha = git('rev-parse', 'HEAD')
+  f.answers['repos/example/repo/commits/main'] = { sha }
+  f.save()
+  e.state = 'closing'
+  e.evidence.specifying = { text: 'Spec accepted', at: 1, files: [join(f.root, 'spec.md')] }
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'merged', pr: 61, reviewer: 'reviewer-41', verdict: 'approve' } }
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  const suite = spawnSync(command[0], command.slice(1), { cwd: f.root, env: f.env, encoding: 'utf8' })
+  assert.equal(suite.status, 0, suite.stdout + suite.stderr)
+  const log = join(f.home, 'full-suite.log')
+  writeFileSync(log, suite.stdout + suite.stderr)
+  const receipt = { sha, branch: 'main', suites: [{ command, exitCode: suite.status, sha, log, skippedChecks: [] }], review: {
+    baseSha: base, sha, model: 'review-model', reviewer: 'whole-epic-reviewer',
+    requirements: [{ id: 'R1', status: 'done', evidence: 'tests/all.test.mjs' }, { id: 'R-2', status: 'done', evidence: 'feature.txt' }], findings: [],
+  } }
+  const proof = join(f.home, 'closing.json')
+  const close = value => { writeFileSync(proof, JSON.stringify(value)); return f.call('phase', '40', 'closing', '--evidence', 'Whole epic verified', '--closing-file', proof) }
+  return { ...f, git, base, sha, record, receipt, proof, close }
+}
+
+test('closing records the exact default-branch suite and complete independent requirement review', t => {
+  const f = closingFixture(t)
+  const result = f.close(f.receipt)
+  assert.equal(result.status, 0, JSON.stringify(result.error))
+  assert.equal(result.result.epic.state, 'done')
+  assert.equal(result.result.epic.closing.sha, f.sha)
+  assert.equal(result.result.epic.closing.suites[0].exitCode, 0)
+  assert.deepEqual(result.result.epic.closing.review.requirements.map(row => row.id), ['R1', 'R-2'])
+})
+
+test('closing refuses stale, partial, same-model or failed evidence without changing the epic', t => {
+  const f = closingFixture(t)
+  const before = readFileSync(f.record, 'utf8')
+  const changes = [
+    receipt => { receipt.sha = 'f'.repeat(40) },
+    receipt => { receipt.suites[0].exitCode = 9 },
+    receipt => { receipt.suites = [] },
+    receipt => { receipt.review.baseSha = 'e'.repeat(40) },
+    receipt => { receipt.review.model = 'AUTHOR-MODEL' },
+    receipt => { receipt.review.reviewer = 'test-owner' },
+    receipt => { receipt.review.requirements.pop() },
+    receipt => { receipt.review.findings.push({ id: 'F1', evidence: 'reader and writer disagree' }) },
+    receipt => { receipt.review.requirements[0].status = 'missing' },
+    receipt => { receipt.suites[0].skippedChecks = ['integration'] },
+  ]
+  for (const change of changes) {
+    const receipt = structuredClone(f.receipt)
+    change(receipt)
+    const result = f.close(receipt)
+    assert.equal(result.status, 1, JSON.stringify(receipt))
+    assert.equal(readFileSync(f.record, 'utf8'), before)
+  }
+})
+
+test('closing requires the clean live default branch, not an equivalent feature checkout', t => {
+  const f = closingFixture(t)
+  f.git('checkout', '-qb', 'feature')
+  assert.match(f.close(f.receipt).error.message, /default branch/)
+  f.git('checkout', '-q', 'main')
+  writeFileSync(join(f.root, 'feature.txt'), 'uncommitted change')
+  assert.match(f.close(f.receipt).error.message, /clean default branch/)
+  f.git('checkout', '--', 'feature.txt')
+  f.answers['repos/example/repo/commits/main'] = { sha: 'd'.repeat(40) }
+  f.save()
+  assert.match(f.close(f.receipt).error.message, /Closing SHA/)
+})
+
+test('deadline debt remains visible and blocks closing until every item has a ruling', t => {
+  const f = closingFixture(t)
+  const debt = join(f.home, 'debt.json')
+  writeFileSync(debt, JSON.stringify({ key: `closing:${f.sha}:suite:0:skip:0`, kind: 'skipped-check', check: 'integration', note: 'Deferred at the deadline' }))
+  f.ok('debt', '40', '--file', debt)
+  f.ok('debt', '40', '--file', debt)
+  assert.equal(f.ok('status', '40').debt.length, 1)
+  assert.match(f.close(f.receipt).error.message, /closing:.*ruling/)
+  const ruling = join(f.home, 'ruling.json')
+  writeFileSync(ruling, JSON.stringify({ verdict: 'accepted', reason: 'The owner accepts the remaining integration risk' }))
+  f.ok('ruling', '40', `closing:${f.sha}:suite:0:skip:0`, '--file', ruling)
+  f.receipt.suites[0].skippedChecks = ['integration']
+  assert.equal(f.close(f.receipt).status, 0)
+})
+
+test('merging before reviewing requires an explicit override and records each omitted gate', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40', '--posture', 'deadline').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'implementing' } }
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merge_commit_sha: 'b'.repeat(40) })
+  f.save()
+  assert.match(f.call('issue', '40', '41', 'merged', '--pr', '61').error.message, /never reached reviewing/)
+  const merged = f.ok('issue', '40', '41', 'merged', '--pr', '61', '--override', 'Owner requested the emergency merge').epic
+  assert.deepEqual(merged.debts.map(debt => debt.kind), ['merge-without-review', 'skipped-check', 'gate-override'])
+  assert.equal(merged.posture, 'deadline')
+})
+
+test('closing preserves the original base, model and full-suite roster', t => {
+  const f = closingFixture(t)
+  assert.match(f.call('start', '40', '--base-sha', 'c'.repeat(40)).error.message, /cannot be replaced/)
+  assert.match(f.call('start', '40', '--coordinator-model', 'replacement').error.message, /cannot be replaced/)
+  const file = join(f.home, 'new-suites.json')
+  writeFileSync(file, JSON.stringify([['true']]))
+  assert.match(f.call('start', '40', '--full-suites-file', file).error.message, /cannot.*remove/)
+  assert.equal(f.close(f.receipt).status, 0)
+})
+
+test('fixed and issue-filed debt require evidence and a real issue', t => {
+  const f = closingFixture(t)
+  const event = join(f.home, 'debt.json'), ruling = join(f.home, 'ruling.json')
+  writeFileSync(event, JSON.stringify({ key: 'docs', kind: 'gate-override', note: 'Docs check omitted' }))
+  f.ok('debt', '40', '--file', event)
+  writeFileSync(ruling, JSON.stringify({ verdict: 'fixed', reason: 'Repaired' }))
+  assert.match(f.call('ruling', '40', 'docs', '--file', ruling).error.message, /evidence/)
+  writeFileSync(ruling, JSON.stringify({ verdict: 'issue-filed', reason: 'Track remaining work', issue: 90 }))
+  f.answers['repos/example/repo/issues/90'] = { number: 90, state: 'open', pull_request: {} }
+  f.save()
+  assert.match(f.call('ruling', '40', 'docs', '--file', ruling).error.message, /follow-up issue #90/)
+  f.answers['repos/example/repo/issues/90'] = { number: 90, state: 'open' }
+  f.save()
+  f.ok('ruling', '40', 'docs', '--file', ruling)
+  assert.equal(f.close(f.receipt).status, 0)
+})
+
+test('a historical accepted check omission cannot waive a closing-suite skip', t => {
+  const f = closingFixture(t)
+  const e = JSON.parse(readFileSync(f.record, 'utf8'))
+  e.debts = [{ key: 'old-integration', kind: 'skipped-check', sub: 41, check: 'integration', note: 'Old PR skipped integration', at: 1, ruling: { verdict: 'accepted', reason: 'Old risk accepted' } }]
+  writeFileSync(f.record, JSON.stringify(e))
+  f.receipt.suites[0].skippedChecks = ['integration']
+  const result = f.close(f.receipt)
+  assert.equal(result.status, 1, 'historical debt must not let this new closing skip pass')
+  assert.match(result.error.message, /closing.*integration.*debt/i)
+})
+
+test('a merged move cannot transfer review evidence to a different PR', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'reviewing', pr: 61, reviewer: 'reviewer', verdict: 'approve' } }
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  f.answers['repos/example/repo/pulls/62'] = { number: 62, state: 'closed', merged: true }
+  f.save()
+  const result = f.call('issue', '40', '41', 'merged', '--pr', '62')
+  assert.equal(result.status, 1, 'PR61 review cannot authorize PR62')
+  assert.match(result.error.message, /PR #61.*PR #62/)
 })

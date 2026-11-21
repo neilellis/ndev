@@ -45,7 +45,13 @@ When every sub-issue is merged, `epicPhase(finished: "coordinating")`.
 
 Run the spec's acceptance checks end to end where the human allows it.
 
-Record the acceptance evidence and any gaps in the closing report. Show the report to the human. Get approval before you run `mcp__ndev__epicPhase(issue, finished: "closing", evidence: report)`.
+At the start, record the original full base SHA, coordinator model and full-suite command roster with `epicStarted(baseSha, coordinatorModel, fullSuites, posture)` or `ndev epic start <epic> --base-sha <sha> --coordinator-model <model> --full-suites-file <json> --posture standard`. The roster file is a JSON array of argument arrays, for example `[["npm","test"]]`. The base and model cannot be replaced; the roster can grow but cannot lose a command. For an older epic, recover the real original base from its history before supplying it.
+
+Keep per-sub-issue merges into the default branch. At closing, use a clean checkout of that branch at its current remote SHA. Run every full-suite command there and retain its log, exit status and SHA. Start a reviewer on a different model to review original base..closing SHA against the committed spec. Each R1 or R-1 needs done, changed or missing and evidence; every finding and every changed or missing requirement needs a ruling.
+
+Record each skipped check, unreviewed merge and gate override with `epicDebt(issue, key, kind, note, sub?, check?)` or `ndev epic debt <epic> --file <json>`. Use a stable event key for retries. A skipped check needs its name; an unreviewed merge needs its sub-issue. Rule with `epicDebtRuling(issue, key, ruling)` or `ndev epic ruling <epic> <key> --file <json>`. A ruling has verdict fixed, issue-filed or accepted, and a reason. Fixed needs evidence; issue-filed needs a real issue number. Deadline posture records the same debt and keeps the closing gate. Never-reviewed merges need an explicit override reason; the tool records the omitted review and verification automatically. Skipped CI checks and phase overrides also create debt.
+
+Write the structured closing JSON described in `kb/workflow.md`, outside the checkout. Show the report and its remaining accepted or filed debt to the human; obtain any approval required by the project's gates. Complete with `epicPhase(issue, finished: "closing", evidence: report, closingFile: absolutePath)` or `ndev epic phase <epic> closing --evidence "<report>" --closing-file <path>`. The tool checks Git identity, committed R-id coverage, receipt shape, log existence and debt rulings. Suite outcomes and model identity are recorded attestations: the phase tool does not execute the suites or launch the reviewer. A new default-branch SHA needs new evidence. Skip and goto cannot bypass closing.
 
 ## Rulings
 
@@ -99,3 +105,5 @@ Answer a direct question from the human before any other work.
 ## Reports to the human
 
 Report when a decision is theirs, when an issue merges, and when the epic ends. Lead with the decisions as numbered questions, then the PRs with their status, then follow-up issues you can create. Say what you did not run.
+
+For each closing suite skip, use debt key `closing:<full-sha>:suite:<suite-index>:skip:<skip-index>`, with zero-based indexes into the closing receipt arrays, the matching `check`, and no `sub`. This binds the ruling to the current closing event; a prior PR omission cannot waive a new skip.

@@ -228,7 +228,7 @@ export function markReady($: EngineInterface, root: string, repo: string, n: num
   return gh($, root, repo, ['pr-ready', String(n)])
 }
 
-export type Checks = { pending: string[]; red: string[]; green: string[] }
+export type Checks = { pending: string[]; red: string[]; green: string[]; skipped?: string[] }
 // With the PR number this costs one gh call, because the PR rollup holds both kinds of check.
 export async function readChecks($: EngineInterface, root: string, repo: string, sha: string, pr?: number): Promise<Checks> {
   const { check_runs: runs, statuses } = await ghOne<{ check_runs: { name: string; status: string; conclusion: string | null; started_at?: string | null }[]; statuses: { context: string; state: string }[] }>($, root, repo, ['commit-checks', sha, ...(pr ? ['--pr', String(pr)] : [])])
@@ -242,7 +242,10 @@ export async function readChecks($: EngineInterface, root: string, repo: string,
   }
   for (const c of latest.values()) {
     if (c.status !== 'completed') out.pending.push(c.name)
-    else if (['success', 'skipped', 'neutral'].includes(c.conclusion ?? '')) out.green.push(c.name)
+    else if (['success', 'skipped', 'neutral'].includes(c.conclusion ?? '')) {
+      out.green.push(c.name)
+      if (c.conclusion === 'skipped') out.skipped = [...(out.skipped ?? []), c.name]
+    }
     else out.red.push(`${c.name} (${c.conclusion})`)
   }
   for (const s of statuses) {
