@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { confirm } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, run } from './common.mjs'
@@ -8,6 +8,7 @@ import { DEFAULT_PARALLEL, EPIC_STATES, ISSUE_STATES, KEY, OWNER_LIVE_MS, SHORT_
 import { readProject } from './project.mjs'
 import { resolveRemote } from './remote.mjs'
 import { readWorkflowRecords } from './waits.mjs'
+import { closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, mergeDebts, recordDebt, requirementIds, rulingProblem } from './epic-closing.ts'
 
 const string = { type: 'string' }
 const boolean = { type: 'boolean' }
@@ -24,6 +25,10 @@ function load(root, n) {
   const file = pathFor(root, n)
   const e = readObject(file)
   if (e.epic !== n || !EPIC_STATES.includes(e.state) || !e.roles?.implementer?.agent || !e.roles?.reviewer?.agent || !Number.isInteger(e.parallel) || e.parallel < 1 || !e.evidence || !Array.isArray(e.history) || !e.issues || Array.isArray(e.issues)) refuse(`Invalid epic record ${file}.`, `Restore the last valid ${file}.`)
+  try { configureClosing({}, { baseSha: e.baseSha, coordinatorModel: e.coordinatorModel, fullSuites: e.fullSuites, posture: e.posture }) } catch (error) { refuse(`Invalid closing configuration in ${file}: ${error.message}.`) }
+  if (e.debts !== undefined && (!Array.isArray(e.debts) || e.debts.some(debt => debtProblem(debt)))) refuse(`Invalid debt in ${file}.`, `Restore the last valid ${file}.`)
+  if (e.posture !== undefined && !['standard', 'deadline'].includes(e.posture)) refuse(`Invalid posture in ${file}.`)
+  if (e.baseSha !== undefined && !closingSha(e.baseSha)) refuse(`Invalid base SHA in ${file}.`)
   if (e.externalBlockers !== undefined && (!e.externalBlockers || typeof e.externalBlockers !== 'object' || Array.isArray(e.externalBlockers))) refuse(`Invalid external blockers in ${file}.`)
   for (const [key, item] of Object.entries(e.externalBlockers ?? {})) {
     if (!item || String(item.issue) !== key || e.issues[key] || !['waiting', 'merged'].includes(item.state) || !Array.isArray(item.blockedBy) || item.blockedBy.length || item.state === 'merged' && (!item.pr || !item.mergeSha)) refuse(`Invalid external blocker #${key} in ${file}.`)
@@ -72,7 +77,7 @@ function nextAction(epic) {
 }
 
 function epicResult(epic) {
-  const result = { epic, nextAction: nextAction(epic) }
+  const result = { epic, nextAction: nextAction(epic), debt: (epic.debts ?? []).map(item => ({ key: item.key, kind: item.kind, sub: item.sub, check: item.check, note: item.note, ruling: item.ruling ?? null })) }
   if (epic.off) return result
   if (epic.state === 'framing') {
     return { ...result, nextGuidance: 'Load ndev-epic-plan and read all of NORTH_STAR.md before framing.' }
@@ -151,7 +156,7 @@ function fileIssue(workspace, repo, title) {
 }
 
 async function start(workspace, argv) {
-  const options = Object.fromEntries(['title','short-name','parallel','implementer','implementer-model','reviewer','reviewer-model','run','repo-id','remote','remote-repo'].map(k => [k, string]))
+  const options = Object.fromEntries(['title','short-name','parallel','implementer','implementer-model','reviewer','reviewer-model','run','repo-id','remote','remote-repo','base-sha','coordinator-model','posture','full-suites-file'].map(k => [k, string]))
   const normalized = argv.map((v, i) => v === '--remote' && (!argv[i + 1] || argv[i + 1].startsWith('--')) ? '--remote=' : v)
   const { values: v, positionals: [issue] } = argsFor(normalized, { ...options, local: boolean, 'take-over': boolean }, 'ndev epic start --help', { positionals: 1 })
   if (!!issue === !!v.title) bad('Give one epic number or --title.')
@@ -177,6 +182,8 @@ async function start(workspace, argv) {
   const gh = before ?? github(root, repo, `/issues/${n}`)
   if (!before && (gh.state !== 'open' || !gh.title)) refuse(`GitHub issue #${n} is ${gh.state}.`)
   const e = before ? structuredClone(before) : { epic: n, repo, root, title: gh.title, state: 'framing', evidence: {}, parallel: DEFAULT_PARALLEL, roles: { implementer: { agent: 'claude' }, reviewer: { agent: 'codex' } }, issues: {}, history: [] }
+  try { configureClosing(e, { baseSha: v['base-sha'], coordinatorModel: v['coordinator-model'], posture: v.posture, fullSuites: v['full-suites-file'] ? JSON.parse(readFileSync(resolve(root, v['full-suites-file']), 'utf8')) : undefined }) } catch (error) { bad(error.message) }
+  e.posture ??= 'standard'
   delete e.off
   if (!before || before.owner?.session !== session()) delete e.coordinator
   if (process.env.ORCA_AGENT_SESSION_ID) e.coordinator = { session: process.env.ORCA_AGENT_SESSION_ID }
@@ -292,17 +299,73 @@ function importEpic(workspace, e, before, v) {
   e.evidence.import = { text: v.evidence, at: Date.now(), files: file === '-' ? [] : [resolve(workspace.root, file)] }
   e.state = 'coordinating'
   const merged = Object.values(e.issues).filter(sub => sub.state === 'merged')
-  for (const sub of merged) prepareMergeHandoffs(e, sub)
+  for (const sub of merged) { mergeDebts(e, sub, Boolean(sub.reviewer && sub.verdict), !sub.mergedUnverified, Date.now()); prepareMergeHandoffs(e, sub) }
   save(workspace, e, before, 'epicImport', before.state, e.state)
   handoffs(workspace, e, merged)
   return { ...epicResult(e), frontier: frontier(e) }
 }
 
+function closingReceipt(workspace, e, file) {
+  if (!file) refuse('Closing needs structured evidence in --closing-file <json>.', `Run ndev epic phase ${e.epic} closing --evidence <text> --closing-file <json>.`)
+  const path = resolve(workspace.root, file)
+  const receipt = readObject(path)
+  const main = branchFor(e)
+  const remote = github(e.root, e.repo, `/commits/${encodeURIComponent(main)}`)
+  const head = checked('git', ['rev-parse', 'HEAD'], { cwd: workspace.root })
+  const branch = checked('git', ['branch', '--show-current'], { cwd: workspace.root })
+  if (closingSha(e.baseSha)) checked('git', ['merge-base', '--is-ancestor', e.baseSha, head], { cwd: workspace.root, repair: 'Fetch the original epic base commit and verify it precedes the closing SHA.' })
+  const dirty = Boolean(checked('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: workspace.root }))
+  const ids = []
+  const specs = e.evidence.specifying?.files ?? []
+  if (!specs.length) refuse('Closing needs committed spec files with numbered requirements.')
+  for (const spec of specs) {
+    const name = relative(realpathSync(workspace.root), realpathSync(spec))
+    if (name === '..' || name.startsWith('../') || isAbsolute(name)) refuse(`Spec ${spec} is outside ${workspace.root}. Commit the spec on ${main}.`)
+    const source = checked('git', ['show', `${head}:${name}`], { cwd: workspace.root, repair: `Commit ${name} on ${main} before closing.` })
+    ids.push(...requirementIds(source))
+  }
+  const problems = closingProblems(e, receipt, { branch, defaultBranch: main, head, remoteHead: remote?.sha, dirty, requirements: [...new Set(ids)] })
+  if (problems.length) refuse(`Epic #${e.epic} cannot close:\n- ${problems.join('\n- ')}`, `Run ndev epic status ${e.epic}; record the missing evidence and rule on every debt with ndev epic ruling.`)
+  for (const followup of closingFollowups(e, receipt)) {
+    const found = github(e.root, e.repo, `/issues/${followup.issue}`)
+    if (found?.number !== followup.issue || found.pull_request) refuse(`${followup.id} needs a real follow-up issue #${followup.issue} in ${e.repo}.`)
+  }
+  for (const suite of receipt.suites) if (!statSync(resolve(workspace.root, suite.log), { throwIfNoEntry: false })?.isFile()) refuse(`Closing suite log ${suite.log} is missing.`)
+  return receipt
+}
+
+function addDebt(workspace, e, before, v) {
+  if (!v.file) bad('Debt requires --file <json>.')
+  const debt = readObject(resolve(workspace.root, v.file))
+  if (debt.sub !== undefined && !e.issues[debt.sub]) bad(`Debt sub-issue #${debt.sub} is outside epic #${e.epic}.`)
+  try { recordDebt(e, debt, Date.now()) } catch (error) { bad(error.message) }
+  if (isDeepStrictEqual(e, before)) return epicResult(e)
+  return save(workspace, e, before, 'epicDebt', e.state, e.state)
+}
+
+function ruleDebt(workspace, e, before, key, v) {
+  const debt = e.debts?.find(item => item.key === key)
+  if (!debt) bad(`Unknown debt ${key} in epic #${e.epic}.`)
+  if (!v.file) bad('A debt ruling requires --file <json>.')
+  const ruling = readObject(resolve(workspace.root, v.file))
+  const problem = rulingProblem(ruling)
+  if (problem) bad(`Debt ${key} ${problem}.`)
+  if (ruling.verdict === 'issue-filed') {
+    const found = github(e.root, e.repo, `/issues/${ruling.issue}`)
+    if (found?.number !== ruling.issue || found.state !== 'open' || found.pull_request) refuse(`Debt ${key} needs an open follow-up issue #${ruling.issue} in ${e.repo}.`)
+  }
+  debt.ruling = ruling
+  if (isDeepStrictEqual(e, before)) return epicResult(e)
+  return save(workspace, e, before, 'epicDebtRuling', e.state, e.state)
+}
+
 function phase(workspace, e, before, finished, v) {
   if (finished !== e.state || !nextEpicState(finished)) refuse(`Epic #${e.epic} is ${e.state}, so ${finished} cannot finish.`)
   if (!v.evidence?.trim()) bad(`Finishing ${finished} requires --evidence.`)
+  if (v['closing-file'] && finished !== 'closing') bad('--closing-file is only for closing.')
+  if (finished === 'closing') e.closing = closingReceipt(workspace, e, v['closing-file'])
   if (finished === 'framing' && !v.aim?.trim()) bad('Finishing framing requires --aim.')
-  const files = (v.file ?? []).map(f => resolve(workspace.root, f))
+  const files = [...(v.file ?? []), ...(finished === 'closing' && v['closing-file'] ? [v['closing-file']] : [])].map(f => resolve(workspace.root, f))
   if (['researching', 'specifying', 'spec-review'].includes(finished) && !files.length) bad(`Finishing ${finished} requires --file.`)
   for (const f of files) if (!statSync(f, { throwIfNoEntry: false })?.isFile()) refuse(`Missing phase evidence file ${f}.`)
   if (finished === 'slicing') e.issues = slices(workspace.root, e, v['issues-file'])
@@ -314,8 +377,8 @@ function phase(workspace, e, before, finished, v) {
 }
 
 function branchFor(e) {
-  const branch = github(e.root, e.repo, '').default_branch
-  if (!branch) refuse(`GitHub omitted the default branch for ${e.repo}.`)
+  const branch = github(e.root, e.repo, '')?.default_branch
+  if (typeof branch !== 'string' || !branch.trim()) refuse(`GitHub omitted the default branch for ${e.repo}.`)
   return branch
 }
 
@@ -403,6 +466,9 @@ function verify(e, sub) {
   if (missing.length) refuse(`PR #${sub.pr} omits migrations ${missing.map(f => f.filename).join(', ')}.`, 'Use ndev flow add-migration and update the PR body.')
   const fresh = github(e.root, e.repo, endpoint)
   if (fresh.head?.sha !== sha || fresh.base?.ref !== main || fresh.state !== 'open' || fresh.draft || fresh.mergeable !== true) refuse(`PR #${sub.pr} changed during verification of ${sha}.`)
+  const omitted = rollup.filter(check => check.conclusion === 'SKIPPED').map(check => check.name ?? check.context)
+  if (!rollup.length) omitted.push('ci:no-checks')
+  for (const [index, check] of omitted.entries()) recordDebt(e, { key: `verify:${sub.issue}:${sha}:${index}`, kind: 'skipped-check', sub: sub.issue, check, note: `PR #${sub.pr} skipped ${check} at ${sha}` }, Date.now())
   return { sha, base: main, checks: rollup.map(check => [check.workflowName, check.name ?? check.context].filter(Boolean).join('/')) }
 }
 
@@ -489,11 +555,20 @@ function move(workspace, e, before, sub, to, v) {
     sub.verification = verify(e, sub)
     sub.verdict = v.verdict
     delete sub.stackedOn
-  } else if (['reviewing','fixing','verified'].includes(from) && to === 'merged') {
+  } else if (to === 'merged' && ['waiting','implementing','blocked','reviewing','fixing','verified'].includes(from)) {
+    const reviewed = Boolean(sub.reviewer && sub.verdict)
+    const reachedReview = Boolean(sub.reviewer) || ['reviewing','fixing','verified'].includes(from)
+    if (!reachedReview && !v.override?.trim()) refuse(`Sub-issue #${sub.issue} never reached reviewing.`, 'Repeat the merged move with --pr and --override <reason> to record review debt.')
+    if (v.pr && sub.pr && number(v.pr, 'PR') !== sub.pr) refuse(`Review of PR #${sub.pr} cannot transfer to PR #${v.pr}.`, 'Keep the recorded PR, or reconcile the sub-issue before merging.')
+    if (v.pr) sub.pr = number(v.pr, 'PR')
+    if (!sub.pr) bad('Merged requires the PR number.')
     const pr = github(e.root, e.repo, `/pulls/${sub.pr}`)
     if (pr.merged !== true) refuse(`GitHub has not merged PR #${sub.pr}.`)
     if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
-    if (from !== 'verified' || (sub.verification && sub.verification.sha !== pr.head.sha)) sub.mergedUnverified = true
+    const verified = from === 'verified' && sub.verification?.sha === pr.head?.sha
+    if (!verified) sub.mergedUnverified = true
+    mergeDebts(e, sub, reviewed, verified, Date.now())
+    if (v.override?.trim()) recordDebt(e, { key: `merge:${sub.issue}:override`, kind: 'gate-override', sub: sub.issue, note: v.override.trim() }, Date.now())
     prepareMergeHandoffs(e, sub)
   } else refuse(`Issue #${sub.issue} cannot move from ${from} to ${to}.`)
   if (v.workspace) sub.workspace = v.workspace
@@ -523,14 +598,15 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
   if (verb === 'start') return start(workspace, args)
   const specs = {
     import: [{ evidence: string, 'issues-file': string }, 1],
-    phase: [{ evidence: string, file: { ...string, multiple: true }, aim: string, 'issues-file': string }, 2],
-    next: [{}, 1], brief: [{ pr: string }, 3], issue: [{ pr: string, worker: string, workspace: string, verdict: string, note: string }, 3],
+    debt: [{ file: string }, 1], ruling: [{ file: string }, 2],
+    phase: [{ evidence: string, file: { ...string, multiple: true }, aim: string, 'issues-file': string, 'closing-file': string }, 2],
+    next: [{}, 1], brief: [{ pr: string }, 3], issue: [{ pr: string, worker: string, workspace: string, verdict: string, note: string, override: string }, 3],
     status: [{}, 1], skip: [{ issue: string }, 1], goto: [{ issue: string }, 2], off: [{ issue: string }, 0],
   }
   const [opts, count] = specs[verb] ?? bad(`Unknown epic command ${verb}.`)
   const { values: v, positionals: pos } = argsFor(args, opts, `ndev epic ${verb} --help`, { positionals: count })
   const override = ['skip','goto','off'].includes(verb)
-  if (['phase','import','next','brief','issue'].includes(verb) && pos.length !== count) bad(`ndev epic ${verb} requires ${count} positional argument(s).`)
+  if (['phase','import','next','brief','issue','debt','ruling'].includes(verb) && pos.length !== count) bad(`ndev epic ${verb} requires ${count} positional argument(s).`)
   const raw = override ? v.issue : pos[0]
   const n = raw !== undefined ? number(raw, 'epic') : activeEpic(workspace.root)?.epic
   if (!n) {
@@ -544,16 +620,19 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
     if (!override && (e.off || e.owner?.session !== session())) refuse(`This session does not coordinate #${n}.`, `Run ndev epic start ${n}.`)
     if (verb === 'next') return { epic: n, state: e.state, frontier: e.state === 'coordinating' ? frontier(e) : null }
     if (verb === 'import') return importEpic(workspace,e,before,v)
+    if (verb === 'debt') return addDebt(workspace,e,before,v)
+    if (verb === 'ruling') return ruleDebt(workspace,e,before,pos[1],v)
     if (verb === 'phase') return phase(workspace,e,before,pos[1],v)
     if (override) {
       const from = e.state
       const to = verb === 'goto' ? pos[0] : nextEpicState(from)
       if (verb !== 'off' && !EPIC_STATES.includes(to)) bad(`Invalid target phase for ${verb}: ${to}.`)
+      if (verb !== 'off' && to === 'done') refuse('The closing gate cannot be skipped or bypassed.', `Use ndev epic phase ${e.epic} closing with structured evidence and ruled debt.`)
       const revision = createHash('sha256').update(JSON.stringify(e)).digest('hex').slice(0, 12)
       const action = confirm(`epic ${verb}${verb === 'goto' ? ' ' + to : ''}`, String(n), revision, workspace.root, json)
       if (action) return action
       if (verb === 'off') { e.off = true; delete e.owner }
-      else { e.state = to; e.evidence[from] = { at: Date.now(), text: pos[verb === 'goto' ? 1 : 0] ?? 'Human override' } }
+      else { recordDebt(e, { key: `phase:${from}:${to}:${e.revision}`, kind: 'gate-override', note: pos[verb === 'goto' ? 1 : 0] ?? 'Human override' }, Date.now()); e.state = to; e.evidence[from] = { at: Date.now(), text: pos[verb === 'goto' ? 1 : 0] ?? 'Human override' } }
       return notifyCoordinator(workspace, e, save(workspace,e,before,`human:${verb}`,from,e.state), from)
     }
     const sub = e.issues[number(pos[1], 'sub-issue')]

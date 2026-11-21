@@ -1,3 +1,4 @@
+import type { ClosingEvidence, EpicDebt } from './epic-closing'
 import type { Server } from '../../hooks/remote-store'
 
 export type EpicState = 'framing' | 'researching' | 'specifying' | 'deciding' | 'spec-review' | 'slicing' | 'coordinating' | 'closing' | 'done'
@@ -22,6 +23,7 @@ export type SubIssue = {
   mergeSha?: string
   // True when a human merged the PR before "verified", so the verify checks did not run.
   mergedUnverified?: boolean
+  verification?: { sha: string; at?: number }
   // The state that a block interrupted, and the only state the issue goes back to.
   previous?: IssueState
   // The saved Orca server that holds the workspace, set when the implementer brief is written for a start there.
@@ -40,6 +42,12 @@ export type Epic = {
   shortName?: string
   owner?: { session: string; at: number }
   aim?: string
+  baseSha?: string
+  coordinatorModel?: string
+  fullSuites?: string[][]
+  posture?: 'standard' | 'deadline'
+  debts?: EpicDebt[]
+  closing?: ClosingEvidence
   evidence: Partial<Record<EpicState, { at: number; text: string; files?: string[] }>>
   parallel: number
   roles: { implementer: Role; reviewer: Role }

@@ -12,6 +12,7 @@ import { SECTION, boundRoot, inFreeTurn, loadWorkflow, registerWorkflowFailure, 
 
 import { EPIC_STATES, nextEpicState, sliceProblems, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
 export * from '../../scripts/ndev/epic-model'
+import { closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, mergeDebts, recordDebt, requirementIds, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
 
 // What the human can do next in each epic state, as options. kb/workflow.md "What the human can do next" lists them.
 export function epicHumanStep(epic: Epic): string {
@@ -44,7 +45,7 @@ function epicAgentStep(epic: Epic): string {
     case 'spec-review': return `Load the skill ndev:epic-plan. Get an independent review of the spec and rule on each finding, then ${phase('spec-review', 'files (the review) and evidence (the ruling on each finding)')}`
     case 'slicing': return `Load the skill ndev:epic-plan. File the sub-issues on GitHub, then ${phase('slicing', 'issues ([{ issue, key, title, blockedBy }]) and evidence')}`
     case 'coordinating': return `Load the skill ndev:epic-coordinate. Call mcp__ndev__epicNext with issue ${n}; for each sub-issue that it lists as ready or as able to start stacked call mcp__ndev__epicBrief and run the command that it gives, and record each move with mcp__ndev__epicIssue. When every sub-issue is merged, ${phase('coordinating', 'and evidence')}`
-    case 'closing': return `Load the skill ndev:epic-coordinate. Verify the whole epic end to end, then ${phase('closing', 'evidence (what was verified, and what remains)')}`
+    case 'closing': return `Load the skill ndev:epic-coordinate. Verify the whole default branch at the closing SHA, obtain a different-model base..main review for every R-id, and rule on each debt. Then ${phase('closing', 'evidence and closingFile (the structured receipts and review)')}`
     case 'done': return 'The epic is done. Nothing remains.'
   }
 }
@@ -156,6 +157,8 @@ export async function loadEpic($: EngineInterface, root: string, n: number): Pro
   if (!epic || epic.epic !== n || !EPIC_STATES.includes(epic.state as EpicState) || typeof epic.issues !== 'object' || !Array.isArray(epic.history)) {
     throw new Refuse(`${path} is not an epic record for #${n}: it needs epic ${n}, a state from ${EPIC_STATES.join(', ')}, issues and history. Repair: fix the file, then call the tool again.`)
   }
+  try { configureClosing({}, { baseSha: epic.baseSha, coordinatorModel: epic.coordinatorModel, fullSuites: epic.fullSuites, posture: epic.posture }) } catch (error) { throw new Refuse(`${path}: ${error instanceof Error ? error.message : String(error)}. Repair the closing configuration.`) }
+  if (epic.debts !== undefined && (!Array.isArray(epic.debts) || epic.debts.some(debt => debtProblem(debt)))) throw new Refuse(`${path} has invalid debt. Repair the record.`)
   return epic as Epic
 }
 
@@ -194,7 +197,7 @@ async function boundEpic($: EngineInterface, c: Ctx, tool: string): Promise<Epic
 }
 
 const moved = (epic: Epic, tool: string, to: string, at: number, from?: string) => epic.history.push({ at, tool, ...(from ? { from } : {}), to })
-const answer = (epic: Epic, lead: string) => `${lead}\nEpic #${epic.epic} is in the state "${epic.state}". Next: ${epicStep(epic)}`
+const answer = (epic: Epic, lead: string) => `${lead}\nDebt: ${JSON.stringify(epic.debts ?? [])}\nEpic #${epic.epic} is in the state "${epic.state}". Next: ${epicStep(epic)}`
 
 function roleOf(value: unknown, name: string, fallback: Role): Role {
   if (value === undefined) return fallback
@@ -270,6 +273,7 @@ async function epicStarted($: EngineInterface, c: Ctx): Promise<string> {
       if (remote) existing.remote = { id: remote.id, name: remote.name }
       else if (args.remote === false) delete existing.remote
       if (shortName) existing.shortName = shortName
+      configureEpic(existing, args)
       moved(existing, 'epicStarted', existing.state, now)
       return begin($, existing, `Resumed epic #${n}: ${link(existing, n)}${placed(existing)}`)
     }
@@ -286,8 +290,15 @@ async function epicStarted($: EngineInterface, c: Ctx): Promise<string> {
     ...(remote ? { remote: { id: remote.id, name: remote.name } } : {}), ...(remoteRepo ? { remoteRepo } : {}),
     issues: {}, history: [],
   }
+  configureEpic(epic, args)
   moved(epic, 'epicStarted', 'framing', now)
   return begin($, epic, `${lead}${placed(epic)}`)
+}
+
+function configureEpic(epic: Epic, args: Args): void {
+  try { configureClosing(epic, { baseSha: args.baseSha, coordinatorModel: args.coordinatorModel, posture: args.posture, fullSuites: args.fullSuites }) }
+  catch (error) { throw new Refuse(`Refused: ${error instanceof Error ? error.message : String(error)}. Nothing changed.`) }
+  epic.posture ??= 'standard'
 }
 
 async function begin($: EngineInterface, epic: Epic, lead: string): Promise<string> {
@@ -319,6 +330,72 @@ function slicesOf(args: Args): Slice[] {
     if (!Array.isArray(blockedBy) || !blockedBy.every(isCount)) throw new Refuse(`Refused: issues[${i}].blockedBy must be a list of issue numbers, and it is ${JSON.stringify(blockedBy)}. Nothing changed.`)
     return { issue: Number(s.issue), key: s.key, title: s.title.trim(), blockedBy: (blockedBy as unknown[]).map(Number) }
   })
+}
+
+async function epicClosing($: EngineInterface, epic: Epic, file: string): Promise<ClosingEvidence> {
+  if (!file) throw new Refuse('Refused: closing needs structured evidence in closingFile. Nothing changed.')
+  let receipt: unknown
+  try { receipt = JSON.parse(await $.fs.read(file)) }
+  catch (error) { throw new Refuse(`Refused: closing evidence ${file} cannot be read: ${error instanceof Error ? error.message : String(error)}.`) }
+  const main = await defaultBranch($, epic.root, epic.repo)
+  if (typeof main !== 'string' || !main.trim()) throw new Refuse('Refused: GitHub returned no default branch for closing.')
+  const head = await gitOut(epic.root, $, 'rev-parse', 'HEAD')
+  const branch = await gitOut(epic.root, $, 'branch', '--show-current')
+  const dirty = Boolean(await gitOut(epic.root, $, 'status', '--porcelain', '--untracked-files=all'))
+  if (closingSha(epic.baseSha)) await gitOut(epic.root, $, 'merge-base', '--is-ancestor', epic.baseSha, head)
+  const remote = await ghOne<{ sha: string }>($, epic.root, epic.repo, ['api', `repos/${epic.repo}/commits/${encodeURIComponent(main)}`])
+  const specs = epic.evidence.specifying?.files ?? []
+  if (!specs.length) throw new Refuse('Refused: closing needs committed spec files with numbered requirements.')
+  const ids: string[] = []
+  for (const spec of specs) {
+    const name = spec.startsWith(epic.root + '/') ? spec.slice(epic.root.length + 1) : ''
+    if (!name || name.split('/').includes('..')) throw new Refuse(`Refused: spec ${spec} must be committed inside ${epic.root}.`)
+    ids.push(...requirementIds(await gitOut(epic.root, $, 'show', `${head}:${name}`)))
+  }
+  const problems = closingProblems(epic, receipt, { branch, defaultBranch: main, head, remoteHead: remote?.sha, dirty, requirements: [...new Set(ids)] })
+  if (problems.length) throw new Refuse(`Refused: epic #${epic.epic} cannot close:\n- ${problems.join('\n- ')}. Record evidence and rule on debt, then retry.`)
+  const report = receipt as ClosingEvidence
+  for (const followup of closingFollowups(epic, report)) {
+    const found = await ghOne<{ number: number; pull_request?: unknown }>($, epic.root, epic.repo, ['api', `repos/${epic.repo}/issues/${followup.issue}`])
+    if (found?.number !== followup.issue || found.pull_request) throw new Refuse(`Refused: ${followup.id} needs a real follow-up issue #${followup.issue} in ${epic.repo}.`)
+  }
+  for (const suite of report.suites) {
+    const slash = suite.log.lastIndexOf('/')
+    const entries = await $.fs.list(suite.log.slice(0, slash) || '/')
+    if (!entries.some(entry => entry.name === suite.log.slice(slash + 1) && entry.kind === 'file')) throw new Refuse(`Refused: closing suite log ${suite.log} is missing or not a file.`)
+  }
+  return report
+}
+
+async function epicDebt($: EngineInterface, c: Ctx): Promise<string> {
+  const epic = await boundEpic($, c, 'epicDebt')
+  const debt = { key: str(c.args, 'key'), kind: str(c.args, 'kind'), note: str(c.args, 'note'), ...(c.args.sub !== undefined ? { sub: Number(c.args.sub) } : {}), ...(str(c.args, 'check') ? { check: str(c.args, 'check') } : {}) }
+  if (debt.sub !== undefined && !epic.issues[String(debt.sub)]) throw new Refuse(`Refused: #${debt.sub} is outside epic #${epic.epic}.`)
+  const count = epic.debts?.length ?? 0
+  try { recordDebt(epic, debt as Parameters<typeof recordDebt>[1], await $.clock.now()) }
+  catch (error) { throw new Refuse(`Refused: ${error instanceof Error ? error.message : String(error)}.`) }
+  if (epic.debts?.length !== count) { moved(epic, 'epicDebt', epic.state, await $.clock.now()); await saveEpic($, epic) }
+  return answer(epic, `Debt ${debt.key} is recorded.`)
+}
+
+async function epicDebtRuling($: EngineInterface, c: Ctx): Promise<string> {
+  const epic = await boundEpic($, c, 'epicDebtRuling')
+  const key = str(c.args, 'key')
+  const debt = epic.debts?.find(item => item.key === key)
+  if (!debt) throw new Refuse(`Refused: debt ${key} is not recorded in epic #${epic.epic}.`)
+  const problem = rulingProblem(c.args.ruling)
+  if (problem) throw new Refuse(`Refused: debt ${key} ${problem}.`)
+  const ruling = c.args.ruling as DebtRuling
+  if (ruling.verdict === 'issue-filed') {
+    const found = await ghOne<{ number: number; state: string; pull_request?: unknown }>($, epic.root, epic.repo, ['api', `repos/${epic.repo}/issues/${ruling.issue}`])
+    if (found?.number !== ruling.issue || found.state !== 'open' || found.pull_request) throw new Refuse(`Refused: debt ${key} needs open follow-up issue #${ruling.issue}.`)
+  }
+  if (JSON.stringify(debt.ruling) !== JSON.stringify(ruling)) {
+    debt.ruling = ruling
+    moved(epic, 'epicDebtRuling', epic.state, await $.clock.now())
+    await saveEpic($, epic)
+  }
+  return answer(epic, `Debt ${key} ruled ${ruling.verdict}: ${ruling.reason}`)
 }
 
 async function epicPhase($: EngineInterface, c: Ctx): Promise<string> {
@@ -364,6 +441,7 @@ async function epicPhase($: EngineInterface, c: Ctx): Promise<string> {
       if (open.length) throw new Refuse(`Refused: these sub-issues are not merged: ${open.map(i => `#${i.issue} ("${i.state}")`).join(', ')}. Nothing changed.`)
       break
     }
+    case 'closing': { epic.closing = await epicClosing($, epic, str(args, 'closingFile')); files = [str(args, 'closingFile')]; break }
     case 'done': throw new Refuse(`Refused: epic #${epic.epic} is done. Nothing changed.`)
     default: break
   }
@@ -497,16 +575,21 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
     await saveEpic($, epic)
     return answer(epic, `#${sub.issue} keeps the state "${from}"; its workspace is ${workspace}.`)
   }
+  if (to === 'merged' && from !== 'merged' && !['reviewing', 'fixing', 'verified'].includes(from)) {
+    if (!str(args, 'override')) throw new Refuse(`Refused: #${sub.issue} never reached reviewing. Supply override with the reason to record debt.`)
+    if (isCount(args.pr)) sub.pr = Number(args.pr)
+    if (!sub.pr) throw new Refuse(`Refused: merging #${sub.issue} needs its PR number.`)
+  }
   if (to === 'blocked') {
     if (from === 'blocked' || from === 'merged') throw new Refuse(`Refused: #${sub.issue} is "${from}" and cannot be blocked. Nothing changed.`)
     if (!note) throw new Refuse(`Refused: a block needs note: what blocks #${sub.issue} and who can end it. Nothing changed.`)
     sub.previous = from
     sub.note = note
-  } else if (from === 'blocked') {
+  } else if (from === 'blocked' && to !== 'merged') {
     if (to !== sub.previous) throw new Refuse(`Refused: #${sub.issue} is blocked, and goes back only to the state it was in, "${sub.previous}". Nothing changed.`)
     sub.previous = undefined
   } else {
-    if (!MOVES[from].includes(to)) throw new Refuse(`Refused: #${sub.issue} is in the state "${from}", and "${to}" does not follow it. From "${from}" it goes to: ${[...MOVES[from], ...(from === 'merged' ? [] : ['blocked'])].join(', ') || 'nothing'}. Nothing changed.`)
+    if (!MOVES[from].includes(to) && to !== 'merged') throw new Refuse(`Refused: #${sub.issue} is in the state "${from}", and "${to}" does not follow it. From "${from}" it goes to: ${[...MOVES[from], ...(from === 'merged' ? [] : ['blocked'])].join(', ') || 'nothing'}. Nothing changed.`)
     switch (`${from}>${to}`) {
       case 'waiting>implementing': {
         const merged = new Set(Object.values(epic.issues).filter(i => i.state === 'merged').map(i => i.issue))
@@ -551,17 +634,23 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         extra = `\n${report}\nNext: merge PR #${sub.pr}, then call epicIssue with state "merged".`
         break
       }
+      case 'waiting>merged':
+      case 'implementing>merged':
+      case 'blocked>merged':
       case 'reviewing>merged':
       case 'fixing>merged':
       case 'verified>merged': {
         const pr = await readPr($, epic.root, epic.repo, sub.pr!)
-        const early = from !== 'verified'
+        const reviewed = Boolean(sub.reviewer && sub.verdict)
+        const early = from !== 'verified' || sub.verification?.sha !== pr.head.sha
         if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: ${early ? `from "${from}", "merged" records only a PR that a human already merged. Move #${sub.issue} to "verified" first, then merge it` : 'merge it'}, then call epicIssue again.`)
         if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
         if (early) {
           sub.mergedUnverified = true
           extra = `\nA human merged PR #${sub.pr}${sub.mergeSha ? ` (merge commit ${sub.mergeSha})` : ''} while #${sub.issue} was in "${from}", so the verify checks did not run and the record says so. If the PR added migrations, ndev:merge did not run them: check them with the human.`
         }
+        mergeDebts(epic, sub, reviewed, !early, now)
+        if (str(args, 'override')) recordDebt(epic, { key: `merge:${sub.issue}:override`, kind: 'gate-override', sub: sub.issue, note: str(args, 'override') }, now)
         const above = Object.values(epic.issues).filter(i => i.stackedOn === sub.issue && i.state !== 'merged').sort((a, b) => a.issue - b.issue)
         if (above.length) {
           let base = '<the default branch>'
@@ -591,6 +680,8 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
   const n = sub.pr!
   const error = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300)
   let body = ''
+  let verifiedSha = ''
+  let omittedChecks: string[] = []
   // A merged PR has its own refusal: its old checks say nothing, and the repair is another move.
   let merged: Refuse | undefined
   let main = '<the default branch>'
@@ -601,6 +692,7 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
   try {
     const pr = await readPr($, epic.root, epic.repo, n)
     body = pr.body ?? ''
+    verifiedSha = pr.head.sha
     if (pr.merged) merged = new Refuse(`Refused: PR #${n} for #${sub.issue} is already merged${pr.merge_commit_sha ? ` (merge commit ${pr.merge_commit_sha})` : ''}, so the verify checks cannot run on it. Nothing changed. Repair: call epicIssue with state "merged", which records a PR that a human merged.`)
     if (pr.state !== 'open') failed.push(`the PR is ${pr.state}`)
     else if (pr.draft) failed.push('the PR is a draft')
@@ -621,6 +713,8 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
     else notRun.push('mergeable: GitHub has not computed it yet')
     try {
       const checks = await readChecks($, epic.root, epic.repo, pr.head.sha, n)
+      omittedChecks = checks.skipped ?? []
+      if (!checks.green.length && !checks.pending.length && !checks.red.length) omittedChecks = ['ci:no-checks']
       if (checks.red.length) failed.push(`checks failed: ${checks.red.join(', ')}`)
       if (checks.pending.length) failed.push(`checks not ended: ${checks.pending.join(', ')}`)
       if (!checks.red.length && !checks.pending.length) passed.push(`checks (${checks.green.length} passed${checks.green.length ? `: ${checks.green.join(', ')}` : ''})`)
@@ -645,6 +739,8 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
   if (!failed.length && !notRun.length) {
     // The PR is on the default branch and what it was stacked on is merged: the stack is over.
     delete sub.stackedOn
+    sub.verification = { sha: verifiedSha, at: await $.clock.now() }
+    for (const check of omittedChecks) recordDebt(epic, { key: `verify:${sub.issue}:${verifiedSha}:${omittedChecks.indexOf(check)}`, kind: 'skipped-check', sub: sub.issue, check, note: `PR #${sub.pr} skipped ${check} at ${verifiedSha}` }, await $.clock.now())
     return report
   }
   const repairs = [
@@ -660,7 +756,7 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
 function statusText(epic: Epic): string {
   const rows = Object.values(epic.issues).sort((a, b) => a.issue - b.issue).map(i => `- #${i.issue} "${i.title}": ${i.state}${i.pr ? `, PR #${i.pr}` : ''}${i.rounds ? `, ${i.rounds} rounds` : ''}${i.blockedBy.length ? `, after ${tags(i.blockedBy)}` : ''}${i.remote ? `, on ${i.remote.name}` : ''}${i.stackedOn ? `, stacked on ${tag(i.stackedOn)}` : ''}${i.state === 'blocked' && i.note ? ` (${i.note})` : ''}`)
   const place = epic.remote ? `\nNew sub-issues start on the saved Orca server ${served(epic.remote)}${epic.remoteRepo ? `, repository ${epic.remoteRepo}` : ' (remoteRepo is not recorded)'}.` : ''
-  return `Epic #${epic.epic} "${epic.title}" in ${epic.root} is in the state "${epic.state}". Next: ${epicStep(epic)}${place}${rows.length ? `\nSub-issues:\n${rows.join('\n')}` : ''}`
+  return `Epic #${epic.epic} "${epic.title}" in ${epic.root} is in the state "${epic.state}". Next: ${epicStep(epic)}${place}\nDebt: ${JSON.stringify(epic.debts ?? [])}${rows.length ? `\nSub-issues:\n${rows.join('\n')}` : ''}`
 }
 
 async function epicStatus($: EngineInterface, c: Ctx): Promise<string> {
@@ -672,6 +768,8 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
   switch (name) {
     case 'epicStarted': return epicStarted($, c)
     case 'epicPhase': return epicPhase($, c)
+    case 'epicDebt': return epicDebt($, c)
+    case 'epicDebtRuling': return epicDebtRuling($, c)
     case 'epicNext': return epicNext($, c)
     case 'epicBrief': return epicBrief($, c)
     case 'epicIssue': return epicIssue($, c)
@@ -699,6 +797,10 @@ const SPECS: Spec[] = [
       repoId: string('Optional: the Orca repository id, for the worker-start commands'),
       remote: { description: 'Optional, and only when the human asks for it: start the workers of new sub-issues on a saved Orca server. true is the server that /dev remote saved for this project, else the only one Orca has; a string names one by name, recipe id or id; false goes back to this machine. With no value, nothing changes', anyOf: [{ type: 'boolean' }, { type: 'string' }] },
       remoteRepo: string('With remote: the selector of the repository on that server, such as id:<id> or name:<name>, from `orca repo list --environment <server> --json`'),
+      baseSha: string('The original full base commit before the epic implementation; it cannot be replaced'),
+      coordinatorModel: string('The original coordinator model identifier; closing review uses another model'),
+      posture: { type: 'string', enum: ['standard', 'deadline'] },
+      fullSuites: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: 'The full-suite command argument arrays; later changes can only add commands' },
       takeOver: { type: 'boolean', description: 'Only when the session that owns the epic is dead' },
     },
     required: [],
@@ -711,6 +813,7 @@ const SPECS: Spec[] = [
       finished: { type: 'string', enum: EPIC_STATES.slice(0, -1), description: 'The phase that is complete: the current state' },
       evidence: string('What the phase did and showed'),
       files: { type: 'array', items: { type: 'string' }, description: 'researching: the notes; specifying: the spec; spec-review: the review. Each must exist' },
+      closingFile: string('closing only: structured exact-SHA full-suite receipts and whole-epic R-id review'),
       aim: string('framing only: one or two sentences that say what the epic is for'),
       issues: { type: 'array', items: { type: 'object', properties: { issue: { type: 'number' }, key: { type: 'string' }, title: { type: 'string' }, blockedBy: { type: 'array', items: { type: 'number' } } }, required: ['issue', 'key', 'title'] }, description: 'slicing only: the sub-issues, each open on GitHub' },
     },
@@ -734,10 +837,13 @@ const SPECS: Spec[] = [
       worker: string('The dispatch id of the worker that starts now'),
       workspace: string("The absolute path of the implementer's worktree; for a sub-issue on a saved Orca server, its worktree id there, <repoId>::<path>"),
       verdict: { type: 'string', enum: ['approve', 'changes'] },
+      override: string('merged before reviewing: the explicit reason, recorded as debt'),
       note: string('fixing: your ruling on each finding; blocked: what blocks it'),
     },
     required: ['issue', 'sub', 'state'],
   },
+  { name: 'epicDebt', description: 'Record a skipped check, unreviewed merge or gate override as unresolved epic debt.', properties: { issue: num('The epic'), key: string('Stable event key for retries'), kind: { type: 'string', enum: ['skipped-check', 'merge-without-review', 'gate-override'] }, note: string('What happened and why'), sub: num('Optional sub-issue'), check: string('Required for a skipped check') }, required: ['issue', 'key', 'kind', 'note'] },
+  { name: 'epicDebtRuling', description: 'Rule on a recorded debt. Closing refuses unresolved items.', properties: { issue: num('The epic'), key: string('The recorded debt key'), ruling: { type: 'object', properties: { verdict: { type: 'string', enum: ['fixed', 'issue-filed', 'accepted'] }, reason: string('Required reason'), evidence: string('Required when fixed'), issue: num('Required open follow-up for issue-filed') }, required: ['verdict', 'reason'] } }, required: ['issue', 'key', 'ruling'] },
   { name: 'epicStatus', description: 'Read-only: the epic state, the next step and the sub-issues by state.', properties: { issue: num('Optional: the epic issue') }, required: [] },
 ]
 
@@ -798,8 +904,10 @@ function tellCoordinator($: EngineInterface, text: string): void {
 }
 
 async function humanMove($: EngineInterface, epic: Epic, to: EpicState, how: 'skip' | 'goto', reason: string): Promise<string> {
+  if (to === 'done') throw new Refuse('Refused: the closing gate cannot be skipped or bypassed. Complete epicPhase closing with structured evidence and ruled debt.')
   const now = await $.clock.now()
   const from = epic.state
+  recordDebt(epic, { key: `phase:${from}:${to}:${epic.history.length}`, kind: 'gate-override', note: reason || 'Human override' }, now)
   epic.evidence[from] = { at: now, text: `The human ran /flow epic ${how}: ${reason || 'no reason given'}`, ...(epic.evidence[from]?.files ? { files: epic.evidence[from]!.files } : {}) }
   epic.state = to
   moved(epic, `human:${how}`, to, now, from)

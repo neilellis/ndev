@@ -10,6 +10,8 @@ type Dollar = Parameters<Body>[0]
 const ROOT = '/proj'
 const REPO = 'acme/w'
 const SHA = 'aaaaaaaa11111111'
+const CLOSING_SHA = 'a'.repeat(40)
+const BASE_SHA = 'b'.repeat(40)
 const EPIC_FILE = (n: number) => `${ROOT}/.neil-dev.epic-${n}.json`
 const ok = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 
@@ -125,7 +127,7 @@ const engine = (on: On, opts: Opts = {}) => {
     [`${ROOT}/docs/review.md`]: 'review',
   }))
   const s = {
-    now: 1_000, issues: {} as Record<number, { state: string; title: string } | string>,
+    closing: false, now: 1_000, issues: {} as Record<number, { state: string; title: string } | string>,
     prs: {} as Record<number, Record<string, unknown>>, checks: { check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }], statuses: [] } as unknown,
     files: [] as { status: string; filename: string }[] | '__fail__', ignored: true, exclude: [] as string[],
     servers: [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'dev-build VM 5e6f' }] as { id: string; name: string }[], orcaFails: '',
@@ -174,7 +176,10 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'worktree') return ok(`worktree ${ROOT}\n`)
       if (a[1] === 'remote') return ok(`git@github.com:${REPO}.git\n`)
       if (line.includes('--abbrev-ref')) return ok('issue-7\n')
-      if (a[1] === 'rev-parse') return ok(`${SHA}\n`)
+      if (a[1] === 'rev-parse') return ok(`${s.closing ? CLOSING_SHA : SHA}\n`)
+      if (s.closing && a[1] === 'branch') return ok('main')
+      if (s.closing && (a[1] === 'status' || a[1] === 'merge-base')) return ok()
+      if (s.closing && a[1] === 'show') return ok('R1: Works')
       return ok('', 1, `git not faked: ${line}`)
     }
     if (a[0] === 'bash' && a[1]?.endsWith('gh.sh')) {
@@ -192,6 +197,7 @@ const engine = (on: On, opts: Opts = {}) => {
       if (a[2] === 'api' && line.includes(`repos/${REPO}/pulls/`) && line.includes('/files')) {
         return s.files === '__fail__' ? ok('', 1, 'HTTP 502: Bad Gateway') : ok(s.files.map(f => `${f.status}\t${f.filename}\n`).join(''))
       }
+      if (a[2] === 'api' && line.includes('/commits/main')) return ok(JSON.stringify({ sha: CLOSING_SHA }))
       if (a[2] === 'default-branch') return ok('{"default_branch":"main"}')
       return ok('', 1, `gh.sh not faked: ${line}`)
     }
@@ -590,7 +596,19 @@ test('coordinating refuses to close with an issue not merged, and closing turns 
   expect((await tool($, 'epicPhase', { issue: 40, finished: 'coordinating', evidence: 'all merged' })).isError).toBe(false)
   expect((await tool($, 'epicPhase', { issue: 40, finished: 'closing', evidence: '' })).isError).toBe(true)
   const done = await tool($, 'epicPhase', { issue: 40, finished: 'closing', evidence: 'ran it end to end; nothing remains' })
-  expect(done.isError).toBe(false)
+  expect(done.isError).toBe(true)
+  expect(done.text).toContain('closingFile')
+  w.s.closing = true
+  const saved = w.epic()!
+  saved.baseSha = BASE_SHA
+  saved.coordinatorModel = 'author'
+  saved.fullSuites = [['npm', 'test']]
+  for (const sub of Object.values(saved.issues)) { sub.reviewer = 'reviewer'; sub.verdict = 'approve' }
+  w.files.set(EPIC_FILE(40), JSON.stringify(saved))
+  w.files.set('/logs/suite.log', 'all passed')
+  w.files.set('/logs/closing.json', JSON.stringify({ sha: CLOSING_SHA, branch: 'main', suites: [{ command: ['npm', 'test'], exitCode: 0, sha: CLOSING_SHA, log: '/logs/suite.log', skippedChecks: [] }], review: { baseSha: BASE_SHA, sha: CLOSING_SHA, model: 'other', reviewer: 'independent', requirements: [{ id: 'R1', status: 'done', evidence: 'test' }], findings: [] } }))
+  const closed = await tool($, 'epicPhase', { issue: 40, finished: 'closing', evidence: 'suite and review', closingFile: '/logs/closing.json' })
+  expect(closed.isError).toBe(false)
   expect(w.epic()?.state).toBe('done')
   const line = await sections($)
   expect(line.epic).toBeUndefined()
@@ -1170,3 +1188,27 @@ for (const [name, args] of [
     expect(JSON.parse(entry?.[1] ?? '{}').calls?.some((call: { tool: string; outcome: string }) => call.tool === name && call.outcome === 'failed')).toBe(true)
   })
 }
+
+test('deadline debt tools preserve retries and require a reasoned ruling', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40, posture: 'deadline' })
+  const event = { issue: 40, key: 'deadline-ci', kind: 'skipped-check', check: 'ci', note: 'Owner deferred CI' }
+  expect((await tool($, 'epicDebt', event)).isError).toBe(false)
+  expect((await tool($, 'epicDebt', event)).isError).toBe(false)
+  expect(w.epic()?.debts?.length).toBe(1)
+  expect((await tool($, 'epicDebtRuling', { issue: 40, key: 'deadline-ci', ruling: { verdict: 'accepted' } })).isError).toBe(true)
+  expect((await tool($, 'epicDebtRuling', { issue: 40, key: 'deadline-ci', ruling: { verdict: 'accepted', reason: 'Owner accepts risk' } })).isError).toBe(false)
+  expect((await tool($, 'epicStatus', { issue: 40 })).text).toContain('Owner accepts risk')
+})
+
+test('an unreviewed SDK merge needs an override and records all omitted gates', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  w.files.set(EPIC_FILE(40), JSON.stringify({ ...w.epic(), issues: withIssues(sub(41, { state: 'implementing' })) }))
+  w.s.prs[12] = { state: 'closed', merged: true }
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged', pr: 12 })).isError).toBe(true)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged', pr: 12, override: 'Owner requested emergency merge' })).isError).toBe(false)
+  expect(w.epic()?.debts?.map(debt => debt.kind)).toEqual(['merge-without-review', 'skipped-check', 'gate-override'])
+})
