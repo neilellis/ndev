@@ -12,7 +12,7 @@ For Windows, paired or remote execution, the CLI cannot read a comparable execut
 
 ## Upstream reports
 
-[ndev issue #37](https://github.com/neilellis/ndev/issues/37) records four symptoms on Orca 1.4.257. The original incident has no retained Dispatch receipts. The reports below distinguish those historical observations from read-only checks on 1.4.266; no real worker was restarted or stopped to reproduce them.
+[ndev issue #37](https://github.com/neilellis/ndev/issues/37) records four symptoms on Orca 1.4.257. The original incident has no retained Dispatch receipts. The reports below distinguish those historical observations from read-only checks on 1.4.266. No real worker was restarted or stopped to reproduce them.
 
 | Symptom | Report and evidence |
 |---|---|
