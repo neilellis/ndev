@@ -113,6 +113,8 @@ ndev hook <event> [--harness <harness>]
 ndev watch [--session <id>] [--worktree <selector>] [--once]
 ```
 
+Triage applies the [worker safety rules](orca-worker-safety.md): exit and release checks before retry, one worker by default, and local load checks.
+
 `fix-prs` configures each repair worktree for `light` mode and `auto` steering before launching its Codex worker. This applies to existing and new worktrees. A new repair worktree is created without an agent first, so the session starts after its settings are saved. If configuration fails, no worker starts. The worker resumes an enabled workflow with the same mode and steering, and leaves disabled workflows off.
 
 When an owner needs to inspect a reviewed commit before a release prerequisite can be met, use `ndev flow push-draft` in the reviewing phase. Supply the full SHA and a summary of the independent review for that commit. It checks the clean worktree, runs `pre-push-check.sh` and pushes that SHA with Git hooks to the existing draft PR in the same repository. The workflow stays in review. Use `finished-review` to run the pre-ready check and mark the PR ready.
