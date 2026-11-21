@@ -6,7 +6,6 @@ import { atomicJson, CliError, locked, readObject, run, stateRoot } from './comm
 const flag = () => join(stateRoot(), 'chat-guard')
 const maximumTranscriptBytes = 1024 * 1024
 const minutes = 60_000
-const threshold = 200_000
 const providers = new Set(['claude', 'codex'])
 const preLaunchErrors = new Set([
   'incompatible_runtime', 'worktree_host_unresolved', 'selector_not_found', 'LINEAGE_PARENT_AMBIGUOUS',
@@ -193,9 +192,7 @@ export function blockedNativePrompt(harness, payload) {
   const idle = Math.floor(elapsed / minutes)
   const explanation = elapsed > 50 * minutes
     ? `This chat has been idle for ${idle} minutes.`
-    : elapsed >= 20 * minutes && activity.tokens > threshold
-      ? `This chat has about ${activity.tokens.toLocaleString('en-GB')} tokens and has been idle for ${idle} minutes.`
-      : undefined
+    : undefined
   if (!explanation) {
     if (existsSync(file)) locked(file, () => rmSync(file, { force: true }))
     return

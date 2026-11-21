@@ -325,9 +325,10 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
   assert.notEqual(call('codex', 'draft', [codex(21, 200_000)]).decision, 'block')
   assert.notEqual(call('codex', 'draft', [codex(6, 300_000)]).decision, 'block')
   assert.notEqual(call('codex', 'draft', [codex(19, 300_000)]).decision, 'block')
-  const blocked = call('codex', 'draft', stale)
+  assert.notEqual(call('codex', 'draft', stale).decision, 'block')
+  const blocked = call('codex', 'draft', [codex(51, 200_001)])
   assert.equal(blocked.decision, 'block')
-  assert.match(blocked.reason, /200,001 tokens.*\/compact/)
+  assert.match(blocked.reason, /51 minutes.*\/compact/)
   assert.notEqual(call('codex', '/compact keep the plan', stale).decision, 'block')
   assert.notEqual(call('codex', 'draft', [...stale, { timestamp: stamp(0), type: 'compacted' }]).decision, 'block')
   const claude = {

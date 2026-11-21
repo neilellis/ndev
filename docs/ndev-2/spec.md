@@ -191,7 +191,7 @@ On a new session, instruct the agent to start the saved workflow before developm
 
 ### Native Orca chat guard
 
-Run `ndev chat-guard on` to enable the guard for local Codex and Claude Code native chats. The prompt hook blocks a send after 20 minutes of inactivity above 200,000 context tokens, or after more than 50 minutes of inactivity. It uses the latest available provider transcript accounting, so the token count is approximate. The guard reads a bounded transcript tail. If only the age of a truncated transcript is known, it can still enforce the 50-minute rule.
+Run `ndev chat-guard on` to enable the guard for local Codex and Claude Code native chats. The prompt hook blocks a send after more than 50 minutes of inactivity. The guard reads a bounded transcript tail. If only the age of a truncated transcript is known, it can still enforce the 50-minute rule.
 
 The guard saves the latest blocked message text locally for each chat. Reply `continue` to pass that saved request to the current chat through the prompt hook's additional context, without compaction. This consumes the saved request once and keeps the guard enabled for later messages. Reply `hand-off` to start a new Orca chat in the same workspace with up to three recent assistant excerpts and the saved message. Reply `new-session` to send just the saved message to a new chat. Attachments need to be added again. To compact the current chat first, run `/compact`, wait for it to finish, then resend the message. When a new-chat launch has an uncertain delivery result, recover that launch before continuing here to avoid duplicate delivery. Run `ndev chat-guard off` to disable it or `ndev chat-guard status` to check whether it is enabled.
 
