@@ -5,6 +5,8 @@ description: "The non-interactive heavyweight development skill (heavy mode, aut
 
 # Ready-board delivery
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Do one bounded pass: read the board, sort the startable issues, work each unit in its own worktree, branch and PR, verify it, smoke-test it where the project has a preview, and leave each PR for a human to merge. Never merge. Never push the base branch.

@@ -5,6 +5,8 @@ description: "Coordinate the implementation of an epic: start an implementer and
 
 # Coordinate an epic
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 You are the **coordinator** and the final arbiter. Workers implement and review; you choose the order, rule on findings, verify and merge. You write no product code. Each sub-issue gets one workspace with two workers in turn: an implementer, then a reviewer on a different model.
 
 Keep the aim of the epic in view in every ruling: meet the requirement, keep it simple.

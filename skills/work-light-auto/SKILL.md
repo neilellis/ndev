@@ -5,6 +5,8 @@ description: "The non-interactive lightweight development skill (light mode, aut
 
 # Ready-board delivery, one unit at a time
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 This is the attended, native-dispatch form of `work-heavy-auto`. Survey and order the Ready column, then give each independent issue or dependency batch to one disposable worker. Report one line per unit. A human merges.

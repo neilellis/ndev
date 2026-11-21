@@ -5,6 +5,8 @@ description: "Implement larger or risky changes in heavy mode with a written pla
 
 # Development method (staged)
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Use this skill for one larger or riskier development task. For a focused fix or a small feature, use

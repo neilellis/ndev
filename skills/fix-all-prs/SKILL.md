@@ -5,6 +5,8 @@ description: "Fix and merge every outstanding open pull request one at a time, o
 
 # Fix all pull requests
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 Fix each open PR one at a time, oldest first. Merge it when it is fixed. Then merge `origin/<base>` into the next PR, fix it and merge it. Repeat until no open PRs remain.
 Where an agent has already worked on a PR, work with that agent. It has context that you do not have.
 

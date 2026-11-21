@@ -5,6 +5,8 @@ description: Group a project's GitHub issues, preview a triage plan, and launch 
 
 # Triage issues
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 Use `ndev` on PATH. If it is missing from PATH, use `"${CLAUDE_PLUGIN_ROOT}/bin/ndev"`. Run triage in the current project worktree.
 
 With no subcommand, or with `start`, run `ndev triage start --dry-run --json` with the user's flags. Use `--codex` in Codex unless the user asks for Claude workers. Keep a dry run when the user asks for one. Add `--open` only when the user wants open issues across the repository. Check `ndev project status` if the command reports missing GitHub settings.

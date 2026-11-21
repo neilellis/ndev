@@ -5,6 +5,8 @@ description: "Merge a pull request and run its Supabase migrations. Use for /nde
 
 # Merge a pull request and run its migrations
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 The `addMigration` workflow tool lists each migration in a marked section of the PR body. This skill merges the PR, then applies those migrations.
 
 ## The workflow

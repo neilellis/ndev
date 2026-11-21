@@ -5,6 +5,8 @@ description: "Merge the current change's pull request in a website or app projec
 
 # Publish the current change
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 When the user types `/publish`, that is their approval to merge the pull request for the current change. Use `finish` to get it ready and `github` for pull request operations. Never push to the base branch directly. Report only results that tools confirm.
 
 If `<project root>/.neil-dev.json` has a `branding` key, follow the project's brand copy rules for the publication report. Use the `copy` skill for those rules. Find the root with `git rev-parse --show-toplevel`.
