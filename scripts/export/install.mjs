@@ -132,7 +132,7 @@ function hookPlan(profile, binary, previous, retire = false) {
     const kept = []
     for (const group of entries) {
       const hooks = group.hooks.filter(hook => !isDeepStrictEqual(hook, previous?.[event]))
-      if (!retire && hooks.some(hook => isDeepStrictEqual(hook, expected))) fail(1, `Unowned ndev hook for ${event} in ${config}.`, 'Move the conflicting entry before installing.')
+      if (!retire && hooks.some(hook => isDeepStrictEqual(hook, expected))) fail(1, `Unowned ndev hook for ${event} in ${config}: ${expected.command}. No matching ownership record.`, `Move the conflicting entry in ${quote(config)}, then rerun ndev install ${profile.name}.`)
       if (hooks.length || group.hooks.length === 0) kept.push({ ...group, hooks })
     }
     if (!retire) kept.push({ hooks: [expected] })
@@ -272,7 +272,7 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
       if (original?.profile.config && original.profile.config !== profile.config && pathInfo(original.profile.config)) {
         hooks.push(hookPlan(original.profile, binary, original.hooks, true))
       }
-      const hook = hookPlan(profile, binary, previous?.profile.config === profile.config ? previous.hooks : undefined)
+      const hook = hookPlan(profile, binary, previous?.hooks)
       hooks.push(hook)
       records[profile.name].hooks = hook.desired
     }
@@ -282,6 +282,13 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
   const activeTargets = new Set([...files.keys()].map(targetPath))
   const stale = retired.filter(path => !activeTargets.has(targetPath(path)))
   const owned = { ...before.files }
+  const previousFiles = { ...before.files }
+  const ownedTargets = new Map(Object.entries(before.files).map(([path, entry]) => [targetPath(path), entry]))
+  for (const [path, entry] of files) {
+    if (previousFiles[path]) continue
+    const previous = ownedTargets.get(targetPath(path))
+    if (previous?.owner === entry.owner) previousFiles[path] = previous
+  }
   for (const path of retired) delete owned[path]
   for (const path of stale) {
     const info = pathInfo(path)
@@ -290,7 +297,7 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
   for (const [path, entry] of files) {
     const info = pathInfo(path)
     const digest = hash(entry.text)
-    const previous = before.files[path]
+    const previous = previousFiles[path]
     if (info && (!info.isFile() || !previous || (previous.reserved && hash(readFileSync(path)) !== previous.sha256))) conflicts.push(path)
     owned[path] = { owner: entry.owner, mode: entry.mode, sha256: digest }
   }
@@ -298,20 +305,21 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
     ...(opts.panels ? { panelSource: join(share, 'orca-plugin/ndev') } : {}),
     hooks: hooks.map(({ config, desired }) => ({ config, entries: desired })),
     ...(profiles.some(p => p.name === 'codex') ? { codex: { trust: 'Review and trust the hooks in Codex /hooks.', roleLimits: 'Read-only roles use the read-only sandbox. Agent tool lists and delegation restrictions require host support.' } } : {}) }
-  return { files, hooks, stale, result, manifest: { schemaVersion: 1, version, files: owned, profiles: records } }
+  return { files, hooks, stale, result, previousFiles, manifest: { schemaVersion: 1, version, files: owned, profiles: records } }
 }
 
 function apply(plan, before, manifestPath) {
   const reserved = { ...plan.manifest.files }
   for (const path of plan.files.keys()) {
-    if (!before.files[path] || before.files[path].reserved) reserved[path] = { ...reserved[path], reserved: true }
+    if (!plan.previousFiles[path] || plan.previousFiles[path].reserved) reserved[path] = { ...reserved[path], reserved: true }
   }
   for (const path of plan.stale) reserved[path] = before.files[path]
   atomic(manifestPath, json({ ...plan.manifest, pending: { profiles: plan.result.profiles, beforeProfiles: before.pending?.beforeProfiles ?? before.profiles }, files: reserved }), 0o600, !!pathInfo(manifestPath))
   for (const [path, { text, mode }] of plan.files) {
     const info = pathInfo(path)
     if (info?.isFile() && hash(readFileSync(path)) === plan.manifest.files[path].sha256 && (info.mode & 0o777) === mode) continue
-    if (info && (!before.files[path] || (before.files[path].reserved && hash(readFileSync(path)) !== before.files[path].sha256))) fail(1, `File appeared during install: ${path}.`, 'Move the conflicting file and rerun ndev install.')
+    const previous = plan.previousFiles[path]
+    if (info && (!previous || (previous.reserved && hash(readFileSync(path)) !== previous.sha256))) fail(1, `File appeared during install: ${path}.`, 'Move the conflicting file and rerun ndev install.')
     atomic(path, text, mode, !!info)
   }
   for (const hook of plan.hooks) {

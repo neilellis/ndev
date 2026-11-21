@@ -28,6 +28,74 @@ function fixture(t) {
 
 const read = path => JSON.parse(readFileSync(path, 'utf8'))
 
+test('install recognises copied owned hooks and symlinked assets in a Claude profile', t => {
+  const { home, env, install } = fixture(t)
+  const first = install('claude')
+  const original = env.CLAUDE_CONFIG_DIR
+  const foreign = { matcher: 'Read', hooks: [{ type: 'command', command: 'check-read' }] }
+  const document = read(join(original, 'settings.json'))
+  document.hooks.PreToolUse.unshift(foreign)
+  const settings = JSON.stringify(document)
+  writeFileSync(join(original, 'settings.json'), settings)
+  const profile = join(home, 'orca-profile')
+  mkdirSync(profile)
+  writeFileSync(join(profile, 'settings.json'), settings)
+  symlinkSync(join(original, 'skills'), join(profile, 'skills'), 'dir')
+  symlinkSync(join(original, 'agents'), join(profile, 'agents'), 'dir')
+  env.CLAUDE_CONFIG_DIR = profile
+  assert.deepEqual(install('claude', '--dry-run').conflicts, [])
+  install('claude')
+  assert.equal(read(join(profile, 'settings.json')).hooks.SessionStart.length, 1)
+  assert.deepEqual(read(join(profile, 'settings.json')).hooks.PreToolUse[0], foreign)
+  assert.equal(read(join(original, 'settings.json')).hooks.SessionStart, undefined)
+  assert.deepEqual(read(join(original, 'settings.json')).hooks.PreToolUse, [foreign])
+  assert.ok(existsSync(join(original, 'skills/ndev-work-light/SKILL.md')))
+  assert.equal(read(first.manifest).profiles.claude.profile.config, join(profile, 'settings.json'))
+  install('claude')
+  env.CLAUDE_CONFIG_DIR = original
+  install('claude')
+  assert.equal(read(join(original, 'settings.json')).hooks.SessionStart.length, 1)
+  assert.ok(existsSync(join(profile, 'agents/ndev-diff-reviewer.md')))
+})
+
+test('install refuses an identical hook without recorded ownership and gives its command and repair', t => {
+  const { env, prefix, install, run } = fixture(t)
+  const hook = install('claude', '--dry-run').hooks[0].entries.SessionStart
+  mkdirSync(env.CLAUDE_CONFIG_DIR)
+  const config = join(env.CLAUDE_CONFIG_DIR, 'settings.json')
+  const original = JSON.stringify({ hooks: { SessionStart: [{ hooks: [hook] }] } })
+  writeFileSync(config, original)
+  const result = run('claude')
+  assert.equal(result.status, 1)
+  assert.ok(result.stderr.includes(config), result.stderr)
+  assert.ok(result.stderr.includes(hook.command), result.stderr)
+  assert.match(result.stderr, /No matching ownership record/)
+  assert.match(result.stderr, /rerun ndev install claude/)
+  assert.equal(readFileSync(config, 'utf8'), original)
+  assert.equal(existsSync(prefix), false)
+})
+
+test('switching a Claude profile refuses unrelated assets beside owned directory aliases', t => {
+  const { home, env, install, run } = fixture(t)
+  install('claude')
+  const original = env.CLAUDE_CONFIG_DIR
+  const profile = join(home, 'orca-profile')
+  mkdirSync(profile)
+  const settings = readFileSync(join(original, 'settings.json'), 'utf8')
+  writeFileSync(join(profile, 'settings.json'), settings)
+  symlinkSync(join(original, 'skills'), join(profile, 'skills'), 'dir')
+  mkdirSync(join(profile, 'agents'))
+  const foreign = join(profile, 'agents/ndev-diff-reviewer.md')
+  writeFileSync(foreign, 'foreign agent')
+  env.CLAUDE_CONFIG_DIR = profile
+  const result = run('claude')
+  assert.equal(result.status, 1)
+  assert.ok(result.stderr.includes(foreign), result.stderr)
+  assert.equal(readFileSync(foreign, 'utf8'), 'foreign agent')
+  assert.equal(readFileSync(join(original, 'settings.json'), 'utf8'), settings)
+  assert.equal(readFileSync(join(profile, 'settings.json'), 'utf8'), settings)
+})
+
 test('install all plans active harness paths, a single shared release, and leaves HOME untouched', t => {
   const { env, prefix, install } = fixture(t)
   const result = install('all', '--dry-run')
