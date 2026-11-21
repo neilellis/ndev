@@ -130,10 +130,12 @@ function load(root: string, args: Args): Workflow {
       const byPr = shared.find(record => record.pr === Number(args.pr))
       if (byPr) return byPr
     } else if (args.issue) {
-      const byIssue = shared.find(record => record.issues?.includes(Number(args.issue)))
-      if (byIssue && readRecord(root, Number(args.issue))?.state === 'developed') return byIssue
+      const snapshot = readRecord(root, Number(args.issue))
+      const byIssue = shared.find(record => record.pr === snapshot?.prs?.[0] && (record.issue === Number(args.issue) || record.issues?.includes(Number(args.issue))))
+      if (byIssue && snapshot?.state === 'developed') return byIssue
     } else {
-      const active = records.filter(record => record.pr || record.state !== 'developed' || !shared.some(pr => pr.issues?.includes(record.issue)))
+      const active = records.filter(record => !(record.pr && record.off && records.some(snapshot => !snapshot.pr && snapshot.prs?.[0] !== record.pr && (snapshot.issue === record.issue || record.issues?.includes(snapshot.issue)))))
+        .filter(record => record.pr || record.state !== 'developed' || !shared.some(pr => pr.pr === record.prs?.[0] && (pr.issue === record.issue || pr.issues?.includes(record.issue))))
       const owned = active.filter(record => record.owner?.session === session())
       if (owned.length === 1) return owned[0]!
       if (active.length === 1) return active[0]!
@@ -1357,6 +1359,7 @@ function repairFlow(root: string, config: Config, args: Args) {
   for (const prior of shared) {
     if (!prior.off) throw new Fail(1, `Issue #${issue} belongs to shared PR #${prior.pr}. Finish that shared workflow before repairing its association. Nothing was rebound.`)
     const pr = readPr(prior, prior.pr)
+    if (pr === null || typeof pr !== 'object' || Array.isArray(pr)) throw new Fail(1, `Shared PR #${prior.pr} in ${issueFile(root, prior.issue)} returned a non-object PR response: ${JSON.stringify(pr)}. Nothing was rebound.`)
     if (pr.number !== prior.pr || pr.merged !== undefined && typeof pr.merged !== 'boolean' || pr.merged !== true && pr.state !== 'closed') throw new Fail(1, `Shared PR #${prior.pr} is not confirmed closed or merged. Leave its association intact.`)
     repairOwner(prior, args)
   }
@@ -1464,6 +1467,7 @@ function publicStart(root: string, config: Config, args: Args, hotfix: boolean) 
     let pr: Pr
     try { pr = readPr(carrier, number) }
     catch (error) { throw new Fail(1, `Cannot inspect Issue #${carrier.issue}, PR #${number}, record ${path}: ${(error as Error).message}. Repair: inspect that PR before retrying ndev flow start ${issue}.`) }
+    if (pr === null || typeof pr !== 'object' || Array.isArray(pr)) throw new Fail(1, `Issue #${carrier.issue}, PR #${number}, record ${path}: GitHub returned a non-object PR response: ${JSON.stringify(pr)}. Repair: inspect that PR before retrying.`)
     if (pr.number !== number || !['open', 'closed'].includes(pr.state) || pr.merged !== undefined && typeof pr.merged !== 'boolean') throw new Fail(1, `Issue #${carrier.issue}, PR #${number}, record ${path}: GitHub returned PR #${pr.number} in state ${JSON.stringify(pr.state)}. Repair: inspect that PR before retrying.`)
     if (pr.merged || pr.state === 'closed') {
       const sameIssue = carrier.issue === issue || carrier.issues?.includes(issue)

@@ -55,10 +55,18 @@ export function effectiveWorkflowRecords(root) {
 function findRecord(all, { issue, pr }) {
   if (pr !== undefined) return all.find(record => record.pr === pr) ?? all.find(record => record.prs?.includes(pr))
   if (issue !== undefined) {
-    return all.find(record => record.pr && (record.issue === issue || record.issues?.includes(issue))) ??
-      all.find(record => record.issue === issue)
+    const snapshot = all.find(record => !record.pr && record.issue === issue)
+    const carriers = all.filter(record => record.pr && (record.issue === issue || record.issues?.includes(issue)))
+    if (snapshot) return carriers.find(record => record.pr === snapshot.prs?.[0]) ?? snapshot
+    return carriers.length === 1 ? carriers[0] : undefined
   }
-  const current = all.filter(issueRecord => !issueRecord.pr || !all.some(other => other !== issueRecord && other.issue === issueRecord.issue && other.pr))
+  const snapshots = all.filter(record => !record.pr)
+  const selected = snapshots.map(record => {
+    if (!Number.isSafeInteger(record.issue) || record.issue <= 0) throw new CliError(1, `Workflow record has invalid issue ${JSON.stringify(record.issue)}.`, { repair: 'Inspect the .neil-dev.issue-*.json records in this worktree.' })
+    return findRecord(all, { issue: record.issue })
+  })
+  const unbound = all.filter(record => record.pr && !snapshots.some(snapshot => snapshot.issue === record.issue || record.issues?.includes(snapshot.issue)))
+  const current = [...new Set([...selected, ...unbound].filter(Boolean))]
   return current.length === 1 ? current[0] : undefined
 }
 

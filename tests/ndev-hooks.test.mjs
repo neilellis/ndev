@@ -483,6 +483,7 @@ test('commit refusals distinguish open, unavailable and invalid PR state without
     ['echo "not json"', /PR #18 state unverified.*invalid JSON.*not json/s],
     ['echo \'{"number":99,"state":"closed","merged":true}\'', /PR #18 state unverified.*returned PR #99/],
     ['echo \'{"number":18,"state":"open","merged":"false"}\'', /PR #18 state unverified/],
+    ['echo null', /PR #18 state unverified.*non-object/],
   ]) {
     writeFileSync(gh, `#!/bin/sh\n${body}\n`)
     const decision = hook(root, 'codex', 'exec_command', 'git push origin topic', { NDEV_FLOW_GH: gh })

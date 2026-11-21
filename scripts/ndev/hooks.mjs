@@ -149,6 +149,7 @@ function workflowGitRefusal(root, workflow) {
   let receipt
   try { receipt = JSON.parse(result.stdout) }
   catch (error) { return `${prefix} PR #${pr} state unverified: ${command} returned invalid JSON (${error.message}): ${result.stdout.slice(0, 250)}.${checkpoint}` }
+  if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)) return `${prefix} PR #${pr} state unverified: ${command} returned a non-object PR response: ${JSON.stringify(receipt)}.${checkpoint}`
   if (receipt.number !== pr || !['open', 'closed'].includes(receipt.state) || receipt.merged !== undefined && typeof receipt.merged !== 'boolean') return `${prefix} PR #${pr} state unverified: ${command} returned PR #${receipt.number} in state ${JSON.stringify(receipt.state)}, merged=${JSON.stringify(receipt.merged)}.${checkpoint}`
   const state = receipt.merged === true ? 'merged' : receipt.state
   const repair = state === 'merged' || state === 'closed' ? ` Repair: run ndev flow off --pr ${pr} to retain the old record without its guard before starting another issue.` : checkpoint

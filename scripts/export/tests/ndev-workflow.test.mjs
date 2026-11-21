@@ -1015,6 +1015,25 @@ test('repair of a reopened issue retains its disabled merged shared PR', () => {
   assert.equal(JSON.stringify(JSON.parse(readFileSync(p.file, 'utf8')).prs[9]), original)
   const resumed = JSON.parse(output(flow(p, ['start', '7'], { ...p.fake, RETIRED_PR: '1' })))
   assert.deepEqual(resumed.workflow.prs, [10])
+  output(run(p.work, join(repo, 'bin/ndev'), ['wait', 'seconds', '--issue', '7', '0.001', '--json'], p.fake))
+  output(run(p.work, join(repo, 'bin/ndev'), ['wait', 'seconds', '0.001', '--json'], p.fake))
+  const caller = { ...p.read(), issue: 15, prs: [], state: 'developing', rev: 1 }
+  const callerFile = join(p.work, '.neil-dev.issue-15.json')
+  writeFileSync(callerFile, JSON.stringify({ version: 1, issue: 15, workflow: caller }))
+  const waiting = run(p.work, join(repo, 'bin/ndev'), ['wait', 'state', '--issue', '15', '--attempts', '1', '--timeout', '30', '7', 'ci', '--json'], p.fake)
+  assert.equal(waiting.status, 3, waiting.stdout + waiting.stderr)
+  assert.equal(JSON.parse(waiting.stdout).error.details.last.state, 'developing')
+  rmSync(callerFile)
+  const developed = JSON.parse(readFileSync(p.file, 'utf8'))
+  developed.workflow.state = 'developed'
+  developed.prs[10] = { ...developed.workflow, pr: 10, issues: [7], state: 'reviewing' }
+  writeFileSync(p.file, JSON.stringify(developed))
+  const current = JSON.parse(output(flow(p, ['status', '--issue', '7'], p.fake)))
+  assert.equal(current.workflow.pr, 10)
+  assert.equal(current.workflow.state, 'reviewing')
+  const unbound = JSON.parse(output(flow(p, ['status'], { ...p.fake, ORCA_AGENT_SESSION_ID: 'new-reader' })))
+  assert.equal(unbound.workflow.pr, 10)
+  assert.equal(JSON.stringify(JSON.parse(readFileSync(p.file, 'utf8')).prs[9]), original)
 })
 
 test('a finished or disabled old PR does not block a new issue or require a GitHub read', () => {
@@ -1041,5 +1060,12 @@ test('a failed stale-PR lookup refuses start with the record, identifier and com
   assert.equal(result.status, 1)
   assert.ok(result.stderr.includes(p.file), result.stderr)
   assert.match(result.stderr, /Issue #7.*PR #9.*exited 37: Permission denied by GitHub/s)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  const invalid = join(p.dir, 'invalid-pr.json')
+  writeFileSync(invalid, 'null')
+  const malformed = flow(p, ['start', '19', '--short-name', 'next-issue'], { ...fake, REPAIR_PR: invalid })
+  assert.equal(malformed.status, 1)
+  assert.ok(malformed.stderr.includes(p.file), malformed.stderr)
+  assert.match(malformed.stderr, /Issue #7.*PR #9.*non-object/s)
   assert.equal(readFileSync(p.file, 'utf8'), before)
 })
