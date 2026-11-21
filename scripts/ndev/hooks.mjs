@@ -9,7 +9,7 @@ import { ensureProjectFiles } from '../../orca-plugin/ndev/worker/files.mjs'
 import { binding } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
 import { readProject } from './project.mjs'
-import { readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
+import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
 
 const events = new Set(['session-start', 'prompt-submit', 'prompt-context', 'pre-tool-use', 'post-tool-use', 'turn-start', 'turn-complete', 'session-end', 'compact'])
 const harnesses = new Set(['claude', 'codex', 'opencode'])
@@ -34,11 +34,7 @@ function changeSession(root, id, change) {
 }
 
 export function currentWorkflow(root, ids = []) {
-  const records = readWorkflowRecords(root)
-  const effective = records.map(wf => (wf.state === 'developed' && !wf.pr
-    ? records.find(pr => pr.pr === wf.prs?.[0] && pr.state !== 'developing')
-    : undefined) ?? wf)
-  const ordered = [...new Set(effective)].filter(wf => !wf.off && !wf.noChecks && !['done', 'setup'].includes(wf.state))
+  const ordered = effectiveWorkflowRecords(root).filter(wf => !wf.off && !wf.noChecks && !['done', 'setup'].includes(wf.state))
   const own = ordered.filter(wf => ids.includes(wf.owner?.session))
   return own.find(wf => wf.pr) ?? own[0] ?? ordered.find(wf => wf.pr) ?? ordered[0]
 }
@@ -139,6 +135,27 @@ function pushMarker(root, id, token, event, call, payload) {
   }
 }
 
+function workflowGitRefusal(root, workflow) {
+  const path = join(root, `.neil-dev.issue-${workflow.issue}.json`)
+  const prefix = `Issue #${workflow.issue} is in ${workflow.state}. Record: ${path}.`
+  const checkpoint = ' Commit or push with ndev flow checkpoint so the checks run.'
+  const pr = workflow.pr ?? workflow.prs?.[0]
+  if (!pr) return prefix + checkpoint
+  if (!workflow.repo) return `${prefix} PR #${pr} state unverified: the record has no repository.${checkpoint}`
+  const script = process.env.NDEV_FLOW_GH || join(releaseRoot, 'scripts/github/gh.sh')
+  const command = `gh.sh pr-read ${pr} in ${workflow.repo}`
+  const result = run('bash', [script, 'pr-read', String(pr)], { cwd: root, env: { ...process.env, GH_REPO: workflow.repo }, timeout: 3_000 })
+  if (result.status !== 0) return `${prefix} PR #${pr} state unverified: ${command} exited ${result.status}: ${result.stderr.trim() || result.stdout.trim() || 'no output'}.${checkpoint}`
+  let receipt
+  try { receipt = JSON.parse(result.stdout) }
+  catch (error) { return `${prefix} PR #${pr} state unverified: ${command} returned invalid JSON (${error.message}): ${result.stdout.slice(0, 250)}.${checkpoint}` }
+  if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)) return `${prefix} PR #${pr} state unverified: ${command} returned a non-object PR response: ${JSON.stringify(receipt)}.${checkpoint}`
+  if (receipt.number !== pr || !['open', 'closed'].includes(receipt.state) || receipt.merged !== undefined && typeof receipt.merged !== 'boolean') return `${prefix} PR #${pr} state unverified: ${command} returned PR #${receipt.number} in state ${JSON.stringify(receipt.state)}, merged=${JSON.stringify(receipt.merged)}.${checkpoint}`
+  const state = receipt.merged === true ? 'merged' : receipt.state
+  const repair = state === 'merged' || state === 'closed' ? ` Repair: run ndev flow off --pr ${pr} to retain the old record without its guard before starting another issue.` : checkpoint
+  return `${prefix} PR #${pr} state ${state}.${repair}`
+}
+
 function rawGitReason(command, workspace, workflow, helperCwd) {
   if (!workflow) return undefined
   const label = `Issue #${workflow.issue} is in ${workflow.state}.`
@@ -157,7 +174,7 @@ function rawGitReason(command, workspace, workflow, helperCwd) {
     const ownedRef = match[2] === 'push' && pushNames(tail.split(/[;&|)\n]/)[0], workflow)
     const followUp = workflow.followUps?.some(item => item.worktree && findWorkspace(item.worktree)?.gitDir === there?.gitDir)
     if (there && workflowDir && there.gitDir !== there.commonDir && there.gitDir !== workflowDir.gitDir && !ownedRef && !followUp) continue
-    return `${label} Commit or push with ndev flow checkpoint so the checks run.`
+    return workflowGitRefusal(workflow.root ?? workspace.root, workflow)
   }
 }
 

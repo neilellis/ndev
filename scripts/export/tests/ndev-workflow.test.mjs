@@ -160,8 +160,8 @@ issue-read) echo '{"title":"Fix the thing","state":"open"}' ;;
 issue-new) if [ -n "$ACCEPTED_BODY" ]; then cp "$5" "$ACCEPTED_BODY"; echo 'lost create response' >&2; exit 33; fi; echo '{"number":40,"url":"https://github.com/test/project/issues/40"}' ;;
 api) if [ -z "$SEARCH_DELAY" ]; then jq -n --rawfile body "$ACCEPTED_BODY" '[{number:40,body:$body},{number:55,body:"unrelated"},{number:67,body:$body,pull_request:{}}]' | jq -r "$5"; fi ;;
 pr-list) [ -z "$EXISTING_PR" ] || echo '{"number":9}' ;;
-pr-new) echo '{"url":"https://github.com/test/project/pull/9"}' ;;
-pr-read) if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
+pr-new) printf '{"url":"https://github.com/test/project/pull/%s"}\\n' \"\${NEW_PR:-9}\" ;;
+pr-read) if [ -n "$RETIRED_PR" ] && [ "$2" = "9" ]; then echo '{"number":9,"state":"closed","merged":true}'; exit 0; fi; if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
 pr-edit) cp "$4" "$PR_BODY" ;;
 feedback) ;;
 comment|subissues|pr-ready) echo '{"ok":true}' ;;
@@ -944,4 +944,128 @@ test('repaired alias completion refuses local and canonical stashes and passes w
     git(p.work, 'stash', 'drop', '-q')
   }
   assert.equal(JSON.parse(output(flow(p, args, p.fake))).state, 'done')
+})
+
+test('start in a reused worktree refuses a merged carrier with its record and repair', () => {
+  for (const shared of [false, true]) {
+    const p = project()
+    const fake = services(p)
+    const previous = JSON.parse(readFileSync(p.file, 'utf8'))
+    previous.workflow.state = shared ? 'developed' : 'ci'
+    previous.workflow.owner = { session: 'session-A', at: Date.now() }
+    if (shared) previous.prs = { 9: { ...previous.workflow, pr: 9, state: 'ci', issues: [7] } }
+    writeFileSync(p.file, JSON.stringify(previous))
+    const before = readFileSync(p.file, 'utf8')
+    const pr = join(p.dir, 'merged-pr.json')
+    writeFileSync(pr, JSON.stringify({ number: 9, state: 'closed', merged: true }))
+    const result = flow(p, ['start', '19', '--short-name', 'next-issue'], { ...fake, REPAIR_PR: pr })
+    assert.equal(result.status, 1, result.stdout + result.stderr)
+    assert.match(result.stderr, /Issue #7.*PR #9.*merged/s)
+    assert.ok(result.stderr.includes(p.file), result.stderr)
+    assert.match(result.stderr, /ndev flow off --pr 9/)
+    assert.equal(readFileSync(p.file, 'utf8'), before)
+    assert.equal(existsSync(join(p.work, '.neil-dev.issue-19.json')), false)
+  }
+})
+
+test('the stale carrier repair confirms off, retains the record and permits the next issue', () => {
+  const p = project()
+  const fake = services(p)
+  const checks = join(p.work, 'scripts/ndev/workflow')
+  mkdirSync(checks, { recursive: true })
+  for (const name of ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh']) writeFileSync(join(checks, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  const record = JSON.parse(readFileSync(p.file, 'utf8'))
+  record.workflow.state = 'ci'
+  writeFileSync(p.file, JSON.stringify(record))
+  const command = `import { runFlow } from ${JSON.stringify(new URL('../flow/cli.ts', import.meta.url))}; Object.defineProperty(process.stdin, 'isTTY', {value:true}); Object.defineProperty(process.stderr, 'isTTY', {value:true}); console.log(JSON.stringify(runFlow(['off','--pr','9'])))`
+  const disabled = spawnSync(process.execPath, ['--input-type=module', '-e', command], {
+    cwd: p.work, env: { ...env, ...fake }, encoding: 'utf8', input: 'confirm off #7 1\n',
+  })
+  output(disabled)
+  const kept = JSON.parse(readFileSync(p.file, 'utf8'))
+  assert.deepEqual(kept.workflow.prs, [9])
+  assert.ok(kept.workflow.off)
+  const started = JSON.parse(output(flow(p, ['start', '19', '--short-name', 'next-issue'], { ...fake, NEW_PR: '10' })))
+  assert.equal(started.issue, 19)
+  assert.deepEqual(started.workflow.prs, [10])
+  assert.ok(JSON.parse(readFileSync(p.file, 'utf8')).workflow.off)
+})
+
+test('restarting the reopened issue refuses its merged PR with a new-PR repair', () => {
+  const p = project()
+  const fake = services(p)
+  const pr = join(p.dir, 'merged-pr.json')
+  writeFileSync(pr, JSON.stringify({ number: 9, state: 'closed', merged: true }))
+  const result = flow(p, ['start', '7'], { ...fake, REPAIR_PR: pr })
+  assert.equal(result.status, 1, result.stdout + result.stderr)
+  assert.ok(result.stderr.includes(p.file), result.stderr)
+  assert.match(result.stderr, /PR #9.*merged/s)
+  assert.match(result.stderr, /ndev flow repair --issue 7 --pr/)
+})
+
+test('repair of a reopened issue retains its disabled merged shared PR', () => {
+  const p = repairProject()
+  const held = JSON.parse(readFileSync(p.file, 'utf8'))
+  held.workflow.state = 'developed'
+  held.prs = { 9: { ...held.workflow, pr: 9, issues: [7, 8], state: 'ci', off: { at: 1, reason: 'Old PR merged' } } }
+  writeFileSync(p.file, JSON.stringify(held))
+  const original = JSON.stringify(held.prs[9])
+  const result = p.repair([], { RETIRED_PR: '1' })
+  assert.deepEqual(JSON.parse(output(result)).workflow.prs, [10])
+  assert.equal(JSON.stringify(JSON.parse(readFileSync(p.file, 'utf8')).prs[9]), original)
+  const resumed = JSON.parse(output(flow(p, ['start', '7'], { ...p.fake, RETIRED_PR: '1' })))
+  assert.deepEqual(resumed.workflow.prs, [10])
+  output(run(p.work, join(repo, 'bin/ndev'), ['wait', 'seconds', '--issue', '7', '0.001', '--json'], p.fake))
+  output(run(p.work, join(repo, 'bin/ndev'), ['wait', 'seconds', '0.001', '--json'], p.fake))
+  const caller = { ...p.read(), issue: 15, prs: [], state: 'developing', rev: 1 }
+  const callerFile = join(p.work, '.neil-dev.issue-15.json')
+  writeFileSync(callerFile, JSON.stringify({ version: 1, issue: 15, workflow: caller }))
+  const waiting = run(p.work, join(repo, 'bin/ndev'), ['wait', 'state', '--issue', '15', '--attempts', '1', '--timeout', '30', '7', 'ci', '--json'], p.fake)
+  assert.equal(waiting.status, 3, waiting.stdout + waiting.stderr)
+  assert.equal(JSON.parse(waiting.stdout).error.details.last.state, 'developing')
+  rmSync(callerFile)
+  const developed = JSON.parse(readFileSync(p.file, 'utf8'))
+  developed.workflow.state = 'developed'
+  developed.prs[10] = { ...developed.workflow, pr: 10, issues: [7], state: 'reviewing' }
+  writeFileSync(p.file, JSON.stringify(developed))
+  const current = JSON.parse(output(flow(p, ['status', '--issue', '7'], p.fake)))
+  assert.equal(current.workflow.pr, 10)
+  assert.equal(current.workflow.state, 'reviewing')
+  const unbound = JSON.parse(output(flow(p, ['status'], { ...p.fake, ORCA_AGENT_SESSION_ID: 'new-reader' })))
+  assert.equal(unbound.workflow.pr, 10)
+  assert.equal(JSON.stringify(JSON.parse(readFileSync(p.file, 'utf8')).prs[9]), original)
+})
+
+test('a finished or disabled old PR does not block a new issue or require a GitHub read', () => {
+  for (const kind of ['done', 'off', 'shared-off']) {
+    const p = project()
+    const fake = services(p)
+    const held = JSON.parse(readFileSync(p.file, 'utf8'))
+    held.workflow.state = kind === 'done' ? 'done' : kind === 'shared-off' ? 'developed' : 'ci'
+    held.workflow.owner = { session: 'another-session', at: Date.now() }
+    if (kind === 'off') held.workflow.off = { at: 1 }
+    if (kind === 'shared-off') held.prs = { 9: { ...held.workflow, pr: 9, state: 'ci', off: { at: 1 } } }
+    writeFileSync(p.file, JSON.stringify(held))
+    output(flow(p, ['start', '19', '--short-name', 'next-issue'], { ...fake, PR_READ_FAIL: 'Unexpected old PR lookup' }))
+    assert.equal(existsSync(join(p.work, '.neil-dev.issue-19.json')), true)
+    assert.doesNotMatch(readFileSync(fake.GH_LOG, 'utf8'), /pr-read/)
+  }
+})
+
+test('a failed stale-PR lookup refuses start with the record, identifier and command output', () => {
+  const p = project()
+  const fake = services(p)
+  const before = readFileSync(p.file, 'utf8')
+  const result = flow(p, ['start', '19', '--short-name', 'next-issue'], { ...fake, PR_READ_FAIL: 'Permission denied by GitHub' })
+  assert.equal(result.status, 1)
+  assert.ok(result.stderr.includes(p.file), result.stderr)
+  assert.match(result.stderr, /Issue #7.*PR #9.*exited 37: Permission denied by GitHub/s)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  const invalid = join(p.dir, 'invalid-pr.json')
+  writeFileSync(invalid, 'null')
+  const malformed = flow(p, ['start', '19', '--short-name', 'next-issue'], { ...fake, REPAIR_PR: invalid })
+  assert.equal(malformed.status, 1)
+  assert.ok(malformed.stderr.includes(p.file), malformed.stderr)
+  assert.match(malformed.stderr, /Issue #7.*PR #9.*non-object/s)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
 })

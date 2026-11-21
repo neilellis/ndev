@@ -7,7 +7,7 @@ import { finishRound, interviewOnly, parseChatAnswers, parseRound, roundMarkdown
 import type { Mode } from '../../../types'
 import { readProject } from '../../ndev/project.mjs'
 export { secretFiles, findInText } from '../../../hooks/workflow/secrets.ts'
-export { readWorkflowRecords } from '../../ndev/waits.mjs'
+export { effectiveWorkflowRecords, readWorkflowRecords } from '../../ndev/waits.mjs'
 
 export function issueRequest(root: string, repo: string, identity: string[]) {
   const hash = createHash('sha256').update(JSON.stringify([repo, ...identity])).digest('hex')
