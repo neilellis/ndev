@@ -1,6 +1,6 @@
 import { expect, test } from './sdk-testing'
 
-declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
+import { until } from './until'
 
 type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
 type On = Parameters<Body>[1]
@@ -66,7 +66,6 @@ const engine = (on: On, opts: { statuses: (Status | { exitCode: number; stderr: 
 
 const start = async ($: Dollar, isInteractive = false) => {
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive })
-  await new Promise(resolve => setTimeout(resolve, 50))
 }
 
 const section = async ($: Dollar) => {
@@ -103,6 +102,8 @@ test('no file: the person is asked, and a yes creates it from ~/.zshrc', async (
     answers: ['Create from ~/.zshrc'],
   })
   await start($, true)
+  await until('the created credentials section', async () => ((await section($)) ?? '').includes(FILE), () => ({ asked, toasts }))
+  await until('the credentials question', () => credentialQuestions(asked).length === 1, () => asked)
 
   expect(credentialQuestions(asked)).toHaveLength(1)
   expect(credentialQuestions(asked)[0]).toContain('~/.zshrc')
@@ -114,6 +115,7 @@ test('no file: the person is asked, and a yes creates it from ~/.zshrc', async (
 test('no file and the dialog closed: nothing is created, and the agent asks before creating it', async ($, on) => {
   const { ran, asked } = engine(on, { statuses: [status({})] })
   await start($, true)
+  await until('the credentials question', () => credentialQuestions(asked).length === 1, () => asked)
 
   expect(credentialQuestions(asked)).toHaveLength(1)
   expect(inits(ran)).toHaveLength(0)
@@ -154,6 +156,7 @@ test('a GitHub set-up that throws: the failure is shown, and the credentials que
   const { asked, toasts } = engine(on, { statuses: [status({})], ghThrows: true })
   await start($, true)
 
+  await until('the credentials question after GitHub setup failed', () => credentialQuestions(asked).length === 1, () => ({ asked, toasts }))
   expect(toasts.join(' ')).toContain('the GitHub set-up failed')
   expect(credentialQuestions(asked)).toHaveLength(1)
 })

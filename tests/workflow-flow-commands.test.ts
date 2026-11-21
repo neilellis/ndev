@@ -1,6 +1,7 @@
 // Workflow tests: The /flow commands and /unblock. The shared harness is in tests/workflow-harness.ts.
 import { expect, test } from './sdk-testing'
 import { CHECKS, engine, start, tool, command, unblock } from './workflow-harness'
+import { workflowHost } from './workflow-host'
 
 // ---- /flow ----
 test('/flow status shows the state and the next step', async ($, on) => {
@@ -123,15 +124,16 @@ test('/unblock when nothing is blocked says so and changes nothing', async ($, o
 })
 
 // ---- the wait tools ----
-test('a long-period wait reports its limiting deadline or hook budget and restores the workflow', { timeoutMs: 60_000 }, async ($, on) => {
-  const w = engine(on)
-  await start($, w)
+test('a long-period wait reports its limiting deadline or hook budget and restores the workflow', { timeoutMs: 60_000 }, async () => {
+  const { world: w, call } = workflowHost()
   w.s.sleepAdvances = true
-  // Each pause costs the hook some of its own time, as a busy host does between two $ calls.
-  w.s.sleepSpinMs = 150
+  let remainingMs = 10_000
+  const pauses: number[] = []
+  w.s.onSleep = seconds => { pauses.push(seconds); remainingMs -= 150 }
   w.s.probe = () => ({ exitCode: 1 })
+  const budget = { ms: 10_000, get remainingMs() { return remainingMs } }
   const began = w.s.now
-  const r = await tool($, 'waitFor', { shell_command: 'false', period: 300 })
+  const r = await call('waitFor', { issue: 7, shell_command: 'false', period: 300 }, budget)
   expect(r.text).not.toContain('no tool.call hook')
   expect(r.isError).toBe(true)
   if (r.text.includes("the host's time budget for one hook is nearly spent")) {
@@ -142,26 +144,52 @@ test('a long-period wait reports its limiting deadline or hook budget and restor
     expect(r.text).toContain('Repair: call it again, for at most 1200 s more')
     expect(w.s.now - began).toBeGreaterThanOrEqual(1_180_000)
   }
+  expect(pauses.some(seconds => seconds > 2)).toBe(true)
   expect(w.s.now - began).toBeLessThanOrEqual(1_200_000)
   expect(w.state()?.state).toBe('developing')
 })
 
-// On a loaded computer each slice of a pause costs the hook some of its own ten seconds. Past them the host
-// drops the hook, and the agent reads "no tool.call hook answered this call". The test kit counts that time
-// and does not drop the hook, so the proof is that the wait ends inside the pause, before the time is spent.
-// A large record makes each read of it slow, and that time is the hook's own. The pauses grow to make the time
-// last, so how many checks run first depends on how busy the computer is.
-test('a wait whose own time runs low during a long pause stops inside the pause, and names the cause and the repair', { timeoutMs: 180_000 }, async ($, on) => {
-  const w = engine(on, { wf: { ballast: Array.from({ length: 3_000_000 }, (_, i) => ({ n: i, at: 0 })) } })
-  await start($, w)
+test('a wait whose own time runs low during a long pause stops inside the pause, and names the cause and the repair', { timeoutMs: 180_000 }, async () => {
+  const { world: w, call } = workflowHost()
   w.s.sleepAdvances = true
+  let remainingMs = 10_000
+  const pauses: number[] = []
+  w.s.onSleep = seconds => { pauses.push(seconds); remainingMs = 1999 }
   w.s.probe = () => ({ exitCode: 1 })
-  const r = await tool($, 'waitFor', { shell_command: 'false', period: 1100 })
+  const r = await call('waitFor', { issue: 7, shell_command: 'false', period: 1100 }, { ms: 10_000, get remainingMs() { return remainingMs } })
   expect(r.isError).toBe(true)
   expect(r.text).toMatch(/waitFor stopped its wait for `false` to exit 0 after \d+ attempts/)
   expect(r.text).toContain("the host's time budget for one hook is nearly spent")
-  expect(r.text).toContain('ms are left of 10000 ms')
+  expect(r.text).toContain('1999 ms are left of 10000 ms')
   expect(r.text).toContain('Repair: call waitFor again')
+  expect(pauses).toEqual([2])
+  expect(w.s.probes).toHaveLength(1)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait at the hook budget threshold can finish normally', async () => {
+  const { world: w, call } = workflowHost()
+  w.s.sleepAdvances = true
+  const exits = [1, 0]
+  w.s.probe = () => ({ exitCode: exits.shift()! })
+  const r = await call('waitFor', { issue: 7, shell_command: 'ready', period: 5 }, { ms: 10_000, remainingMs: 2000 })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('ended after 2 checks')
+  expect(r.text).not.toContain('budget')
+  expect(w.s.now).toBe(5000)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait below the hook budget threshold refuses before its first check', async () => {
+  const { world: w, call } = workflowHost()
+  w.s.sleepAdvances = true
+  w.s.probe = () => ({ exitCode: 0 })
+  const r = await call('waitFor', { issue: 7, shell_command: 'ready' }, { ms: 10_000, remainingMs: 1999 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('after 0 attempts')
+  expect(r.text).toContain('1999 ms are left of 10000 ms')
+  expect(w.s.probes).toHaveLength(0)
+  expect(w.s.now).toBe(0)
   expect(w.state()?.state).toBe('developing')
 })
 
