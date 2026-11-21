@@ -21,3 +21,5 @@ The SDK compiler follows `$` calls only into named top-level helpers or function
 
 
 This execution allowance differs from the workflow's time limits. Keep assertions about the simulated clock, process timeouts, the hook's own budget and workflow restoration. A longer runner deadline does not change those contracts. The forced low-budget tests retain their explicit deadlines and refusal assertions.
+
+Tests of the hook budget call the real registered tool handler through `tests/workflow-host.ts`. The host fixture supplies state, files, process results and the remaining hook budget. The simulated clock and budget move independently. Controls cover the exact threshold, refusal before the first check, interruption inside a pause and workflow restoration.

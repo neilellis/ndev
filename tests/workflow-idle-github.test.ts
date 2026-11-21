@@ -1,6 +1,7 @@
 // Workflow tests: The idle reads of GitHub: the PR, its checks and the person typing. The shared harness is in tests/workflow-harness.ts.
 import { expect, test } from './sdk-testing'
-import { SHA, pull, CHECKS, engine, start, tool, command, turnEnds, idle, poll, RUNNING, hookCall } from './workflow-harness'
+import { until } from './until'
+import { ROOT, fireIdle, SHA, pull, CHECKS, engine, start, tool, command, turnEnds, idle, poll, RUNNING, hookCall } from './workflow-harness'
 
 // ---- the idle heartbeat ----
 test('idle with a clean PR: one REST read, a compaction and the next step', async ($, on) => {
@@ -56,9 +57,10 @@ test('a pending check is not a failure', async ($, on) => {
 
 test('a read of GitHub that fails is said, not read as a clean PR, and the reminder still goes', async ($, on) => {
   const w = engine(on)
-  await start($, w)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: false })
   w.s.ghFails = 'HTTP 403: API rate limit exceeded'
-  await idle(w)
+  fireIdle(w)
+  await until('the PR #12 refusal and reminder', () => w.toasts.some(text => text.includes('PR #12 was not read')) && w.prompts.length === 1, () => ({ toasts: w.toasts, prompts: w.prompts }))
   expect(w.toasts.join()).toContain('PR #12 was not read')
   expect(w.toasts.join()).toContain('rate limit')
   expect(w.prompts.length).toBe(1)

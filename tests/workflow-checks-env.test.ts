@@ -161,7 +161,7 @@ test('started asks for fast-checks.sh, and says it holds the fast tools only', a
 
 test('started initialises the submodules of the worktree it claims', async ($, on) => {
   const w = engine(on, { wf: null, main: true, config: QUALITY })
-  await start($, w)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: false })
   expect((await tool($, 'started', { issue: 7, shortName: 'add-sub' })).isError).toBe(false)
   expect(w.steps).toContain('init-worktree-submodules.sh')
   expect(w.submodules).toEqual([{ command: 'git worktree add /claimed/issue-7', paths: '.claude/agents' }])

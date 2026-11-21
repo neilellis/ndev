@@ -13,8 +13,6 @@ export const CONFIG = `${ROOT}/.neil-dev.json`
 export const REPO = 'acme/w'
 export const SHA = 'aaaaaaaa11111111'
 export const STREAM_CAP = 4194304 // What $.process.run keeps of each stream, and the most $.fs.write takes.
-// Blocks the event loop just after a mocked $ call resolves, so the time falls to the hook that made the call.
-export const spinAfter = (ms: number) => setTimeout(() => { const end = Date.now() + ms; while (Date.now() < end) { /* the hook's own time */ } }, 0)
 export const ok = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 
 export const flow = (over: Record<string, unknown> = {}) => ({
@@ -75,7 +73,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     otherWorktrees: [] as string[], worktreeListFails: '', checkHold: undefined as Promise<void> | undefined, onCheck: undefined as (() => void) | undefined, checkMs: {} as Record<string, number>, checkStops: [] as string[],
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, env: {} as Record<string, string>, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
-    probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, onRead: undefined as ((path: string) => void | Promise<void>) | undefined, sleepYields: false, sleepSpinMs: 0, onSleep: undefined as ((seconds: number) => void) | undefined, clockSleeps: 0, staleSaves: 0, staleSaveMs: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
+    probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, onRead: undefined as ((path: string) => void | Promise<void>) | undefined, sleepYields: false, onSleep: undefined as ((seconds: number) => void) | undefined, clockSleeps: 0, staleSaves: 0, staleSaveMs: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
     duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, innerScroller: undefined as { element: string; height: number; total: number } | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, unchanged: [] as string[], removed: [] as string[], renamedFrom: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
@@ -187,7 +185,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     if (a[0] === 'sleep' && s.sleepFails) throw new Error(s.sleepFails)
     // A pause of 0.2 s is a call that waits for its turn (whenTurnsFree). A real sleep lets the call that has the
     // turn go on, so this one yields too: a loop of pauses that resolve at once would hold the event loop.
-    if (a[0] === 'sleep') return (async () => { if (s.sleepYields || a[1] === '0.2') await new Promise(r => setTimeout(r, 1)); await s.sleepHold; s.onSleep?.(Number(a[1])); if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); if (s.sleepSpinMs) spinAfter(s.sleepSpinMs); return ok() })() as never
+    if (a[0] === 'sleep') return (async () => { if (s.sleepYields || a[1] === '0.2') await new Promise(r => setTimeout(r, 1)); await s.sleepHold; s.onSleep?.(Number(a[1])); if (s.sleepAdvances) s.now += Number(a[1]) * 1000 + (s.sleepDrift.shift() ?? 0); return ok() })() as never
     if (s.probe && (a[0] === 'curl' || a[0] === 'ps' || (a[0] === 'bash' && a[1] === '-c'))) {
       s.probes.push(line)
       s.probeLimits.push(e.init?.timeoutMs)
@@ -522,9 +520,12 @@ export const turnEnds = async ($: Dollar, reason = 'answer') => {
   await settle()
 }
 // One idle period passes, and the watchdog's timer fires.
-export const idle = async (w: W) => {
+export const fireIdle = (w: W) => {
   w.s.now += 21 * 60_000
   w.timers.splice(0).forEach(fire => fire())
+}
+export const idle = async (w: W) => {
+  fireIdle(w)
   await settle()
 }
 

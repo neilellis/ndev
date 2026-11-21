@@ -1,7 +1,5 @@
 import { expect, test } from './sdk-testing'
 
-declare function setTimeout(fn: (value?: unknown) => void, ms: number): unknown
-
 type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
 type On = Parameters<Body>[1]
 type Dollar = Parameters<Body>[0]
@@ -70,7 +68,6 @@ const engine = (on: On, opts: { files?: Record<string, string>; script?: { exitC
 
 const start = async ($: Dollar) => {
   await $.session.start({ cwd: `${ROOT}/src`, surface: 'terminal', isInteractive: false })
-  await new Promise(resolve => setTimeout(resolve, 50))
 }
 const end = ($: Dollar, reason = 'prompt_input_exit') => $.session.end({ reason, sessionId: 's1', resume: { id: 's1' } } as never)
 
