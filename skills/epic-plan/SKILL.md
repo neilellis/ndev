@@ -5,6 +5,8 @@ description: "Plan an epic as its coordinator: frame the aim, send helpers to re
 
 # Plan an epic
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 You are the **coordinator**: one capable model that plans, decides and verifies. Helpers do the legwork: sub-agents research and scout, a different model reviews the spec. You keep the conclusions and the judgement; they keep the file dumps.
 
 The plan is finished when a worker who has only the spec and one sub-issue can implement that issue without omission, and the human has ruled on every decision.

@@ -5,6 +5,8 @@ description: "Push the current change in a website or app project and keep fixin
 
 # Finish the current change
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 The user may not be technical. Tell them what is happening in plain English, with clear links. Never merge. Merging needs `/publish` or "Approve and publish" (see `publish`).
 
 ## The workflow

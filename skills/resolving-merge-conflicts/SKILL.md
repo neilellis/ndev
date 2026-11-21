@@ -5,6 +5,8 @@ description: "Use when you need to resolve an in-progress git merge/rebase confl
 
 # Resolve merge conflicts
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 1. **See the current state** of the merge or rebase: `git status`, the recent history on both sides, and the conflicting files.
 2. **Find the primary sources** for each conflict. Learn why each change was made and what its intent was. Read the commit messages, the PRs and the original issues.
 3. **Resolve each hunk.** Keep both intents where you can. Where they are incompatible, choose the one that matches the merge's stated goal and record the trade-off. Do not invent new behaviour. Always resolve; never `--abort`.

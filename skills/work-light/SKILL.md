@@ -5,6 +5,8 @@ description: "Implement focused fixes and small features in light mode, the defa
 
 # Light work
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 One main agent owns each fix from diagnosis to PR. Small helpers keep its context focused.

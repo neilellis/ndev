@@ -5,6 +5,8 @@ description: "The interactive hack development skill (hack mode). Find a solutio
 
 # Hack work
 
+Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native commands and when to use them. Prefer those commands for workflow operations when `ndev` is available. Keep this skill's gates and ownership rules.
+
 Read the applicable parts of the project’s `NORTH_STAR.md`.
 
 Hack mode has two parts. First, the human and the agent hack at a solution with few rules. Then the agent makes the change strict before any of it is pushed. A human steers hack mode at every step, so it is interactive only: auto steering refuses it.
