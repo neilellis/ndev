@@ -30,6 +30,7 @@ const json = value => `${JSON.stringify(value, null, 2)}\n`
 const hash = value => createHash('sha256').update(value).digest('hex')
 const pathInfo = path => lstatSync(path, { throwIfNoEntry: false })
 const object = value => !!value && typeof value === 'object' && !Array.isArray(value)
+const installations = record => record ? [{ profile: record.profile, hooks: record.hooks, version: record.version }, ...(record.additionalInstalls ?? [])] : []
 const targetPath = path => {
   let ancestor = path
   while (!existsSync(ancestor)) ancestor = dirname(ancestor)
@@ -164,7 +165,7 @@ function readManifest(path) {
   const share = dirname(path)
   const binary = resolve(share, '../../bin/ndev')
   for (const [file, item] of Object.entries(record.files)) {
-    const profiles = [record.profiles[item?.owner]?.profile, record.pending?.beforeProfiles?.[item?.owner]?.profile].filter(Boolean)
+    const profiles = [...installations(record.profiles[item?.owner]), ...installations(record.pending?.beforeProfiles?.[item?.owner])].map(install => install.profile).filter(Boolean)
     const releaseEntry = relative(share, file)
     const inRelease = item?.owner === 'release' && (file === binary || releaseEntry === 'package.json' || /^(?:agents|bin|hooks|kb|orca-plugin|scripts|skills|templates|\.claude-plugin)\//.test(releaseEntry))
     const inProfile = profiles.some(profile => (profile.skillsDir && /^ndev-[^/]+\/.+/.test(relative(profile.skillsDir, file))) ||
@@ -219,8 +220,8 @@ function verifyRelease(profiles, manifest, manifestPath, binary, repair, cwd) {
   const binaryVersion = probe(binary, ['--version']).trim()
   if (!binaryVersion.includes(manifest.version)) fail(1, `Installed binary ${binary} reported ${binaryVersion}, expected ${manifest.version}.`, repair)
   for (const profile of profiles) {
-    const installed = manifest.profiles[profile.name]
-    if (!installed || !isDeepStrictEqual(installed.profile, JSON.parse(JSON.stringify(profile)))) fail(1, `No install record for active ${profile.name} paths.`, repair)
+    const installed = installations(manifest.profiles[profile.name]).find(install => isDeepStrictEqual(install.profile, JSON.parse(JSON.stringify(profile))))
+    if (!installed) fail(1, `No install record for active ${profile.name} paths.`, repair)
     if (profile.config) {
       const config = readJson(profile.config)
       for (const [event, handler] of Object.entries(installed.hooks)) {
@@ -254,7 +255,19 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
   const hooks = []
   const conflicts = []
   const records = { ...before.profiles }
-  for (const profile of profiles) {
+  const targets = [...profiles]
+  const claude = profiles.find(profile => profile.name === 'claude')
+  if (claude) {
+    const configs = new Set([targetPath(claude.config)])
+    for (const install of installations(before.profiles.claude)) {
+      const config = targetPath(install.profile.config)
+      if (configs.has(config)) continue
+      configs.add(config)
+      targets.push(install.profile)
+    }
+  }
+  const fileTargets = new Map([...files].map(([path, entry]) => [targetPath(path), entry.owner]))
+  for (const profile of targets) {
     const added = assets({ profile, share, binary, root, version })
     if (profile.adapter) {
       const source = readFileSync(join(here, 'opencode-plugin.mjs'), 'utf8')
@@ -262,20 +275,25 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
     }
     if (profile.hooks === 'none') added.set(join(profile.skillsDir, 'ndev-session/SKILL.md'), { text: sessionSkill, mode: 0o644 })
     for (const [path, entry] of added) {
+      const target = targetPath(path)
+      if (fileTargets.get(target) === profile.name) continue
       if (files.has(path) || (before.files[path] && before.files[path].owner !== profile.name)) conflicts.push(path)
       files.set(path, { ...entry, owner: profile.name })
+      fileTargets.set(target, profile.name)
     }
-    records[profile.name] = { profile, version }
+    const record = { profile, version }
     if (profile.config) {
-      const previous = before.profiles[profile.name]
+      const previous = installations(before.profiles[profile.name]).find(install => targetPath(install.profile.config) === targetPath(profile.config)) ?? before.profiles[profile.name]
       const original = before.pending?.beforeProfiles?.[profile.name] ?? previous
-      if (original?.profile.config && original.profile.config !== profile.config && pathInfo(original.profile.config)) {
+      if (profile.name !== 'claude' && original?.profile.config && original.profile.config !== profile.config && pathInfo(original.profile.config)) {
         hooks.push(hookPlan(original.profile, binary, original.hooks, true))
       }
       const hook = hookPlan(profile, binary, previous?.hooks)
       hooks.push(hook)
-      records[profile.name].hooks = hook.desired
+      record.hooks = hook.desired
     }
+    if (profiles.includes(profile)) records[profile.name] = record
+    else (records[profile.name].additionalInstalls ??= []).push(record)
   }
   const selected = new Set(['release', ...profiles.map(p => p.name)])
   const retired = Object.keys(before.files).filter(path => selected.has(before.files[path].owner) && !files.has(path))

@@ -47,15 +47,44 @@ test('install recognises copied owned hooks and symlinked assets in a Claude pro
   install('claude')
   assert.equal(read(join(profile, 'settings.json')).hooks.SessionStart.length, 1)
   assert.deepEqual(read(join(profile, 'settings.json')).hooks.PreToolUse[0], foreign)
-  assert.equal(read(join(original, 'settings.json')).hooks.SessionStart, undefined)
-  assert.deepEqual(read(join(original, 'settings.json')).hooks.PreToolUse, [foreign])
+  assert.equal(read(join(original, 'settings.json')).hooks.SessionStart.length, 1)
+  assert.deepEqual(read(join(original, 'settings.json')).hooks.PreToolUse[0], foreign)
   assert.ok(existsSync(join(original, 'skills/ndev-work-light/SKILL.md')))
   assert.equal(read(first.manifest).profiles.claude.profile.config, join(profile, 'settings.json'))
   install('claude')
   env.CLAUDE_CONFIG_DIR = original
   install('claude')
   assert.equal(read(join(original, 'settings.json')).hooks.SessionStart.length, 1)
+  assert.equal(read(join(profile, 'settings.json')).hooks.SessionStart.length, 1)
   assert.ok(existsSync(join(profile, 'agents/ndev-diff-reviewer.md')))
+})
+
+test('Claude installs retain and repair assets and hooks in separate config homes', t => {
+  const { home, env, install } = fixture(t)
+  const first = install('claude')
+  const original = env.CLAUDE_CONFIG_DIR
+  const second = join(home, 'second-claude')
+  const third = join(home, 'third-claude')
+  env.CLAUDE_CONFIG_DIR = second
+  install('claude')
+  env.CLAUDE_CONFIG_DIR = third
+  install('claude')
+  for (const dir of [original, second, third]) {
+    assert.equal(read(join(dir, 'settings.json')).hooks.SessionStart.length, 1)
+    assert.ok(existsSync(join(dir, 'skills/ndev-work-light/SKILL.md')))
+    assert.ok(existsSync(join(dir, 'agents/ndev-diff-reviewer.md')))
+  }
+  rmSync(join(original, 'skills/ndev-work-light/SKILL.md'))
+  rmSync(join(second, 'settings.json'))
+  env.CLAUDE_CONFIG_DIR = original
+  install('claude')
+  assert.equal(read(first.manifest).profiles.claude.additionalInstalls.length, 2)
+  assert.ok(existsSync(join(original, 'skills/ndev-work-light/SKILL.md')))
+  assert.equal(read(join(second, 'settings.json')).hooks.SessionStart.length, 1)
+  for (const dir of [original, second, third]) {
+    env.CLAUDE_CONFIG_DIR = dir
+    assert.deepEqual(install('claude', '--dry-run').conflicts, [])
+  }
 })
 
 test('install refuses an identical hook without recorded ownership and gives its command and repair', t => {
