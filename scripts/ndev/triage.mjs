@@ -366,23 +366,29 @@ function restoreRejectedRun(root, state, env) {
   return true
 }
 
-function verifyRetry(root, state, group) {
+function verifyRetry(root, state, group, previousDispatch = group.dispatchId) {
   const workers = []
   const cursors = new Set()
   let cursor
   do {
     const listing = orca(root, state.host, ['orchestration', 'worker-list', '--run', state.runId, '--include-remote', '--limit', '100', ...(cursor ? ['--cursor', cursor] : []), '--full'])
-    if (!Array.isArray(listing.workers) || listing.truncated || listing.errors?.length || listing.remoteErrors?.length) throw failure(`Cannot verify all attempts of Task ${group.taskId} before retrying Dispatch ${group.dispatchId}.`, listing)
+    if (!Array.isArray(listing.workers) || listing.truncated || listing.errors?.length || listing.remoteErrors?.length) throw failure(`Cannot verify all attempts of Task ${group.taskId} before retrying Dispatch ${previousDispatch}.`, listing)
     if (listing.scope?.run && listing.scope.run !== state.runId) throw failure(`Orca returned workers for Run ${listing.scope.run}, expected ${state.runId}.`)
     workers.push(...listing.workers.filter(worker => worker.taskId === group.taskId))
-    cursor = listing.nextCursor
-    if (cursor && (!nonempty(cursor) || cursors.has(cursor))) throw failure(`Orca repeated or returned an invalid worker cursor for Run ${state.runId}.`)
-    if (cursor) cursors.add(cursor)
+    if (!object(listing.page) || typeof listing.page.hasMore !== 'boolean') throw failure(`Orca returned incomplete worker pagination for Run ${state.runId}.`, listing)
+    cursor = listing.page.nextCursor
+    if (listing.page.hasMore) {
+      if (!nonempty(cursor) || cursors.has(cursor)) throw failure(`Orca repeated or returned an invalid worker cursor for Run ${state.runId}.`)
+      cursors.add(cursor)
+    } else {
+      if (cursor != null) throw failure(`Orca returned a worker cursor with hasMore=false for Run ${state.runId}.`)
+      cursor = undefined
+    }
   } while (cursor)
-  const missing = !workers.some(worker => worker.dispatchId === group.dispatchId)
+  const missing = !workers.some(worker => worker.dispatchId === previousDispatch)
   const unsafe = workers.find(worker => worker.projection?.liveness?.verdict !== 'exited' || worker.terminalState !== 'released')
   if (missing || unsafe) {
-    const dispatch = unsafe?.dispatchId || group.dispatchId
+    const dispatch = unsafe?.dispatchId || previousDispatch
     throw new CliError(1, `Task ${group.taskId}: cannot retry Dispatch ${dispatch}; liveness ${unsafe?.projection?.liveness?.verdict || 'unverifiable'}, terminal ${unsafe?.terminalState || 'unobserved'}. The previous worker is not proven exited and released.`, {
       repair: `Run orca orchestration worker-show --dispatch ${dispatch} --json and follow its recovery. A failed state, stop_unknown or release_unknown does not prove exit. Preserve the worker; do not start a successor or close its terminal.`,
     })
@@ -495,6 +501,7 @@ function launch(root, state, retry = false, panelLaunch = false) {
       save(root, state)
       continue
     }
+    if (g.previousDispatch && !state.operations?.['worker-' + g.lead]) verifyRetry(root, state, g, g.previousDispatch)
     const reference = dependencies.find(group => group.prHead && group.prState === 'open')
     const cmd = ['orchestration', 'worker-start', '--task', g.taskId, '--run', state.runId, ...(state.remote ? ['--on', state.remote.id] : []), '--worktree', 'new-top-level', '--repo', state.remote?.repoSelector || 'path:' + state.main, '--name', `issue-${g.lead}`, '--agent', state.agent, '--model', g.model, '--effort', g.effort, ...(reference ? ['--base-branch', reference.prHead] : []), ...(g.previousDispatch ? ['--retry-of', g.previousDispatch] : []), '--full']
     try {

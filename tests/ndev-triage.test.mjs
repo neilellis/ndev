@@ -79,13 +79,13 @@ worker-start) if [ -n "$START_RECEIPT" ]; then printf '%s\n' "$START_RECEIPT"; e
 'orchestration worker-list')
   if [ -n "$WORKER_PAGED" ]; then
     case " $* " in
-      *' --cursor older '*) echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-old","terminalState":"active","projection":{"liveness":{"verdict":"alive"}}}]}}' ;;
-      *) echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-failed","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}}],"nextCursor":"older"}}' ;;
+      *' --cursor older '*) echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-old","terminalState":"active","projection":{"liveness":{"verdict":"alive"}}}],"page":{"hasMore":false}}}' ;;
+      *) echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-failed","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}}],"page":{"hasMore":true,"nextCursor":"older"}}}' ;;
     esac
     exit 0
   fi
   if [ -n "$WORKER_LIST" ]; then printf '%s\n' "$WORKER_LIST"; exit 0; fi
-  echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-failed","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}},{"taskId":"task-15","dispatchId":"d-15","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}}]}}' ;;
+  echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-failed","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}},{"taskId":"task-15","dispatchId":"d-15","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}}],"page":{"hasMore":false}}}' ;;
 'orchestration task-list') echo '{"ok":true,"result":{"tasks":[]}}' ;;
 'orchestration worker-show') if [ -n "$WORKER_SHOW" ]; then printf '%s\n' "$WORKER_SHOW"; exit 0; fi; if [ -n "$NATIVE_RECEIPT" ]; then
   echo '{"ok":true,"result":{"dispatch":{"status":"failed"},"worker":{"worktreeId":"w-15","state":"stopped","lastError":"Worker process stopped"},"projection":{"liveness":{"verdict":"exited"}}}}'
@@ -437,7 +437,7 @@ test('retry refuses an older Task attempt that is still live, even when the late
     { taskId: 'task-15', dispatchId: 'd-failed', terminalState: 'released', projection: { liveness: { verdict: 'exited' } } },
     { taskId: 'task-15', dispatchId: 'd-old', terminalState: 'active', projection: { liveness: { verdict: 'alive' } } },
   ]
-  const result = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers } }) })
+  const result = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers, page: { hasMore: false } } }) })
   assert.equal(result.status, 1)
   assert.match(result.error.message, /d-old.*alive/)
   assert.match(result.error.repair, /worker-show --dispatch d-old/)
@@ -449,7 +449,7 @@ test('retry refuses missing or unreleased worker evidence and preserves the fail
   for (const workers of [[], [{ taskId: 'task-15', dispatchId: 'd-failed', terminalState: 'release_unknown', projection: { liveness: { verdict: 'exited' } } }]]) {
     const p = planned(t)
     p.cli(['launch'], { START_FAIL: '1' })
-    const result = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers } }) })
+    const result = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers, page: { hasMore: false } } }) })
     assert.equal(result.status, 1)
     assert.equal(p.ok(['status']).groups[0].dispatchId, 'd-failed')
     assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
@@ -487,7 +487,7 @@ test('retry checks older worker pages and refuses repeated cursors', t => {
   assert.equal(paged.status, 1)
   assert.match(paged.error.message, /d-old.*alive/)
   assert.match(p.log(), /worker-list.*--cursor older/)
-  const repeated = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers: [], nextCursor: 'same' } }) })
+  const repeated = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers: [], page: { hasMore: true, nextCursor: 'same' } } }) })
   assert.equal(repeated.status, 1)
   assert.match(repeated.error.message, /cursor/)
   assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
@@ -503,5 +503,18 @@ test('paired execution serializes a requested batch instead of using coordinator
   const launched = p.ok(['launch'], { FAKE_LOAD: '150' })
   assert.equal(launched.groups[0].status, 'running')
   assert.equal(launched.groups[1].status, 'queued')
+  assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
+})
+
+test('a retry queued by host load rechecks worker exit before dispatching later', t => {
+  const p = planned(t)
+  p.cli(['launch'], { START_FAIL: '1' })
+  const queued = p.ok(['launch'], { FAKE_LOAD: '150' })
+  assert.equal(queued.groups[0].status, 'queued')
+  assert.equal(queued.groups[0].previousDispatch, 'd-failed')
+  const workers = [{ taskId: 'task-15', dispatchId: 'd-failed', terminalState: 'active', projection: { liveness: { verdict: 'alive' } } }]
+  const resumed = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers, page: { hasMore: false } } }) })
+  assert.equal(resumed.status, 1)
+  assert.match(resumed.error.message, /d-failed.*alive/)
   assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
 })
