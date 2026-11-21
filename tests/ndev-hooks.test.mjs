@@ -19,9 +19,9 @@ function fixture(t) {
   return root
 }
 
-function hook(root, harness, toolName, command) {
+function hook(root, harness, toolName, command, env = {}) {
   const result = spawnSync(ndev, ['hook', 'pre-tool-use', '--harness', harness], {
-    cwd: root, encoding: 'utf8',
+    cwd: root, encoding: 'utf8', env: { ...process.env, ...env },
     input: JSON.stringify({ session_id: 'fixture', cwd: root, tool_name: toolName, tool_input: { command } }),
   })
   assert.equal(result.status, 0, result.stderr)
@@ -450,4 +450,45 @@ console.log(JSON.stringify({ ok: true, result }))
   assert.deepEqual(retried, [...replay, '--retry-launch', 'replay-id'])
   assert.deepEqual(afterRefusal, incompatible)
   assert.equal(readFileSync(launches, 'utf8').trim().split('\n').length, 7)
+})
+
+test('commit refusal identifies the stale issue, PR state, record and repair for every harness', t => {
+  const root = fixture(t)
+  const path = join(root, '.neil-dev.issue-17.json')
+  writeFileSync(path, JSON.stringify({ version: 1, issue: 17, workflow: {
+    issue: 17, root, repo: 'o/r', state: 'ci', branch: 'topic', base: 'main', prs: [18],
+  } }))
+  const gh = join(root, 'gh.sh')
+  writeFileSync(gh, '#!/bin/sh\nprintf \'%s\\n\' \'{"number":18,"state":"closed","merged":true}\'\n')
+  for (const [harness, tool] of [['claude', 'Bash'], ['codex', 'exec_command'], ['opencode', 'shell']]) {
+    const decision = hook(root, harness, tool, 'git commit -m next', { NDEV_FLOW_GH: gh })
+    const reason = decision?.hookSpecificOutput?.permissionDecisionReason ?? decision?.reason
+    assert.equal(decision?.hookSpecificOutput?.permissionDecision ?? decision?.decision, 'deny')
+    assert.match(reason, /Issue #17.*PR #18.*merged/s)
+    assert.ok(reason.includes(path), reason)
+    assert.match(reason, /ndev flow off --pr 18/)
+    assert.doesNotMatch(reason, /ndev flow checkpoint/)
+  }
+})
+
+test('commit refusals distinguish open, unavailable and invalid PR state without allowing Git', t => {
+  const root = fixture(t)
+  writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({ version: 1, issue: 17, workflow: {
+    issue: 17, root, repo: 'o/r', state: 'ci', branch: 'topic', base: 'main', prs: [18],
+  } }))
+  const gh = join(root, 'gh.sh')
+  for (const [body, expected] of [
+    ['printf \'%s\\n\' \'{"number":18,"state":"open","merged":false}\'', /PR #18 state open/],
+    ['echo "PR lookup denied" >&2\nexit 37', /PR #18 state unverified.*exited 37: PR lookup denied/],
+    ['echo "not json"', /PR #18 state unverified.*invalid JSON.*not json/s],
+    ['echo \'{"number":99,"state":"closed","merged":true}\'', /PR #18 state unverified.*returned PR #99/],
+    ['echo \'{"number":18,"state":"open","merged":"false"}\'', /PR #18 state unverified/],
+  ]) {
+    writeFileSync(gh, `#!/bin/sh\n${body}\n`)
+    const decision = hook(root, 'codex', 'exec_command', 'git push origin topic', { NDEV_FLOW_GH: gh })
+    assert.equal(decision?.hookSpecificOutput?.permissionDecision, 'deny')
+    const reason = decision.hookSpecificOutput.permissionDecisionReason
+    assert.match(reason, expected)
+    assert.doesNotMatch(reason, /state merged/)
+  }
 })

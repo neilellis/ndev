@@ -1353,8 +1353,13 @@ function repairFlow(root: string, config: Config, args: Args) {
   const repo = resolveRepo(root, config)
   const held = readRecord(root, issue)
   const records = publicCli!.readWorkflowRecords(root) as Workflow[]
-  const shared = records.find(wf => wf.pr && (wf.issue === issue || wf.issues?.includes(issue)))
-  if (shared) throw new Fail(1, `Issue #${issue} belongs to shared PR #${shared.pr}. Finish that shared workflow before repairing its association. Nothing was rebound.`)
+  const shared = records.filter(wf => wf.pr && (wf.issue === issue || wf.issues?.includes(issue)))
+  for (const prior of shared) {
+    if (!prior.off) throw new Fail(1, `Issue #${issue} belongs to shared PR #${prior.pr}. Finish that shared workflow before repairing its association. Nothing was rebound.`)
+    const pr = readPr(prior, prior.pr)
+    if (pr.number !== prior.pr || pr.merged !== undefined && typeof pr.merged !== 'boolean' || pr.merged !== true && pr.state !== 'closed') throw new Fail(1, `Shared PR #${prior.pr} is not confirmed closed or merged. Leave its association intact.`)
+    repairOwner(prior, args)
+  }
   if (held && (resolve(held.root) !== root || held.repo.toLowerCase() !== repo.toLowerCase() || held.pr || held.prs.length > 1 || held.op || held.state === 'wait')) {
     throw new Fail(1, `Issue #${issue} has a shared, pending, waiting or mismatched workflow in ${held.root}; repair it there after its operation finishes. Nothing was rebound.`)
   }
@@ -1364,7 +1369,7 @@ function repairFlow(root: string, config: Config, args: Args) {
   if (held?.off) throw new Fail(1, `Workflow of #${issue} is off: ${held.off.reason}. Run ndev flow on --issue ${issue} before repairing it.`)
   if ((args.mode || held?.mode || config.mode) === 'hack' && (held?.steering || config.steering) === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
   if (held) repairOwner(held, args)
-  const foreign = records.find(wf => wf.issue !== issue && !['done', 'setup'].includes(wf.state) && !wf.off)
+  const foreign = (publicCli!.effectiveWorkflowRecords(root) as Workflow[]).find(wf => wf.issue !== issue && !['done', 'setup'].includes(wf.state) && !wf.off)
   if (foreign) throw new Fail(1, `Issue #${foreign.issue} already uses ${root}. Finish that workflow before repairing #${issue}.`)
   const info = ghJson<{ title: string; state: string }>(root, repo, ['issue-read', String(issue)])
   if (info.state !== 'open') throw new Fail(1, `Issue #${issue} is ${info.state}; reopen it before repairing its PR association.`)
@@ -1449,9 +1454,27 @@ function publicStart(root: string, config: Config, args: Args, hotfix: boolean) 
     if (!wf.prs.length) { save(wf); setUpPr(wf, info.title); save(wf) }
     return report(wf, config, [`Hotfix #${issue} uses its own worktree ${target} and draft PR ${prUrl(wf)}.`])
   }
+  const held = publicCli!.effectiveWorkflowRecords(target) as Workflow[]
+  const currentPr = readRecord(target, issue)?.prs?.[0]
+  for (const carrier of held.filter(record => record.pr || record.prs?.length)) {
+    const number = carrier.pr || carrier.prs[0]
+    const associated = number === currentPr && (carrier.issue === issue || carrier.issues?.includes(issue))
+    if (associated ? info.state !== 'open' : carrier.off || carrier.state === 'done') continue
+    const path = issueFile(target, carrier.issue)
+    let pr: Pr
+    try { pr = readPr(carrier, number) }
+    catch (error) { throw new Fail(1, `Cannot inspect Issue #${carrier.issue}, PR #${number}, record ${path}: ${(error as Error).message}. Repair: inspect that PR before retrying ndev flow start ${issue}.`) }
+    if (pr.number !== number || !['open', 'closed'].includes(pr.state) || pr.merged !== undefined && typeof pr.merged !== 'boolean') throw new Fail(1, `Issue #${carrier.issue}, PR #${number}, record ${path}: GitHub returned PR #${pr.number} in state ${JSON.stringify(pr.state)}. Repair: inspect that PR before retrying.`)
+    if (pr.merged || pr.state === 'closed') {
+      const sameIssue = carrier.issue === issue || carrier.issues?.includes(issue)
+      const enable = !carrier.pr && carrier.off ? `ndev flow on --issue ${issue}, then ` : ''
+      const disable = !sameIssue || carrier.pr && !carrier.off ? `ndev flow off --pr ${number}, then ` : ''
+      const repair = sameIssue ? `${disable}${enable}ndev flow repair --issue ${issue} --pr <new-open-pr>` : `${disable}ndev flow start ${issue}`
+      throw new Fail(1, `Issue #${carrier.issue} still has PR #${number} (${pr.merged ? 'merged' : 'closed'}) in ${path}. Nothing changed.${sameIssue ? ` Reopened issue #${issue} needs a new open PR that closes it before repairing the association.` : ''} Repair: run ${repair} in ${target}. The on/off commands require confirmation and preserve the record.`)
+    }
+  }
   if (!existing) {
-    const held = publicCli!.readWorkflowRecords(target) as Workflow[]
-    const foreign = held.filter(record => record.state !== 'done').map(ownedElsewhere).find(Boolean)
+    const foreign = held.filter(record => !record.off && record.state !== 'done').map(ownedElsewhere).find(Boolean)
     if (foreign) throw new Fail(1, foreign)
   }
   const result = started(target, config, args)

@@ -45,6 +45,13 @@ export function readWorkflowRecords(root) {
   })
 }
 
+export function effectiveWorkflowRecords(root) {
+  const records = readWorkflowRecords(root)
+  return [...new Set(records.map(record => (record.state === 'developed' && !record.pr
+    ? records.find(pr => pr.pr === record.prs?.[0] && pr.state !== 'developing')
+    : undefined) ?? record))]
+}
+
 function findRecord(all, { issue, pr }) {
   if (pr !== undefined) return all.find(record => record.pr === pr) ?? all.find(record => record.prs?.includes(pr))
   if (issue !== undefined) {
