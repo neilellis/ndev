@@ -106,3 +106,9 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `export.mjs` | Copies the skills, agents, scripts and `kb/` for another agent harness, with a generated stamp on each file. It rewrites the Claude-only paths and tool calls, writes `manifest.json` and `leftovers.json`, and refuses to overwrite a file that it did not generate (exit 3). Prints a JSON summary. Tests: `node --test scripts/export/tests/export.test.mjs`. | `hooks/export.ts` (`/dev export`) |
 | `harnesses/*.json` | One profile for each known harness: its skills and agents folders, agent format, review command, verify command and notes. | `export.mjs` |
 | `flow/cli.ts` | The source of `ndev-flow`, the workflow CLI of an export. It imports the copied `machine.ts` and `change-types.ts`. Tests: `node --test scripts/export/tests/flow.test.mjs`. | `export.mjs` (copied to `<home>/flow/`) |
+
+## ndev/workflow/
+
+| Script | Purpose | Used by |
+|---|---|---|
+| `check-plugin-version.mjs` | Rejects committed plugin asset changes after the latest version bump. Requires complete Git history. Tests: `node --test tests/ndev-plugin-version.test.mjs`. | `pre-push-check.sh`, CI |
