@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { availableParallelism, loadavg, platform } from 'node:os'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, run, stateRoot } from './common.mjs'
 import { confirmPanelAction, publishPanel, renderPanel } from './panes.mjs'
 import { readProject } from './project.mjs'
@@ -241,6 +242,7 @@ function triageData(state) {
   const sections = []
   const section = (title, rows) => { if (rows.length) sections.push({ title, rows }) }
   if (state.phase === 'grouping') section('Issues to group', state.issues.map(i => ({ label: '#' + i.number, value: i.title })))
+  if (state.admission?.reason) section('Admission', [{ label: 'Waiting for host capacity', value: state.admission.reason }])
   section('Groups', state.groups.map(g => ({ label: g.issues.map(n => '#' + n).join(', '), value: [g.title, g.status, g.pr && 'PR #' + g.pr, g.error, g.stalled && 'Worker needs attention'].filter(Boolean).join(' · ') })))
   section('Clean evidence', (chunk || []).map(i => ({ label: '#' + i.number, value: JSON.stringify(i) })))
   section('Clean decisions', (state.verdicts || []).map(v => ({ label: '#' + v.issue, value: [v.verdict, v.confidence, v.evidence, v.decision].filter(Boolean).join(' · ') })))
@@ -364,11 +366,43 @@ function restoreRejectedRun(root, state, env) {
   return true
 }
 
+function verifyRetry(root, state, group) {
+  const workers = []
+  const cursors = new Set()
+  let cursor
+  do {
+    const listing = orca(root, state.host, ['orchestration', 'worker-list', '--run', state.runId, '--include-remote', '--limit', '100', ...(cursor ? ['--cursor', cursor] : []), '--full'])
+    if (!Array.isArray(listing.workers) || listing.truncated || listing.errors?.length || listing.remoteErrors?.length) throw failure(`Cannot verify all attempts of Task ${group.taskId} before retrying Dispatch ${group.dispatchId}.`, listing)
+    if (listing.scope?.run && listing.scope.run !== state.runId) throw failure(`Orca returned workers for Run ${listing.scope.run}, expected ${state.runId}.`)
+    workers.push(...listing.workers.filter(worker => worker.taskId === group.taskId))
+    cursor = listing.nextCursor
+    if (cursor && (!nonempty(cursor) || cursors.has(cursor))) throw failure(`Orca repeated or returned an invalid worker cursor for Run ${state.runId}.`)
+    if (cursor) cursors.add(cursor)
+  } while (cursor)
+  const missing = !workers.some(worker => worker.dispatchId === group.dispatchId)
+  const unsafe = workers.find(worker => worker.projection?.liveness?.verdict !== 'exited' || worker.terminalState !== 'released')
+  if (missing || unsafe) {
+    const dispatch = unsafe?.dispatchId || group.dispatchId
+    throw new CliError(1, `Task ${group.taskId}: cannot retry Dispatch ${dispatch}; liveness ${unsafe?.projection?.liveness?.verdict || 'unverifiable'}, terminal ${unsafe?.terminalState || 'unobserved'}. The previous worker is not proven exited and released.`, {
+      repair: `Run orca orchestration worker-show --dispatch ${dispatch} --json and follow its recovery. A failed state, stop_unknown or release_unknown does not prove exit. Preserve the worker; do not start a successor or close its terminal.`,
+    })
+  }
+}
+
+function admission(state) {
+  if (state.remote || state.host !== 'local' || platform() === 'win32') return { capacity: 1 }
+  const load = loadavg()[0]
+  const cores = availableParallelism()
+  if (!Number.isFinite(load) || load < 0 || !positive(cores)) throw failure(`Cannot read local host load: load=${load}, cores=${cores}.`)
+  return { capacity: state.batch, ...(load > cores && { reason: `Host load ${load} exceeds ${cores} CPU cores. No new worker starts. Run ndev triage launch after the host load falls.` }) }
+}
+
 function launch(root, state, retry = false, panelLaunch = false) {
   restoreRejectedRun(root, state)
   const failed = state.groups.filter(group => group.status === 'failed')
   expectPhase(state, retry && failed.length ? ['planned', 'running', 'done'] : ['planned', 'running'])
   if (retry && failed.length) {
+    for (const group of failed) if (group.dispatchId && !recordedRequest(state.operations?.['worker-' + group.lead])) verifyRetry(root, state, group)
     state.phase = 'running'
     for (const group of failed) {
       const key = 'worker-' + group.lead
@@ -438,7 +472,16 @@ function launch(root, state, retry = false, panelLaunch = false) {
       delete g.blockReason
       delete g.error
     }
-    if (g.status !== 'queued' || state.groups.filter(group => group.status === 'running').length >= state.batch) continue
+    if (g.status !== 'queued') continue
+    const admitted = admission(state)
+    if (admitted.reason) {
+      state.admission = admitted
+      note(state, admitted.reason)
+      save(root, state)
+      break
+    }
+    delete state.admission
+    if (state.groups.filter(group => group.status === 'running').length >= admitted.capacity) continue
     if (impeded) {
       Object.assign(g, { status: 'blocked', blockReason: 'dependency', error: 'A predecessor failed.' })
       save(root, state)
@@ -466,7 +509,16 @@ function launch(root, state, retry = false, panelLaunch = false) {
       const receipt = error.details?.receipt?.result
       g.status = 'failed'
       g.error = error.message
-      if (receipt?.dispatchId) g.dispatchId = receipt.dispatchId
+      if (receipt?.dispatchId) {
+        g.dispatchId = receipt.dispatchId
+        const verdict = receipt.projection?.liveness?.verdict
+        if (verdict !== 'exited') {
+          g.status = 'running'
+          g.stalled = true
+          g.lifecycleConflict = true
+          g.error += ` Dispatch ${g.dispatchId} has liveness ${verdict || 'unverifiable'}; inspect orca orchestration worker-show --dispatch ${g.dispatchId} --json before recovery.`
+        }
+      }
       const worktree = launchedWorktree(receipt)
       if (nonempty(worktree)) {
         g.worktree = worktree
@@ -514,12 +566,26 @@ function refresh(root, state) {
     const before = g.status
     const activity = Date.parse(receipt.worker?.updatedAt ?? receipt.updatedAt ?? '') || Number(receipt.lastActivityAt) || g.lastActivity
     if (activity) g.lastActivity = activity
+    if (g.lifecycleConflict) {
+      delete g.lifecycleConflict
+      delete g.error
+      delete g.stalled
+    }
     const workerStates = [receipt.dispatch?.status, receipt.worker?.state, receipt.state]
     if (['complete', 'completed', 'done', 'succeeded'].includes(task?.status) || workerStates.some(status => ['completed', 'done', 'succeeded', 'finished'].includes(status))) g.status = 'done'
     else if (['failed', 'cancelled', 'blocked'].includes(task?.status) || workerStates.some(status => ['failed', 'cancelled', 'lost', 'abandoned', 'stopped'].includes(status))) {
-      g.status = 'failed'
-      g.error = receipt.worker?.lastError || receipt.lastError ||
-        `Orca dispatch ${g.dispatchId} reported ${[...workerStates, task?.status].filter(Boolean).join(', ')}.`
+      const verdict = receipt.projection?.liveness?.verdict
+      const detail = receipt.worker?.lastError || receipt.lastError || [...workerStates, task?.status].filter(Boolean).join(', ')
+      if (verdict === 'exited') {
+        g.status = 'failed'
+        g.error = detail
+        delete g.lifecycleConflict
+      } else {
+        g.status = 'running'
+        g.stalled = true
+        g.lifecycleConflict = true
+        g.error = `Dispatch ${g.dispatchId}: ${detail}; liveness ${verdict || 'unverifiable'}. Inspect orca orchestration worker-show --dispatch ${g.dispatchId} --json before any recovery.`
+      }
     }
     if (before !== g.status) { g.lastActivity = Date.now(); note(state, `#${g.lead} is ${g.status}.`) }
     if (g.status === 'running' && !g.stalled && (receipt.projection?.liveness?.verdict === 'exited' || Date.now() - g.lastActivity >= 30 * 60_000)) {
@@ -550,7 +616,7 @@ async function begin(root, old, argv, clean) {
   if (options.batch && options.sequential) throw input('--batch conflicts with --sequential.')
   if (options.since) options.since = integer(options.since, '--since')
   const remote = options.remote === undefined ? undefined : await (await import('./remote.mjs')).resolveRemote(options.remote, { root, repo })
-  const state = { ...idle(), root, revision: old.revision, repo, host: localHost(), remote, options, agent: options.codex ? 'codex' : 'claude', batch: options.sequential ? 1 : options.batch ? integer(options.batch, '--batch') : 5 }
+  const state = { ...idle(), root, revision: old.revision, repo, host: localHost(), remote, options, agent: options.codex ? 'codex' : 'claude', batch: options.sequential ? 1 : options.batch ? integer(options.batch, '--batch') : 1 }
   state.main = checked('git', ['worktree', 'list', '--porcelain', '-z'], { cwd: root }).split('\0')[0].slice(9)
   const spaces = workspaces(root, state)
   const all = issuesFor(root, state, config.github.board, clean)

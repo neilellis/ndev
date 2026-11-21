@@ -26,6 +26,9 @@ function project(t) {
   git('push', '-qu', 'origin', 'main')
   writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ github: { repo: 'test/project', board: null } }))
   const input = join(root, 'input.json')
+  const metrics = join(root, 'metrics.mjs')
+  writeFileSync(metrics, `import os from 'node:os'; import { syncBuiltinESMExports } from 'node:module'; os.loadavg = () => [Number(process.env.FAKE_LOAD || 0), 0, 0]; os.availableParallelism = () => 10; syncBuiltinESMExports();`)
+  env.NODE_OPTIONS = '--import=' + metrics
   function fixture(name, script) {
     const path = join(localBin, name)
     writeFileSync(path, '#!/bin/sh\necho "' + name + ' $*" >> "$FAKE_LOG"\n' + script)
@@ -70,14 +73,24 @@ fi; if [ -n "$OWN_20" ]; then echo '{"ok":true,"result":{"worktrees":[{"id":"w20
   case "$2" in
 run-create) echo '{"ok":true,"result":{"run":{"id":"run-15"}}}' ;;
 task-create) echo '{"ok":true,"result":{"task":{"id":"task-15"}}}' ;;
-worker-start) if [ -n "$START_UNKNOWN" ]; then echo '{"ok":false,"error":{"message":"lost response","data":{"orchestrationRequestId":"req-15"}}}'; exit 1; fi; if [ -n "$START_FAIL" ]; then echo '{"ok":true,"result":{"state":"failed","failedStage":"agent","lastError":"agent refused","dispatchId":"d-failed"}}'; exit 1; fi; echo '{"ok":true,"result":{"state":"ready","dispatchId":"d-15","effects":[{"kind":"worktree","id":"w-15"}]}}' ;;
+worker-start) if [ -n "$START_RECEIPT" ]; then printf '%s\n' "$START_RECEIPT"; exit 1; fi; if [ -n "$START_UNKNOWN" ]; then echo '{"ok":false,"error":{"message":"lost response","data":{"orchestrationRequestId":"req-15"}}}'; exit 1; fi; if [ -n "$START_FAIL" ]; then echo '{"ok":true,"result":{"state":"failed","failedStage":"agent","lastError":"agent refused","dispatchId":"d-failed","projection":{"liveness":{"verdict":"exited"}}}}'; exit 1; fi; echo '{"ok":true,"result":{"state":"ready","dispatchId":"d-15","effects":[{"kind":"worktree","id":"w-15"}]}}' ;;
   esac ;;
 'orchestration request-show') echo '{"ok":true,"result":{"state":"completed"}}' ;;
+'orchestration worker-list')
+  if [ -n "$WORKER_PAGED" ]; then
+    case " $* " in
+      *' --cursor older '*) echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-old","terminalState":"active","projection":{"liveness":{"verdict":"alive"}}}]}}' ;;
+      *) echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-failed","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}}],"nextCursor":"older"}}' ;;
+    esac
+    exit 0
+  fi
+  if [ -n "$WORKER_LIST" ]; then printf '%s\n' "$WORKER_LIST"; exit 0; fi
+  echo '{"ok":true,"result":{"workers":[{"taskId":"task-15","dispatchId":"d-failed","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}},{"taskId":"task-15","dispatchId":"d-15","terminalState":"released","projection":{"liveness":{"verdict":"exited"}}}]}}' ;;
 'orchestration task-list') echo '{"ok":true,"result":{"tasks":[]}}' ;;
-'orchestration worker-show') if [ -n "$NATIVE_RECEIPT" ]; then
-  echo '{"ok":true,"result":{"dispatch":{"status":"failed"},"worker":{"worktreeId":"w-15","state":"stopped","lastError":"Worker process stopped"}}}'
+'orchestration worker-show') if [ -n "$WORKER_SHOW" ]; then printf '%s\n' "$WORKER_SHOW"; exit 0; fi; if [ -n "$NATIVE_RECEIPT" ]; then
+  echo '{"ok":true,"result":{"dispatch":{"status":"failed"},"worker":{"worktreeId":"w-15","state":"stopped","lastError":"Worker process stopped"},"projection":{"liveness":{"verdict":"exited"}}}}'
   exit 0
-fi; if [ -n "$WORKER_FAILED" ]; then echo '{"ok":true,"result":{"state":"failed","lastError":"lost worker"}}'; exit 0; fi; echo '{"ok":true,"result":{"state":"completed","pr":55}}' ;;
+fi; if [ -n "$WORKER_FAILED" ]; then echo '{"ok":true,"result":{"state":"failed","lastError":"lost worker","projection":{"liveness":{"verdict":"exited"}}}}'; exit 0; fi; echo '{"ok":true,"result":{"state":"completed","pr":55}}' ;;
 'orchestration inbox') if [ -n "$NATIVE_RECEIPT" ]; then
   echo '{"ok":true,"result":{"messages":[{"id":"q1","run_id":"run-15","thread_id":"q1","from_handle":"worker","to_handle":"coordinator","type":"question","body":"Which fixture should I use?"},{"id":"q2","run_id":"run-15","thread_id":"q2","from_handle":"worker","to_handle":"coordinator","type":"question","body":"Can I proceed?"},{"id":"r2","run_id":"run-15","thread_id":"q2","from_handle":"coordinator","to_handle":"worker","type":"status","body":"Yes."},{"id":"q3","run_id":"another-run","thread_id":"q3","from_handle":"worker","to_handle":"coordinator","type":"question","body":"Unrelated question"}]}}'
   exit 0
@@ -395,4 +408,100 @@ test('opening the pane restores a plan wedged by the old missing-sender error', 
   assert.ok(snapshot.data.actions.some(action => action.id === 'triage.launch'))
   assert.equal(p.ok(['status']).operations.run, undefined)
   assert.doesNotMatch(p.log(), /run-create|worker-start/)
+})
+
+function planned(t, options = []) {
+  const p = project(t)
+  p.ok(['start', '--dry-run', '--open', ...options])
+  p.json({ groups: [group([12]), group([15, 20])] })
+  p.ok(['groups', '--file', p.input])
+  return p
+}
+
+test('a failed Orca dispatch with a live or uncertain process keeps its slot and needs attention', t => {
+  for (const verdict of ['alive', 'unverifiable', undefined]) {
+    const p = planned(t, ['--batch', '1'])
+    p.ok(['launch'])
+    const state = p.ok(['refresh'], { WORKER_SHOW: JSON.stringify({ ok: true, result: { state: 'failed', lastError: 'startup deadline', projection: { liveness: { verdict } } } }) })
+    assert.equal(state.groups[0].status, 'running')
+    assert.equal(state.groups[0].stalled, true)
+    assert.match(state.groups[0].error, /d-15.*startup deadline/)
+    assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
+  }
+})
+
+test('retry refuses an older Task attempt that is still live, even when the latest exited', t => {
+  const p = planned(t)
+  p.cli(['launch'], { START_FAIL: '1' })
+  const workers = [
+    { taskId: 'task-15', dispatchId: 'd-failed', terminalState: 'released', projection: { liveness: { verdict: 'exited' } } },
+    { taskId: 'task-15', dispatchId: 'd-old', terminalState: 'active', projection: { liveness: { verdict: 'alive' } } },
+  ]
+  const result = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers } }) })
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /d-old.*alive/)
+  assert.match(result.error.repair, /worker-show --dispatch d-old/)
+  assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
+  assert.doesNotMatch(p.log(), /worker-stop|worker-release|terminal close/)
+})
+
+test('retry refuses missing or unreleased worker evidence and preserves the failed dispatch', t => {
+  for (const workers of [[], [{ taskId: 'task-15', dispatchId: 'd-failed', terminalState: 'release_unknown', projection: { liveness: { verdict: 'exited' } } }]]) {
+    const p = planned(t)
+    p.cli(['launch'], { START_FAIL: '1' })
+    const result = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers } }) })
+    assert.equal(result.status, 1)
+    assert.equal(p.ok(['status']).groups[0].dispatchId, 'd-failed')
+    assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
+  }
+})
+
+test('triage defaults to one worker and defers an overloaded local launch without losing the plan', t => {
+  const p = planned(t)
+  const held = p.ok(['launch'], { FAKE_LOAD: '150' })
+  assert.equal(held.groups[0].status, 'queued')
+  assert.match(held.admission.reason, /150.*10/)
+  assert.doesNotMatch(p.log(), /orca orchestration worker-start/)
+  const resumed = p.ok(['launch'], { FAKE_LOAD: '10' })
+  assert.equal(resumed.groups[0].status, 'running')
+  assert.equal(resumed.groups[1].status, 'queued')
+  assert.equal(resumed.admission, undefined)
+})
+
+test('a failed start receipt with live worker evidence retains the occupied slot', t => {
+  const p = planned(t)
+  const result = p.cli(['launch'], { START_RECEIPT: JSON.stringify({ ok: true, result: { state: 'failed', dispatchId: 'd-live', lastError: 'readiness elapsed', projection: { liveness: { verdict: 'alive' } } } }) })
+  assert.equal(result.status, 1)
+  const state = p.ok(['status'])
+  assert.equal(state.groups[0].status, 'running')
+  assert.equal(state.groups[0].dispatchId, 'd-live')
+  assert.equal(state.groups[0].stalled, true)
+  p.ok(['launch'])
+  assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
+})
+
+test('retry checks older worker pages and refuses repeated cursors', t => {
+  const p = planned(t)
+  p.cli(['launch'], { START_FAIL: '1' })
+  const paged = p.cli(['launch'], { WORKER_PAGED: '1' })
+  assert.equal(paged.status, 1)
+  assert.match(paged.error.message, /d-old.*alive/)
+  assert.match(p.log(), /worker-list.*--cursor older/)
+  const repeated = p.cli(['launch'], { WORKER_LIST: JSON.stringify({ ok: true, result: { workers: [], nextCursor: 'same' } }) })
+  assert.equal(repeated.status, 1)
+  assert.match(repeated.error.message, /cursor/)
+  assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
+})
+
+test('paired execution serializes a requested batch instead of using coordinator load', t => {
+  const p = planned(t, ['--batch', '5'])
+  const key = createHash('sha256').update(p.root).digest('hex')
+  const file = join(p.env.XDG_STATE_HOME, 'ndev', 'triage', key + '.json')
+  const state = JSON.parse(readFileSync(file, 'utf8'))
+  state.host = 'paired-host'
+  writeFileSync(file, JSON.stringify(state))
+  const launched = p.ok(['launch'], { FAKE_LOAD: '150' })
+  assert.equal(launched.groups[0].status, 'running')
+  assert.equal(launched.groups[1].status, 'queued')
+  assert.equal(p.log().match(/orca orchestration worker-start/g).length, 1)
 })
