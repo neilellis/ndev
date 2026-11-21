@@ -28,6 +28,6 @@ Tests of the hook budget call the real registered tool handler through `tests/wo
 
 Run `node scripts/ndev/workflow/check-plugin-version.mjs` after you commit. Pre-push checks and CI run the same command. It checks the committed tree, with complete Git history. A shallow clone must run `git fetch --unshallow` first.
 
-The guard compares plugin assets at HEAD with the latest version change on the first-parent history. Changes to manifest metadata do not count as a version change. The version must increase. After another asset change, raise the patch version and commit it with the changed assets.
+The guard compares plugin assets at HEAD with the latest version change on the first-parent history. Changes to manifest metadata do not count as a version change. The version must exceed every earlier version on that history, so a downgrade cannot permit reuse of a published version. After another asset change, raise the patch version and commit it with the changed assets.
 
 Plugin assets are `.claude-plugin/`, `hooks/`, `skills/`, `agents/`, `scripts/`, `kb/`, `templates/`, `types/`, `README.md` and `tsconfig.json`. Tests, CI configuration, development docs and native CLI files outside these paths do not require a plugin version bump.

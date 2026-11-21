@@ -120,3 +120,16 @@ test('pre-push reports the failed manifest identifier and Git output', t => {
   assert.match(result.stderr, /HEAD:\.claude-plugin\/plugin.json/)
   assert.match(result.stderr, /exited 128.*fatal:/s)
 })
+
+test('a downgrade and restoration cannot reuse the published version', t => {
+  const f = fixture(t)
+  f.version('1.2.2')
+  f.commit()
+  f.put('hooks/index.ts', 'changed')
+  f.version('1.2.3')
+  f.commit()
+  const result = f.check()
+  assert.equal(result.status, 1, result.stdout + result.stderr)
+  assert.match(result.stderr, /1\.2\.3/)
+  assert.match(result.stderr, /raise the patch version/i)
+})

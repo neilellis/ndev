@@ -31,16 +31,20 @@ function check() {
   const history = git('log', '--first-parent', '--format=%H', 'HEAD', '--', manifest).trim().split('\n').filter(Boolean)
   if (!history.length) throw new Error(`${manifest} has no committed history.`)
   let anchor = history[0]
+  let foundEarlierVersion = false
+  const nextParts = current.split('.').map(BigInt)
   for (const commit of history.slice(1)) {
     const previous = versionAt(commit)
-    if (previous !== current) {
-      const nextParts = current.split('.').map(BigInt)
-      const oldParts = previous.split('.').map(BigInt)
-      const differing = nextParts.findIndex((value, index) => value !== oldParts[index])
-      if (nextParts[differing] < oldParts[differing]) throw new Error(`${manifest} version ${current} is lower than ${previous} at ${commit}. Repair: raise the patch version above ${previous}.`)
-      break
+    if (!foundEarlierVersion && previous === current) {
+      anchor = commit
+      continue
     }
-    anchor = commit
+    foundEarlierVersion = true
+    const oldParts = previous.split('.').map(BigInt)
+    const differing = nextParts.findIndex((value, index) => value !== oldParts[index])
+    if (differing === -1 || nextParts[differing] < oldParts[differing]) {
+      throw new Error(`${manifest} version ${current} does not exceed earlier version ${previous} at ${commit}. Repair: raise the patch version above ${previous}.`)
+    }
   }
   const changed = git('diff', '--name-only', '-z', anchor, 'HEAD', '--', ...assets).split('\0').filter(Boolean)
   if (changed.length) {
