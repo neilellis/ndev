@@ -932,7 +932,8 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   let neighbour: Workflow | undefined
   if (!wf && active && !active.direct && (active.state !== 'done' || active.prs[0])) {
     const isMine = active.owner?.session === session || (!active.owner && active.lastSession === session) || args.takeOver === true
-    if (isMine) joined = active
+    if (isMine && active.branch !== branchHere) throw new Refuse(`Refused: ${root} is on ${branchHere}, and ${whoOf(active)} of this session is on ${active.branch} here, so issue #${issue} cannot join its PR. Nothing changed. Repair: git switch ${active.branch} and call started again to join that PR, or start #${issue} from the main checkout, which claims its own worktree.`)
+    else if (isMine) joined = active
     else if (active.state !== 'done') throw new Refuse(`Refused: ${whoOf(active)} in ${active.root} belongs to the session ${active.owner?.session ?? active.lastSession ?? 'of another agent'}, and issue #${issue} would join its PR. Nothing changed. Repair: start #${issue} from the main checkout, which claims its own worktree. If that session is dead, call started with takeOver true.`)
     else if (!info.isMain) neighbour = active
   }
