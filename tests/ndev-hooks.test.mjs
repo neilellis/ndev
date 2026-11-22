@@ -493,3 +493,26 @@ test('commit refusals distinguish open, unavailable and invalid PR state without
     assert.doesNotMatch(reason, /state merged/)
   }
 })
+
+test('the ci check wait is refused only while this session has a live ndev watch', t => {
+  const root = fixture(t)
+  const state = mkdtempSync(join(tmpdir(), 'ndev-hook-state-'))
+  t.after(() => rmSync(state, { recursive: true, force: true }))
+  writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({ version: 1, issue: 17, workflow: {
+    issue: 17, root, repo: 'o/r', state: 'ci', branch: 'topic', base: 'main', prs: [18],
+  } }))
+  const env = { XDG_STATE_HOME: state, ORCA_AGENT_SESSION_ID: 'fixture' }
+  const wait = '/x/scripts/github/wait-for-pr-change.sh 18 --skip-success --json'
+  const unwatched = hook(root, 'claude', 'Bash', wait, env)
+  assert.notEqual(unwatched?.hookSpecificOutput?.permissionDecision, 'deny', JSON.stringify(unwatched))
+  const watchFile = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import { realpathSync } from 'node:fs'; import { hookSessionFile } from ${JSON.stringify(new URL('../scripts/ndev/hooks.mjs', import.meta.url).href)}; console.log(hookSessionFile(realpathSync(process.argv[1]), 'fixture').replace(/\\.json$/, '.watch.json'))`, root,
+  ], { encoding: 'utf8', env: { ...process.env, ...env } })
+  assert.equal(watchFile.status, 0, watchFile.stderr)
+  const file = watchFile.stdout.trim()
+  mkdirSync(join(file, '..'), { recursive: true })
+  writeFileSync(file, JSON.stringify({ root, session: 'fixture', pid: process.pid }))
+  const watched = hook(root, 'claude', 'Bash', wait, env)
+  assert.equal(watched?.hookSpecificOutput?.permissionDecision, 'deny')
+  assert.match(watched.hookSpecificOutput.permissionDecisionReason, /ndev watch reads these checks/)
+})
