@@ -2,8 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
-import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, run } from './common.mjs'
-import { currentWorkflow, hookSessionFile, workflowRootFor } from './hooks.mjs'
+import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run } from './common.mjs'
+import { currentWorkflow, hookSessionFile, watcherState, workflowRootFor } from './hooks.mjs'
 import { readProject } from './project.mjs'
 import { recoverDeadWaits } from './waits.mjs'
 import { activeEpic } from './epic.mjs'
@@ -43,21 +43,6 @@ function orca(args, root) {
     })
   }
   return receipt.result
-}
-
-function watcherState(root, id) {
-  return hookSessionFile(root, id).replace(/\.json$/, '.watch.json')
-}
-
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    if (error.code === 'ESRCH') return false
-    if (error.code === 'EPERM') return true
-    throw error
-  }
 }
 
 function changeState(file, update) {

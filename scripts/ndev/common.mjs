@@ -115,3 +115,14 @@ export function atomicJson(file, data) {
 export function stateRoot(env = process.env) {
   return join(resolve(env.XDG_STATE_HOME || join(env.HOME || homedir(), '.local/state')), 'ndev')
 }
+
+export function isAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    if (error.code === 'EPERM') return true
+    throw error
+  }
+}
