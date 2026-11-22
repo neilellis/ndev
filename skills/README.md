@@ -55,6 +55,7 @@ The sections below cover every source skill once. Keep this index current when a
 - [triage](triage/SKILL.md)
 - [epic-plan](epic-plan/SKILL.md)
 - [epic-coordinate](epic-coordinate/SKILL.md)
+- [multi-epic-triage](multi-epic-triage/SKILL.md)
 - [goal-work](goal-work/SKILL.md)
 - [work-light-auto](work-light-auto/SKILL.md)
 - [work-heavy-auto](work-heavy-auto/SKILL.md)
