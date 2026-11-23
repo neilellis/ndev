@@ -41,3 +41,7 @@ Retirement does not change a Statement or a Source text. The citations keep the 
 2. Report to the human: the document, the PDR, the number of references that you changed, and the checks that you ran with their result.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

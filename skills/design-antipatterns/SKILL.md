@@ -46,3 +46,7 @@ Revisit the primary action and the content that supports it at narrow and wide w
 For a review, return a short ordered list: location, observed signal, user impact, and proposed repair. Include useful choices to keep when this prevents an unnecessary redesign. For implementation, make the authorized changes and report what changed and what was verified.
 
 For source history and the limits of this interpretation, see [provenance](references/source.md).
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

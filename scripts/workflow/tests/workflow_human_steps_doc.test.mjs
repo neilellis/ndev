@@ -16,7 +16,7 @@ const listOf = (file, pattern) => {
 
 test('kb/workflow.md has a row for each issue state and each epic state', () => {
   const states = listOf('hooks/workflow/machine.ts', /export const STATES = \[([^\]]+)\]/)
-  const epicStates = listOf('hooks/workflow/epic.ts', /export const EPIC_STATES: EpicState\[\] = \[([^\]]+)\]/)
+  const epicStates = listOf('scripts/ndev/epic-model.ts', /export const EPIC_STATES: EpicState\[\] = \[([^\]]+)\]/)
   assert.ok(states.includes('developing') && epicStates.includes('slicing'))
   const section = source('kb/workflow.md').split('\n## What the human can do next\n')[1]?.split('\n## ')[0]
   assert.ok(section, 'kb/workflow.md has no section "## What the human can do next"')

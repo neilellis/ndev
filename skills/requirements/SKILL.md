@@ -60,3 +60,7 @@ Search before you plan, design or change behaviour. Use the words of the area, t
 7. Run `ndev requirements check`, then `ndev requirements render`, and commit the record with the generated file.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

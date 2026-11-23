@@ -18,3 +18,7 @@ Group related issues into one pull request per group. Give each group a short im
 Show the result after submission. Run `ndev triage launch` only when the phase is `planned` and the user requests launch. If the user explicitly asked for a dry run, stop after showing the result. If the CLI reports an existing triage, show its status before proposing any reset.
 
 For `status`, `refresh`, or `launch`, run the named command directly. For other subcommands, read their CLI help and follow the next action in the result.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

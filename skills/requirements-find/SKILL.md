@@ -45,3 +45,7 @@ When two sources disagree, or a source disagrees with the code, write each side 
 3. Report to the human: the documents you read, the number of records (Accepted and Proposed), the number of ledger entries by reason, each conflict, and each document you did not read.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

@@ -1,6 +1,6 @@
 ---
 name: epic-coordinate
-description: "Coordinate the implementation of an epic: start an implementer and then a reviewer per sub-issue as Orca workers, rule on findings, verify each pull request, merge it with its migrations, and start what it unblocks. Use in the epic workflow states coordinating and closing, when an mcp__ndev__epic tool or /flow epic names this skill."
+description: "Coordinate the implementation of an epic: start an implementer and then a reviewer per sub-issue as Orca workers, rule on findings, verify each pull request, merge it with its migrations, and start what it unblocks. Use in the epic workflow states coordinating and closing, when an epic workflow tool or /flow epic names this skill."
 ---
 
 # Coordinate an epic

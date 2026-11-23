@@ -82,3 +82,7 @@ List each PR in the queue as merged (with the merge SHA), blocked (with the reas
 Once you have user feedback that unblocks you start on that PR(s) in the same sequential manner.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

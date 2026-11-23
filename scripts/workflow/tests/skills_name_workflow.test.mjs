@@ -19,7 +19,9 @@ const read = item => readFileSync(item.path, 'utf8')
 const OTHER_TOOLS = ['report', 'triage_groups']
 const toolNames = () => {
   const source = readFileSync(join(ROOT, 'hooks', 'workflow', 'tools.ts'), 'utf8')
-  return new Set([...source.matchAll(/\{ name: '([A-Za-z]+)', description:/g)].map(m => m[1]).concat(OTHER_TOOLS))
+  const epicSource = readFileSync(join(ROOT, 'hooks', 'workflow', 'epic.ts'), 'utf8')
+  const epicNames = [...epicSource.matchAll(/^\s+name: '(epic[A-Za-z]+)'/gm), ...epicSource.matchAll(/\{ name: '(epic[A-Za-z]+)', description:/g)].map(m => m[1])
+  return new Set([...source.matchAll(/\{ name: '([A-Za-z]+)', description:/g)].map(m => m[1]).concat(epicNames, OTHER_TOOLS))
 }
 
 // The skills that carry development work must name the tool for each stage.
@@ -28,6 +30,7 @@ const FULL_METHOD = ['work-light', 'work-heavy']
 
 test('the tool list was read from the source', () => {
   assert.ok(toolNames().has('started'), 'no tool named started: the pattern no longer matches hooks/workflow/tools.ts')
+  for (const name of ['epicStarted', 'epicPhase', 'epicNext', 'epicBrief', 'epicIssue', 'epicStatus']) assert.ok(toolNames().has(name), `no tool named ${name}: the pattern no longer matches hooks/workflow/epic.ts`)
 })
 
 test('each skill names a workflow tool', () => {

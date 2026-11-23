@@ -43,3 +43,7 @@ Keep all working files in `<worktree>/.triage/` and add it to `.git/info/exclude
 ## Scripts
 
 `scripts/apply_triage.py` reads `.triage/plan.py`, `notes.py` and `epics.json` and runs the `gh` writes (`close`, `notes`, `epics`, `labels`), with `--dry-run`. It stops at the first failure and prints the issue and gh's stderr.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

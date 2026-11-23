@@ -40,3 +40,7 @@ A human owns `docs/formal/requirements/extra/outline.md`. If it does not exist, 
 3. Report to the human: the sections you wrote, the sections that were stale and why, and each place where the records of a section seemed to conflict or to leave a gap.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

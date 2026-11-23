@@ -57,4 +57,4 @@ Use `--json` when another program needs the result. Check both the exit status a
 
 A command name does not waive a gate. Do not use `skip`, `goto`, `off`, `--take-over`, or review waivers to clear an inconvenient refusal. Keep helper agents within their permitted operations. Queue starts, remote provisioning, merges, installs, and resource stops need authority from the current task.
 
-The [workflow guide](${CLAUDE_PLUGIN_ROOT}/kb/workflow.md) owns the full method and evidence contracts. This skill helps select the native command that carries it.
+The [workflow guide](${CLAUDE_PLUGIN_ROOT}/kb/workflow.md) owns the full method and evidence contracts. This skill helps select the native command that carries it. The `mcp__ndev__*` tools carry the same method, and `mcp__ndev__status` reads the next step.

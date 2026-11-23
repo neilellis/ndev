@@ -38,3 +38,7 @@ The commands are `ndev requirements <command>`. Run them from the project.
 3. Report to the human: the number of pull requests, how many link to records from documents, how many new records of origin `PR` you wrote, each record that a pull request showed to be wrong, and the pull requests you did not read.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
+
+## The workflow
+
+While a workflow runs, this skill is one step of the current stage. Read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
