@@ -63,7 +63,7 @@ function setupStatus(workspace, { prompt = false } = {}) {
   return { ...result, northStar: { path, exists } }
 }
 
-function saveProject(root, key, value) {
+export function saveProject(root, key, value) {
   const path = configPath(root)
   locked(path, () => {
     const config = { ...readProject(root), [key]: value }
