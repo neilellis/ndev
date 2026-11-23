@@ -14,11 +14,12 @@ const IN_FORCE = ["Proposed", "Accepted"];
 const ORIGINS = ["explicit", "implied", "PR"];
 const PULL = /^https:\/\/\S+\/pull\/\d+/;
 const METHODS = ["test", "check", "model", "eval", "review"];
-const SECTIONS = ["Statement", "Source text", "Trace", "Notes"];
+const SECTIONS = ["Statement", "Source text", "Trace", "Notes", "Log"];
+const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, file, trace, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, sync, log, sources, ledger, uncovered, untraced, link, file, trace, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -36,7 +37,13 @@ const LEDGER_ENTRY = /^- (.+)#L(\d+)-L(\d+) ([0-9a-f]{12}): (.+)$/;
 const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
 const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|may not|will not|refuses?|only)\b/i;
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
-const AGREED_FORM = `"- Agreed: <name>, YYYY-MM-DD, text <hash>"`;
+const AGREED_FORM = `"agreed: <name>, YYYY-MM-DD, text <hash>"`;
+const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Issues: "issues", PRs: "prs", Agreed: "agreed" };
+const KEYS = Object.values(FIELDS);
+const LISTS = ["source", "author", "verification", "issues", "prs"];
+const PLAIN = /^[A-Za-z0-9][A-Za-z0-9 ._/#:-]*$/;
+const UNSUPPORTED = /^[[\]{}|>&*!%@`#]|\s#|:$|: /;
+const RESERVED = /^(true|false|yes|no|on|off|null|y|n)$/i;
 const PROTECTED = ["Statement", "Source text"];
 const SCRIPT = "ndev requirements";
 const RETIRED = `${DIR}/extra/retired.md`;
@@ -92,11 +99,93 @@ function read(entry) {
   return parse(entry, readFileSync(entry.full, "utf8"));
 }
 
+function yamlValue(raw) {
+  if (raw.startsWith('"')) return JSON.parse(raw);
+  if (raw.startsWith("'")) {
+    if (!/^'(?:[^']|'')*'$/.test(raw)) throw new SyntaxError("unclosed single quote");
+    return raw.slice(1, -1).replace(/''/g, "'");
+  }
+  if (UNSUPPORTED.test(raw)) throw new SyntaxError("unsupported YAML");
+  return raw;
+}
+
+function frontMatter(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines[0] !== "---") return { body: text };
+  const end = lines.indexOf("---", 1);
+  if (end < 0) return { error: `the front matter has no closing "---" line.`, body: text };
+  const data = {};
+  let list;
+  for (const line of lines.slice(1, end)) {
+    if (!line.trim()) {
+      list = undefined;
+      continue;
+    }
+    const item = line.match(/^\s*- (.*)$/);
+    const pair = line.match(/^([A-Za-z_][\w-]*):(?:[ \t]+(.*))?$/);
+    try {
+      if (item && list) list.push(yamlValue(item[1].trim()));
+      else if (!pair) return { error: `front matter line ${JSON.stringify(line)} is not "key: value" or "  - item".`, body: text };
+      else if (Object.hasOwn(data, pair[1])) return { error: `"${pair[1]}" is in the front matter more than once.`, body: text };
+      else {
+        const raw = (pair[2] ?? "").trim();
+        list = raw ? undefined : [];
+        data[pair[1]] = raw === "[]" ? [] : raw ? yamlValue(raw) : list;
+      }
+    } catch {
+      return { error: `front matter line ${JSON.stringify(line)} is not valid. Records use plain values, "double-quoted" or 'single-quoted' values, and lists of "  - item" lines. Quote a value with a special character.`, body: text };
+    }
+  }
+  return { data, body: lines.slice(end + 1).join("\n"), eol: text.includes("\r\n") ? "\r\n" : "\n" };
+}
+
+const yamlScalar = (value) => (PLAIN.test(value) && !UNSUPPORTED.test(value) && !value.endsWith(" ") && !RESERVED.test(value) && !/^[\d.]+$/.test(value) ? value : JSON.stringify(value));
+
+function yamlLines(key, value) {
+  if (!Array.isArray(value)) return [`${key}: ${yamlScalar(String(value))}`];
+  if (!value.length) return [`${key}: []`];
+  return [`${key}:`, ...value.map((item) => `  - ${typeof item === "number" ? item : yamlScalar(String(item))}`)];
+}
+
+function frontMatterText(data) {
+  return ["---", ...KEYS.filter((k) => data[k] !== undefined).flatMap((k) => yamlLines(k, data[k])), "---", ""].join("\n");
+}
+
 function parse(entry, text) {
-  const field = (name) => text.match(new RegExp(`^- ${name}:[ \\t]*(.*)$`, "m"))?.[1].trim();
-  const title = text.match(/^# (.+)$/m)?.[1].trim();
-  const sections = Object.fromEntries(SECTIONS.map((name) => [name, sectionBody(text, name)]));
-  return { ...entry, text, field, status: field("Status"), section: field("Section") ?? "", title: title ?? entry.file, hasTitle: title !== undefined, sections };
+  const front = frontMatter(text);
+  const data = front.data ?? {};
+  const field = (name) => {
+    const value = data[FIELDS[name] ?? name];
+    if (value === undefined) return undefined;
+    return Array.isArray(value) ? value.join(", ") : String(value).trim();
+  };
+  const author = data.author === undefined ? [] : (Array.isArray(data.author) ? data.author : [data.author]).map((name) => String(name).trim());
+  const legacy = !front.data && !front.error && /^- ID:/m.test(text);
+  const title = field("Title");
+  const body = front.body.replace(/\r\n/g, "\n");
+  const sections = Object.fromEntries(SECTIONS.map((name) => [name, sectionBody(body, name)]));
+  return { ...entry, text, front, data, field, author, legacy, status: field("Status"), section: field("Section") ?? "", title: title || entry.file, hasTitle: Boolean(title), sections };
+}
+
+function setField(entry, key, value) {
+  const record = read(entry);
+  if (!record.front.data) throw new Failure(`${entry.rel} has no valid front matter, so "${key}" cannot change. Run: ${SCRIPT} check`);
+  const { eol } = record.front;
+  const lines = record.text.split(eol);
+  const end = lines.indexOf("---", 1);
+  const extent = (start) => {
+    let stop = start + 1;
+    while (stop < end && /^\s*- /.test(lines[stop])) stop += 1;
+    return stop;
+  };
+  const at = (k) => lines.findIndex((line, i) => i > 0 && i < end && line.startsWith(`${k}:`));
+  const found = at(key);
+  if (found > 0) lines.splice(found, extent(found) - found, ...yamlLines(key, value));
+  else {
+    const before = KEYS.slice(0, KEYS.indexOf(key)).map(at).filter((i) => i > 0);
+    lines.splice(before.length ? extent(Math.max(...before)) : 1, 0, ...yamlLines(key, value));
+  }
+  writeFileSync(entry.full, lines.join(eol));
 }
 
 const outside = (root, rel) => path.isAbsolute(rel) || path.relative(root, path.resolve(root, rel)).split(path.sep)[0] === "..";
@@ -213,10 +302,33 @@ function inspect(root) {
     records.push(record);
     const number = entry.file.slice(0, 4);
     const fail = (message) => problems.push(`${entry.rel}: ${message}`);
-    if (!record.hasTitle) fail(`no "# <short title>" line.`);
+    if (record.legacy) {
+      fail(`the fields are a "- Name: value" list under the title. Put them in YAML front matter at the top of the file, as in kb/requirements.md.`);
+      continue;
+    }
+    if (record.front.error) {
+      fail(record.front.error);
+      continue;
+    }
+    if (!record.front.data) {
+      fail(`no YAML front matter. The file starts with a "---" line, the fields, and a "---" line, as in kb/requirements.md.`);
+      continue;
+    }
+    for (const [key, value] of Object.entries(record.data)) {
+      if (!KEYS.includes(key)) fail(`"${key}" is not a field of a record. The fields are ${KEYS.join(", ")}.`);
+      else if (Array.isArray(value) && !LISTS.includes(key)) fail(`"${key}" is a list. It takes one value.`);
+    }
+    const present = Object.keys(record.data).filter((key) => KEYS.includes(key));
+    if (present.join() !== KEYS.filter((key) => present.includes(key)).join()) fail(`the fields are not in the order ${KEYS.join(", ")}. Put them in that order.`);
+    if (!record.hasTitle) fail(`no "title" in the front matter. Add "title: <short title>".`);
+    if (!sourceCurrent(record)) fail(`"source" is not the citations of the source text, in order (${[sourceField(record)].flat().join(", ") || "none"}): one value for one citation, a list for more. Run: ${SCRIPT} sync ${entry.id}`);
+    const linked = linkFields(record);
+    if (!numbersCurrent(record.data.issues, linked.issues)) fail(`"issues" is not the numbers of the issues in the Trace (${linked.issues.join(", ") || "none"}). Run: ${SCRIPT} sync ${entry.id}`);
+    if (!numbersCurrent(record.data.prs, linked.prs)) fail(`"prs" is not the numbers of the pull requests in the Trace and the source text (${linked.prs.join(", ") || "none"}). Run: ${SCRIPT} sync ${entry.id}`);
+    if (!record.author.length || record.author.some((name) => !name)) fail(`no "author". List the people who wrote the source text: ${SCRIPT} author ${entry.id} "<name>"`);
     const id = record.field("ID");
-    if (id !== entry.id) fail(`"- ID: ${id ?? ""}" does not match the file number. Use "- ID: ${entry.id}".`);
-    if (record.status === undefined) fail(`no "- Status:" line. Add "- Status: Proposed".`);
+    if (id !== entry.id) fail(`"id: ${id ?? ""}" does not match the file number. Use "id: ${entry.id}".`);
+    if (record.status === undefined) fail(`no "status". Add "status: Proposed".`);
     else if (!STATUS.test(record.status)) fail(`status "${record.status}" is not Proposed, Accepted, Rejected, Retired or Superseded by NNNN.`);
     else {
       const by = record.status.match(/^Superseded by (\d{4})$/)?.[1];
@@ -227,22 +339,28 @@ function inspect(root) {
     const origin = record.field("Origin");
     if (!ORIGINS.includes(origin)) fail(`origin "${origin ?? ""}" is not explicit, implied or PR.`);
     const date = record.field("Date");
-    if (date === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(`"- Date:" needs YYYY-MM-DD (got "${date ?? "no line"}").`);
+    if (date === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(`"date" needs YYYY-MM-DD (got "${date ?? "no value"}").`);
     const verification = record.field("Verification");
-    if (!verification) fail(`no "- Verification:" value. Use unassigned, or one or more of ${METHODS.join(", ")}.`);
+    if (!verification) fail(`no "verification" value. Use unassigned, or a list of one or more of ${METHODS.join(", ")}.`);
     else if (verification !== "unassigned") for (const method of verification.split(",").map((m) => m.trim())) if (!METHODS.includes(method)) fail(`verification "${method}" is not unassigned, ${METHODS.slice(0, -1).join(", ")} or ${METHODS.at(-1)}.`);
     const agreed = record.field("Agreed");
-    if (agreed !== undefined && !AGREED.test(agreed)) fail(`"- Agreed: ${agreed}" does not have the form ${AGREED_FORM}. Only a human writes it, with: ${SCRIPT} agree ${entry.id} --by "<name>"`);
+    if (agreed !== undefined && !AGREED.test(agreed)) fail(`"agreed: ${agreed}" does not have the form ${AGREED_FORM}. Only a human writes it, with: ${SCRIPT} agree ${entry.id} --by "<name>"`);
     const proposed = record.status === "Proposed";
     for (const name of ["Section", "Decided by"]) {
       const value = record.field(name);
-      if (value === undefined) fail(`no "- ${name}:" line.`);
-      else if (!value && !proposed) fail(`"- ${name}:" has no value, and the status is ${record.status}. Fill it, or keep the status Proposed.`);
+      if (value === undefined) fail(`no "${FIELDS[name]}" in the front matter.`);
+      else if (!value && !proposed) fail(`"${FIELDS[name]}" has no value, and the status is ${record.status}. Fill it, or keep the status Proposed.`);
     }
     for (const name of ["Statement", "Source text"]) {
       const body = record.sections[name];
       if (body === undefined) fail(`missing the section "## ${name}".`);
       else if (!body && !proposed) fail(`the section "## ${name}" is empty, and the status is ${record.status}. Fill it, or keep the status Proposed.`);
+    }
+    if (record.sections.Log === undefined) fail(`missing the section "## Log".`);
+    else {
+      const logged = logEntries(record);
+      if (!logged.length) fail(`the Log has no entry. Each record starts with "- YYYY-MM-DD: Created." Add it with: ${SCRIPT} log ${entry.id} "Created."`);
+      for (const line of logged) if (!LOG_ENTRY.test(line)) fail(`Log line "${line}" is not "- YYYY-MM-DD: <what changed>". Add an entry with: ${SCRIPT} log ${entry.id} "<what changed>"`);
     }
     const { sources, stray } = sourceText(record.sections["Source text"]);
     const form = `Each source is "- <path>#L<first>-L<last>" or "- <https link>", then its quote. Make one with: ${SCRIPT} quote <path> <first> <last>`;
@@ -305,15 +423,17 @@ function create(root, sentence, options) {
   const origin = options.origin ?? "explicit";
   if (!ORIGINS.includes(origin)) throw new Usage(`Unknown origin "${origin}": use explicit, implied or PR`);
   const title = (sentence ?? "").trim();
-  if (!title || !slug(title)) throw new Usage(`new needs a short title, for example: new "The report names each source"`);
+  if (!title || !slug(title)) throw new Usage(`new needs a short title, for example: new "The report names each source" --author "Ann Smith"`);
+  const author = (options.author ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+  if (!author.length) throw new Usage(`new needs --author "<name>, <name>": the people who wrote the source text`);
   const existing = entries(root);
   const bad = existing.find((e) => !NAME.test(e.file));
   if (bad) throw new Failure(`${bad.rel} does not match NNNN-<title>.md, so the next number is unknown. Rename it, or run check.`);
   const next = String(Math.max(0, ...existing.map((e) => Number(e.file.slice(0, 4)))) + 1).padStart(4, "0");
   const full = path.join(root, DIR, `${next}-${slug(title)}.md`);
-  const fields = [`- ID: REQ-${next}`, `- Status: Proposed`, `- Origin: ${origin}`, `- Section: ${options.section ?? ""}`.trimEnd(), `- Date: ${new Date().toISOString().slice(0, 10)}`, `- Decided by:`, `- Verification: unassigned`];
+  const data = { id: `REQ-${next}`, title, status: "Proposed", origin, section: (options.section ?? "").trim(), date: new Date().toISOString().slice(0, 10), source: [], author, decided_by: "", verification: "unassigned", issues: [], prs: [] };
   mkdirSync(path.dirname(full), { recursive: true });
-  writeFileSync(full, `# ${title}\n\n${fields.join("\n")}\n` + SECTIONS.map((s) => `\n## ${s}\n`).join(""), { flag: "wx" });
+  writeFileSync(full, frontMatterText(data) + SECTIONS.map((s) => (s === "Log" ? `\n## Log\n\n- ${data.date}: Created.\n` : `\n## ${s}\n`)).join(""), { flag: "wx" });
   return `${full}\n`;
 }
 
@@ -379,8 +499,8 @@ function blocks(markdown) {
 function article(record, retired) {
   const sources = sourceText(record.sections["Source text"]).sources.map((s) => `<li><a href="${escape(s.url ?? `${UP}${encodeURI(retired.has(s.rel) ? frozenCopy(s.rel) : s.rel)}#L${s.first}-L${s.last}`)}">${escape(s.citation)}</a>\n<blockquote class="source">${escape(s.quote.join("\n"))}</blockquote></li>`);
   const decided = record.field("Decided by") ? `Decided by ${escape(record.field("Decided by"))}, ${escape(record.field("Date"))}` : `Dated ${escape(record.field("Date"))}`;
-  const meta = [escape(record.status), escape(record.field("Origin")), `Verification: ${escape(record.field("Verification"))}`, decided, `<a href="../${encodeURI(record.file)}">record</a>`];
-  const optional = ["Trace", "Notes"].filter((name) => record.sections[name]).map((name) => `<h4>${name}</h4>\n${blocks(record.sections[name])}`);
+  const meta = [escape(record.status), escape(record.field("Origin")), `Verification: ${escape(record.field("Verification"))}`, `Author: ${escape(record.author.join(", "))}`, decided, `<a href="../${encodeURI(record.file)}">record</a>`];
+  const optional = ["Trace", "Notes", "Log"].filter((name) => record.sections[name]).map((name) => `<h4>${name}</h4>\n${blocks(record.sections[name])}`);
   return [
     `<article id="${record.id}" class="status-${record.status.split(" ")[0].toLowerCase()}">`,
     `<h3><a href="#${record.id}">${record.id}</a> ${escape(record.title)}</h3>`,
@@ -707,11 +827,11 @@ function publication(root, config) {
   const sourceLink = (s) => s.url ?? `${fileLink(retired.has(s.rel) ? frozenCopy(s.rel) : s.rel)}#L${s.first}-L${s.last}`;
   const entry = (record, here) => {
     const decided = record.field("Decided by") ? `Decided by ${record.field("Decided by")}, ${record.field("Date")}` : `Dated ${record.field("Date")}`;
-    const meta = [record.status, record.field("Origin"), `Verification: ${record.field("Verification")}`, decided].map(text).join(" · ");
+    const meta = [record.status, record.field("Origin"), `Verification: ${record.field("Verification")}`, `Author: ${record.author.join(", ")}`, decided].map(text).join(" · ");
     const parts = [`<a id="${record.id}"></a>`, `## ${record.id} ${text(record.title)}`, `${meta} · [record](${fileLink(record.rel)})`, markdown(record.sections.Statement ?? "", DIR, here)];
     const sources = sourceText(record.sections["Source text"]).sources;
     if (sources.length) parts.push("### Source text", ...sources.map((s) => [`- [${text(s.citation)}](${sourceLink(s)})`, ...(s.quote.length ? [`${fence(s.quote)}text\n${s.quote.join("\n")}\n${fence(s.quote)}`] : [])].join("\n\n")));
-    for (const name of ["Trace", "Notes"]) if (record.sections[name]) parts.push(`### ${name}`, markdown(record.sections[name], DIR, here));
+    for (const name of ["Trace", "Notes", "Log"]) if (record.sections[name]) parts.push(`### ${name}`, markdown(record.sections[name], DIR, here));
     return parts.join("\n\n");
   };
   const stored = narratives(root);
@@ -731,11 +851,13 @@ function publication(root, config) {
       origin: r.field("Origin"),
       section: r.section,
       date: r.field("Date"),
+      author: r.author,
       decidedBy: r.field("Decided by") ?? "",
       verification: r.field("Verification"),
       statement: r.sections.Statement ?? "",
       sources: sourceText(r.sections["Source text"]).sources.map((s) => ({ citation: s.citation, link: sourceLink(s) })),
       trace: r.sections.Trace ?? "",
+      log: r.sections.Log ?? "",
       notes: r.sections.Notes ?? "",
       page: route(p.slug),
       record: fileLink(r.rel),
@@ -813,11 +935,17 @@ function guard(root, options) {
     const before = protectedParts(old);
     const after = protectedParts(now);
     const changed = PROTECTED.filter((name) => before[name] !== after[name]);
+    const oldLog = logEntries(old);
+    const nowLog = logEntries(now);
+    const lost = oldLog.find((line, i) => nowLog[i] !== line);
+    if (lost) problems.push(`${now.rel}: the Log entry "${lost}" of ${base} is changed or removed. The Log only grows: restore the entry, and add a new one with: ${SCRIPT} log ${now.id} "<what changed>"`);
+    const tracked = [...["title", "status"].filter((key) => old.data[key] !== now.data[key]), ...changed];
+    if (tracked.length && nowLog.length <= oldLog.length) problems.push(`${now.rel}: the ${tracked.join(" and the ")} changed since ${base}, and the Log has no new entry. Run: ${SCRIPT} log ${now.id} "<what changed>"`);
     if (!changed.length) continue;
     const agreed = now.field("Agreed")?.match(AGREED);
     if (agreed && agreed[3] === textHash(now)) continue;
     const parts = changed.map((name) => `the ${name}`).join(" and ");
-    const why = agreed ? "the Agreed line is for other text: the text changed after the human agreed" : "no human agreed to the change";
+    const why = agreed ? "the agreement is for other text: the text changed after the human agreed" : "no human agreed to the change";
     const diff = changed.map((name) => `  ${name}, old:\n${indented(old.sections[name])}\n  ${name}, new:\n${indented(now.sections[name])}`).join("\n");
     problems.push(`${now.rel}: ${parts} changed since ${base}, and ${why}.\n${diff}\n  Show the human the old and the new text. When they agree, they run: ${SCRIPT} agree ${now.id} --by "<name>". Otherwise, restore the old text.`);
   }
@@ -830,14 +958,70 @@ function agree(root, id, options) {
   if (!process.stdin.isTTY) throw new Failure(`agree records the agreement of a human to a changed Statement or Source text, so only a human runs it, in a terminal. Show the human the old and the new text, and ask them to run: ${SCRIPT} agree ${id} --by "<name>"`);
   const entry = entries(root).find((e) => e.id === id && NAME.test(e.file));
   if (!entry) throw new Failure(`${id} is not a record in ${DIR}.`);
+  const value = `${options.by.trim()}, ${new Date().toISOString().slice(0, 10)}, text ${textHash(read(entry))}`;
+  setField(entry, "agreed", value);
+  return `${entry.rel}: agreed: ${value}\n`;
+}
+
+const logEntries = (record) => (record.sections.Log ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+
+function log(root, id, text) {
+  const what = (text ?? "").trim();
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !what || /[\r\n]/.test(what)) throw new Usage(`log needs <REQ-NNNN> "<what changed>" on one line, for example: log REQ-0001 "Retired, because the report was removed."`);
+  const entry = recordEntry(root, id);
+  const line = `- ${new Date().toISOString().slice(0, 10)}: ${what}`;
+  appendLines(entry, "Log", [line], { unique: false });
+  return `${entry.rel}: ${line}\n`;
+}
+
+function sourceField(record) {
+  const cited = sourceText(record.sections["Source text"]).sources.map((source) => source.citation);
+  return cited.length === 1 ? cited[0] : cited;
+}
+
+const sourceCurrent = (record) => JSON.stringify(record.data.source) === JSON.stringify(sourceField(record));
+
+const urlNumber = (url) => Number(url.match(/\/(\d+)$/)[1]);
+const numberList = (urls, form) => [...new Set([...urls].filter((url) => form.test(url)).map(urlNumber))].sort((a, b) => a - b);
+
+function linkFields(record) {
+  const { prs, issues } = traces(record);
+  return { issues: numberList(issues, ISSUE_URL), prs: numberList(prs, PULL_URL) };
+}
+
+const numbersCurrent = (value, wanted) => Array.isArray(value) && value.length === wanted.length && value.every((item, i) => /^\d+$/.test(String(item)) && Number(item) === wanted[i]);
+const synced = (record) => sourceCurrent(record) && numbersCurrent(record.data.issues, linkFields(record).issues) && numbersCurrent(record.data.prs, linkFields(record).prs);
+
+function syncRecord(entry) {
   const record = read(entry);
-  const line = `- Agreed: ${options.by.trim()}, ${new Date().toISOString().slice(0, 10)}, text ${textHash(record)}`;
-  let text;
-  if (/^- Agreed:.*$/m.test(record.text)) text = record.text.replace(/^- Agreed:.*$/m, () => line);
-  else if (/^- Verification:.*$/m.test(record.text)) text = record.text.replace(/^- Verification:.*$/m, (found) => `${found}\n${line}`);
-  else throw new Failure(`${entry.rel} has no "- Verification:" line, so the Agreed line has no place. Run: ${SCRIPT} check`);
-  writeFileSync(entry.full, text);
-  return `${entry.rel}: ${line.slice(2)}\n`;
+  const value = sourceField(record);
+  const { issues, prs } = linkFields(record);
+  setField(entry, "source", value);
+  setField(entry, "issues", issues);
+  setField(entry, "prs", prs);
+  const shown = (list) => list.join(", ") || "none";
+  return `${entry.rel}: source: ${shown([value].flat())}; issues: ${shown(issues)}; prs: ${shown(prs)}\n`;
+}
+
+function sync(root, ids) {
+  for (const id of ids) if (!/^REQ-\d{4}$/.test(id)) throw new Usage(`sync takes record ids, for example: sync REQ-0001. Got "${id}"`);
+  if (ids.length) return ids.map((id) => syncRecord(recordEntry(root, id))).join("");
+  const records = entries(root).filter((e) => NAME.test(e.file)).map(read);
+  const broken = records.filter((record) => !record.front.data);
+  if (broken.length) throw new Failure(broken.map((record) => `${record.rel} has no valid front matter, so nothing is written. Run: ${SCRIPT} check`).join("\n"));
+  const stale = records.filter((record) => !synced(record));
+  for (const record of stale) syncRecord(record);
+  return `${stale.length} ${stale.length === 1 ? "record" : "records"} synced\n`;
+}
+
+function author(root, id, names) {
+  const people = names.map((name) => name.trim());
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !people.length || people.some((name) => !name)) throw new Usage(`author needs <REQ-NNNN> and one or more names, for example: author REQ-0001 "Suriya Khan" "Carter Dillard"`);
+  const comma = people.find((name) => name.includes(","));
+  if (comma) throw new Usage(`"${comma}" has a comma. Give each name as its own argument, for example: author ${id} "Suriya Khan" "Carter Dillard"`);
+  const entry = recordEntry(root, id);
+  setField(entry, "author", people);
+  return `${entry.rel}: author: ${people.join(", ")}\n`;
 }
 
 function tier(rel) {
@@ -1150,15 +1334,18 @@ function link(root, id, url, options) {
   return `${entry.rel}: ${added.join(", ")}\n`;
 }
 
-function appendTrace(entry, wanted) {
+const appendTrace = (entry, wanted) => appendLines(entry, "Trace", wanted, { unique: true });
+
+function appendLines(entry, name, wanted, { unique }) {
   const record = read(entry);
-  const held = (record.sections.Trace ?? "").split("\n").map((line) => line.trim());
-  const added = wanted.filter((line, i, all) => !held.includes(line) && all.indexOf(line) === i);
+  if (!record.front.data) throw new Failure(`${entry.rel} has no valid front matter, so the ${name} cannot change. Run: ${SCRIPT} check`);
+  const held = (record.sections[name] ?? "").split("\n").map((line) => line.trim());
+  const added = unique ? wanted.filter((line, i, all) => !held.includes(line) && all.indexOf(line) === i) : wanted;
   if (!added.length) return added;
   const eol = record.text.includes("\r\n") ? "\r\n" : "\n";
   const lines = record.text.split(/\r?\n/);
-  const start = lines.findIndex((line) => line.trim() === "## Trace");
-  if (start < 0) throw new Failure(`${entry.rel} has no "## Trace" section. Run: ${SCRIPT} check`);
+  const start = lines.findIndex((line) => line.trim() === `## ${name}`);
+  if (start < 0) throw new Failure(`${entry.rel} has no "## ${name}" section. Run: ${SCRIPT} check`);
   const after = lines.slice(start + 1).findIndex((line) => line.startsWith("## "));
   const end = after < 0 ? lines.length : start + 1 + after;
   const body = lines.slice(start + 1, end);
@@ -1166,6 +1353,11 @@ function appendTrace(entry, wanted) {
   while (body.length && !body.at(-1).trim()) body.pop();
   const tail = lines.slice(end);
   writeFileSync(entry.full, [...lines.slice(0, start + 1), "", ...body, ...added, ...(tail.length ? ["", ...tail] : [""])].join(eol));
+  if (name === "Trace") {
+    const { issues, prs } = linkFields(read(entry));
+    setField(entry, "issues", issues);
+    setField(entry, "prs", prs);
+  }
   return added;
 }
 
@@ -1302,6 +1494,9 @@ export function runRequirements(argv, { json } = {}) {
       render: () => render(root(), options),
       guard: () => guard(root(), options),
       agree: () => agree(root(), rest[0], options),
+      author: () => author(root(), rest[0], rest.slice(1)),
+      sync: () => sync(root(), rest),
+      log: () => log(root(), rest[0], rest[1]),
       sources: () => sources(root(), options),
       ledger: () => ledger(root(), rest[0], rest[1], rest[2], rest[3]),
       uncovered: () => uncovered(root(), rest),

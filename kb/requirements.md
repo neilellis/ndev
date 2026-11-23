@@ -23,16 +23,22 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 ## Template
 
 ```markdown
-# <short title>
-
-- ID: REQ-NNNN
-- Status: Proposed | Accepted | Rejected | Retired | Superseded by NNNN
-- Origin: explicit | implied | PR
-- Section: <the section of the document that holds it>
-- Date: YYYY-MM-DD
-- Decided by: <name>
-- Verification: unassigned | test | check | model | eval | review
-- Agreed: <name>, YYYY-MM-DD, text <hash>    (only after a change that a human agreed to)
+---
+id: REQ-NNNN
+title: <short title>
+status: Proposed | Accepted | Rejected | Retired | Superseded by NNNN
+origin: explicit | implied | PR
+section: <the section of the document that holds it>
+date: YYYY-MM-DD
+source: <the citation of the source text>    (a list when there is more than one)
+author:
+  - <name of a person who wrote the source text>
+decided_by: <name>
+verification: unassigned    (or a list: "  - test", "  - model")
+issues: []    (or a list of the numbers of the issues in the Trace: "  - 5")
+prs: []    (or a list of the numbers of the pull requests in the Trace and the Source text: "  - 12")
+agreed: <name>, YYYY-MM-DD, text <hash>    (only after a change that a human agreed to)
+---
 
 ## Statement
 
@@ -55,26 +61,39 @@ The requirement. This is the binding text.
 - File: <path or pattern of a file that implements it>
 
 ## Notes
+
+## Log
+
+- YYYY-MM-DD: Created.
+- YYYY-MM-DD: <what changed in the record, and why>
 ```
 
-`ndev requirements new "<short title>"` creates the next numbered file from this template with the status `Proposed`. `ndev requirements quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
+The fields are YAML front matter, in this order. A value with a colon, a quote or another special character is in double quotes. `ndev requirements check` fails a record that has its fields in a `- Name: value` list under a `# <title>` line.
+
+`ndev requirements new "<short title>" --author "<name>, <name>"` creates the next numbered file from this template with the status `Proposed`. `ndev requirements author <REQ-NNNN> "<name>"...` replaces the list of authors. `ndev requirements sync [<REQ-NNNN>...]` writes the `source`, `issues` and `prs` fields from the Source text and the Trace. With no id, it writes each record whose fields are different. `ndev requirements link` and `ndev requirements file` write `issues` and `prs` when they add to the Trace. `ndev requirements log <REQ-NNNN> "<what changed>"` adds an entry with the date of today to the Log. `ndev requirements quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
 
 ## The fields
 
 | Field | Values |
 |---|---|
-| Status | `Proposed`: an agent wrote it and no human has accepted it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
-| Origin | `explicit`: a document states it. `implied`: a test, a schema constraint or a check enforces it, and no document states it. `PR`: no record covered a pull request, so the record was written from that pull request. |
-| Section | The section of the generated document that holds the record. |
-| Agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `ndev requirements agree`, which runs only in a terminal. |
-| Verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. More than one is allowed, with commas. `unassigned` until a method is chosen. |
+| status | `Proposed`: an agent wrote it and no human has accepted it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
+| origin | `explicit`: a document states it. `implied`: a test, a schema constraint or a check enforces it, and no document states it. `PR`: no record covered a pull request, so the record was written from that pull request. |
+| section | The section of the generated document that holds the record. |
+| source | The citations of the Source text, in the same order: a path with lines, or an https link to a pull request, an issue or a web document. One value when there is one citation, and a list when there are more. `ndev requirements check` fails a `source` that is different from the Source text. |
+| author | The people who wrote the source text, one or more. When the source is a document, these are the people who wrote the document. When the source is only a pull request, this is the author of the pull request. An agent is never the author. |
+| issues | The numbers of the issues in the Trace, in ascending order. A list, `[]` when there is none. `ndev requirements check` fails a list that is different from the Trace. |
+| prs | The numbers of the pull requests in the Trace and the Source text, in ascending order. A list, `[]` when there is none. `ndev requirements check` fails a list that is different. |
+| decided_by | The human who accepted, rejected or retired the record. |
+| agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `ndev requirements agree`, which runs only in a terminal. |
+| verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. Give a list for one or more methods. `unassigned` until a method is chosen. |
 
 ## Rules
 
 - **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. When the human agrees, the agent changes the text and the human runs `ndev requirements agree`. The status, the trace and the notes are not protected.
-- **A human accepts.** An agent writes `Proposed`. An accepted record names the human in `Decided by`. An agent never marks its own record `Accepted`.
+- **A human accepts.** An agent writes `Proposed`. An accepted record names the human in `decided_by`. An agent never marks its own record `Accepted`.
 - **One requirement for each record.** If a statement has two requirements that can pass or fail apart, it is two records.
 - **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
+- **The Log records each change to the requirement.** `ndev requirements new` writes the first entry, `Created.`. When the title, the status, the Statement or the Source text changes, add an entry with `ndev requirements log`: what changed, and why. Never change or remove an entry.
 - **Numbers are never reused, and a record is never deleted.** A requirement that ends gets the status `Retired`. A proposal that fails gets `Rejected`.
 - **A change to an accepted Statement needs a PDR.** The PDR names the record in `Requirement changed`.
 - **Name every file by its full path** from the repository root, and every issue and pull request by its link.
@@ -89,18 +108,22 @@ The requirement. This is the binding text.
 - a record that is not `Proposed` and has no statement, source text, section or approver;
 - a source that is not a path with lines or an https link, or that has no quote;
 - a record of origin `PR` whose source text names no pull request;
-- a record in force whose cited lines do not hold the quoted text.
+- a record in force whose cited lines do not hold the quoted text;
+- a `source`, `issues` or `prs` field that is different from the Source text and the Trace;
+- a record with no `## Log`, with no entry in the Log, or with a Log line that is not `- YYYY-MM-DD: <what changed>`.
 
 When the quoted text only moved in its file, the check names the new lines, and the agent corrects the line numbers. When the text changed, the check sends the change to a human.
 
 `ndev requirements guard --base <git ref>` compares each record with the same number at the base. It fails:
 
-- a Statement or a Source text that changed, with no `Agreed` line, or with an `Agreed` line for other text;
+- a Statement or a Source text that changed, with no `agreed` field, or with an `agreed` field for other text;
+- a title, a status, a Statement or a Source text that changed, with no new entry in the Log;
+- a Log entry of the base that is changed or removed;
 - a record that is at the base and is not in the working tree.
 
-A record that is new since the base passes: the first creation is the exception. A citation whose line numbers changed, with the same path and quote, passes: the text only moved. The check also fails an `Agreed` line that does not have the form above.
+A record that is new since the base passes: the first creation is the exception. A citation whose line numbers changed, with the same path and quote, passes: the text only moved. The check also fails an `agreed` field that does not have the form above.
 
-The guard proves that the `Agreed` line matches the text. It does not prove that a human wrote the line. In review, check that the human named in the line made the commit that adds it.
+The guard proves that the `agreed` field matches the text. It does not prove that a human wrote the field. In review, check that the human named in the field made the commit that adds it.
 
 `ndev requirements render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check`, `render --check` and `guard --base <the target branch>` in the project's checks.
 
@@ -177,7 +200,7 @@ It writes:
 
 - in the front matter of each page, `title` and `description`. The description of a page is "N requirement records in the <section> section". The description of the index is "N requirement records in M sections";
 - `index.<format>`: the title of the outline, the count of the records by status, and a link to each page;
-- one page for each section, in the order of the outline: the narrative, then each record with an anchor `REQ-NNNN`, its fields, Statement, Source text, Trace and Notes. A bare `REQ-NNNN` links to the record on its page;
+- one page for each section, in the order of the outline: the narrative, then each record with an anchor `REQ-NNNN`, its fields, Statement, Source text, Trace, Notes and Log. A bare `REQ-NNNN` links to the record on its page;
 - `not-in-force.<format>` for the records that are not in force;
 - `requirements.json`: the title and each record, with its page;
 - `.published`: the files that this publish wrote.

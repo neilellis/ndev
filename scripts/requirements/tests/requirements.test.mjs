@@ -20,8 +20,10 @@ const run = (root, ...args) => {
 };
 const GUIDE = "# Guide\n\nThe report names each source.\nThe report refuses an unread source.\n\nEnd.\n";
 const GUIDE_SOURCE = "- docs/guide.md#L3-L4\n\n> The report names each source.\n> The report refuses an unread source.";
-const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", section = "Report", date = "2026-01-02", decidedBy = "Neil Ellis", verification = "unassigned", statement = "The report names each source.", sourceText = GUIDE_SOURCE, trace = "", notes = "" } = {}) =>
-  `# ${title}\n\n- ID: ${id}\n- Status: ${status}\n- Origin: ${origin}\n- Section: ${section}\n- Date: ${date}\n- Decided by: ${decidedBy}\n- Verification: ${verification}\n\n## Statement\n\n${statement}\n\n## Source text\n\n${sourceText}\n\n## Trace\n\n${trace}\n\n## Notes\n\n${notes}\n`;
+const numbers = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => Number(m[1])))].sort((a, b) => a - b);
+const yamlList = (key, items) => (items.length ? `${key}:\n${items.map((item) => `  - ${JSON.stringify(item)}`).join("\n")}` : `${key}: []`);
+const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", section = "Report", date = "2026-01-02", author = ["Neil Ellis"], decidedBy = "Neil Ellis", verification = "unassigned", statement = "The report names each source.", sourceText = GUIDE_SOURCE, source = [...sourceText.matchAll(/^- (.+)$/gm)].map((m) => m[1]), trace = "", issues = numbers(trace, /^- Issue: https:\/\/\S+\/issues\/(\d+)$/gm), prs = numbers(`${trace}\n${sourceText}`, /^- (?:PR: )?https:\/\/\S+\/pull\/(\d+)$/gm), notes = "", log = `- ${date}: Created.` } = {}) =>
+  `---\nid: ${id}\ntitle: ${JSON.stringify(title)}\nstatus: ${status}\norigin: ${origin}\nsection: ${JSON.stringify(section)}\ndate: ${date}\n${source.length === 1 ? `source: ${JSON.stringify(source[0])}` : yamlList("source", source)}\n${yamlList("author", author)}\ndecided_by: ${JSON.stringify(decidedBy)}\n${Array.isArray(verification) ? yamlList("verification", verification) : `verification: ${verification}`}\n${yamlList("issues", issues)}\n${yamlList("prs", prs)}\n---\n\n## Statement\n\n${statement}\n\n## Source text\n\n${sourceText}\n\n## Trace\n\n${trace}\n\n## Notes\n\n${notes}\n\n## Log\n\n${log}\n`;
 const seeded = (records = { "0001-the-report-names-each-source.md": record("0001") }) => {
   const root = project();
   put(root, "docs/guide.md", GUIDE);
@@ -32,32 +34,41 @@ const seeded = (records = { "0001-the-report-names-each-source.md": record("0001
 describe("new", () => {
   it("creates the first record as REQ-0001, Proposed and explicit, with the template sections", () => {
     const root = project();
-    const out = run(root, "new", "The report names each source");
+    const out = run(root, "new", "The report names each source", "--author", "Suriya Khan, Carter Dillard");
     assert.equal(out.status, 0, out.stderr);
     assert.deepEqual(readdirSync(path.join(root, DIR)), ["0001-the-report-names-each-source.md"]);
     const text = readFileSync(path.join(root, DIR, "0001-the-report-names-each-source.md"), "utf8");
-    assert.match(text, /^# The report names each source\n/);
-    for (const line of ["- ID: REQ-0001", "- Status: Proposed", "- Origin: explicit", "- Section:", "- Decided by:", "- Verification: unassigned"]) assert.ok(text.split("\n").includes(line), `missing line "${line}" in:\n${text}`);
-    assert.match(text, /^- Date: \d{4}-\d{2}-\d{2}$/m);
-    for (const section of ["Statement", "Source text", "Trace", "Notes"]) assert.match(text, new RegExp(`^## ${section}$`, "m"));
+    assert.match(text, /^---\nid: REQ-0001\ntitle: The report names each source\nstatus: Proposed\norigin: explicit\nsection: ""\ndate: \d{4}-\d{2}-\d{2}\nsource: \[\]\nauthor:\n  - Suriya Khan\n  - Carter Dillard\ndecided_by: ""\nverification: unassigned\nissues: \[\]\nprs: \[\]\n---\n\n## Statement\n/);
+    assert.doesNotMatch(text, /^# /m);
+    for (const section of ["Statement", "Source text", "Trace", "Notes", "Log"]) assert.match(text, new RegExp(`^## ${section}$`, "m"));
+    assert.match(text, new RegExp(`## Notes\n\n## Log\n\n- ${new Date().toISOString().slice(0, 10)}: Created\\.\n$`));
     assert.ok(out.stdout.includes(path.join(root, DIR, "0001-the-report-names-each-source.md")));
   });
 
   it("takes the number after the highest one, with the origin and the section it is given", () => {
     const root = seeded({ "0007-the-report-names-each-source.md": record("0007") });
-    const out = run(root, "new", "A retry keeps the first result", "--origin", "implied", "--section", "Pipeline");
+    const out = run(root, "new", "A retry keeps the first result", "--origin", "implied", "--section", "Pipeline: retries", "--author", "Neil Ellis");
     assert.equal(out.status, 0, out.stderr);
     const text = readFileSync(path.join(root, DIR, "0008-a-retry-keeps-the-first-result.md"), "utf8");
-    assert.match(text, /^- ID: REQ-0008$/m);
-    assert.match(text, /^- Origin: implied$/m);
-    assert.match(text, /^- Section: Pipeline$/m);
+    assert.match(text, /^id: REQ-0008$/m);
+    assert.match(text, /^origin: implied$/m);
+    assert.match(text, /^section: "Pipeline: retries"$/m);
+    assert.equal(run(root, "check").status, 0);
   });
 
   it("creates a record whose origin is a pull request", () => {
     const root = project();
-    const out = run(root, "new", "The export keeps the column order", "--origin", "PR");
+    const out = run(root, "new", "The export keeps the column order", "--origin", "PR", "--author", "Neil Ellis");
     assert.equal(out.status, 0, out.stderr);
-    assert.match(readFileSync(path.join(root, DIR, "0001-the-export-keeps-the-column-order.md"), "utf8"), /^- Origin: PR$/m);
+    assert.match(readFileSync(path.join(root, DIR, "0001-the-export-keeps-the-column-order.md"), "utf8"), /^origin: PR$/m);
+  });
+
+  it("refuses a record without an author", () => {
+    const root = project();
+    const out = run(root, "new", "A title");
+    assert.equal(out.status, 2);
+    assert.match(out.stderr, /new needs --author "<name>, <name>"/);
+    assert.equal(existsSync(path.join(root, DIR)), false);
   });
 
   it("refuses an origin that is not explicit, implied or PR", () => {
@@ -203,7 +214,7 @@ describe("check", () => {
   });
 
   it("accepts several verification methods", () => {
-    const out = run(seeded({ "0001-a.md": record("0001", { verification: "test, model" }) }), "check");
+    const out = run(seeded({ "0001-a.md": record("0001", { verification: ["test", "model"] }) }), "check");
     assert.equal(out.status, 0, out.stderr);
   });
 
@@ -218,7 +229,7 @@ describe("check", () => {
     const empty = { statement: "", sourceText: "", section: "", decidedBy: "" };
     const accepted = run(seeded({ "0001-a.md": record("0001", empty) }), "check");
     assert.equal(accepted.status, 1);
-    for (const name of ["## Statement", "## Source text", "- Section:", "- Decided by:"]) assert.ok(accepted.stderr.includes(name), `no "${name}" in:\n${accepted.stderr}`);
+    for (const name of ["## Statement", "## Source text", '"section"', '"decided_by"']) assert.ok(accepted.stderr.includes(name), `no "${name}" in:\n${accepted.stderr}`);
     const proposed = run(seeded({ "0001-a.md": record("0001", { ...empty, status: "Proposed" }) }), "check");
     assert.equal(proposed.status, 0, proposed.stderr);
   });
@@ -305,6 +316,7 @@ describe("render", () => {
     const html = readFileSync(path.join(root, HTML), "utf8");
     assert.match(html, /^<!doctype html>/);
     assert.match(html, /<article id="REQ-0001"/);
+    assert.match(html, /<p class="meta">Accepted · explicit · Verification: unassigned · Author: Neil Ellis · Decided by Neil Ellis, 2026-01-02 · /);
     assert.match(html, /<strong>names<\/strong>/);
     assert.match(html, /<a href="\.\.\/extra\/glossary\.md#source">source<\/a>/);
     assert.match(html, /<blockquote>\s*<p>A quoted rule\.<\/p>\s*<\/blockquote>/);
@@ -411,9 +423,9 @@ describe("guard", () => {
     assert.match(out.stdout, /2 records guarded against base: no protected text changed without agreement/);
   });
 
-  it("passes changes to the status, the trace and the notes", () => {
+  it("passes changes to the status, the trace and the notes, with a new Log entry", () => {
     const root = committed();
-    edit(root, (text) => text.replace("- Status: Accepted", "- Status: Retired").replace("## Trace\n", "## Trace\n\n- scripts/report.mjs\n").replace("## Notes\n", "## Notes\n\nA note.\n"));
+    edit(root, (text) => text.replace("status: Accepted", "status: Retired").replace("## Trace\n", "## Trace\n\n- scripts/report.mjs\n").replace("## Notes\n", "## Notes\n\nA note.\n").replace(/Created\.\n$/, "Created.\n- 2026-02-03: Retired, because the report was removed.\n"));
     const out = run(root, "guard", "--base", "base");
     assert.equal(out.status, 0, out.stderr);
   });
@@ -453,7 +465,7 @@ describe("guard", () => {
 
   it("fails a changed citation path with no agreement", () => {
     const root = committed();
-    edit(root, (text) => text.replace("docs/guide.md#L3-L4", "docs/other.md#L3-L4"));
+    edit(root, (text) => text.replaceAll("docs/guide.md#L3-L4", "docs/other.md#L3-L4"));
     const out = run(root, "guard", "--base", "base");
     assert.equal(out.status, 1);
     assert.match(out.stderr, /the Source text changed/);
@@ -470,21 +482,23 @@ describe("guard", () => {
   it("passes a change that a human agreed to, and fails it again when the text changes after the agreement", () => {
     const root = committed();
     edit(root, (text) => text.replace("The report names each source.\n\n## Source", "The report names every source.\n\n## Source"));
+    assert.equal(run(root, "log", "REQ-0001", "The Statement says every source.").status, 0);
     const agreed = inTerminal(root, "agree", "REQ-0001", "--by", "Neil Ellis");
     assert.equal(agreed.status, 0, agreed.stdout);
     const text = readFileSync(path.join(root, DIR, FILE), "utf8");
-    assert.match(text, /^- Agreed: Neil Ellis, \d{4}-\d{2}-\d{2}, text [0-9a-f]{12}$/m);
+    assert.match(text, /^agreed: "Neil Ellis, \d{4}-\d{2}-\d{2}, text [0-9a-f]{12}"\n---\n/m);
     assert.equal(run(root, "check").status, 0);
     assert.equal(run(root, "guard", "--base", "base").status, 0);
     edit(root, (t) => t.replace("The report names every source.", "The report names all sources."));
     const out = run(root, "guard", "--base", "base");
     assert.equal(out.status, 1);
-    assert.match(out.stderr, /the Agreed line is for other text/);
+    assert.match(out.stderr, /the agreement is for other text/);
   });
 
   it("keeps an agreement valid when only the line numbers move afterwards", () => {
     const root = committed();
     edit(root, (text) => text.replace("The report names each source.\n\n## Source", "The report names every source.\n\n## Source"));
+    assert.equal(run(root, "log", "REQ-0001", "The Statement says every source.").status, 0);
     assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Neil Ellis").status, 0);
     edit(root, (text) => text.replace("docs/guide.md#L3-L4", "docs/guide.md#L5-L6"));
     assert.equal(run(root, "guard", "--base", "base").status, 0);
@@ -501,7 +515,7 @@ describe("guard", () => {
 
   it("fails a changed line anchor in a link, which is not a moved citation", () => {
     const root = committed({ [FILE]: record("0001", { sourceText: "- https://example.com/doc#L1-L5\n\n> The report names each source." }) });
-    edit(root, (text) => text.replace("doc#L1-L5", "doc#L9-L12"));
+    edit(root, (text) => text.replaceAll("doc#L1-L5", "doc#L9-L12"));
     const out = run(root, "guard", "--base", "base");
     assert.equal(out.status, 1);
     assert.match(out.stderr, /the Source text changed/);
@@ -530,13 +544,155 @@ describe("guard", () => {
   });
 });
 
+describe("front matter", () => {
+  const BULLETS = "# The report names each source\n\n- ID: REQ-0001\n- Status: Accepted\n- Origin: explicit\n- Section: Report\n- Date: 2026-01-02\n- Decided by: Neil Ellis\n- Verification: unassigned\n\n## Statement\n\nThe report names each source.\n\n## Source text\n\n" + GUIDE_SOURCE + "\n\n## Trace\n\n## Notes\n\n";
+  const failing = (text, pattern) => {
+    const out = run(seeded({ [FILE]: text }), "check");
+    assert.equal(out.status, 1, out.stdout);
+    assert.match(out.stderr, pattern);
+  };
+
+  it("fails a record whose fields are a bullet list under the title", () => {
+    failing(BULLETS, /0001-the-report-names-each-source\.md: the fields are a "- Name: value" list under the title\. Put them in YAML front matter at the top of the file/);
+  });
+
+  it("fails a record with no author, and names the command that sets it", () => {
+    failing(record("0001", { author: [] }), /no "author"\. List the people who wrote the source text: ndev requirements author REQ-0001 "<name>"/);
+    failing(record("0001", { author: [""] }), /no "author"/);
+  });
+
+  it("fails an unknown key, a repeated key, a missing title, a list where one value belongs and front matter that does not close", () => {
+    failing(record("0001").replace("status: Accepted", "status: Accepted\nowner: Ann"), /"owner" is not a field of a record/);
+    failing(record("0001").replace("status: Accepted", "status: Accepted\nstatus: Proposed"), /"status" is in the front matter more than once/);
+    failing(record("0001").replace(/^title: .*\n/m, ""), /no "title" in the front matter/);
+    failing(record("0001").replace(/^section: .*$/m, "section:\n  - Report"), /"section" is a list\. It takes one value/);
+    failing(record("0001").replace("\n---\n\n## Statement", "\n\n## Statement"), /the front matter has no closing "---" line/);
+    failing(record("0001").replace('title: "The report names each source"', 'title: "The report'), /front matter line "title: \\"The report" is not valid/);
+    for (const line of ["author: [Ann, Bob]", "author: Ann # a comment", "author: |", "author: &x Ann", "author: *x", "author: {a: b}", "author: # Ann"]) failing(record("0001").replace(/^author:\n  - "Neil Ellis"$/m, line), new RegExp(`front matter line ${JSON.stringify(JSON.stringify(line)).slice(1, -1).replace(/[[\]{}|*]/g, "\\$&")} is not valid`));
+    failing(record("0001", { author: ["Ann", "Bob"] }).replace('  - "Ann"\n', '  - "Ann"\n\n'), /front matter line "  - \\"Bob\\"" is not "key: value"/);
+  });
+
+  it("fails fields that are not in the order of the template, and names that order", () => {
+    const text = record("0001");
+    const id = text.match(/^id: .*\n/m)[0];
+    failing(text.replace(id, "").replace(/^(title: .*\n)/m, `$1${id}`), /the fields are not in the order id, title, status, .*\. Put them in that order/);
+  });
+
+  it("reads quoted values, plain values and a single-quoted value", () => {
+    const root = seeded({ [FILE]: record("0001", { title: 'A "quoted": title' }).replace('section: "Report"', "section: 'Report'") });
+    assert.equal(run(root, "check").status, 0);
+    assert.match(run(root, "list", "--section", "Report").stdout, /REQ-0001  Accepted  A "quoted": title  /);
+  });
+});
+
+describe("author", () => {
+  it("sets the authors of a record, and keeps the other fields and the body", () => {
+    const root = seeded();
+    const out = run(root, "author", "REQ-0001", "Suriya Khan", "Carter Dillard");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), record("0001", { author: ["Suriya Khan", "Carter Dillard"] }).replace('  - "Suriya Khan"\n  - "Carter Dillard"', "  - Suriya Khan\n  - Carter Dillard"));
+    assert.match(out.stdout, /0001-the-report-names-each-source\.md: author: Suriya Khan, Carter Dillard/);
+  });
+
+  it("refuses a name with a comma, as new --author splits names at commas", () => {
+    const out = run(seeded(), "author", "REQ-0001", "Suriya Khan, Carter Dillard");
+    assert.equal(out.status, 2);
+    assert.match(out.stderr, /"Suriya Khan, Carter Dillard" has a comma\. Give each name as its own argument/);
+  });
+
+  it("needs a known record and at least one name", () => {
+    const root = seeded();
+    assert.equal(run(root, "author", "REQ-0001").status, 2);
+    const unknown = run(root, "author", "REQ-0009", "Ann");
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /REQ-0009 is not a record/);
+    assert.equal(run(root, "author", "REQ-0001", " ").status, 2);
+  });
+});
+
+describe("source and sync", () => {
+  const TWO = `${GUIDE_SOURCE}\n\n- https://github.com/o/r/pull/12\n\n> Name each source.`;
+  const checked = (text) => {
+    const root = seeded({ [FILE]: text });
+    return { root, out: run(root, "check") };
+  };
+
+  it("passes a record whose source is its one citation, or the list of its citations in order", () => {
+    assert.equal(checked(record("0001")).out.status, 0, checked(record("0001")).out.stderr);
+    const two = checked(record("0001", { sourceText: TWO }));
+    assert.equal(two.out.status, 0, two.out.stderr);
+  });
+
+  it("fails a source that is not the citations of the source text, and names the command that sets it", () => {
+    for (const source of [[], ["docs/guide.md#L3-L4"], ["https://github.com/o/r/pull/12", "docs/guide.md#L3-L4"]]) {
+      const { out } = checked(record("0001", { sourceText: TWO, source }));
+      assert.equal(out.status, 1);
+      assert.match(out.stderr, /0001-the-report-names-each-source\.md: "source" is not the citations of the source text, in order \(docs\/guide\.md#L3-L4, https:\/\/github\.com\/o\/r\/pull\/12\): one value for one citation, a list for more\. Run: ndev requirements sync REQ-0001/);
+    }
+    assert.match(checked(record("0001").replace(/^source: .*\n/m, "")).out.stderr, /"source" is not the citations of the source text/);
+  });
+
+  it("fails a list for one citation, and an empty value for no citation", () => {
+    assert.match(checked(record("0001").replace(/^source: .*$/m, "source:\n  - docs/guide.md#L3-L4")).out.stderr, /"source" is not the citations of the source text, in order \(docs\/guide\.md#L3-L4\)/);
+    const none = checked(record("0001", { status: "Proposed", sourceText: "" }).replace("source: []", 'source: ""'));
+    assert.equal(none.out.status, 1);
+    assert.match(none.out.stderr, /"source" is not the citations of the source text, in order \(none\)/);
+  });
+
+  it("writes nothing when a record has no valid front matter", () => {
+    const stale = record("0001", { source: [] });
+    const root = seeded({ [FILE]: stale, "0002-a-second-rule.md": "# A second rule\n\n- ID: REQ-0002\n\n## Statement\n" });
+    const out = run(root, "sync");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /0002-a-second-rule\.md has no valid front matter/);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), stale);
+  });
+
+  it("writes the citations of one record, a scalar for one and a list for more", () => {
+    const root = seeded({ [FILE]: record("0001", { source: [] }), "0002-a-second-rule.md": record("0002", { title: "A second rule", sourceText: TWO, source: [] }) });
+    const one = run(root, "sync", "REQ-0001");
+    assert.equal(one.status, 0, one.stderr);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), record("0001").replace('source: "docs/guide.md#L3-L4"', "source: docs/guide.md#L3-L4"));
+    assert.match(one.stdout, /0001-the-report-names-each-source\.md: source: docs\/guide\.md#L3-L4; issues: none; prs: none/);
+    const all = run(root, "sync");
+    assert.equal(all.status, 0, all.stderr);
+    assert.match(readFileSync(path.join(root, DIR, "0002-a-second-rule.md"), "utf8"), /\nsource:\n  - docs\/guide\.md#L3-L4\n  - https:\/\/github\.com\/o\/r\/pull\/12\nauthor:/);
+    assert.match(all.stdout, /^1 record synced/m);
+    assert.equal(run(root, "check").status, 0);
+    assert.match(run(root, "sync").stdout, /^0 records synced/m);
+  });
+
+  it("refuses an unknown record", () => {
+    const out = run(seeded({ [FILE]: record("0001") }), "sync", "REQ-0009");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0009 is not a record/);
+  });
+});
+
+describe("guard across the move to front matter", () => {
+  it("passes a record whose fields moved from a bullet list to front matter with the same text", () => {
+    const root = committed({ [FILE]: "# The report names each source\n\n- ID: REQ-0001\n- Status: Accepted\n- Origin: explicit\n- Section: Report\n- Date: 2026-01-02\n- Decided by: Neil Ellis\n- Verification: unassigned\n\n## Statement\n\nThe report names each source.\n\n## Source text\n\n" + GUIDE_SOURCE + "\n\n## Trace\n\n\n\n## Notes\n\n\n" });
+    put(root, `${DIR}/${FILE}`, record("0001"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("passes a legacy record with CRLF line endings that moved to front matter with the same text", () => {
+    const legacy = "# The report names each source\n\n- ID: REQ-0001\n- Status: Accepted\n- Origin: explicit\n- Section: Report\n- Date: 2026-01-02\n- Decided by: Neil Ellis\n- Verification: unassigned\n\n## Statement\n\nThe report names each source.\n\n## Source text\n\n" + GUIDE_SOURCE + "\n\n## Trace\n\n\n\n## Notes\n\n\n";
+    const root = committed({ [FILE]: legacy.replace(/\n/g, "\r\n") });
+    put(root, `${DIR}/${FILE}`, record("0001"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+  });
+});
+
 describe("agree", () => {
   it("refuses to run when standard input is not a terminal", () => {
     const root = committed();
     const out = run(root, "agree", "REQ-0001", "--by", "Neil Ellis");
     assert.equal(out.status, 1);
     assert.match(out.stderr, /agree records the agreement of a human/);
-    assert.doesNotMatch(readFileSync(path.join(root, DIR, FILE), "utf8"), /Agreed/);
+    assert.doesNotMatch(readFileSync(path.join(root, DIR, FILE), "utf8"), /agreed/);
   });
 
   it("needs a known record and a name", () => {
@@ -545,29 +701,30 @@ describe("agree", () => {
     assert.match(inTerminal(root, "agree", "REQ-0001").stdout, /agree needs <REQ-NNNN> --by "<name>"/);
   });
 
-  it("replaces an earlier Agreed line", () => {
+  it("replaces an earlier agreement, and keeps the other fields and the body", () => {
     const root = committed();
     assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Ann").status, 0);
     assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Bob").status, 0);
     const text = readFileSync(path.join(root, DIR, FILE), "utf8");
-    assert.equal(text.match(/^- Agreed:/gm).length, 1);
-    assert.match(text, /^- Agreed: Bob, /m);
+    assert.equal(text.match(/^agreed:/gm).length, 1);
+    assert.match(text, /^agreed: "Bob, /m);
+    assert.equal(text.replace(/^agreed: .*\n/m, ""), record("0001"));
   });
 
   it("writes a name that holds replacement patterns as it is", () => {
     const root = committed();
     assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Ann").status, 0);
     assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "A$'B$&").status, 0);
-    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), /^- Agreed: A\$'B\$&, \d{4}/m);
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), /^agreed: "A\$'B\$&, \d{4}/m);
   });
 });
 
-describe("check of the Agreed line", () => {
-  it("fails an Agreed line that does not have the form", () => {
-    const root = seeded({ [FILE]: record("0001").replace("- Verification: unassigned", "- Verification: unassigned\n- Agreed: yes") });
+describe("check of the agreement", () => {
+  it("fails an agreed value that does not have the form", () => {
+    const root = seeded({ [FILE]: record("0001").replace("verification: unassigned", "verification: unassigned\nagreed: yes") });
     const out = run(root, "check");
     assert.equal(out.status, 1);
-    assert.match(out.stderr, /"- Agreed: yes" does not have the form "- Agreed: <name>, YYYY-MM-DD, text <hash>"/);
+    assert.match(out.stderr, /"agreed: yes" does not have the form "agreed: <name>, YYYY-MM-DD, text <hash>"/);
   });
 });
 
@@ -845,7 +1002,7 @@ describe("link", () => {
   });
 
   it("ends the file with one newline when the Trace is the last section", () => {
-    const root = withPrs({ [FILE]: record("0001").replace(/\n## Notes\n\n\n$/, "") });
+    const root = withPrs({ [FILE]: record("0001").replace(/\n## Notes\n\n\n\n## Log\n\n.*\n$/, "") });
     assert.equal(run(root, "link", "REQ-0001", PR13).status, 0);
     assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), new RegExp(`## Trace\\n\\n- PR: ${PR13}\\n$`));
   });
@@ -857,6 +1014,110 @@ describe("link", () => {
     const missing = run(root, "link", "REQ-0001", "https://github.com/o/r/pull/99", "--prs", "prs.json");
     assert.equal(missing.status, 1);
     assert.match(missing.stderr, /pull\/99 is not in prs\.json/);
+  });
+});
+
+describe("issues and prs", () => {
+  const LINKED = `- PR: ${PR13}\n- Issue: https://github.com/o/r/issues/9\n- PR: ${PR12}\n- Issue: ${ISSUE5}\n- File: docs/guide.md`;
+  const WITH_PR = `${GUIDE_SOURCE}\n\n- https://github.com/o/r/pull/20\n\n> Name each source.`;
+
+  it("passes lists of the numbers of the issues and pull requests in the Trace and the source text, in ascending order", () => {
+    const text = record("0001", { trace: LINKED, sourceText: WITH_PR });
+    assert.match(text, /\nissues:\n  - 5\n  - 9\nprs:\n  - 12\n  - 13\n  - 20\n---/);
+    const out = run(seeded({ [FILE]: text }), "check");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("fails lists that are missing, out of order or not the links, and names the command that writes them", () => {
+    const cases = [
+      [record("0001", { trace: LINKED }).replace(/^issues:\n(  - .*\n)*/m, ""), /"issues" is not the numbers of the issues in the Trace \(5, 9\)\. Run: ndev requirements sync REQ-0001/],
+      [record("0001", { trace: LINKED, prs: [13, 12] }), /"prs" is not the numbers of the pull requests in the Trace and the source text \(12, 13\)\. Run: ndev requirements sync REQ-0001/],
+      [record("0001", { trace: LINKED, issues: [5] }), /"issues" is not the numbers of the issues in the Trace \(5, 9\)/],
+      [record("0001", { prs: [12] }), /"prs" is not the numbers of the pull requests in the Trace and the source text \(none\)/],
+      [record("0001").replace("issues: []", "issues: 5"), /"issues" is not the numbers of the issues in the Trace \(none\)/],
+    ];
+    for (const [text, message] of cases) {
+      const out = run(seeded({ [FILE]: text }), "check");
+      assert.equal(out.status, 1, text);
+      assert.match(out.stderr, message);
+    }
+  });
+
+  it("sync writes the numbers as plain lists, and keeps the rest of the file", () => {
+    const good = record("0001", { trace: LINKED, sourceText: WITH_PR });
+    const root = seeded({ [FILE]: record("0001", { trace: LINKED, sourceText: WITH_PR, issues: [], prs: [] }) });
+    const out = run(root, "sync", "REQ-0001");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /issues: 5, 9; prs: 12, 13, 20/);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), good.replace(/^source:\n  - "docs\/guide\.md#L3-L4"\n  - "https:\/\/github\.com\/o\/r\/pull\/20"$/m, "source:\n  - docs/guide.md#L3-L4\n  - https://github.com/o/r/pull/20"));
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("link writes the numbers of the pull request and the issues it closes", () => {
+    const root = withPrs();
+    assert.equal(run(root, "link", "REQ-0001", PR12, "--prs", "prs.json").status, 0);
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), /\nissues:\n  - 5\nprs:\n  - 12\n---/);
+    const out = run(root, "check");
+    assert.equal(out.status, 0, out.stderr);
+  });
+});
+
+describe("log", () => {
+  const CREATED = "- 2026-01-02: Created.";
+
+  it("fails a record with no Log section, no entry, or a line that is not an entry", () => {
+    const cases = [
+      [record("0001").replace(/\n## Log\n\n.*\n$/, ""), /missing the section "## Log"/],
+      [record("0001", { log: "" }), /the Log has no entry\. Each record starts with "- YYYY-MM-DD: Created\."/],
+      [record("0001", { log: `${CREATED}\nChanged the title.` }), /Log line "Changed the title\." is not "- YYYY-MM-DD: <what changed>"\. Add an entry with: ndev requirements log REQ-0001 "<what changed>"/],
+      [record("0001", { log: `${CREATED}\n- 2026-1-3: Changed.` }), /Log line "- 2026-1-3: Changed\." is not/],
+    ];
+    for (const [text, message] of cases) {
+      const out = run(seeded({ [FILE]: text }), "check");
+      assert.equal(out.status, 1, text);
+      assert.match(out.stderr, message);
+    }
+  });
+
+  it("log adds a dated entry at the end of the Log and keeps the rest of the file", () => {
+    const root = seeded();
+    const out = run(root, "log", "REQ-0001", "Retired, because the report was removed.");
+    assert.equal(out.status, 0, out.stderr);
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), record("0001", { log: `${CREATED}\n- ${today}: Retired, because the report was removed.` }));
+    assert.match(out.stdout, new RegExp(`0001-the-report-names-each-source\\.md: - ${today}: Retired, because the report was removed\\.`));
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("log refuses an unknown record, no text, and text over more than one line", () => {
+    const root = seeded();
+    assert.equal(run(root, "log", "REQ-0009", "Changed.").status, 1);
+    assert.equal(run(root, "log", "REQ-0001").status, 2);
+    assert.equal(run(root, "log", "REQ-0001", "  ").status, 2);
+    assert.equal(run(root, "log", "REQ-0001", "One.\nTwo.").status, 2);
+  });
+
+  it("guard fails a change to the title, the status or the Statement with no new Log entry", () => {
+    for (const change of [(t) => t.replace("status: Accepted", "status: Retired"), (t) => t.replace('title: "The report names each source"', 'title: "The report names every source"')]) {
+      const root = committed();
+      edit(root, change);
+      const out = run(root, "guard", "--base", "base");
+      assert.equal(out.status, 1);
+      assert.match(out.stderr, new RegExp(`${DIR}/${FILE}: the (status|title) changed since base, and the Log has no new entry\\. Run: ndev requirements log REQ-0001 "<what changed>"`));
+    }
+    const root = committed();
+    edit(root, (t) => t.replace("The report names each source.\n\n## Source", "The report names every source.\n\n## Source"));
+    assert.match(run(root, "guard", "--base", "base").stderr, /the Statement changed since base, and the Log has no new entry/);
+  });
+
+  it("guard fails an edited or removed Log entry", () => {
+    for (const change of [(t) => t.replace("Created.", "Made."), (t) => t.replace(/- 2026-01-02: Created\.\n$/, "- 2026-02-03: Retired.\n")]) {
+      const root = committed();
+      edit(root, change);
+      const out = run(root, "guard", "--base", "base");
+      assert.equal(out.status, 1);
+      assert.match(out.stderr, /the Log entry "- 2026-01-02: Created\." of base is changed or removed\. The Log only grows: restore the entry/);
+    }
   });
 });
 
@@ -1051,7 +1312,7 @@ describe("publish", () => {
     assert.deepEqual(page(root, ".published").split("\n").filter(Boolean), ["index.md", "report.md", "requirements.json", "sources.md"]);
     const report = page(root, "report.md");
     assert.match(report, /^---\ntitle: "Report"\ndescription: "1 requirement record in the Report section\."\n---\n\n# Report\n/);
-    assert.match(report, /\n<a id="REQ-0001"><\/a>\n\n## REQ-0001 The report names each source\n\nAccepted · explicit · Verification: unassigned · Decided by Neil Ellis, 2026-01-02 · \[record\]\(\.\.\/\.\.\/\.\.\/docs\/formal\/requirements\/0001-the-report-names-each-source\.md\)\n\nThe report names each source\.\n/);
+    assert.match(report, /\n<a id="REQ-0001"><\/a>\n\n## REQ-0001 The report names each source\n\nAccepted · explicit · Verification: unassigned · Author: Neil Ellis · Decided by Neil Ellis, 2026-01-02 · \[record\]\(\.\.\/\.\.\/\.\.\/docs\/formal\/requirements\/0001-the-report-names-each-source\.md\)\n\nThe report names each source\.\n/);
     assert.match(report, /### Source text\n\n- \[docs\/guide\.md#L3-L4\]\(\.\.\/\.\.\/\.\.\/docs\/guide\.md#L3-L4\)\n\n```text\nThe report names each source\.\nThe report refuses an unread source\.\n```\n/);
     const index = page(root, "index.md");
     assert.match(index, /^---\ntitle: "Requirements"\ndescription: "2 requirement records in 2 sections\."\n---\n\n# Requirements\n\n2 records: 2 Accepted\.\n/);
@@ -1060,6 +1321,7 @@ describe("publish", () => {
     assert.equal(json.title, "Requirements");
     assert.deepEqual(json.records.map((r) => [r.id, r.status, r.section, r.page]), [["REQ-0001", "Accepted", "Report", "report.md"], ["REQ-0002", "Accepted", "Sources", "sources.md"]]);
     assert.equal(json.records[0].statement, "The report names each source.");
+    assert.deepEqual(json.records[0].author, ["Neil Ellis"]);
     assert.deepEqual(json.records[0].sources, [{ citation: "docs/guide.md#L3-L4", link: "../../../docs/guide.md#L3-L4" }]);
   });
 
