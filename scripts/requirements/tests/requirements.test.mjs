@@ -740,10 +740,134 @@ describe("uncovered", () => {
   });
 });
 
+const PR12 = "https://github.com/o/r/pull/12";
+const PR13 = "https://github.com/o/r/pull/13";
+const ISSUE5 = "https://github.com/o/r/issues/5";
+const PRS = [
+  { number: 12, title: "Name each source", url: PR12, closingIssuesReferences: [{ number: 5, url: ISSUE5 }] },
+  { number: 13, title: "Bump the parser", url: PR13, closingIssuesReferences: [] },
+];
+const withPrs = (records, prs = PRS) => {
+  const root = seeded(records);
+  put(root, "prs.json", JSON.stringify(prs));
+  return root;
+};
+const PR13_SOURCE = `- ${PR13}\n\n> Bump the parser`;
+
+describe("untraced", () => {
+  it("lists each merged pull request that no record names, and fails", () => {
+    const out = run(withPrs(), "untraced", "--prs", "prs.json");
+    assert.equal(out.status, 1);
+    assert.equal(out.stdout, `#12  Name each source  ${PR12}\n#13  Bump the parser  ${PR13}\n`);
+    assert.match(out.stderr, /2 of 2 merged pull requests trace to no record/);
+  });
+
+  it("counts a pull request in a record's Trace, and one in the Source text of a record of origin PR", () => {
+    const root = withPrs({
+      [FILE]: record("0001", { trace: `- PR: ${PR12}\n- Issue: ${ISSUE5}` }),
+      "0002-the-parser-reads-the-new-format.md": record("0002", { status: "Proposed", origin: "PR", decidedBy: "", sourceText: PR13_SOURCE }),
+    });
+    const out = run(root, "untraced", "--prs", "prs.json");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "2 merged pull requests: each traces to a record, with the issues it closes\n");
+  });
+
+  it("fails a traced pull request whose closing issue the record does not link", () => {
+    const root = withPrs({ [FILE]: record("0001", { trace: `- PR: ${PR12}` }), "0002-the-parser-reads-the-new-format.md": record("0002", { status: "Proposed", origin: "PR", decidedBy: "", sourceText: PR13_SOURCE }) });
+    const out = run(root, "untraced", "--prs", "prs.json");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0001 traces https:\/\/github\.com\/o\/r\/pull\/12, which closes https:\/\/github\.com\/o\/r\/issues\/5, and does not link it\. Run: requirements\.mjs link REQ-0001 https:\/\/github\.com\/o\/r\/pull\/12 --prs prs\.json/);
+  });
+
+  it("needs --prs, and names a file that is not a list of pull requests", () => {
+    const root = withPrs();
+    assert.equal(run(root, "untraced").status, 2);
+    put(root, "bad.json", "{");
+    const bad = run(root, "untraced", "--prs", "bad.json");
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /bad\.json is not JSON/);
+    put(root, "odd.json", JSON.stringify([{ number: 1 }]));
+    const odd = run(root, "untraced", "--prs", "odd.json");
+    assert.equal(odd.status, 1);
+    assert.match(odd.stderr, /odd\.json: entry 1 has no pull request url.*gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences/);
+  });
+
+  it("fails a closing issue with no issue url, and a pull request with no list of closing issues", () => {
+    const root = withPrs({ [FILE]: record("0001", { trace: `- PR: ${PR12}` }) }, [{ number: 12, title: "t", url: PR12, closingIssuesReferences: [{ number: 5 }] }]);
+    const noUrl = run(root, "untraced", "--prs", "prs.json");
+    assert.equal(noUrl.status, 1);
+    assert.match(noUrl.stderr, /prs\.json: entry 1 \(https:\/\/github\.com\/o\/r\/pull\/12\) closing issue 1 has no issue url/);
+    put(root, "bare.json", JSON.stringify([{ number: 12, title: "t", url: PR12 }]));
+    const bare = run(root, "untraced", "--prs", "bare.json");
+    assert.equal(bare.status, 1);
+    assert.match(bare.stderr, /bare\.json: entry 1 \(https:\/\/github\.com\/o\/r\/pull\/12\) has no closingIssuesReferences list/);
+  });
+
+  it("lists the oldest pull request first, and matches a pull request number exactly", () => {
+    const pr1 = "https://github.com/o/r/pull/1";
+    const root = withPrs({ [FILE]: record("0001", { trace: `- PR: ${pr1}` }) }, [PRS[1], PRS[0], { number: 1, title: "First", url: pr1, closingIssuesReferences: [] }]);
+    const out = run(root, "untraced", "--prs", "prs.json");
+    assert.equal(out.stdout, `#12  Name each source  ${PR12}\n#13  Bump the parser  ${PR13}\n`);
+  });
+});
+
+describe("link", () => {
+  it("adds the pull request and the issues it closes to the Trace, once", () => {
+    const root = withPrs();
+    const out = run(root, "link", "REQ-0001", PR12, "--prs", "prs.json");
+    assert.equal(out.status, 0, out.stderr);
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.match(text, new RegExp(`## Trace\\n\\n- PR: ${PR12}\\n- Issue: ${ISSUE5}\\n\\n## Notes`));
+    const again = run(root, "link", "REQ-0001", PR12, "--prs", "prs.json");
+    assert.equal(again.status, 0, again.stderr);
+    assert.match(again.stdout, /already links/);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), text);
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("keeps the lines that the Trace already holds, and adds an issue that is named", () => {
+    const root = withPrs({ [FILE]: record("0001", { trace: "- Code: src/report.ts" }) });
+    run(root, "link", "REQ-0001", PR13, "--issue", "https://github.com/o/r/issues/9");
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), new RegExp(`## Trace\\n\\n- Code: src/report.ts\\n- PR: ${PR13}\\n- Issue: https://github.com/o/r/issues/9\\n\\n## Notes`));
+  });
+
+  it("keeps the line endings of a CRLF record", () => {
+    const root = withPrs({ [FILE]: record("0001", { trace: "- Code: src/report.ts" }).replace(/\n/g, "\r\n") });
+    assert.equal(run(root, "link", "REQ-0001", PR12, "--prs", "prs.json").status, 0);
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.doesNotMatch(text.replace(/\r\n/g, ""), /\n/);
+    assert.match(text, new RegExp(`## Trace\\r\\n\\r\\n- Code: src/report.ts\\r\\n- PR: ${PR12}\\r\\n- Issue: ${ISSUE5}\\r\\n\\r\\n## Notes`));
+  });
+
+  it("ends the file with one newline when the Trace is the last section", () => {
+    const root = withPrs({ [FILE]: record("0001").replace(/\n## Notes\n\n\n$/, "") });
+    assert.equal(run(root, "link", "REQ-0001", PR13).status, 0);
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), new RegExp(`## Trace\\n\\n- PR: ${PR13}\\n$`));
+  });
+
+  it("refuses an unknown record, a link that is not a pull request, and a pull request that is not in the file", () => {
+    const root = withPrs();
+    assert.equal(run(root, "link", "REQ-0009", PR12).status, 1);
+    assert.equal(run(root, "link", "REQ-0001", ISSUE5).status, 2);
+    const missing = run(root, "link", "REQ-0001", "https://github.com/o/r/pull/99", "--prs", "prs.json");
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /pull\/99 is not in prs\.json/);
+  });
+});
+
+describe("check of the Trace links", () => {
+  it("fails a PR line that is not a pull request and an Issue line that is not an issue", () => {
+    const out = run(seeded({ [FILE]: record("0001", { trace: `- PR: ${ISSUE5}\n- Issue: ${PR12}` }) }), "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /trace line "- PR: https:\/\/github\.com\/o\/r\/issues\/5" is not a link to a pull request/);
+    assert.match(out.stderr, /trace line "- Issue: https:\/\/github\.com\/o\/r\/pull\/12" is not a link to an issue/);
+  });
+});
+
 describe("usage", () => {
   it("names the commands when the command is unknown", () => {
     const out = run(project(), "frobnicate");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered/);
+    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link/);
   });
 });

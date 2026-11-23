@@ -18,7 +18,11 @@ const SECTIONS = ["Statement", "Source text", "Trace", "Notes"];
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link";
+const PULL_URL = /^https:\/\/\S+\/pull\/\d+$/;
+const ISSUE_URL = /^https:\/\/\S+\/issues\/\d+$/;
+const TRACE_LINK = /^- (PR|Issue): (.*)$/;
+const GH_PRS = "gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences";
 const LEDGER = `${DIR}/extra/ledger.md`;
 const LEDGER_ENTRY = /^- (.+)#L(\d+)-L(\d+) ([0-9a-f]{12}): (.+)$/;
 const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
@@ -187,6 +191,11 @@ function inspect(root) {
     const form = `Each source is "- <path>#L<first>-L<last>" or "- <https link>", then its quote. Make one with: ${SCRIPT} quote <path> <first> <last>`;
     if (origin === "PR" && sources.length && !sources.some((source) => PULL.test(source.url ?? ""))) fail(`the origin is PR, and the source text names no pull request. Add "- <https link to the pull request>" and its quote.`);
     for (const line of stray) fail(`source text line "${line}" belongs to no citation. ${form}`);
+    for (const line of (record.sections.Trace ?? "").split("\n")) {
+      const link = line.trim().match(TRACE_LINK);
+      if (link?.[1] === "PR" && !PULL_URL.test(link[2].trim())) fail(`trace line "${line.trim()}" is not a link to a pull request.`);
+      if (link?.[1] === "Issue" && !ISSUE_URL.test(link[2].trim())) fail(`trace line "${line.trim()}" is not a link to an issue.`);
+    }
     for (const source of sources) {
       if (source.bad) fail(`citation "${source.citation}" is not a path with lines or an https link. ${form}`);
       else if (!source.quote.some((l) => l.trim())) fail(`source ${source.citation} has no quote. ${form}`);
@@ -573,6 +582,89 @@ function uncovered(root, paths) {
   throw new Failure([...problems, summary].join("\n"));
 }
 
+function pullRequests(root, file) {
+  if (!file) throw new Usage(`needs --prs <file>, made with: ${GH_PRS} > <file>`);
+  const full = path.resolve(root, file);
+  if (!existsSync(full)) throw new Failure(`${file} does not exist. Make it with: ${GH_PRS} > ${file}`);
+  let data;
+  try {
+    data = JSON.parse(readFileSync(full, "utf8"));
+  } catch (error) {
+    throw new Failure(`${file} is not JSON: ${error.message}. Make it with: ${GH_PRS} > ${file}`);
+  }
+  if (!Array.isArray(data)) throw new Failure(`${file} is not a list of pull requests. Make it with: ${GH_PRS} > ${file}`);
+  return data.map((pr, i) => {
+    if (!PULL_URL.test(pr?.url ?? "")) throw new Failure(`${file}: entry ${i + 1} has no pull request url. Make the file with: ${GH_PRS} > ${file}`);
+    const where = `${file}: entry ${i + 1} (${pr.url})`;
+    if (!Array.isArray(pr.closingIssuesReferences)) throw new Failure(`${where} has no closingIssuesReferences list. Make the file with: ${GH_PRS} > ${file}`);
+    const issues = pr.closingIssuesReferences.map((issue, j) => {
+      if (!ISSUE_URL.test(issue?.url ?? "")) throw new Failure(`${where} closing issue ${j + 1} has no issue url. Make the file with: ${GH_PRS} > ${file}`);
+      return issue.url;
+    });
+    return { number: pr.number, title: pr.title ?? "", url: pr.url, issues };
+  });
+}
+
+function traces(record) {
+  const prs = new Set();
+  const issues = new Set();
+  for (const line of (record.sections.Trace ?? "").split("\n")) {
+    const link = line.trim().match(TRACE_LINK);
+    if (link) (link[1] === "PR" ? prs : issues).add(link[2].trim());
+  }
+  for (const source of sourceText(record.sections["Source text"]).sources) {
+    const pull = source.url?.match(PULL)?.[0];
+    if (pull) prs.add(pull);
+  }
+  return { prs, issues };
+}
+
+function untraced(root, options) {
+  const prs = pullRequests(root, options.prs);
+  const records = entries(root).filter((e) => NAME.test(e.file)).map((e) => read(e)).map((r) => ({ ...r, links: traces(r) }));
+  const missing = [];
+  const problems = [];
+  for (const pr of prs) {
+    const tracing = records.filter((r) => r.links.prs.has(pr.url));
+    if (!tracing.length) missing.push(pr);
+    for (const record of tracing) for (const issue of pr.issues) if (!record.links.issues.has(issue)) problems.push(`${record.id} traces ${pr.url}, which closes ${issue}, and does not link it. Run: ${SCRIPT} link ${record.id} ${pr.url} --prs ${options.prs}`);
+  }
+  if (!missing.length && !problems.length) return `${prs.length} merged pull request${prs.length === 1 ? "" : "s"}: each traces to a record, with the issues it closes\n`;
+  missing.sort((a, b) => a.number - b.number);
+  process.stdout.write(missing.map((pr) => `#${pr.number}  ${pr.title}  ${pr.url}`).join("\n") + (missing.length ? "\n" : ""));
+  if (missing.length) problems.push(`${missing.length} of ${prs.length} merged pull requests trace to no record. Link each to the records it implements with ${SCRIPT} link, or write a record with: ${SCRIPT} new "<title>" --origin PR`);
+  throw new Failure(problems.join("\n"));
+}
+
+function link(root, id, url, options) {
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !PULL_URL.test(url ?? "") || (options.issue !== undefined && !ISSUE_URL.test(options.issue))) throw new Usage(`link needs <REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>], for example: link REQ-0001 https://github.com/o/r/pull/12 --prs prs.json`);
+  const entry = entries(root).find((e) => e.id === id && NAME.test(e.file));
+  if (!entry) throw new Failure(`${id} is not a record in ${DIR}.`);
+  const issues = [];
+  if (options.prs) {
+    const pr = pullRequests(root, options.prs).find((p) => p.url === url);
+    if (!pr) throw new Failure(`${url} is not in ${options.prs}. Make the file again with: ${GH_PRS} > ${options.prs}`);
+    issues.push(...pr.issues);
+  }
+  if (options.issue) issues.push(options.issue);
+  const record = read(entry);
+  const held = (record.sections.Trace ?? "").split("\n").map((line) => line.trim());
+  const added = [`- PR: ${url}`, ...issues.map((issue) => `- Issue: ${issue}`)].filter((line, i, all) => !held.includes(line) && all.indexOf(line) === i);
+  if (!added.length) return `${id} already links ${url}${issues.length ? " and the issues it closes" : ""}\n`;
+  const eol = record.text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = record.text.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === "## Trace");
+  if (start < 0) throw new Failure(`${entry.rel} has no "## Trace" section. Run: ${SCRIPT} check`);
+  const after = lines.slice(start + 1).findIndex((line) => line.startsWith("## "));
+  const end = after < 0 ? lines.length : start + 1 + after;
+  const body = lines.slice(start + 1, end);
+  while (body.length && !body[0].trim()) body.shift();
+  while (body.length && !body.at(-1).trim()) body.pop();
+  const tail = lines.slice(end);
+  writeFileSync(entry.full, [...lines.slice(0, start + 1), "", ...body, ...added, ...(tail.length ? ["", ...tail] : [""])].join(eol));
+  return `${entry.rel}: ${added.join(", ")}\n`;
+}
+
 try {
   const { positional, options } = parseArguments(process.argv.slice(2));
   const [command, ...rest] = positional;
@@ -589,6 +681,8 @@ try {
     sources: () => sources(root(), options),
     ledger: () => ledger(root(), rest[0], rest[1], rest[2], rest[3]),
     uncovered: () => uncovered(root(), rest),
+    untraced: () => untraced(root(), options),
+    link: () => link(root(), rest[0], rest[1], options),
   };
   if (!commands[command]) throw new Usage(`Unknown command "${command ?? ""}": use ${COMMANDS}`);
   process.stdout.write(commands[command]());

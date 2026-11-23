@@ -45,6 +45,9 @@ The requirement. This is the binding text.
 
 ## Trace
 
+- PR: <link to a pull request that implements it>
+- Issue: <link to an issue that the pull request closes>
+
 ## Notes
 ```
 
@@ -109,3 +112,11 @@ The `requirements-find` skill reads the project's documents and writes the recor
 | 4 | other | Each other document |
 
 `requirements.mjs uncovered [path...]` reads the named documents, or each tier 1 document. It skips front matter, headings, code blocks, comments, rules and table separators. It lists each other line that no record cites and no ledger entry holds, and marks a normative line (must, shall, should, never, always, only and the like). It fails while a line is not accounted for, and when the lines of a ledger entry changed after the entry was written. A record of any status accounts for the lines that it cites: a rejected record is a decision.
+
+## Tracing pull requests
+
+Each merged pull request traces to a record. The `requirements-retrospective` skill does this work for the pull requests merged before the records existed.
+
+`requirements.mjs untraced --prs <file>` reads the output of `gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences`. A record names a pull request in a `- PR:` line of its Trace, or as a link in its Source text. The command lists each pull request that no record names, the oldest first. It also fails a record that names a pull request and does not link each issue that the pull request closes.
+
+`requirements.mjs link <REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]` adds the `- PR:` line and the `- Issue:` lines to the Trace. With `--prs`, it adds the issues that the pull request closes. The Trace is not protected, so an agent can link. `check` fails a `- PR:` line that is not a link to a pull request, and an `- Issue:` line that is not a link to an issue.
