@@ -35,6 +35,8 @@ author:
   - <name of a person who wrote the source text>
 decided_by: <name>
 verification: unassigned    (or a list: "  - test", "  - model")
+model:    (only when a Quint model specifies the requirement)
+  - models/<area>.qnt#<name>
 issues: []    (or a list of the numbers of the issues in the Trace: "  - 5")
 prs: []    (or a list of the numbers of the pull requests in the Trace and the Source text: "  - 12")
 nfr: true    (only for a non-functional requirement)
@@ -96,6 +98,7 @@ These commands write the record:
 | decided_by | The human who accepted, rejected or retired the record. |
 | agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `ndev requirements agree`, which runs only in a terminal. |
 | verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. Give a list for one or more methods. `unassigned` until a method is chosen. |
+| model | Optional. The Quint models that specify the requirement, as a list. Each entry is a `.qnt` path from the project root. Add `#<name>` for one part of the model: a `val`, `def`, `action`, `temporal` or `run`. See [Models](#models). |
 
 ## Rules
 
@@ -123,6 +126,7 @@ These commands write the record:
 - a `source`, `issues` or `prs` field that is different from the Source text and the Trace;
 - an `nfr` value that is not `true`;
 - a `- None:` line in a record without `nfr: true`, with no reason, or in a Trace that has a link;
+- for a record in force, a `model` entry that is not a `.qnt` path, a model file that does not exist, a model that does not cite the record ID, and a `#<name>` that the model does not declare;
 - a record with no `## Log`, with no entry in the Log, or with a Log line that is not `- YYYY-MM-DD: <what changed>`.
 
 When the quoted text only moved in its file, the check names the new lines, and the agent corrects the line numbers. When the text changed, the check sends the change to a human.
@@ -175,9 +179,20 @@ A record lists each file that implements it, in `- File:` lines of its Trace. A 
 - each `- PR:` link that is not a merged pull request in the file, and each `- Issue:` link that is not in the file;
 - each Accepted record with no `- File:` line, unless an open issue in its Trace plans the work or it is a non-functional requirement with a `- None:` reason;
 - each `- File:` line of a record in force that matches no tracked file;
-- each `REQ-NNNN` in a tracked file that names no record, names a record that is not in force, or names a record whose `- File:` lines do not match that file.
+- each `REQ-NNNN` in a tracked file that names no record, names a record that is not in force, or names a record whose `- File:` lines do not match that file. A model that the record lists in `model` needs no `- File:` line;
+- each file that cites a record with a model, and does not hold the path of one of its models.
 
 The scan of the files skips the records folder and the publish folder.
+
+## Models
+
+A Quint model is a formal specification of a part of the system. Write one when the requirement is about state, order or concurrency, and a test cannot show all the cases. Examples: two migrations never share a version, and an accepted proposal never goes back to proposed. A record that is a fixed fact, such as a word on a page, needs no model.
+
+Write the model with the `quint-modeling` skill (https://github.com/quint-co/quint/tree/main/skills). Its `from-requirements` guide starts from records like these. Put a comment that names the record ID at each part of the model that specifies it, for example `// REQ-0007` above `temporal neverTwoVersions`.
+
+`ndev requirements model <REQ-NNNN> <path.qnt[#name]>...` sets the `model` list of a record. It refuses an entry that `check` fails. Each source file that cites the record also holds the path of its model, for example `// REQ-0007 models/migrations.qnt`. Then an agent that reads the code finds the specification.
+
+`check` does not run Quint. Run `quint typecheck` and `quint test` on the models in the project's own checks.
 
 ## The document
 

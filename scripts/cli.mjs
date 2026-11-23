@@ -136,7 +136,7 @@ const groups = {
       new: '"<short title>" --author "<name>, <name>" [--origin explicit|implied|PR] [--section <name>]',
       list: '[--status <status>] [--section <name>]', search: '<term>...',
       quote: '<path> <first line> <last line>', check: '', render: '[--check]',
-      guard: '--base <git ref>', agree: '<REQ-NNNN> --by "<name>"', author: '<REQ-NNNN> "<name>"...', sync: '[<REQ-NNNN>...]', log: '<REQ-NNNN> "<what changed>"',
+      guard: '--base <git ref>', agree: '<REQ-NNNN> --by "<name>"', author: '<REQ-NNNN> "<name>"...', model: '<REQ-NNNN> <path.qnt[#name]>...', sync: '[<REQ-NNNN>...]', log: '<REQ-NNNN> "<what changed>"',
       sources: '[--tier <n>]', ledger: '<path> <first line> <last line> "<reason>"',
       uncovered: '[<path>...]', untraced: '--prs <file>',
       link: '<REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]',

@@ -17,6 +17,7 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 | `ndev requirements list [--status <status>] [--section <name>]` | Lists each record. |
 | `ndev requirements new "<short title>" --author "<name>, <name>" [--origin explicit\|implied\|PR] [--section <name>]` | Creates the next numbered record from the template, status `Proposed`, and prints its path. The authors are the people who wrote the source text. |
 | `ndev requirements author <REQ-NNNN> "<name>"...` | Replaces the list of authors of a record. |
+| `ndev requirements model <REQ-NNNN> <path.qnt[#name]>...` | Sets the Quint models that specify a record. Refuses a model that does not exist, does not cite the record, or does not declare the name. |
 | `ndev requirements sync [<REQ-NNNN>...]` | Writes the `source`, `issues` and `prs` fields from the Source text and the Trace. Run it after you change a citation, or a PR or Issue line of the Trace by hand. |
 | `ndev requirements log <REQ-NNNN> "<what changed>"` | Adds an entry with the date of today to the `## Log`. Run it each time the title, the status, the Statement or the Source text changes. |
 | `ndev requirements quote <path> <first line> <last line>` | Prints a citation and the lines as a quote, ready for the Source text. |
@@ -54,7 +55,8 @@ Search before you plan, design or change behaviour. Use the words of the area, t
 2. Create the record with `ndev requirements new`. Give one requirement only.
 3. Write the Statement. When a document states the requirement, use its words.
 4. Add the Source text with `ndev requirements quote`. For a link (an issue, a pull request, a message), write `- <https link>` and then the quoted text. A record of origin `PR` names its pull request.
-5. Leave the status `Proposed`. A human accepts: then set `status: Accepted`, `decided_by` and the `date`, and add a Log entry. Never accept your own record.
-6. Run `ndev requirements check`, then `ndev requirements render`, and commit the record with the generated file.
+5. When the requirement is about state, order or concurrency, write a Quint model with the `quint-modeling` skill and set it with `ndev requirements model`. The section "Models" of the format page tells when a model is needed. Each source file that cites the record also cites the model path.
+6. Leave the status `Proposed`. A human accepts: then set `status: Accepted`, `decided_by` and the `date`, and add a Log entry. Never accept your own record.
+7. Run `ndev requirements check`, then `ndev requirements render`, and commit the record with the generated file.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

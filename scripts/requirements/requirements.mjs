@@ -19,7 +19,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, sync, log, sources, ledger, uncovered, untraced, link, file, trace, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, trace, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -39,9 +39,11 @@ const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
 const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|may not|will not|refuses?|only)\b/i;
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"agreed: <name>, YYYY-MM-DD, text <hash>"`;
-const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed" };
+const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Model: "model", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed" };
 const KEYS = Object.values(FIELDS);
-const LISTS = ["source", "author", "verification", "issues", "prs"];
+const LISTS = ["source", "author", "verification", "model", "issues", "prs"];
+const MODEL_ENTRY = /^([^#\s]+\.qnt)(?:#([A-Za-z_][A-Za-z0-9_]*))?$/;
+const MODEL_FORM = "Give a .qnt path from the project root, with #<name> after it for one part of the model.";
 const PLAIN = /^[A-Za-z0-9][A-Za-z0-9 ._/#:-]*$/;
 const UNSUPPORTED = /^[[\]{}|>&*!%@`#]|\s#|:$|: /;
 const RESERVED = /^(true|false|yes|no|on|off|null|y|n)$/i;
@@ -344,6 +346,7 @@ function inspect(root) {
     const verification = record.field("Verification");
     if (!verification) fail(`no "verification" value. Use unassigned, or a list of one or more of ${METHODS.join(", ")}.`);
     else if (verification !== "unassigned") for (const method of verification.split(",").map((m) => m.trim())) if (!METHODS.includes(method)) fail(`verification "${method}" is not unassigned, ${METHODS.slice(0, -1).join(", ")} or ${METHODS.at(-1)}.`);
+    if (IN_FORCE.includes(record.status)) for (const model of modelEntries(record)) for (const problem of modelProblems(root, entry.id, model)) fail(problem);
     const agreed = record.field("Agreed");
     if (agreed !== undefined && !AGREED.test(agreed)) fail(`"agreed: ${agreed}" does not have the form ${AGREED_FORM}. Only a human writes it, with: ${SCRIPT} agree ${entry.id} --by "<name>"`);
     const proposed = record.status === "Proposed";
@@ -1037,6 +1040,44 @@ function author(root, id, names) {
   return `${entry.rel}: author: ${people.join(", ")}\n`;
 }
 
+const modelEntries = (record) => [record.data.model ?? []].flat().map(String);
+const modelFiles = (record) => [...new Set(modelEntries(record).map((model) => model.split("#")[0]))];
+
+function modelForm(root, model) {
+  const match = model.match(MODEL_ENTRY);
+  if (!match || outside(root, match[1])) return `"${model}" is not a Quint model. ${MODEL_FORM}`;
+  const plain = path.posix.normalize(match[1]);
+  if (plain !== match[1]) return `"${model}" is not in its plain form. Write "${model.replace(match[1], plain)}".`;
+  return null;
+}
+
+function modelProblems(root, id, model) {
+  const form = modelForm(root, model);
+  if (form) return [`model ${form}`];
+  const [, file, name] = model.match(MODEL_ENTRY);
+  const full = path.join(root, file);
+  if (!existsSync(full) || !lstatSync(full).isFile()) return [`model "${model}" does not exist. Write the model with the quint-modeling skill, or correct the path.`];
+  const text = readFileSync(full, "utf8");
+  const code = text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  const problems = [];
+  if (!(text.match(REQ_ID) ?? []).includes(id)) problems.push(`model "${model}" does not cite ${id}. Add a comment that names ${id} at the part of the model that specifies it.`);
+  if (name && !new RegExp(`(^|[\\s{;])(pure\\s+)?(val|def|action|temporal|run)\\s+${name}\\b`, "m").test(code)) problems.push(`model "${model}": ${file} declares no val, def, action, temporal or run named "${name}".`);
+  return problems;
+}
+
+function model(root, id, list) {
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !list.length) throw new Usage(`model needs <REQ-NNNN> and one or more Quint models, for example: model REQ-0001 models/report.qnt "models/report.qnt#names"`);
+  const form = list.map((entry) => modelForm(root, entry)).find(Boolean);
+  if (form) throw new Usage(form);
+  const twice = list.find((entry, i) => list.indexOf(entry) !== i);
+  if (twice) throw new Usage(`"${twice}" is given twice. Give each model once.`);
+  const entry = recordEntry(root, id);
+  const problems = list.flatMap((m) => modelProblems(root, id, m));
+  if (problems.length) throw new Failure(problems.map((problem) => `${id}: ${problem}`).join("\n"));
+  setField(entry, "model", list);
+  return `${entry.rel}: model: ${list.join(", ")}\n`;
+}
+
 function tier(rel) {
   const parts = rel.split("/");
   const stem = parts.at(-1).replace(/\.mdx?$/i, "");
@@ -1481,7 +1522,13 @@ function traceAll(root, options) {
     const where = `${file}:${number} cites ${id}`;
     if (!record) problems.push(`${where}, which is not a record in ${DIR}.`);
     else if (!IN_FORCE.includes(record.status)) problems.push(`${where}, which is ${record.status}. Cite the record in force.`);
-    else if (!patterns.get(id).some(({ regex }) => regex.test(file))) problems.push(`${where}, whose record does not list the file. Run: ${SCRIPT} file ${id} ${file}`);
+    else if (modelFiles(record).includes(file)) continue;
+    else if (!patterns.get(id).some(({ regex }) => regex.test(file))) problems.push(file.endsWith(".qnt") ? `${where}, whose record does not list the model. Run: ${SCRIPT} model ${id} ${file}` : `${where}, whose record does not list the file. Run: ${SCRIPT} file ${id} ${file}`);
+    else {
+      const models = modelFiles(record);
+      const text = models.length ? readFileSync(path.join(root, file), "utf8") : "";
+      if (models.length && !models.some((m) => text.includes(m))) problems.push(models.length === 1 ? `${where}, whose model is ${models[0]}, and does not cite the model. Add "${models[0]}" next to ${id}, so that the reader finds the specification.` : `${where}, whose models are ${models.join(", ")}, and cites none of them. Add the one that specifies this code next to ${id}, so that the reader finds the specification.`);
+    }
   }
   if (problems.length) {
     listed(missing);
@@ -1508,6 +1555,7 @@ export function runRequirements(argv, { json } = {}) {
       guard: () => guard(root(), options),
       agree: () => agree(root(), rest[0], options),
       author: () => author(root(), rest[0], rest.slice(1)),
+      model: () => model(root(), rest[0], rest.slice(1)),
       sync: () => sync(root(), rest),
       log: () => log(root(), rest[0], rest[1]),
       sources: () => sources(root(), options),

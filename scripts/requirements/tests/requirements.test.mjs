@@ -22,8 +22,8 @@ const GUIDE = "# Guide\n\nThe report names each source.\nThe report refuses an u
 const GUIDE_SOURCE = "- docs/guide.md#L3-L4\n\n> The report names each source.\n> The report refuses an unread source.";
 const numbers = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => Number(m[1])))].sort((a, b) => a - b);
 const yamlList = (key, items) => (items.length ? `${key}:\n${items.map((item) => `  - ${JSON.stringify(item)}`).join("\n")}` : `${key}: []`);
-const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", section = "Report", date = "2026-01-02", author = ["Neil Ellis"], decidedBy = "Neil Ellis", verification = "unassigned", statement = "The report names each source.", sourceText = GUIDE_SOURCE, source = [...sourceText.matchAll(/^- (.+)$/gm)].map((m) => m[1]), trace = "- File: docs/guide.md", issues = numbers(trace, /^- Issue: https:\/\/\S+\/issues\/(\d+)$/gm), prs = numbers(`${trace}\n${sourceText}`, /^- (?:PR: )?https:\/\/\S+\/pull\/(\d+)$/gm), notes = "", log = `- ${date}: Created.` } = {}) =>
-  `---\nid: ${id}\ntitle: ${JSON.stringify(title)}\nstatus: ${status}\norigin: ${origin}\nsection: ${JSON.stringify(section)}\ndate: ${date}\n${source.length === 1 ? `source: ${JSON.stringify(source[0])}` : yamlList("source", source)}\n${yamlList("author", author)}\ndecided_by: ${JSON.stringify(decidedBy)}\n${Array.isArray(verification) ? yamlList("verification", verification) : `verification: ${verification}`}\n${yamlList("issues", issues)}\n${yamlList("prs", prs)}\n---\n\n## Statement\n\n${statement}\n\n## Source text\n\n${sourceText}\n\n## Trace\n\n${trace}\n\n## Notes\n\n${notes}\n\n## Log\n\n${log}\n`;
+const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", section = "Report", date = "2026-01-02", author = ["Neil Ellis"], decidedBy = "Neil Ellis", verification = "unassigned", model = [], statement = "The report names each source.", sourceText = GUIDE_SOURCE, source = [...sourceText.matchAll(/^- (.+)$/gm)].map((m) => m[1]), trace = "- File: docs/guide.md", issues = numbers(trace, /^- Issue: https:\/\/\S+\/issues\/(\d+)$/gm), prs = numbers(`${trace}\n${sourceText}`, /^- (?:PR: )?https:\/\/\S+\/pull\/(\d+)$/gm), notes = "", log = `- ${date}: Created.` } = {}) =>
+  `---\nid: ${id}\ntitle: ${JSON.stringify(title)}\nstatus: ${status}\norigin: ${origin}\nsection: ${JSON.stringify(section)}\ndate: ${date}\n${source.length === 1 ? `source: ${JSON.stringify(source[0])}` : yamlList("source", source)}\n${yamlList("author", author)}\ndecided_by: ${JSON.stringify(decidedBy)}\n${Array.isArray(verification) ? yamlList("verification", verification) : `verification: ${verification}`}\n${model.length ? `${yamlList("model", model)}\n` : ""}${yamlList("issues", issues)}\n${yamlList("prs", prs)}\n---\n\n## Statement\n\n${statement}\n\n## Source text\n\n${sourceText}\n\n## Trace\n\n${trace}\n\n## Notes\n\n${notes}\n\n## Log\n\n${log}\n`;
 const seeded = (records = { "0001-the-report-names-each-source.md": record("0001") }) => {
   const root = project();
   put(root, "docs/guide.md", GUIDE);
@@ -582,6 +582,80 @@ describe("front matter", () => {
     const root = seeded({ [FILE]: record("0001", { title: 'A "quoted": title' }).replace('section: "Report"', "section: 'Report'") });
     assert.equal(run(root, "check").status, 0);
     assert.match(run(root, "list", "--section", "Report").stdout, /REQ-0001  Accepted  A "quoted": title  /);
+  });
+});
+
+const MODEL = "models/report.qnt";
+const QUINT = "module report {\n  // REQ-0001\n  var named: Set[str]\n  pure def names(s) = s\n  action step = named' = named\n  temporal everyNamed = always(true)\n}\n";
+const modelled = (model, text = QUINT) => {
+  const root = seeded({ [FILE]: record("0001", { model }) });
+  put(root, MODEL, text);
+  return root;
+};
+
+describe("model", () => {
+  it("passes a record whose models exist, cite it and declare the named parts", () => {
+    const out = run(modelled([MODEL, `${MODEL}#names`, `${MODEL}#step`, `${MODEL}#everyNamed`]), "check");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("fails a model that is not a .qnt path, does not exist, does not cite the record or does not declare the name", () => {
+    const out = run(modelled(["models/report.tla", "models/missing.qnt", `${MODEL}#absent`]), "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /0001-the-report-names-each-source\.md: model "models\/report\.tla" is not a Quint model\. Give a \.qnt path from the project root, with #<name> after it for one part of the model\./);
+    assert.match(out.stderr, /0001-the-report-names-each-source\.md: model "models\/missing\.qnt" does not exist\. Write the model with the quint-modeling skill, or correct the path\./);
+    assert.match(out.stderr, /0001-the-report-names-each-source\.md: model "models\/report\.qnt#absent": models\/report\.qnt declares no val, def, action, temporal or run named "absent"\./);
+    const uncited = run(modelled([MODEL], QUINT.replace("// REQ-0001", "// the report")), "check");
+    assert.equal(uncited.status, 1);
+    assert.match(uncited.stderr, /model "models\/report\.qnt" does not cite REQ-0001\. Add a comment that names REQ-0001 at the part of the model that specifies it\./);
+  });
+
+  it("fails a model path that is not in its plain form, and a name that only a comment declares", () => {
+    const out = run(modelled([`./${MODEL}`, `models/../${MODEL}`, `${MODEL}#settle`, `${MODEL}#total`], QUINT.replace("// REQ-0001", "// REQ-0001 def settle\n  /* val total */")), "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /model "\.\/models\/report\.qnt" is not in its plain form\. Write "models\/report\.qnt"\./);
+    assert.match(out.stderr, /model "models\/\.\.\/models\/report\.qnt" is not in its plain form\. Write "models\/report\.qnt"\./);
+    assert.match(out.stderr, /declares no val, def, action, temporal or run named "settle"/);
+    assert.match(out.stderr, /declares no val, def, action, temporal or run named "total"/);
+  });
+
+  it("puts model after verification", () => {
+    const root = modelled([MODEL]);
+    const rel = path.join(root, DIR, FILE);
+    writeFileSync(rel, readFileSync(rel, "utf8").replace(/^(verification: .*\n)(model:\n  - .*\n)/m, "$2$1"));
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the fields are not in the order id, title, status, origin, section, date, source, author, decided_by, verification, model, issues, prs, nfr, agreed/);
+  });
+
+  it("sets the models of a record with the model command", () => {
+    const root = modelled([]);
+    const out = run(root, "model", "REQ-0001", MODEL, `${MODEL}#names`);
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, `${DIR}/${FILE}: model: ${MODEL}, ${MODEL}#names\n`);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), record("0001", { model: [MODEL, `${MODEL}#names`] }).replace(`  - "${MODEL}"\n  - "${MODEL}#names"`, `  - ${MODEL}\n  - ${MODEL}#names`));
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("refuses a model the check would fail, and needs a record and a model", () => {
+    const root = modelled([]);
+    assert.equal(run(root, "model", "REQ-0001").status, 2);
+    const tla = run(root, "model", "REQ-0001", "models/report.tla");
+    assert.equal(tla.status, 2);
+    assert.match(tla.stderr, /"models\/report\.tla" is not a Quint model/);
+    const absent = run(root, "model", "REQ-0001", `${MODEL}#absent`);
+    assert.equal(absent.status, 1);
+    assert.match(absent.stderr, /declares no val, def, action, temporal or run named "absent"/);
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), /^verification: unassigned\nissues: \[\]$/m);
+    const twice = run(root, "model", "REQ-0001", MODEL, MODEL);
+    assert.equal(twice.status, 2);
+    assert.match(twice.stderr, /"models\/report\.qnt" is given twice/);
+    const dotted = run(root, "model", "REQ-0001", `./${MODEL}`);
+    assert.equal(dotted.status, 2);
+    assert.match(dotted.stderr, /"\.\/models\/report\.qnt" is not in its plain form\. Write "models\/report\.qnt"/);
+    const unknown = run(root, "model", "REQ-0009", MODEL);
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /REQ-0009 is not a record/);
   });
 });
 
@@ -1936,6 +2010,25 @@ describe("trace", () => {
     const out = trace(root);
     assert.equal(out.status, 1);
     assert.match(out.stderr, /issues\.json: entry 1 has no state\. Make the file with: gh issue list --state all --limit 10000 --json url,state > issues\.json/);
+  });
+
+  it("accepts a record cited in its own model, and a source file that cites the record and its model", () => {
+    const records = { [FILE]: record("0001", { trace: LINKED, model: [MODEL] }), [PARSER]: parser() };
+    const out = trace(traced({ records, files: { [MODEL]: QUINT, "src/report.js": `export const cited = 'REQ-0001 ${MODEL}';\n` } }));
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("fails a source file that cites a record with a model, and not the model", () => {
+    const records = { [FILE]: record("0001", { trace: LINKED, model: [`${MODEL}#names`] }), [PARSER]: parser() };
+    const out = trace(traced({ records, files: { [MODEL]: QUINT, "src/report.js": "export const cited = 'REQ-0001';\n" } }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /^ndev: src\/report\.js:1 cites REQ-0001, whose model is models\/report\.qnt, and does not cite the model\. Add "models\/report\.qnt" next to REQ-0001, so that the reader finds the specification\.$/m);
+  });
+
+  it("fails a model that cites a record which does not list the model", () => {
+    const out = trace(traced({ files: { [MODEL]: QUINT, "src/report.js": "export const cited = 'REQ-0001';\n" } }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /^ndev: models\/report\.qnt:2 cites REQ-0001, whose record does not list the model\. Run: ndev requirements model REQ-0001 models\/report\.qnt$/m);
   });
 });
 
