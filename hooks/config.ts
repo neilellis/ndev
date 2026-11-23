@@ -17,6 +17,7 @@ export type NeilDevConfig = {
   projectLevel?: ProjectLevel
   workflow?: boolean
   checkEnv?: string[]
+  chatGuard?: boolean
   remote?: Remote
 }
 
@@ -62,7 +63,7 @@ export type LoadedConfig = {
   error?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv', 'remote'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv', 'chatGuard', 'remote'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const MODES: readonly string[] = ['light', 'heavy', 'hack']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
@@ -85,6 +86,7 @@ export const validate = (raw: unknown): string | undefined => {
 
   if (value.projectLevel !== undefined && !(PROJECT_LEVELS as readonly unknown[]).includes(value.projectLevel)) return `"projectLevel" is ${JSON.stringify(value.projectLevel)}; use ${PROJECT_LEVELS.map(l => `"${l}"`).join(', ')}`
   if (value.workflow !== undefined && typeof value.workflow !== 'boolean') return `"workflow" is ${JSON.stringify(value.workflow)}; use true or false`
+  if (value.chatGuard !== undefined && typeof value.chatGuard !== 'boolean') return `"chatGuard" is ${JSON.stringify(value.chatGuard)}; use true or false`
   if (value.checkEnv !== undefined && (!Array.isArray(value.checkEnv) || value.checkEnv.some(k => typeof k !== 'string' || !SECRET_NAME.test(k)))) return `"checkEnv" is ${JSON.stringify(value.checkEnv)}; use a list of key names, such as ["TEST_DATABASE_URL"]`
   if (value.quality !== undefined && (typeof value.quality !== 'object' || value.quality === null || Array.isArray(value.quality))) return '"quality" must be an object'
   if (value.branding !== undefined) {
