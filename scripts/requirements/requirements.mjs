@@ -30,6 +30,7 @@ const REQ_ID = /\bREQ-\d{4}\b/g;
 const PULL_URL = /^https:\/\/\S+\/pull\/\d+$/;
 const ISSUE_URL = /^https:\/\/\S+\/issues\/\d+$/;
 const TRACE_LINK = /^- (PR|Issue|File): (.*)$/;
+const TRACE_NONE = /^- None:(.*)$/;
 const GH_ISSUES = "gh issue list --state all --limit 10000 --json url,state";
 const GH_PRS = "gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences";
 const LEDGER = `${DIR}/extra/ledger.md`;
@@ -38,7 +39,7 @@ const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
 const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|may not|will not|refuses?|only)\b/i;
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"agreed: <name>, YYYY-MM-DD, text <hash>"`;
-const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Issues: "issues", PRs: "prs", Agreed: "agreed" };
+const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed" };
 const KEYS = Object.values(FIELDS);
 const LISTS = ["source", "author", "verification", "issues", "prs"];
 const PLAIN = /^[A-Za-z0-9][A-Za-z0-9 ._/#:-]*$/;
@@ -366,6 +367,13 @@ function inspect(root) {
     const form = `Each source is "- <path>#L<first>-L<last>" or "- <https link>", then its quote. Make one with: ${SCRIPT} quote <path> <first> <last>`;
     if (origin === "PR" && sources.length && !sources.some((source) => PULL.test(source.url ?? ""))) fail(`the origin is PR, and the source text names no pull request. Add "- <https link to the pull request>" and its quote.`);
     for (const line of stray) fail(`source text line "${line}" belongs to no citation. ${form}`);
+    const lines = traceLines(record);
+    if ("nfr" in record.data && record.data.nfr !== "true") fail(`"nfr" takes the value true. Leave it out for a functional requirement.`);
+    for (const line of lines.filter((l) => TRACE_NONE.test(l))) {
+      if (record.data.nfr !== "true") fail(`trace line "${line}" is only for a non-functional requirement (nfr: true). Link what implements the requirement, or the issue that plans it.`);
+      else if (!line.match(TRACE_NONE)[1].trim()) fail(`trace line "${line}" gives no reason. Write why nothing implements the requirement: "- None: <reason>".`);
+      else if (lines.some((l) => TRACE_LINK.test(l))) fail(`trace line "${line}" is in a Trace that has a link. Remove it.`);
+    }
     for (const line of (record.sections.Trace ?? "").split("\n")) {
       const link = line.trim().match(TRACE_LINK);
       if (link?.[1] === "PR" && !PULL_URL.test(link[2].trim())) fail(`trace line "${line.trim()}" is not a link to a pull request.`);
@@ -923,6 +931,11 @@ function guard(root, options) {
     if (files.length > 1) problems.push(`duplicate number ${id.slice(4)}: ${files.join(", ")}. Numbers are never reused: renumber the newer file.`);
   }
   const current = new Map(named.map((e) => [e.id, read(e)]));
+  for (const record of current.values()) {
+    if (!IN_FORCE.includes(record.status)) continue;
+    if (traceLines(record).some((line) => TRACE_LINK.test(line)) || noLinkReason(record)) continue;
+    problems.push(`${record.rel}: the Trace has no link to what implements the requirement or plans to implement it. Add the files with: ${SCRIPT} file ${record.id} <path or pattern>. Add the pull request with: ${SCRIPT} link ${record.id} <pull request link>. When nothing implements it yet, open an issue for it and add "- Issue: <issue link>". When nothing implements it and nothing will, it is not a requirement: reject or retire it. A non-functional requirement (nfr: true) with nothing to link gives the reason as "- None: <reason>".`);
+  }
   for (const rel of git(root, ["ls-tree", "--name-only", base, "--", `${DIR}/`]).split("\n").filter(Boolean)) {
     const file = path.posix.basename(rel);
     if (!NAME.test(file)) continue;
@@ -1278,6 +1291,9 @@ function pullRequests(root, file) {
   });
 }
 
+const traceLines = (record) => (record.sections.Trace ?? "").split("\n").map((line) => line.trim());
+const noLinkReason = (record) => record.data.nfr === "true" && traceLines(record).some((line) => line.match(TRACE_NONE)?.[1].trim());
+
 function traces(record) {
   const prs = new Set();
   const issues = new Set();
@@ -1446,11 +1462,8 @@ function traceAll(root, options) {
   for (const record of records) {
     const inForce = IN_FORCE.includes(record.status);
     for (const url of record.links.linkedPrs) if (!merged.has(url)) problems.push(`${record.id} links ${url}, which is not a merged pull request in ${options.prs}.`);
-    for (const url of record.links.issues) {
-      const state = issues.get(url);
-      if (state === undefined) problems.push(`${record.id} links ${url}, which is not in ${options.issues}.`);
-      else if (state !== "CLOSED") problems.push(`${record.id} links ${url}, which is ${state} in ${options.issues}. Close the issue, or remove the link.`);
-    }
+    for (const url of record.links.issues) if (!issues.has(url)) problems.push(`${record.id} links ${url}, which is not in ${options.issues}.`);
+    const planned = [...record.links.issues].some((url) => issues.get(url) === "OPEN") || noLinkReason(record);
     const compiled = [];
     for (const raw of record.links.files) {
       const regex = filePattern(raw);
@@ -1458,7 +1471,7 @@ function traceAll(root, options) {
       else problems.push(`${record.id}: "- File: ${raw}" is not a path or pattern inside the project. Correct it: a path from the project root, with *, ** or ? where needed.`);
     }
     patterns.set(record.id, compiled);
-    if (record.status === "Accepted" && !compiled.length) problems.push(`${record.id} lists no file that implements it. Add each file or pattern with: ${SCRIPT} file ${record.id} <path or pattern>`);
+    if (record.status === "Accepted" && !compiled.length && !planned) problems.push(`${record.id} lists no file that implements it, and no open issue that plans it. Add each file or pattern with: ${SCRIPT} file ${record.id} <path or pattern>`);
     if (inForce) for (const { raw, regex } of compiled) if (!files.some((file) => regex.test(file))) problems.push(`${record.id}: "- File: ${raw}" matches no tracked file. Correct the path, or remove the line.`);
   }
   const byId = new Map(records.map((record) => [record.id, record]));

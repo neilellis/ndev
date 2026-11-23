@@ -22,7 +22,7 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 | `ndev requirements quote <path> <first line> <last line>` | Prints a citation and the lines as a quote, ready for the Source text. |
 | `ndev requirements check` | Fails a record that breaks the format, and a record whose cited lines do not hold its quoted source text. |
 | `ndev requirements render [--check]` | Writes `docs/formal/requirements/generated/requirements.html`. With `--check`, fails when that file is not current. |
-| `ndev requirements guard --base <git ref>` | Fails a record whose Statement or Source text changed since the base with no human agreement, a change to the title, the status, the Statement or the Source text with no new Log entry, a changed Log entry, and a deleted record. Shows the old and the new text. |
+| `ndev requirements guard --base <git ref>` | Fails a record in force whose Trace has no File, Issue or PR link. Fails a record whose Statement or Source text changed since the base with no human agreement, a change to the title, the status, the Statement or the Source text with no new Log entry, a changed Log entry, and a deleted record. Shows the old and the new text. |
 | `ndev requirements agree <REQ-NNNN> --by "<name>"` | Records a human's agreement to the current Statement and Source text. **Only a human runs it.** It refuses to run without a terminal. |
 
 ## The protected parts
@@ -35,6 +35,7 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 - When `check` says that the text is now at other lines, the text did not change. Correct the line numbers in the citation.
 - When a statement looks wrong, incomplete or in conflict with another record, say so with the evidence. A change to an accepted statement needs a PDR (the `adr-pdr` skill).
 - You can change the status links, `## Trace` and `## Notes`.
+- Each record in force needs a link in the Trace: the files that implement it, the pull request that implemented it, or an issue that plans it. When nothing implements it yet, open an issue and link it. When nothing implements it and nothing will, ask the human whether it is a requirement. A non-functional requirement has `nfr: true` and still needs a link; only when it has truly nothing to link, give the reason as `- None: <reason>`.
 - Add a `## Log` entry for each change to the title, the status, the Statement or the Source text. Never change or remove an entry.
 
 ## Search

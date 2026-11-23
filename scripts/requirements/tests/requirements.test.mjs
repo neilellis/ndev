@@ -22,7 +22,7 @@ const GUIDE = "# Guide\n\nThe report names each source.\nThe report refuses an u
 const GUIDE_SOURCE = "- docs/guide.md#L3-L4\n\n> The report names each source.\n> The report refuses an unread source.";
 const numbers = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => Number(m[1])))].sort((a, b) => a - b);
 const yamlList = (key, items) => (items.length ? `${key}:\n${items.map((item) => `  - ${JSON.stringify(item)}`).join("\n")}` : `${key}: []`);
-const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", section = "Report", date = "2026-01-02", author = ["Neil Ellis"], decidedBy = "Neil Ellis", verification = "unassigned", statement = "The report names each source.", sourceText = GUIDE_SOURCE, source = [...sourceText.matchAll(/^- (.+)$/gm)].map((m) => m[1]), trace = "", issues = numbers(trace, /^- Issue: https:\/\/\S+\/issues\/(\d+)$/gm), prs = numbers(`${trace}\n${sourceText}`, /^- (?:PR: )?https:\/\/\S+\/pull\/(\d+)$/gm), notes = "", log = `- ${date}: Created.` } = {}) =>
+const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", section = "Report", date = "2026-01-02", author = ["Neil Ellis"], decidedBy = "Neil Ellis", verification = "unassigned", statement = "The report names each source.", sourceText = GUIDE_SOURCE, source = [...sourceText.matchAll(/^- (.+)$/gm)].map((m) => m[1]), trace = "- File: docs/guide.md", issues = numbers(trace, /^- Issue: https:\/\/\S+\/issues\/(\d+)$/gm), prs = numbers(`${trace}\n${sourceText}`, /^- (?:PR: )?https:\/\/\S+\/pull\/(\d+)$/gm), notes = "", log = `- ${date}: Created.` } = {}) =>
   `---\nid: ${id}\ntitle: ${JSON.stringify(title)}\nstatus: ${status}\norigin: ${origin}\nsection: ${JSON.stringify(section)}\ndate: ${date}\n${source.length === 1 ? `source: ${JSON.stringify(source[0])}` : yamlList("source", source)}\n${yamlList("author", author)}\ndecided_by: ${JSON.stringify(decidedBy)}\n${Array.isArray(verification) ? yamlList("verification", verification) : `verification: ${verification}`}\n${yamlList("issues", issues)}\n${yamlList("prs", prs)}\n---\n\n## Statement\n\n${statement}\n\n## Source text\n\n${sourceText}\n\n## Trace\n\n${trace}\n\n## Notes\n\n${notes}\n\n## Log\n\n${log}\n`;
 const seeded = (records = { "0001-the-report-names-each-source.md": record("0001") }) => {
   const root = project();
@@ -975,7 +975,7 @@ describe("untraced", () => {
 
 describe("link", () => {
   it("adds the pull request and the issues it closes to the Trace, once", () => {
-    const root = withPrs();
+    const root = withPrs({ [FILE]: record("0001", { trace: "" }) });
     const out = run(root, "link", "REQ-0001", PR12, "--prs", "prs.json");
     assert.equal(out.status, 0, out.stderr);
     const text = readFileSync(path.join(root, DIR, FILE), "utf8");
@@ -1002,7 +1002,7 @@ describe("link", () => {
   });
 
   it("ends the file with one newline when the Trace is the last section", () => {
-    const root = withPrs({ [FILE]: record("0001").replace(/\n## Notes\n\n\n\n## Log\n\n.*\n$/, "") });
+    const root = withPrs({ [FILE]: record("0001", { trace: "" }).replace(/\n## Notes\n\n\n\n## Log\n\n.*\n$/, "") });
     assert.equal(run(root, "link", "REQ-0001", PR13).status, 0);
     assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), new RegExp(`## Trace\\n\\n- PR: ${PR13}\\n$`));
   });
@@ -1127,6 +1127,67 @@ describe("check of the Trace links", () => {
     assert.equal(out.status, 1);
     assert.match(out.stderr, /trace line "- PR: https:\/\/github\.com\/o\/r\/issues\/5" is not a link to a pull request/);
     assert.match(out.stderr, /trace line "- Issue: https:\/\/github\.com\/o\/r\/pull\/12" is not a link to an issue/);
+  });
+});
+
+describe("a Trace with no implementation or plan", () => {
+  const nfr = (text, value = "true") => text.replace("\n---\n\n## Statement", `\nnfr: ${value}\n---\n\n## Statement`);
+  const guarded = (text) => run(committed({ [FILE]: text }), "guard", "--base", "base");
+
+  it("fails the guard for a Proposed or Accepted record with no File, Issue or PR line, and names the repair", () => {
+    for (const status of ["Proposed", "Accepted"]) {
+      const out = guarded(record("0001", { status, trace: "" }));
+      assert.equal(out.status, 1, out.stdout);
+      assert.match(out.stderr, /0001-the-report-names-each-source\.md: the Trace has no link to what implements the requirement or plans to implement it\./);
+      assert.match(out.stderr, /ndev requirements file REQ-0001 <path or pattern>/);
+      assert.match(out.stderr, /ndev requirements link REQ-0001 <pull request link>/);
+      assert.match(out.stderr, /open an issue/);
+      assert.match(out.stderr, /not a requirement/);
+    }
+  });
+
+  it("fails the guard for a File, Issue or PR line with no value", () => {
+    for (const trace of ["- File: ", "- Issue: ", "- PR:  "]) {
+      const out = guarded(record("0001", { trace }));
+      assert.equal(out.status, 1, JSON.stringify(trace));
+      assert.match(out.stderr, /the Trace has no link to what implements the requirement/);
+    }
+  });
+
+  it("passes the guard with one File, Issue or PR line, and for a record that is not in force", () => {
+    for (const trace of ["- File: docs/guide.md", `- Issue: ${ISSUE5}`, `- PR: ${PR12}`]) assert.equal(guarded(record("0001", { trace })).status, 0, trace);
+    for (const status of ["Rejected", "Retired"]) assert.equal(guarded(record("0001", { status, trace: "" })).status, 0, status);
+  });
+
+  it("passes the guard for a non-functional requirement whose Trace gives the reason it has no link", () => {
+    const text = nfr(record("0001", { trace: "- None: the limit applies to the hosting, not to the code." }));
+    assert.equal(run(seeded({ [FILE]: text }), "check").status, 0);
+    assert.equal(guarded(text).status, 0);
+  });
+
+  it("fails the guard for a non-functional requirement with an empty Trace", () => {
+    const out = guarded(nfr(record("0001", { trace: "" })));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the Trace has no link to what implements the requirement/);
+  });
+
+  it("fails a None line in a record that is not non-functional, with no reason, or with a link", () => {
+    const failing = (text, pattern) => {
+      const out = run(seeded({ [FILE]: text }), "check");
+      assert.equal(out.status, 1, out.stdout);
+      assert.match(out.stderr, pattern);
+    };
+    failing(record("0001", { trace: "- None: nothing to link." }), /trace line "- None: nothing to link\." is only for a non-functional requirement \(nfr: true\)\. Link what implements the requirement, or the issue that plans it\./);
+    failing(nfr(record("0001", { trace: "- None:" })), /trace line "- None:" gives no reason/);
+    failing(nfr(record("0001", { trace: "- File: docs/guide.md\n- None: nothing to link." })), /trace line "- None: nothing to link\." is in a Trace that has a link\. Remove it/);
+  });
+
+  it("fails an nfr value other than true", () => {
+    for (const value of ["false", "yes", '"no"']) {
+      const out = run(seeded({ [FILE]: nfr(record("0001"), value) }), "check");
+      assert.equal(out.status, 1, value);
+      assert.match(out.stderr, /"nfr" takes the value true\. Leave it out for a functional requirement\./);
+    }
   });
 });
 
@@ -1800,8 +1861,20 @@ describe("trace", () => {
   it("fails an accepted record that lists no file, and passes a proposed one", () => {
     const out = trace(traced({ records: { [FILE]: record("0001", { trace: `- PR: ${PR12}\n- Issue: ${ISSUE5}` }), [PARSER]: parser() }, files: {} }));
     assert.equal(out.status, 1);
-    assert.match(out.stderr, /^ndev: REQ-0001 lists no file that implements it\. Add each file or pattern with: ndev requirements file REQ-0001 <path or pattern>$/m);
+    assert.match(out.stderr, /^ndev: REQ-0001 lists no file that implements it, and no open issue that plans it\. Add each file or pattern with: ndev requirements file REQ-0001 <path or pattern>$/m);
     assert.doesNotMatch(out.stderr, /REQ-0002/);
+  });
+
+  it("passes an accepted record with no file when an open issue plans it, or when it is non-functional and gives the reason", () => {
+    const planned = record("0001", { trace: `- Issue: ${ISSUE5}` });
+    const nfr = record("0001", { trace: "- None: the limit applies to the hosting." }).replace("\n---\n\n## Statement", "\nnfr: true\n---\n\n## Statement");
+    for (const text of [planned, nfr]) {
+      const out = trace(traced({ records: { [FILE]: text, [PARSER]: parser() }, files: {}, issues: [{ url: ISSUE5, state: "OPEN" }] }));
+      assert.doesNotMatch(out.stderr, /REQ-0001 lists no file/, text);
+      assert.doesNotMatch(out.stderr, /issues\/5, which is/, text);
+    }
+    const out = trace(traced({ records: { [FILE]: planned, [PARSER]: parser() }, files: {} }));
+    assert.match(out.stderr, /REQ-0001 lists no file that implements it, and no open issue that plans it\./);
   });
 
   it("fails a file pattern that matches no tracked file", () => {
@@ -1821,12 +1894,12 @@ describe("trace", () => {
     assert.match(out.stderr, /lib\/other\.js:2 cites REQ-0002, whose record does not list the file\. Run: ndev requirements file REQ-0002 lib\/other\.js/);
   });
 
-  it("fails a linked pull request that is not merged, and a linked issue that is open or unknown", () => {
+  it("fails a linked pull request that is not merged, and a linked issue that is unknown", () => {
     const records = { [FILE]: record("0001", { trace: `${LINKED}\n- PR: https://github.com/o/r/pull/99\n- Issue: https://github.com/o/r/issues/7` }), [PARSER]: parser() };
     const out = trace(traced({ records, issues: [{ url: ISSUE5, state: "OPEN" }] }));
     assert.equal(out.status, 1);
     assert.match(out.stderr, /REQ-0001 links https:\/\/github\.com\/o\/r\/pull\/99, which is not a merged pull request in prs\.json\./);
-    assert.match(out.stderr, /REQ-0001 links https:\/\/github\.com\/o\/r\/issues\/5, which is OPEN in issues\.json\. Close the issue, or remove the link\./);
+    assert.doesNotMatch(out.stderr, /issues\/5/);
     assert.match(out.stderr, /REQ-0001 links https:\/\/github\.com\/o\/r\/issues\/7, which is not in issues\.json\./);
   });
 

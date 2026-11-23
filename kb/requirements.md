@@ -37,6 +37,7 @@ decided_by: <name>
 verification: unassigned    (or a list: "  - test", "  - model")
 issues: []    (or a list of the numbers of the issues in the Trace: "  - 5")
 prs: []    (or a list of the numbers of the pull requests in the Trace and the Source text: "  - 12")
+nfr: true    (only for a non-functional requirement)
 agreed: <name>, YYYY-MM-DD, text <hash>    (only after a change that a human agreed to)
 ---
 
@@ -59,6 +60,7 @@ The requirement. This is the binding text.
 - PR: <link to a pull request that implements it>
 - Issue: <link to an issue that the pull request closes>
 - File: <path or pattern of a file that implements it>
+- None: <why nothing implements it>    (only with nfr: true, and only when the Trace has no link)
 
 ## Notes
 
@@ -70,7 +72,14 @@ The requirement. This is the binding text.
 
 The fields are YAML front matter, in this order. A value with a colon, a quote or another special character is in double quotes. `ndev requirements check` fails a record that has its fields in a `- Name: value` list under a `# <title>` line.
 
-`ndev requirements new "<short title>" --author "<name>, <name>"` creates the next numbered file from this template with the status `Proposed`. `ndev requirements author <REQ-NNNN> "<name>"...` replaces the list of authors. `ndev requirements sync [<REQ-NNNN>...]` writes the `source`, `issues` and `prs` fields from the Source text and the Trace. With no id, it writes each record whose fields are different. `ndev requirements link` and `ndev requirements file` write `issues` and `prs` when they add to the Trace. `ndev requirements log <REQ-NNNN> "<what changed>"` adds an entry with the date of today to the Log. `ndev requirements quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
+These commands write the record:
+
+- `ndev requirements new "<short title>" --author "<name>, <name>"` creates the next numbered file from this template with the status `Proposed`.
+- `ndev requirements author <REQ-NNNN> "<name>"...` replaces the list of authors.
+- `ndev requirements sync [<REQ-NNNN>...]` writes the `source`, `issues` and `prs` fields from the Source text and the Trace. With no id, it writes each record whose fields are different.
+- `ndev requirements link` and `ndev requirements file` add to the Trace, and write `issues` and `prs`.
+- `ndev requirements log <REQ-NNNN> "<what changed>"` adds an entry with the date of today to the Log.
+- `ndev requirements quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
 
 ## The fields
 
@@ -83,6 +92,7 @@ The fields are YAML front matter, in this order. A value with a colon, a quote o
 | author | The people who wrote the source text, one or more. When the source is a document, these are the people who wrote the document. When the source is only a pull request, this is the author of the pull request. An agent is never the author. |
 | issues | The numbers of the issues in the Trace, in ascending order. A list, `[]` when there is none. `ndev requirements check` fails a list that is different from the Trace. |
 | prs | The numbers of the pull requests in the Trace and the Source text, in ascending order. A list, `[]` when there is none. `ndev requirements check` fails a list that is different. |
+| nfr | Optional. `true` for a non-functional requirement: a quality of the system, such as a limit on time, cost or size. Leave it out for a functional requirement. An NFR usually needs a link in the Trace too. Only an NFR with nothing to link gives `- None: <reason>`. |
 | decided_by | The human who accepted, rejected or retired the record. |
 | agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `ndev requirements agree`, which runs only in a terminal. |
 | verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. Give a list for one or more methods. `unassigned` until a method is chosen. |
@@ -94,6 +104,7 @@ The fields are YAML front matter, in this order. A value with a colon, a quote o
 - **One requirement for each record.** If a statement has two requirements that can pass or fail apart, it is two records.
 - **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
 - **The Log records each change to the requirement.** `ndev requirements new` writes the first entry, `Created.`. When the title, the status, the Statement or the Source text changes, add an entry with `ndev requirements log`: what changed, and why. Never change or remove an entry.
+- **Each requirement has an implementation or a plan.** The Trace of a record in force links the files that implement it, the pull request that implemented it, or an issue that plans to implement it. When nothing implements it yet, open an issue and link it. When nothing implements it and nothing will, it is not a requirement: reject or retire it. Only a non-functional requirement (`nfr: true`) with truly nothing to link can give the reason instead, as `- None: <reason>`.
 - **Numbers are never reused, and a record is never deleted.** A requirement that ends gets the status `Retired`. A proposal that fails gets `Rejected`.
 - **A change to an accepted Statement needs a PDR.** The PDR names the record in `Requirement changed`.
 - **Name every file by its full path** from the repository root, and every issue and pull request by its link.
@@ -110,18 +121,20 @@ The fields are YAML front matter, in this order. A value with a colon, a quote o
 - a record of origin `PR` whose source text names no pull request;
 - a record in force whose cited lines do not hold the quoted text;
 - a `source`, `issues` or `prs` field that is different from the Source text and the Trace;
+- an `nfr` value that is not `true`;
+- a `- None:` line in a record without `nfr: true`, with no reason, or in a Trace that has a link;
 - a record with no `## Log`, with no entry in the Log, or with a Log line that is not `- YYYY-MM-DD: <what changed>`.
 
 When the quoted text only moved in its file, the check names the new lines, and the agent corrects the line numbers. When the text changed, the check sends the change to a human.
 
-`ndev requirements guard --base <git ref>` compares each record with the same number at the base. It fails:
+`ndev requirements guard --base <git ref>` fails each record in force (`Proposed` or `Accepted`) whose Trace has no `- File:`, `- Issue:` or `- PR:` line. A record with `nfr: true` and a `- None: <reason>` line passes. The guard also compares each record with the same number at the base. It fails:
 
 - a Statement or a Source text that changed, with no `agreed` field, or with an `agreed` field for other text;
 - a title, a status, a Statement or a Source text that changed, with no new entry in the Log;
 - a Log entry of the base that is changed or removed;
 - a record that is at the base and is not in the working tree.
 
-A record that is new since the base passes: the first creation is the exception. A citation whose line numbers changed, with the same path and quote, passes: the text only moved. The check also fails an `agreed` field that does not have the form above.
+A record that is new since the base passes the comparison: the first creation is the exception. A citation whose line numbers changed, with the same path and quote, passes: the text only moved. The check also fails an `agreed` field that does not have the form above.
 
 The guard proves that the `agreed` field matches the text. It does not prove that a human wrote the field. In review, check that the human named in the field made the commit that adds it.
 
@@ -159,8 +172,9 @@ A record lists each file that implements it, in `- File:` lines of its Trace. A 
 `ndev requirements trace --prs <file> --issues <file>` checks the links in both directions. Make the issues file with `gh issue list --state all --limit 10000 --json url,state`. It fails:
 
 - each merged pull request that no record names, as `untraced` does;
-- each `- PR:` link that is not a merged pull request in the file, and each `- Issue:` link that is not a closed issue in the file;
-- each Accepted record with no `- File:` line, and each `- File:` line of a record in force that matches no tracked file;
+- each `- PR:` link that is not a merged pull request in the file, and each `- Issue:` link that is not in the file;
+- each Accepted record with no `- File:` line, unless an open issue in its Trace plans the work or it is a non-functional requirement with a `- None:` reason;
+- each `- File:` line of a record in force that matches no tracked file;
 - each `REQ-NNNN` in a tracked file that names no record, names a record that is not in force, or names a record whose `- File:` lines do not match that file.
 
 The scan of the files skips the records folder and the publish folder.
