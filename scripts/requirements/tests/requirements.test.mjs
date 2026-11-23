@@ -900,6 +900,29 @@ describe("narrate", () => {
     assert.equal(existsSync(path.join(root, NARRATIVE)), false);
   });
 
+  it("checks each list item alone, keeps a citation after the full stop, and counts no id in a code span", () => {
+    const { out } = narrated("- Users must log in\n- Sessions end (REQ-0001)\n\nEach report must name its sources. (REQ-0001)\n\nThe word `REQ-0001` must not count.\n");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /"Users must log in" has the normative word "must"/);
+    assert.doesNotMatch(out.stderr, /Each report must name its sources/);
+    assert.match(out.stderr, /"The word `REQ-0001` must not count\." has the normative word "must"/);
+  });
+
+  it("reads a CRLF prose file and prints the number of records", () => {
+    const { root, out } = narrated("Each report must name its sources (REQ-0001).\r\nIt is short.\r\n");
+    assert.equal(out.status, 0, out.stderr);
+    assert.doesNotMatch(readFileSync(path.join(root, NARRATIVE), "utf8"), /\r/);
+    assert.match(run(root, "narrate", "Report").stdout, /^1 record in force in "Report"$/m);
+  });
+
+  it("fails two sections with the same file name, and a record in force with no section", () => {
+    const root = seeded({ [FILE]: record("0001", { section: "Auth & Login" }), [SOURCES_FILE]: record("0002", { section: "Auth Login" }), "0003-a-proposal.md": record("0003", { status: "Proposed", section: "", decidedBy: "" }) });
+    const out = run(root, "narrative");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /The sections "Auth & Login" and "Auth Login" have the same file name auth-login\.md\. Rename one section/);
+    assert.match(out.stderr, /REQ-0003 has no section\. Set its Section/);
+  });
+
   it("refuses a section with no record in force", () => {
     const out = run(seeded(), "narrate", "Nowhere");
     assert.equal(out.status, 1);
@@ -942,6 +965,34 @@ describe("render with the outline and the narrative", () => {
     assert.match(html, /<title>The FCC guide<\/title>/);
     assert.ok(html.indexOf('id="section-sources"') < html.indexOf('id="section-report"'));
     assert.match(html, /<h2>Report<\/h2>\n<div class="narrative">\n<p>Each report must name its sources \(<a href="#REQ-0001">REQ-0001<\/a>\)\.<\/p>\n<\/div>/);
+  });
+
+  it("links a bare id only, and leaves an id in a code span or a link alone", () => {
+    const { root } = narrated("Each report must name its sources (REQ-0001). See [the record](#REQ-0001) and `REQ-0001`.\n");
+    assert.equal(run(root, "render").status, 0);
+    const html = readFileSync(path.join(root, HTML), "utf8");
+    assert.match(html, /<p>Each report must name its sources \(<a href="#REQ-0001">REQ-0001<\/a>\)\. See <a href="#REQ-0001">the record<\/a> and <code>REQ-0001<\/code>\.<\/p>/);
+    assert.equal(run(root, "render", "--check").status, 0);
+    put(root, "prose.md", "Each report must name each source (REQ-0001).\n");
+    run(root, "narrate", "Report", "--from", "prose.md");
+    assert.equal(run(root, "render", "--check").status, 1);
+  });
+
+  it("keeps a narrative current when a record is accepted", () => {
+    const root = seeded({ [FILE]: record("0001", { status: "Proposed", decidedBy: "" }) });
+    put(root, "prose.md", "Each report must name its sources (REQ-0001).\n");
+    run(root, "narrate", "Report", "--from", "prose.md");
+    put(root, `${DIR}/${FILE}`, record("0001"));
+    assert.equal(run(root, "narrative").status, 0);
+  });
+
+  it("fails a duplicate outline section and a second title", () => {
+    const root = seeded();
+    put(root, `${DIR}/extra/outline.md`, "# Guide\n\n# Other\n\n## Report\n\n## Report\n");
+    const out = run(root, "render");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /outline\.md: line 3 is a second title/);
+    assert.match(out.stderr, /outline\.md: line 7 names the section "Report" again/);
   });
 
   it("marks a stale narrative", () => {

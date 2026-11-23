@@ -25,11 +25,12 @@ A human owns `docs/formal/requirements/extra/outline.md`. If it does not exist, 
 2. Run `requirements.mjs narrate "<section>"` and read each record of the section. For a stale section, read the old narrative in `docs/formal/requirements/generated/narrative/` too.
 3. Write the prose in a file outside the project, for example in your scratch folder:
    - Start with what the section is about and why it matters, in two or three sentences.
-   - Then group the records and say how they relate: which one comes first, which one depends on another, and which ones a reader must take together.
+   - Then group the records and say how they relate: which one comes first, which one depends on another, and which ones go together.
    - Cite a record by its identifier, for example `(REQ-0012)`. Each sentence that states what the system must do cites the record that states it.
-   - Never restate a requirement in other words. The record's Statement is the binding text; the prose points to it.
+   - Never restate a requirement in other words. The record's Statement is the binding text; the prose points to it. Name what a group of records is about, not what each one requires.
+   - When a record's Statement does not stand alone (for example, it starts with "It" or "That"), say what it refers to in the prose, and report the record to the human.
    - Use paragraphs and lists only. The heading comes from the outline.
-4. Run `requirements.mjs narrate "<section>" --from <file>`. When it fails a sentence, cite the record, or reword the sentence so that it states no requirement. Never cite a record only to pass the check: the record must state the requirement.
+4. Run `requirements.mjs narrate "<section>" --from <file>`. The check reads words, not meaning: it fails each sentence with a normative word, even one that describes a reader or a user. When it fails a sentence, cite the record that states it, or reword the sentence so that it states no requirement. Never cite a record only to pass the check: the record must state the requirement.
 5. Run `requirements.mjs narrative` again. Stop when it passes.
 
 ## Finish

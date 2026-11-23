@@ -357,7 +357,7 @@ code{font-size:.9em}
 
 function narrativeHtml(narrative, current) {
   if (!narrative) return [];
-  const body = blocks(narrative.prose).replace(REQ_ID, (id) => `<a href="#${id}">${id}</a>`);
+  const body = blocks(narrative.prose.split(/(`[^`]+`|\[[^\]]*\]\([^)]*\))/).map((part, i) => (i % 2 ? part : part.replace(REQ_ID, (id) => `[${id}](#${id})`))).join(""));
   const warning = current ? [] : [`<p class="warning">The records of this section changed after this text was written.</p>`];
   return [`<div class="narrative${current ? "" : " stale"}">`, ...warning, body, `</div>`];
 }
@@ -405,11 +405,15 @@ function outline(root, records) {
     if (!line.trim()) return;
     const heading = line.match(/^(#{1,2}) (.+)$/);
     if (!heading) problems.push(`${OUTLINE}: line ${i + 1} is not a heading. The outline holds only "# <title>" and "## <section>" lines.`);
-    else if (heading[1] === "#") title = heading[2].trim();
+    else if (heading[1] === "#") {
+      if (title !== undefined) problems.push(`${OUTLINE}: line ${i + 1} is a second title. The outline has one "# <title>" line.`);
+      title ??= heading[2].trim();
+    } else if (order.includes(heading[2].trim())) problems.push(`${OUTLINE}: line ${i + 1} names the section "${heading[2].trim()}" again.`);
     else order.push(heading[2].trim());
   });
   const used = new Set(records.filter((r) => IN_FORCE.includes(r.status)).map((r) => r.section));
-  for (const record of records) if (IN_FORCE.includes(record.status) && !order.includes(record.section)) problems.push(`${record.id} has the section "${record.section}", which is not in ${OUTLINE}. Add the section to the outline, or correct the record.`);
+  for (const record of records) if (IN_FORCE.includes(record.status) && !record.section) problems.push(`${record.id} has no section. Set its Section to a section of ${OUTLINE}.`);
+  for (const record of records) if (IN_FORCE.includes(record.status) && record.section && !order.includes(record.section)) problems.push(`${record.id} has the section "${record.section}", which is not in ${OUTLINE}. Add the section to the outline, or correct the record.`);
   for (const name of order) if (!used.has(name)) problems.push(`${OUTLINE}: the section "${name}" has no record in force. Remove it from the outline.`);
   if (problems.length) throw new Failure(problems.join("\n"));
   return { title, order };
@@ -417,11 +421,22 @@ function outline(root, records) {
 
 function sectionRecords(records) {
   const groups = new Map();
-  for (const record of records.filter((r) => IN_FORCE.includes(r.status))) groups.set(record.section, [...(groups.get(record.section) ?? []), record]);
+  const problems = [];
+  for (const record of records.filter((r) => IN_FORCE.includes(r.status))) {
+    if (!record.section) problems.push(`${record.id} has no section. Set its Section, so that a narrative can describe it.`);
+    else groups.set(record.section, [...(groups.get(record.section) ?? []), record]);
+  }
+  const files = new Map();
+  for (const name of groups.keys()) {
+    const file = path.basename(narrativePath(name));
+    if (files.has(file)) problems.push(`The sections "${files.get(file)}" and "${name}" have the same file name ${file}. Rename one section.`);
+    else files.set(file, name);
+  }
+  if (problems.length) throw new Failure(problems.join("\n"));
   return groups;
 }
 
-const sectionHash = (members) => createHash("sha256").update([...members].sort((a, b) => a.id.localeCompare(b.id)).map((r) => `${r.id}\n${r.status}\n${r.sections.Statement ?? ""}`).join("\n")).digest("hex").slice(0, 12);
+const sectionHash = (members) => createHash("sha256").update([...members].sort((a, b) => a.id.localeCompare(b.id)).map((r) => `${r.id}\n${r.sections.Statement ?? ""}`).join("\n")).digest("hex").slice(0, 12);
 const narrativePath = (name) => `${NARRATIVE}/${slug(name) || "none"}.md`;
 
 function narratives(root) {
@@ -440,8 +455,24 @@ function narratives(root) {
 }
 
 function sentences(prose) {
-  return prose.split(/\n\s*\n/).flatMap((block) => block.split("\n").map((line) => line.replace(/^\s*(?:[-*] |> ?|\d+\. )/, "")).join(" ").split(/(?<=[.!?])\s+/)).map((s) => s.trim()).filter(Boolean);
+  const units = [];
+  let current = [];
+  const flush = () => {
+    if (current.length) units.push(current.join(" "));
+    current = [];
+  };
+  for (const line of prose.split("\n")) {
+    if (!line.trim()) flush();
+    else if (/^\s*(?:[-*] |\d+\. )/.test(line)) {
+      flush();
+      current.push(line.replace(/^\s*(?:[-*] |\d+\. )/, ""));
+    } else current.push(line.replace(/^\s*> ?/, ""));
+  }
+  flush();
+  return units.flatMap((unit) => unit.split(/(?<=[.!?])\s+(?=[A-Z"“])/)).map((s) => s.trim()).filter(Boolean);
 }
+
+const cites = (sentence) => sentence.replace(/`[^`]+`/g, "").match(REQ_ID);
 
 function narrate(root, name, options) {
   if (!name) throw new Usage(`narrate needs "<section>" [--from <file>]`);
@@ -453,7 +484,7 @@ function narrate(root, name, options) {
   if (!options.from) {
     const stored = narratives(root).get(name);
     const state = !stored ? "missing" : stored.hash === hash ? "current" : "stale";
-    return `${members.map((r) => `${r.id} ${r.status}: ${(r.sections.Statement ?? "").replace(/\s+/g, " ").trim()}`).join("\n")}\nNarrative: ${state}\n`;
+    return `${members.length} record${members.length === 1 ? "" : "s"} in force in "${name}"\n${members.map((r) => `${r.id} ${r.status}: ${(r.sections.Statement ?? "").replace(/\s+/g, " ").trim()}`).join("\n")}\nNarrative: ${state}\n`;
   }
   const source = path.resolve(root, options.from);
   if (!existsSync(source)) throw new Failure(`${options.from} does not exist.`);
@@ -465,7 +496,7 @@ function narrate(root, name, options) {
   });
   for (const sentence of sentences(prose.split("\n").filter((line) => !/^#{1,6}\s/.test(line)).join("\n"))) {
     const word = sentence.match(NORMATIVE)?.[0];
-    if (word && !sentence.match(REQ_ID)) problems.push(`${options.from}: "${sentence}" has the normative word "${word}" and cites no REQ-NNNN. Cite the record that states it, or reword the sentence.`);
+    if (word && !cites(sentence)) problems.push(`${options.from}: "${sentence}" has the normative word "${word}" and cites no REQ-NNNN. Cite the record that states it, or reword the sentence.`);
   }
   for (const id of new Set(prose.match(REQ_ID) ?? [])) if (!ids.has(id)) problems.push(`${options.from}: ${id} is not a record in force in the section "${name}".`);
   if (!prose.trim()) problems.push(`${options.from} is empty.`);

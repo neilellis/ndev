@@ -131,12 +131,12 @@ Each merged pull request traces to a record. The `requirements-retrospective` sk
 - the outline, `docs/formal/requirements/extra/outline.md`, which a human writes: `# <title>`, then one `## <section>` line for each section, in order;
 - the narrative: for each section, prose that introduces it and links its records.
 
-With an outline, `render` fails a record in force whose section is not in the outline, an outline section with no record in force, and a line that is not a heading. With no outline, the sections come in the order of the records.
+With an outline, `render` fails a record in force with no section or with a section that is not in the outline, an outline section with no record in force, a section named twice, a second title, and any line that is not a `#` or `##` heading. With no outline, the sections come in the order of the records.
 
-The `requirements-document` skill writes the narrative. `requirements.mjs narrate "<section>"` prints the records of the section and the state of its narrative. `narrate "<section>" --from <file>` stores the prose in `generated/narrative/` with a hash of the identifier, status and Statement of each record in force in the section. It fails:
+The `requirements-document` skill writes the narrative. `requirements.mjs narrate "<section>"` prints the records of the section and the state of its narrative. `narrate "<section>" --from <file>` stores the prose in `generated/narrative/` with a hash of the identifier and Statement of each record in force in the section. A change of status between `Proposed` and `Accepted` does not make it stale. It fails:
 
-- a sentence with a normative word (must, shall, should, never, only and the like) that cites no `REQ-NNNN`: the records state the requirements, and the narrative only points to them;
+- a sentence with a normative word (must, shall, should, never, cannot, only and the like) that cites no `REQ-NNNN`: the records state the requirements, and the narrative only points to them. Each list item is a sentence. A citation can come after the full stop, as in `... sources. (REQ-0001)`. An identifier in a code span is not a citation;
 - an identifier that is not a record in force in the section;
 - a heading.
 
-`requirements.mjs narrative` lists each section as `current`, `stale` or `missing`. It fails while a narrative is stale or missing, and when a narrative names a section that no record in force has. `render` marks a stale narrative in the document. Run `narrative` in the project's checks with `check` and `render --check`.
+`requirements.mjs narrative` lists each section as `current`, `stale` or `missing`. It fails while a narrative is stale or missing, when a narrative names a section that no record in force has, when a record in force has no section, and when two sections give the same file name. `render` marks a stale narrative in the document, and `render --check` does not fail it: only `narrative` does. Run `narrative` in the project's checks with `check` and `render --check`.
