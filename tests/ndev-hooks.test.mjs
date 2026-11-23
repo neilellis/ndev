@@ -345,6 +345,27 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
   assert.equal(call('claude', 'draft', [oldLargeRecord], '1', new Date(stamp(51))).decision, 'block')
 })
 
+test('chat guard hook ignores a folder outside Git and fails on an invalid project file', t => {
+  const root = fixture(t)
+  const outside = mkdtempSync(join(tmpdir(), 'ndev-outside-'))
+  t.after(() => rmSync(outside, { recursive: true, force: true }))
+  const transcript = join(root, 'conversation.jsonl')
+  writeFileSync(transcript, JSON.stringify({
+    timestamp: new Date(Date.now() - 90 * 60_000).toISOString(), type: 'assistant', message: { usage: { input_tokens: 50 } },
+  }) + '\n')
+  const call = cwd => spawnSync(ndev, ['hook', 'prompt-submit', '--harness', 'claude'], {
+    cwd, encoding: 'utf8',
+    env: { HOME: root, PATH: process.env.PATH, XDG_STATE_HOME: join(root, 'state'), ORCA_STRUCTURED_SESSION: '1' },
+    input: JSON.stringify({ cwd, session_id: 'fixture', transcript_path: transcript, prompt: 'draft' }),
+  })
+  assert.doesNotMatch(call(outside).stdout, /"block"/)
+  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":"yes"}')
+  const bad = call(root)
+  assert.notEqual(bad.status, 0)
+  assert.match(bad.stderr, /"chatGuard" is "yes"; use true or false/)
+  assert.ok(bad.stderr.includes(join(root, '.neil-dev.json')))
+})
+
 test('ndev chat-guard on, off and status set the project key and leave other keys alone', t => {
   const root = fixture(t)
   const guard = verb => spawnSync(ndev, ['chat-guard', verb], { cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH } })
