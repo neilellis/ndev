@@ -19,7 +19,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, trace, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -31,6 +31,8 @@ const PULL_URL = /^https:\/\/\S+\/pull\/\d+$/;
 const ISSUE_URL = /^https:\/\/\S+\/issues\/\d+$/;
 const TRACE_LINK = /^- (PR|Issue|File): (.*)$/;
 const TRACE_NONE = /^- None:(.*)$/;
+const TRACE_DECISION = /^- (PDR|ADR): (.*)$/;
+const DECISION_FOLDERS = { PDR: /^pdrs?$/i, ADR: /^(adrs?|decisions)$/i };
 const GH_ISSUES = "gh issue list --state all --limit 10000 --json url,state";
 const GH_PRS = "gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences";
 const LEDGER = `${DIR}/extra/ledger.md`;
@@ -382,6 +384,12 @@ function inspect(root) {
       if (link?.[1] === "PR" && !PULL_URL.test(link[2].trim())) fail(`trace line "${line.trim()}" is not a link to a pull request.`);
       if (link?.[1] === "Issue" && !ISSUE_URL.test(link[2].trim())) fail(`trace line "${line.trim()}" is not a link to an issue.`);
       if (link?.[1] === "File" && !filePattern(link[2].trim())) fail(`trace line "${line.trim()}" is not a path or pattern inside the project.`);
+      const decision = line.trim().match(TRACE_DECISION);
+      if (decision) {
+        const rel = decision[2].trim();
+        if (decisionKind(rel) !== decision[1]) fail(`trace line "${line.trim()}" is not a Markdown file in ${decision[1] === "PDR" ? "a pdr folder" : "an adr or decisions folder"}. Correct the path, or the kind of the line.`);
+        else if (IN_FORCE.includes(record.status) && !existsSync(path.join(root, rel))) fail(`trace line "${line.trim()}" names a file that does not exist. Correct the path, or remove the line.`);
+      }
     }
     for (const source of sources) {
       if (source.bad) fail(`citation "${source.citation}" is not a path with lines or an https link. ${form}`);
@@ -1078,10 +1086,28 @@ function model(root, id, list) {
   return `${entry.rel}: model: ${list.join(", ")}\n`;
 }
 
+function decisionKind(rel) {
+  if (!filePattern(rel) || /[*?]/.test(rel) || rel.startsWith("/") || !/\.mdx?$/i.test(rel)) return undefined;
+  const folders = rel.split("/").slice(0, -1);
+  return Object.keys(DECISION_FOLDERS).find((kind) => folders.some((folder) => DECISION_FOLDERS[kind].test(folder)));
+}
+
+function decisionLinks(root, id, paths) {
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !paths.length) throw new Usage(`decision needs <REQ-NNNN> <path>..., for example: decision REQ-0001 docs/pdr/0001-keep-sources.md`);
+  for (const rel of paths) if (!decisionKind(rel)) throw new Usage(`"${rel}" is not a Markdown file in a pdr, adr or decisions folder. Name a decision record by its path from the project root.`);
+  const entry = recordEntry(root, id);
+  const files = new Set(trackedFiles(root));
+  const untracked = paths.filter((rel) => !files.has(rel));
+  if (untracked.length) throw new Failure(untracked.map((rel) => `"${rel}" is not a tracked file. git add it first.`).join("\n"));
+  const added = appendTrace(entry, paths.map((rel) => `- ${decisionKind(rel)}: ${rel}`));
+  if (!added.length) return `${id} already lists ${paths.join(", ")}\n`;
+  return `${entry.rel}: ${added.join(", ")}\n`;
+}
+
 function tier(rel) {
   const parts = rel.split("/");
   const stem = parts.at(-1).replace(/\.mdx?$/i, "");
-  if (parts.slice(0, -1).some((p) => /^(requirements?|specs?|specifications?)$/i.test(p)) || /^(north[_-]?star|requirements?|specs?|specifications?|prd)$/i.test(stem)) return 1;
+  if (parts.slice(0, -1).some((p) => /^(requirements?|specs?|specifications?|pdrs?|adrs?|decisions)$/i.test(p)) || /^(north[_-]?star|requirements?|specs?|specifications?|prd)$/i.test(stem)) return 1;
   if (parts.some((p) => /^wiki$/i.test(p) || /\.wiki$/i.test(p))) return 2;
   if (/^readme$/i.test(stem)) return 3;
   return 4;
@@ -1564,6 +1590,7 @@ export function runRequirements(argv, { json } = {}) {
       untraced: () => untraced(root(), options),
       link: () => link(root(), rest[0], rest[1], options),
       file: () => fileLinks(root(), rest[0], rest.slice(1)),
+      decision: () => decisionLinks(root(), rest[0], rest.slice(1)),
       trace: () => traceAll(root(), options),
       narrate: () => narrate(root(), rest[0], options),
       narrative: () => narrative(root()),

@@ -2079,3 +2079,58 @@ describe("file", () => {
     assert.match(checked.stderr, /trace line "- File: \.\.\/x\.js" is not a path or pattern inside the project/);
   });
 });
+
+describe("decision records", () => {
+  const decided = (trace, files = {}) => tracked({ "docs/guide.md": GUIDE, "docs/pdr/0001-keep-sources.md": "# Keep sources\n\nThe report names each source.\n", "docs/adr/0002-parse-once.md": "# Parse once\n", ...files, [`${DIR}/${FILE}`]: record("0001", { trace }) });
+
+  it("check accepts PDR and ADR lines in the Trace", () => {
+    const root = decided("- File: docs/guide.md\n- PDR: docs/pdr/0001-keep-sources.md\n- ADR: docs/adr/0002-parse-once.md");
+    const out = run(root, "check");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("check fails a PDR line outside a pdr folder, an ADR line outside an adr or decisions folder, and a missing file", () => {
+    const root = decided("- File: docs/guide.md\n- PDR: docs/adr/0002-parse-once.md\n- ADR: docs/guide.md\n- PDR: docs/pdr/0009-gone.md");
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /trace line "- PDR: docs\/adr\/0002-parse-once\.md" is not a Markdown file in a pdr folder/);
+    assert.match(out.stderr, /trace line "- ADR: docs\/guide\.md" is not a Markdown file in an adr or decisions folder/);
+    assert.match(out.stderr, /trace line "- PDR: docs\/pdr\/0009-gone\.md" names a file that does not exist/);
+  });
+
+  it("a decision line is not an implementation or a plan for guard", () => {
+    const root = decided("- PDR: docs/pdr/0001-keep-sources.md");
+    git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base");
+    const out = run(root, "guard", "--base", "HEAD");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the Trace has no link to what implements the requirement/);
+  });
+
+  it("decision adds PDR and ADR lines by folder, once each", () => {
+    const root = decided("- File: docs/guide.md", { "doc/architecture/decisions/0003-cache.md": "# Cache\n" });
+    const out = run(root, "decision", "REQ-0001", "docs/pdr/0001-keep-sources.md", "doc/architecture/decisions/0003-cache.md");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(run(root, "decision", "REQ-0001", "docs/pdr/0001-keep-sources.md").stdout, "REQ-0001 already lists docs/pdr/0001-keep-sources.md\n");
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), /- File: docs\/guide\.md\n- PDR: docs\/pdr\/0001-keep-sources\.md\n- ADR: doc\/architecture\/decisions\/0003-cache\.md\n/);
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("decision refuses a file outside a decision folder and an untracked file", () => {
+    const root = decided("- File: docs/guide.md");
+    const outside = run(root, "decision", "REQ-0001", "docs/guide.md");
+    assert.equal(outside.status, 2);
+    assert.match(outside.stderr, /"docs\/guide\.md" is not a Markdown file in a pdr, adr or decisions folder/);
+    put(root, "docs/pdr/0004-draft.md", "# Draft\n");
+    const untracked = run(root, "decision", "REQ-0001", "docs/pdr/0004-draft.md");
+    assert.equal(untracked.status, 1);
+    assert.match(untracked.stderr, /"docs\/pdr\/0004-draft\.md" is not a tracked file\. git add it first\./);
+  });
+
+  it("sources puts PDRs and ADRs in tier 1, and a Source text can quote a PDR", () => {
+    const sourceText = "- docs/pdr/0001-keep-sources.md#L3-L3\n\n> The report names each source.";
+    const root = tracked({ "docs/guide.md": GUIDE, "docs/pdr/0001-keep-sources.md": "# Keep sources\n\nThe report names each source.\n", "docs/adr/0002-parse-once.md": "# Parse once\n", [`${DIR}/${FILE}`]: record("0001", { sourceText }) });
+    assert.equal(run(root, "sources", "--tier", "1").stdout, "1  requirements  docs/adr/0002-parse-once.md\n1  requirements  docs/pdr/0001-keep-sources.md\n");
+    const out = run(root, "check");
+    assert.equal(out.status, 0, out.stderr);
+  });
+});

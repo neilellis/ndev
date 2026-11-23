@@ -62,6 +62,8 @@ The requirement. This is the binding text.
 - PR: <link to a pull request that implements it>
 - Issue: <link to an issue that the pull request closes>
 - File: <path or pattern of a file that implements it>
+- PDR: <path of a product decision record that shapes it>
+- ADR: <path of an architecture decision record that shapes it>
 - None: <why nothing implements it>    (only with nfr: true, and only when the Trace has no link)
 
 ## Notes
@@ -126,6 +128,7 @@ These commands write the record:
 - a `source`, `issues` or `prs` field that is different from the Source text and the Trace;
 - an `nfr` value that is not `true`;
 - a `- None:` line in a record without `nfr: true`, with no reason, or in a Trace that has a link;
+- a `- PDR:` line that is not a Markdown file in a `pdr` folder, an `- ADR:` line that is not a Markdown file in an `adr` or `decisions` folder, and, for a record in force, a decision record that does not exist;
 - for a record in force, a `model` entry that is not a `.qnt` path, a model file that does not exist, a model that does not cite the record ID, and a `#<name>` that the model does not declare;
 - a record with no `## Log`, with no entry in the Log, or with a Log line that is not `- YYYY-MM-DD: <what changed>`.
 
@@ -152,7 +155,7 @@ The `requirements-find` skill reads the project's documents and writes the recor
 
 | Tier | Kind | Path |
 |---|---|---|
-| 1 | requirements | A folder named `requirements`, `spec` or `specification`, or a file named `NORTH_STAR`, `REQUIREMENTS`, `SPEC` or `PRD` |
+| 1 | requirements | A folder named `requirements`, `spec`, `specification`, `pdr`, `adr` or `decisions`, or a file named `NORTH_STAR`, `REQUIREMENTS`, `SPEC` or `PRD` |
 | 2 | wiki | A folder named `wiki` |
 | 3 | readme | `README.md` |
 | 4 | other | Each other document |
@@ -172,6 +175,12 @@ Each merged pull request traces to a record. The `requirements-retrospective` sk
 A record lists each file that implements it, in `- File:` lines of its Trace. A line holds a path from the project root, or a pattern: `*` matches inside one folder, `**` matches any number of folders, and `?` matches one character. A leading `/` is the project root. For example, `- File: src/report/**` or `- File: /docs/*.md`. Each source file that implements a record cites its ID (`REQ-NNNN`), for example in the name of a test or in a line of the file.
 
 `ndev requirements file <REQ-NNNN> <path or pattern>...` adds the `- File:` lines. It refuses a pattern that matches no tracked file. `check` fails a `- File:` line that is not a path or pattern inside the project.
+
+## Tracing decisions
+
+A product decision record (PDR) or an architecture decision record (ADR) can be the source of a record. The Source text quotes it, as it quotes any tracked document. A record also lists the decisions that shape it, in `- PDR:` and `- ADR:` lines of its Trace. A PDR is in a folder named `pdr`. An ADR is in a folder named `adr` or `decisions`.
+
+`ndev requirements decision <REQ-NNNN> <path>...` adds the lines. It takes the kind from the folder, and it refuses a file that is not tracked. A decision line is not an implementation or a plan: `guard` still needs a `- File:`, `- Issue:` or `- PR:` line.
 
 `ndev requirements trace --prs <file> --issues <file>` checks the links in both directions. Make the issues file with `gh issue list --state all --limit 10000 --json url,state`. It fails:
 
