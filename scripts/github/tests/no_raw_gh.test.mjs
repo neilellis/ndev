@@ -32,6 +32,13 @@ const EXCEPTIONS = [
   { file: "skills/video-finish/scripts/finish.mjs", pattern: /"gh", \["run", "view"|gh run view/, reason: "gh run view --log-failed has no REST equivalent" },
   { file: "hooks/fix-all-prs.tsx", pattern: /\['gh', 'pr', 'view', String\(r\.number\), '--web'\]/, reason: "gh pr view --web opens the browser; gh.sh has no route for it. The hooks are another owner's files, left as they are" },
   { file: "hooks/triage.tsx", pattern: /\['gh', 'pr', 'view', String\(g\.pr\), '--repo', v\.repo!, '--web'\]/, reason: "gh pr view --web opens the browser; gh.sh has no route for it. The hooks are another owner's files, left as they are" },
+  { file: "scripts/ndev/epic.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
+  { file: "scripts/ndev/fix-prs.mjs", pattern: /(?:json|checked)\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
+  { file: "scripts/ndev/project.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
+  { file: "scripts/ndev/triage.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
+  { file: "scripts/ndev/waits.mjs", pattern: /remoteJson\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
+  { file: "scripts/ndev/watch.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
+  { file: "skills/multi-epic-triage/scripts/apply_triage.py", pattern: /subprocess\.run\(\["gh", \*args\]/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
   { file: "scripts/github/dump.py", pattern: /"gh", "auth", "token"/, reason: "gh auth * is a listed exception; it reads the token to fetch images" },
 ];
 
