@@ -16,6 +16,8 @@ ndev install verify all
 
 Use `claude`, `codex`, or `opencode` in place of `all` to install one profile. The default binary path is `$HOME/.local/bin/ndev`. Add `$HOME/.local/bin` to your path if necessary. In Codex, use `/hooks` to review and trust the installed hooks.
 
+The Claude install uses `CLAUDE_CONFIG_DIR` when set. When that path changes, ndev keeps each recorded Claude home working and refreshes its hooks, skills and agents on reinstall. Copied hooks must match the ownership manifest. Skills and agents reached through directory symlinks retain their recorded ownership. Foreign hooks and files stay protected.
+
 Use `ndev install <profile> --panels` to install the Orca plugin. Orca prints the approval command if the plugin asks for trust. Open the panel in the correct Orca workspace. Use the CLI text view in a terminal or on a headless host.
 
 ## Set up a new project from an agent

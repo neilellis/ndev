@@ -30,6 +30,7 @@ const json = value => `${JSON.stringify(value, null, 2)}\n`
 const hash = value => createHash('sha256').update(value).digest('hex')
 const pathInfo = path => lstatSync(path, { throwIfNoEntry: false })
 const object = value => !!value && typeof value === 'object' && !Array.isArray(value)
+const installations = record => record ? [{ profile: record.profile, hooks: record.hooks, version: record.version }, ...(record.additionalInstalls ?? [])] : []
 const targetPath = path => {
   let ancestor = path
   while (!existsSync(ancestor)) ancestor = dirname(ancestor)
@@ -132,7 +133,7 @@ function hookPlan(profile, binary, previous, retire = false) {
     const kept = []
     for (const group of entries) {
       const hooks = group.hooks.filter(hook => !isDeepStrictEqual(hook, previous?.[event]))
-      if (!retire && hooks.some(hook => isDeepStrictEqual(hook, expected))) fail(1, `Unowned ndev hook for ${event} in ${config}.`, 'Move the conflicting entry before installing.')
+      if (!retire && hooks.some(hook => isDeepStrictEqual(hook, expected))) fail(1, `Unowned ndev hook for ${event} in ${config}: ${expected.command}. No matching ownership record.`, `Move the conflicting entry in ${quote(config)}, then rerun ndev install ${profile.name}.`)
       if (hooks.length || group.hooks.length === 0) kept.push({ ...group, hooks })
     }
     if (!retire) kept.push({ hooks: [expected] })
@@ -164,7 +165,7 @@ function readManifest(path) {
   const share = dirname(path)
   const binary = resolve(share, '../../bin/ndev')
   for (const [file, item] of Object.entries(record.files)) {
-    const profiles = [record.profiles[item?.owner]?.profile, record.pending?.beforeProfiles?.[item?.owner]?.profile].filter(Boolean)
+    const profiles = [...installations(record.profiles[item?.owner]), ...installations(record.pending?.beforeProfiles?.[item?.owner])].map(install => install.profile).filter(Boolean)
     const releaseEntry = relative(share, file)
     const inRelease = item?.owner === 'release' && (file === binary || releaseEntry === 'package.json' || /^(?:agents|bin|hooks|kb|orca-plugin|scripts|skills|templates|\.claude-plugin)\//.test(releaseEntry))
     const inProfile = profiles.some(profile => (profile.skillsDir && /^ndev-[^/]+\/.+/.test(relative(profile.skillsDir, file))) ||
@@ -219,8 +220,8 @@ function verifyRelease(profiles, manifest, manifestPath, binary, repair, cwd) {
   const binaryVersion = probe(binary, ['--version']).trim()
   if (!binaryVersion.includes(manifest.version)) fail(1, `Installed binary ${binary} reported ${binaryVersion}, expected ${manifest.version}.`, repair)
   for (const profile of profiles) {
-    const installed = manifest.profiles[profile.name]
-    if (!installed || !isDeepStrictEqual(installed.profile, JSON.parse(JSON.stringify(profile)))) fail(1, `No install record for active ${profile.name} paths.`, repair)
+    const installed = installations(manifest.profiles[profile.name]).find(install => isDeepStrictEqual(install.profile, JSON.parse(JSON.stringify(profile))))
+    if (!installed) fail(1, `No install record for active ${profile.name} paths.`, repair)
     if (profile.config) {
       const config = readJson(profile.config)
       for (const [event, handler] of Object.entries(installed.hooks)) {
@@ -254,7 +255,19 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
   const hooks = []
   const conflicts = []
   const records = { ...before.profiles }
-  for (const profile of profiles) {
+  const targets = [...profiles]
+  const claude = profiles.find(profile => profile.name === 'claude')
+  if (claude) {
+    const configs = new Set([targetPath(claude.config)])
+    for (const install of installations(before.profiles.claude)) {
+      const config = targetPath(install.profile.config)
+      if (configs.has(config)) continue
+      configs.add(config)
+      targets.push(install.profile)
+    }
+  }
+  const fileTargets = new Map([...files].map(([path, entry]) => [targetPath(path), entry.owner]))
+  for (const profile of targets) {
     const added = assets({ profile, share, binary, root, version })
     if (profile.adapter) {
       const source = readFileSync(join(here, 'opencode-plugin.mjs'), 'utf8')
@@ -262,26 +275,38 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
     }
     if (profile.hooks === 'none') added.set(join(profile.skillsDir, 'ndev-session/SKILL.md'), { text: sessionSkill, mode: 0o644 })
     for (const [path, entry] of added) {
+      const target = targetPath(path)
+      if (fileTargets.get(target) === profile.name) continue
       if (files.has(path) || (before.files[path] && before.files[path].owner !== profile.name)) conflicts.push(path)
       files.set(path, { ...entry, owner: profile.name })
+      fileTargets.set(target, profile.name)
     }
-    records[profile.name] = { profile, version }
+    const record = { profile, version }
     if (profile.config) {
-      const previous = before.profiles[profile.name]
+      const previous = installations(before.profiles[profile.name]).find(install => targetPath(install.profile.config) === targetPath(profile.config)) ?? before.profiles[profile.name]
       const original = before.pending?.beforeProfiles?.[profile.name] ?? previous
-      if (original?.profile.config && original.profile.config !== profile.config && pathInfo(original.profile.config)) {
+      if (profile.name !== 'claude' && original?.profile.config && original.profile.config !== profile.config && pathInfo(original.profile.config)) {
         hooks.push(hookPlan(original.profile, binary, original.hooks, true))
       }
-      const hook = hookPlan(profile, binary, previous?.profile.config === profile.config ? previous.hooks : undefined)
+      const hook = hookPlan(profile, binary, previous?.hooks)
       hooks.push(hook)
-      records[profile.name].hooks = hook.desired
+      record.hooks = hook.desired
     }
+    if (profiles.includes(profile)) records[profile.name] = record
+    else (records[profile.name].additionalInstalls ??= []).push(record)
   }
   const selected = new Set(['release', ...profiles.map(p => p.name)])
   const retired = Object.keys(before.files).filter(path => selected.has(before.files[path].owner) && !files.has(path))
   const activeTargets = new Set([...files.keys()].map(targetPath))
   const stale = retired.filter(path => !activeTargets.has(targetPath(path)))
   const owned = { ...before.files }
+  const previousFiles = { ...before.files }
+  const ownedTargets = new Map(Object.entries(before.files).map(([path, entry]) => [targetPath(path), entry]))
+  for (const [path, entry] of files) {
+    if (previousFiles[path]) continue
+    const previous = ownedTargets.get(targetPath(path))
+    if (previous?.owner === entry.owner) previousFiles[path] = previous
+  }
   for (const path of retired) delete owned[path]
   for (const path of stale) {
     const info = pathInfo(path)
@@ -290,7 +315,7 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
   for (const [path, entry] of files) {
     const info = pathInfo(path)
     const digest = hash(entry.text)
-    const previous = before.files[path]
+    const previous = previousFiles[path]
     if (info && (!info.isFile() || !previous || (previous.reserved && hash(readFileSync(path)) !== previous.sha256))) conflicts.push(path)
     owned[path] = { owner: entry.owner, mode: entry.mode, sha256: digest }
   }
@@ -298,20 +323,21 @@ function buildPlan(opts, profiles, before, share, binary, assets) {
     ...(opts.panels ? { panelSource: join(share, 'orca-plugin/ndev') } : {}),
     hooks: hooks.map(({ config, desired }) => ({ config, entries: desired })),
     ...(profiles.some(p => p.name === 'codex') ? { codex: { trust: 'Review and trust the hooks in Codex /hooks.', roleLimits: 'Read-only roles use the read-only sandbox. Agent tool lists and delegation restrictions require host support.' } } : {}) }
-  return { files, hooks, stale, result, manifest: { schemaVersion: 1, version, files: owned, profiles: records } }
+  return { files, hooks, stale, result, previousFiles, manifest: { schemaVersion: 1, version, files: owned, profiles: records } }
 }
 
 function apply(plan, before, manifestPath) {
   const reserved = { ...plan.manifest.files }
   for (const path of plan.files.keys()) {
-    if (!before.files[path] || before.files[path].reserved) reserved[path] = { ...reserved[path], reserved: true }
+    if (!plan.previousFiles[path] || plan.previousFiles[path].reserved) reserved[path] = { ...reserved[path], reserved: true }
   }
   for (const path of plan.stale) reserved[path] = before.files[path]
   atomic(manifestPath, json({ ...plan.manifest, pending: { profiles: plan.result.profiles, beforeProfiles: before.pending?.beforeProfiles ?? before.profiles }, files: reserved }), 0o600, !!pathInfo(manifestPath))
   for (const [path, { text, mode }] of plan.files) {
     const info = pathInfo(path)
     if (info?.isFile() && hash(readFileSync(path)) === plan.manifest.files[path].sha256 && (info.mode & 0o777) === mode) continue
-    if (info && (!before.files[path] || (before.files[path].reserved && hash(readFileSync(path)) !== before.files[path].sha256))) fail(1, `File appeared during install: ${path}.`, 'Move the conflicting file and rerun ndev install.')
+    const previous = plan.previousFiles[path]
+    if (info && (!previous || (previous.reserved && hash(readFileSync(path)) !== previous.sha256))) fail(1, `File appeared during install: ${path}.`, 'Move the conflicting file and rerun ndev install.')
     atomic(path, text, mode, !!info)
   }
   for (const hook of plan.hooks) {
