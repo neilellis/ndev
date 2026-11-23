@@ -1,0 +1,84 @@
+# Requirement records
+
+[kb](README.md) › requirements
+
+**A requirement record states one requirement, with an identifier, the source text it comes from, and the links to what implements and verifies it.** The records are the governing text. Each other requirements document is generated from them.
+
+A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR](adr.md) records how the system is built. The record holds what the system must do now.
+
+## Layout
+
+| Path | Holds | Written by |
+|---|---|---|
+| `docs/formal/requirements/NNNN-<title>.md` | One requirement record | An agent proposes; a human accepts |
+| `docs/formal/requirements/extra/` | Material that is not a requirement: glossary, copies of sources, samples, open questions | Humans |
+| `docs/formal/requirements/generated/` | Generated documents. Do not edit them. | The script |
+
+## Template
+
+```markdown
+# <short title>
+
+- ID: REQ-NNNN
+- Status: Proposed | Accepted | Rejected | Retired | Superseded by NNNN
+- Origin: explicit | implied | PR
+- Section: <the section of the document that holds it>
+- Date: YYYY-MM-DD
+- Decided by: <name>
+- Verification: unassigned | test | check | model | eval | review
+
+## Statement
+
+The requirement. This is the binding text.
+
+## Source text
+
+- <full path>#L<first>-L<last>
+
+> The cited lines, word for word.
+
+- <https link>
+
+> The quoted text.
+
+## Trace
+
+## Notes
+```
+
+`requirements.mjs new "<short title>"` creates the next numbered file from this template with the status `Proposed`. `requirements.mjs quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
+
+## The fields
+
+| Field | Values |
+|---|---|
+| Status | `Proposed`: an agent wrote it and no human has accepted it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
+| Origin | `explicit`: a document states it. `implied`: a test, a schema constraint or a check enforces it, and no document states it. `PR`: no record covered a pull request, so the record was written from that pull request. |
+| Section | The section of the generated document that holds the record. |
+| Verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. More than one is allowed, with commas. `unassigned` until a method is chosen. |
+
+## Rules
+
+- **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. The status, the trace and the notes are not protected.
+- **A human accepts.** An agent writes `Proposed`. An accepted record names the human in `Decided by`. An agent never marks its own record `Accepted`.
+- **One requirement for each record.** If a statement has two requirements that can pass or fail apart, it is two records.
+- **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
+- **Numbers are never reused, and a record is never deleted.** A requirement that ends gets the status `Retired`. A proposal that fails gets `Rejected`.
+- **A change to an accepted Statement needs a PDR.** The PDR names the record in `Requirement changed`.
+- **Name every file by its full path** from the repository root, and every issue and pull request by its link.
+
+## Enforcement
+
+`requirements.mjs check` reads each record in `docs/formal/requirements/`. It ignores `README.md` and the folders. It fails:
+
+- a bad file name, a duplicate number, or an `ID` that does not match the file number;
+- a status, an origin or a verification value that is not in the lists above;
+- a `Superseded by` that names no record, itself or an older record;
+- a record that is not `Proposed` and has no statement, source text, section or approver;
+- a source that is not a path with lines or an https link, or that has no quote;
+- a record of origin `PR` whose source text names no pull request;
+- a record in force whose cited lines do not hold the quoted text.
+
+When the quoted text only moved in its file, the check names the new lines, and the agent corrects the line numbers. When the text changed, the check sends the change to a human.
+
+`requirements.mjs render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check` and `render --check` in the project's checks.
