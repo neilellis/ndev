@@ -1,6 +1,6 @@
 // Workflow tests: started, the first commits, done, an issue closed or merged outside the workflow, and the turn-end reminders. The shared harness is in tests/workflow-harness.ts.
 import { expect, test } from './sdk-testing'
-import { ROOT, CHECKS, engine, settle, start, tool, command, turnEnds, finishing, alreadyFixed } from './workflow-harness'
+import { ROOT, CHECKS, engine, settle, start, tool, command, turnEnds, finishing, alreadyFixed, flow } from './workflow-harness'
 
 // ---- started ----
 test('started opens the workflow and answers with the next step', async ($, on) => {
@@ -612,4 +612,17 @@ test('finishing without a checkpoint pushes the real commit before opening the d
   expect(w.pushes.length).toBe(1)
   expect(w.s.upstream).toBe(w.s.sha)
   expect(w.state()?.prs).toEqual([13])
+})
+
+test('started refuses to join this session\'s issue when the worktree is on another branch, and names both branches and the repair', { timeoutMs: 30_000 }, async ($, on) => {
+  const other = flow({ issue: 8, branch: 'issue-8', prs: [], state: 'planning' })
+  const w = engine(on, { wf: null, files: { [`${ROOT}/.neil-dev.issue-8.json`]: JSON.stringify({ version: 1, issue: 8, workflow: other }) } })
+  await start($, w)
+  const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('issue-7')
+  expect(r.text).toContain('issue-8')
+  expect(r.text).toContain('git switch issue-8')
+  expect(r.text).toContain('main checkout')
+  expect(w.files.has(`${ROOT}/.neil-dev.issue-7.json`)).toBe(false)
 })
