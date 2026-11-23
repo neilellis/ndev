@@ -11,7 +11,7 @@ Honour the requested page, area or section. With no scope, choose dev pages that
 
 ## Steps
 
-1. **Structure.** Check the folder notes, parent and child links, reachability from the index file, relative links and each section's `.log/` folder.
+1. **Structure.** Check the folder notes, parent and child links, reachability from the index file, relative links and each section's `.log/` folder. Run `node ${CLAUDE_PLUGIN_ROOT}/skills/adr-pdr/scripts/records.mjs check` for the decision records in `docs/adr` and `docs/pdr`.
 2. **Citations.** Extract the code paths, tables, migrations, commands and configuration that pages claim. Check each against the real files, catalogues or command definitions. A cited file name alone does not prove behaviour. Read-only help and focused tests are useful. Never run a mutating command only because a page cites it.
 3. **Behaviour.** Read the cited implementation to test each behavioural claim. For domain, visual and future pages, check links and structure. A claim about the world needs external evidence, not an inference from code.
 4. **Classify** each finding:

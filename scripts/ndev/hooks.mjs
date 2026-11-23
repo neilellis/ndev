@@ -7,7 +7,7 @@ import { gitCode, gitFolder, OWN_WAIT, pushNames, pushesOnly, RAW_GIT } from '..
 import { envFor, SCRIPT, TIMEOUT_MS, validateQuality } from '../../hooks/quality-shared.ts'
 import { ensureProjectFiles } from '../../orca-plugin/ndev/worker/files.mjs'
 import { binding } from '../export/flow/public.ts'
-import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
+import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
 import { readProject } from './project.mjs'
 import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
 
@@ -20,6 +20,15 @@ const editTools = new Set(['edit', 'write', 'apply_patch', 'multiedit', 'patch']
 export function hookSessionFile(root, id) {
   const key = createHash('sha256').update(JSON.stringify([root, id])).digest('hex')
   return join(stateRoot(), 'sessions', `${key}.json`)
+}
+
+export function watcherState(root, id) {
+  return hookSessionFile(root, id).replace(/\.json$/, '.watch.json')
+}
+
+function watcherRunning(root, id) {
+  const pid = id ? readObject(watcherState(root, id), { missing: {} }).pid : null
+  return Boolean(pid) && isAlive(pid)
 }
 
 function changeSession(root, id, change) {
@@ -156,10 +165,10 @@ function workflowGitRefusal(root, workflow) {
   return `${prefix} PR #${pr} state ${state}.${repair}`
 }
 
-function rawGitReason(command, workspace, workflow, helperCwd) {
+function rawGitReason(command, workspace, workflow, helperCwd, watched) {
   if (!workflow) return undefined
   const label = `Issue #${workflow.issue} is in ${workflow.state}.`
-  if (OWN_WAIT.test(gitCode(command)) && (workflow.state === 'ci' || workflow.doneWaitsFor)) {
+  if (OWN_WAIT.test(gitCode(command)) && (workflow.state === 'ci' || workflow.doneWaitsFor) && watched) {
     return `${label} ndev watch reads these checks. Use ndev flow status for its current result.`
   }
   const normalized = gitCode(command)
@@ -353,7 +362,7 @@ export async function runHook([event, ...argv], supplied) {
   let systemMessage
   if (event === 'pre-tool-use' && call.shell) {
     const helperCwd = payload.agent_id || payload.agentId ? cwd : undefined
-    reason = rawGitReason(call.command, workspace, workflow, helperCwd)
+    reason = rawGitReason(call.command, workspace, workflow, helperCwd, watcherRunning(root, id))
   }
   if (event === 'session-start') {
     const note = sessionStart(root, id)

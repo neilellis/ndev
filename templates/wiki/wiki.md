@@ -16,4 +16,5 @@
 |---|---|
 | What the product does | [domain](domain/domain.md) |
 | How to build, test and push | [dev](dev/dev.md) |
-| Why a decision was made | `<docs/adr/>` |
+| Why a design decision was made | `<docs/adr/>` |
+| Why a requirement changed | `<docs/pdr/>` |

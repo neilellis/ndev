@@ -15,7 +15,7 @@ Work skills carry the brief project-guidance reminder. Specialist skills do not 
 | A diagram | `archify` validates five technical diagram types from a typed specification; `diagram-design` covers custom layouts and other chart types; `infographic` makes raster artwork. |
 | Check a website | `responsive-check` owns the viewport/theme matrix and quick mobile screenshots. `site-check` checks links and runtime errors. `browser-arrows` annotates screenshots. |
 | Documentation | `docs` is the entry point; `doc-coverage` finds gaps; `docs-sync` reconciles source changes; `docs-legibility` checks comprehension; `docs-team` coordinates a whole site. |
-| Knowledge | `remember` records project facts; `dev-wiki` records reusable lessons; `forget` removes false claims; `wiki-lint` checks structure and evidence. |
+| Knowledge | `requirements` searches, writes and checks the requirement records (what the system must do); `adr-pdr` searches and writes the decision records (ADRs for design, PDRs for requirement amendments); `remember` records project facts; `dev-wiki` records reusable lessons; `forget` removes false claims; `wiki-lint` checks structure and evidence. |
 
 ## Consolidated entry points
 
@@ -55,6 +55,7 @@ The sections below cover every source skill once. Keep this index current when a
 - [triage](triage/SKILL.md)
 - [epic-plan](epic-plan/SKILL.md)
 - [epic-coordinate](epic-coordinate/SKILL.md)
+- [multi-epic-triage](multi-epic-triage/SKILL.md)
 - [goal-work](goal-work/SKILL.md)
 - [work-light-auto](work-light-auto/SKILL.md)
 - [work-heavy-auto](work-heavy-auto/SKILL.md)
@@ -89,6 +90,8 @@ The sections below cover every source skill once. Keep this index current when a
 - [docs-team](docs-team/SKILL.md)
 - [wiki-lint](wiki-lint/SKILL.md)
 - [clean-reader](clean-reader/SKILL.md)
+- [adr-pdr](adr-pdr/SKILL.md)
+- [requirements](requirements/SKILL.md)
 - [remember](remember/SKILL.md)
 - [forget](forget/SKILL.md)
 - [dev-wiki](dev-wiki/SKILL.md)

@@ -10,6 +10,6 @@
     "ndev": "bin/ndev"
   },
   "scripts": {
-    "test": "node --test tests/ndev-*.test.mjs scripts/export/tests/*.test.mjs orca-plugin/ndev/test/*.test.mjs scripts/docs/tests/screenshots.test.mjs"
+    "test": "node --test tests/ndev-*.test.mjs scripts/export/tests/*.test.mjs orca-plugin/ndev/test/*.test.mjs scripts/docs/tests/screenshots.test.mjs scripts/requirements/tests/*.test.mjs"
   }
 }

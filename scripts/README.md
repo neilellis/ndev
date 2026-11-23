@@ -59,6 +59,12 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `md-to-pdf.sh` | Renders a markdown file to an A4 PDF. | docs |
 | `vale/test.sh` | Proves every vale rule fires on `testdata/bad.md` and none fires on `testdata/good.md`. | docs |
 
+## requirements/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `requirements.mjs` | Creates, lists, searches and checks the requirement records in `docs/formal/requirements/`, prints a quoted source (`quote`), and renders the records as one HTML file (`render`). | requirements |
+
 ## wiki/
 
 | Script | What it does | Used by |

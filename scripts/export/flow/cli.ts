@@ -1593,7 +1593,7 @@ function dispatchFlow(argv: string[], options: { json?: boolean }) {
   const elsewhere = ownedElsewhere(wf)
   if (elsewhere && command !== 'unblock') throw new Fail(1, elsewhere)
   if ((args.mode || wf.mode) === 'hack' && (args.steering || wf.steering) === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
-  if (command === 'skip' || command === 'goto' || command === 'off' || command === 'on' || command === 'mode' || command === 'steering' && !args.reason) {
+  if (command === 'skip' || command === 'goto' || command === 'on' || command === 'mode' || command === 'steering' && !args.reason) {
     const request = publicCli!.confirm(command, `#${wf.issue}`, wf.rev ?? 0, root, !!options.json)
     if (request) return request
   }

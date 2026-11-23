@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { atomicJson, CliError, locked, readObject, run, stateRoot } from './common.mjs'
+import { atomicJson, CliError, gitWorkspace, locked, readObject, run, stateRoot } from './common.mjs'
+import { readProject, saveProject } from './project.mjs'
 
-const flag = () => join(stateRoot(), 'chat-guard')
 const maximumTranscriptBytes = 1024 * 1024
 const minutes = 60_000
 const providers = new Set(['claude', 'codex'])
@@ -159,8 +159,20 @@ function block(harness, reason) {
   }
 }
 
+function projectEnablesGuard(cwd) {
+  let root
+  try {
+    root = gitWorkspace(cwd).root
+  } catch (error) {
+    if (/not a git repository/i.test(error.details?.output ?? '')) return false
+    throw error
+  }
+  return readProject(root).chatGuard === true
+}
+
 export function blockedNativePrompt(harness, payload) {
-  if (!providers.has(harness) || process.env.ORCA_STRUCTURED_SESSION !== '1' || !existsSync(flag())) return
+  if (!providers.has(harness) || process.env.ORCA_STRUCTURED_SESSION !== '1') return
+  if (!projectEnablesGuard(payload.cwd ?? process.cwd())) return
   if (typeof payload.prompt !== 'string' || contextCommands.test(payload.prompt)) return
   if (typeof payload.transcript_path !== 'string' || !payload.transcript_path) return
   const key = createHash('sha256').update(JSON.stringify([
@@ -209,12 +221,8 @@ export function blockedNativePrompt(harness, payload) {
 
 export function runChatGuard([command, ...args]) {
   if (args.length) throw new CliError(2, 'Use ndev chat-guard on, off, or status.')
-  const path = flag()
-  if (command === 'on' && !existsSync(path)) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-    writeFileSync(path, '', { mode: 0o600, flag: 'wx' })
-  }
-  if (command === 'off') rmSync(path, { force: true })
-  const enabled = existsSync(path)
-  return { enabled, text: `Native Orca chat guard is ${enabled ? 'on' : 'off'}.` }
+  const { root } = gitWorkspace()
+  if (command === 'on' || command === 'off') saveProject(root, 'chatGuard', command === 'on')
+  const enabled = readProject(root).chatGuard === true
+  return { enabled, text: `Native Orca chat guard is ${enabled ? 'on' : 'off'} for ${root}.` }
 }

@@ -37,7 +37,7 @@ Ask the human, in one round, for what code cannot tell you:
 
 Write the research questions as a numbered list and give each to one helper, in parallel, with the model that fits (a strong model for audits and hands-on evaluation, a cheaper one for a side read). Give each helper the question, the files or sources, the stop condition and the return format: a findings file with `file:line` or a link for each claim.
 
-Useful helpers, each separate: what was specified (issues, PRs, docs); what is implemented (verified in code, by a different helper than the one that read the specification); what the outputs must contain (the product's own examples); how the field does it; `ndev:plan-scout` per workstream for the file map, migrations and named tests.
+Useful helpers, each separate: what was specified (issues, PRs, docs, ADRs and PDRs); what is implemented (verified in code, by a different helper than the one that read the specification); what the outputs must contain (the product's own examples); how the field does it; `ndev:plan-scout` per workstream for the file map, migrations and named tests.
 
 Every claim that shapes a decision carries one label: **ran** (you or a helper executed it and saw the result), **read** (taken from code or a document) or **assumed**. Before an assumed or read claim decides anything, run the cheapest probe that could prove it false: try the access, start the service, run the query on real data. A README is not a measurement.
 
@@ -61,7 +61,7 @@ Before the human sees it, self-check for the faults a reviewer finds:
 
 Give each decision a stable id (D1, D2, …), the options, your recommendation and its reason. The human can then answer "D3 yes, D4 no".
 
-**Challenge every answer you do not fully agree with.** An answer is input to the design, not a go-ahead. For each one, say "agree" or state the reservation and what you recommend in its place; the human then rules. Record the ruling in the spec in the human's own words.
+**Challenge every answer you do not fully agree with.** An answer is input to the design, not a go-ahead. For each one, say "agree" or state the reservation and what you recommend in its place; the human then rules. Record the ruling in the spec in the human's own words. Write a ruling that amends a requirement as a PDR, and a ruling on the design as an ADR (`adr-pdr` skill), with the human's ruling as the source.
 
 While this phase is open, change only the spec. File sub-issues, publish and start workers after the spec review, when the human says planning is over.
 

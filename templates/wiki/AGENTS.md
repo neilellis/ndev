@@ -48,6 +48,6 @@ Find and fix: contradictions, broken or stale links, one fact in two places, pag
 ## What does not go here
 
 - A changelog (Git holds it).
-- Decisions and rejected options (they go in ADRs under `<docs/adr/>`).
+- Decisions and rejected options (design decisions go in ADRs under `<docs/adr/>`, requirement amendments in PDRs under `<docs/pdr/>`).
 - Plans, except under `future/`.
 - An agent's private memory.

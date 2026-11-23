@@ -37,7 +37,7 @@ gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$
 Follow "Write issues" in `${CLAUDE_PLUGIN_ROOT}/skills/github/references/issues.md`. In short:
 
 - **Title:** at most 70 characters, specific, in the imperative for a change ("Show the export date in the table header") or as the symptom for a defect ("Export fails for files over 2 GB").
-- **Body:** first the impact, then the requested change, then the acceptance criteria as a checklist. Add open questions only if the description leaves a decision open.
+- **Body:** first the impact, then the requested change, then the acceptance criteria as a checklist. Add open questions only if the description leaves a decision open. Search the decision records first (`adr-pdr` skill) and link a record that settles the question. A change to a requirement says that it needs a PDR.
 - Use only what the description says, plus facts you checked. If the description names code, find it with one bounded search and link it with a commit-pinned permalink. Do not invent steps to reproduce it, numbers or scope.
 - Write the body to a file in the scratchpad or `$TMPDIR`, not in the repository.
 

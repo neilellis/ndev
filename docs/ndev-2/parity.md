@@ -193,6 +193,7 @@ Install each retained skill as `ndev-<name>`. Tests check native discovery, link
 
 | Feature | Source | ndev 2.0 | Work item | Acceptance test |
 | --- | --- | --- | --- | --- |
+| `adr-pdr` skill | `skills/adr-pdr/SKILL.md` | `ndev-adr-pdr` skill | Installer | Discover `ndev-adr-pdr` and resolve its references in each harness. |
 | `adversarial-review` skill | `skills/adversarial-review/SKILL.md` | `ndev-adversarial-review` skill | Installer | Discover `ndev-adversarial-review` and resolve its references in each harness. |
 | `archify` skill | `skills/archify/SKILL.md` | `ndev-archify` skill | Installer | Discover `ndev-archify` and resolve its references in each harness. |
 | `are-we-done` skill | `skills/are-we-done/SKILL.md` | `ndev-are-we-done` skill | Installer | Discover `ndev-are-we-done` and resolve its references in each harness. |
@@ -245,6 +246,7 @@ Install each retained skill as `ndev-<name>`. Tests check native discovery, link
 | `react-grab` skill | `skills/react-grab/SKILL.md` | `ndev-react-grab` skill | Installer | Discover `ndev-react-grab` and resolve its references in each harness. |
 | `remember` skill | `skills/remember/SKILL.md` | `ndev-remember` skill | Installer | Discover `ndev-remember` and resolve its references in each harness. |
 | `report-work-done` skill | `skills/report-work-done/SKILL.md` | `ndev-report-work-done` skill | Installer | Discover `ndev-report-work-done` and resolve its references in each harness. |
+| `requirements` skill | `skills/requirements/SKILL.md` | `ndev-requirements` skill | Installer | Discover `ndev-requirements` and resolve its references in each harness. |
 | `reset` skill | `skills/reset/SKILL.md` | `ndev-reset` skill | Installer | Discover `ndev-reset` and resolve its references in each harness. |
 | `resolving-merge-conflicts` skill | `skills/resolving-merge-conflicts/SKILL.md` | `ndev-resolving-merge-conflicts` skill | Installer | Discover `ndev-resolving-merge-conflicts` and resolve its references in each harness. |
 | `responsive-check` skill | `skills/responsive-check/SKILL.md` | `ndev-responsive-check` skill | Installer | Discover `ndev-responsive-check` and resolve its references in each harness. |

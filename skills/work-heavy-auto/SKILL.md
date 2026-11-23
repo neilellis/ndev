@@ -9,6 +9,8 @@ Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native 
 
 Read the applicable parts of the project’s `NORTH_STAR.md`.
 
+Records: search `docs/adr` and `docs/pdr` for each issue's area (`adr-pdr` skill). Never change a requirement on your own: write the PDR as `Proposed`, say in the PR what human approval is missing, and leave the requirement's text as it is. Do not set an old record to `Superseded` until a human has accepted its replacement.
+
 Do one bounded pass: read the board, sort the startable issues, work each unit in its own worktree, branch and PR, verify it, smoke-test it where the project has a preview, and leave each PR for a human to merge. Never merge. Never push the base branch.
 
 ## The workflow

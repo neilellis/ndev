@@ -299,7 +299,7 @@ test('Codex SessionStart directs the first work turn to the linked GitHub issue'
 test('native chat prompt guard blocks stale sends and allows retry after local compaction', t => {
   const root = fixture(t)
   const state = join(root, 'state')
-  const enabled = join(state, 'ndev', 'chat-guard')
+  const legacyFlag = join(state, 'ndev', 'chat-guard')
   mkdirSync(join(state, 'ndev'), { recursive: true })
   const transcript = join(root, 'conversation.jsonl')
   const call = (harness, prompt, rows, structured = '1', modifiedAt) => {
@@ -320,7 +320,11 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
   })
   const stale = [codex(21, 200_001)]
   assert.notEqual(call('codex', 'draft', stale).decision, 'block')
-  writeFileSync(enabled, '')
+  writeFileSync(legacyFlag, '')
+  assert.notEqual(call('codex', 'draft', [codex(51, 200_001)]).decision, 'block')
+  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":false}')
+  assert.notEqual(call('codex', 'draft', [codex(51, 200_001)]).decision, 'block')
+  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":true}')
   assert.notEqual(call('codex', 'draft', stale, '').decision, 'block')
   assert.notEqual(call('codex', 'draft', [codex(21, 200_000)]).decision, 'block')
   assert.notEqual(call('codex', 'draft', [codex(6, 300_000)]).decision, 'block')
@@ -341,11 +345,48 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
   assert.equal(call('claude', 'draft', [oldLargeRecord], '1', new Date(stamp(51))).decision, 'block')
 })
 
+test('chat guard hook ignores a folder outside Git and fails on an invalid project file', t => {
+  const root = fixture(t)
+  const outside = mkdtempSync(join(tmpdir(), 'ndev-outside-'))
+  t.after(() => rmSync(outside, { recursive: true, force: true }))
+  const transcript = join(root, 'conversation.jsonl')
+  writeFileSync(transcript, JSON.stringify({
+    timestamp: new Date(Date.now() - 90 * 60_000).toISOString(), type: 'assistant', message: { usage: { input_tokens: 50 } },
+  }) + '\n')
+  const call = cwd => spawnSync(ndev, ['hook', 'prompt-submit', '--harness', 'claude'], {
+    cwd, encoding: 'utf8',
+    env: { HOME: root, PATH: process.env.PATH, XDG_STATE_HOME: join(root, 'state'), ORCA_STRUCTURED_SESSION: '1' },
+    input: JSON.stringify({ cwd, session_id: 'fixture', transcript_path: transcript, prompt: 'draft' }),
+  })
+  assert.doesNotMatch(call(outside).stdout, /"block"/)
+  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":"yes"}')
+  const bad = call(root)
+  assert.notEqual(bad.status, 0)
+  assert.match(bad.stderr, /"chatGuard" is "yes"; use true or false/)
+  assert.ok(bad.stderr.includes(join(root, '.neil-dev.json')))
+})
+
+test('ndev chat-guard on, off and status set the project key and leave other keys alone', t => {
+  const root = fixture(t)
+  const guard = verb => spawnSync(ndev, ['chat-guard', verb], { cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH } })
+  const config = () => JSON.parse(readFileSync(join(root, '.neil-dev.json'), 'utf8'))
+  assert.match(guard('status').stdout, /guard is off for/)
+  writeFileSync(join(root, '.neil-dev.json'), '{"mode":"heavy"}')
+  assert.match(guard('on').stdout, /guard is on for/)
+  assert.deepEqual(config(), { mode: 'heavy', chatGuard: true })
+  assert.match(guard('status').stdout, /guard is on for/)
+  assert.match(guard('off').stdout, /guard is off for/)
+  assert.deepEqual(config(), { mode: 'heavy', chatGuard: false })
+  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":"yes"}')
+  const bad = guard('status')
+  assert.notEqual(bad.status, 0)
+  assert.match(bad.stderr, /"chatGuard" is "yes"; use true or false/)
+})
+
 test('chat guard continue passes the saved request once without launching a new chat', t => {
   const root = fixture(t)
   const state = join(root, 'state')
-  mkdirSync(join(state, 'ndev'), { recursive: true })
-  writeFileSync(join(state, 'ndev', 'chat-guard'), '')
+  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":true}')
   const transcript = join(root, 'conversation.jsonl')
   const timestamp = '2000-01-01T00:00:00.000Z'
   const draft = 'Check the release.\nKeep "$HOME" and `echo test` literal.'
@@ -377,8 +418,7 @@ test('chat guard continue passes the saved request once without launching a new 
 test('chat guard replies launch Orca with the saved prompt from the same chat', t => {
   const root = fixture(t)
   const state = join(root, 'state')
-  mkdirSync(join(state, 'ndev'), { recursive: true })
-  writeFileSync(join(state, 'ndev', 'chat-guard'), '')
+  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":true}')
   const transcript = join(root, 'conversation.jsonl')
   const timestamp = new Date(Date.now() - 51 * 60_000).toISOString()
   writeFileSync(transcript, [
@@ -492,4 +532,27 @@ test('commit refusals distinguish open, unavailable and invalid PR state without
     assert.match(reason, expected)
     assert.doesNotMatch(reason, /state merged/)
   }
+})
+
+test('the ci check wait is refused only while this session has a live ndev watch', t => {
+  const root = fixture(t)
+  const state = mkdtempSync(join(tmpdir(), 'ndev-hook-state-'))
+  t.after(() => rmSync(state, { recursive: true, force: true }))
+  writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({ version: 1, issue: 17, workflow: {
+    issue: 17, root, repo: 'o/r', state: 'ci', branch: 'topic', base: 'main', prs: [18],
+  } }))
+  const env = { XDG_STATE_HOME: state, ORCA_AGENT_SESSION_ID: 'fixture' }
+  const wait = '/x/scripts/github/wait-for-pr-change.sh 18 --skip-success --json'
+  const unwatched = hook(root, 'claude', 'Bash', wait, env)
+  assert.notEqual(unwatched?.hookSpecificOutput?.permissionDecision, 'deny', JSON.stringify(unwatched))
+  const watchFile = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import { realpathSync } from 'node:fs'; import { hookSessionFile } from ${JSON.stringify(new URL('../scripts/ndev/hooks.mjs', import.meta.url).href)}; console.log(hookSessionFile(realpathSync(process.argv[1]), 'fixture').replace(/\\.json$/, '.watch.json'))`, root,
+  ], { encoding: 'utf8', env: { ...process.env, ...env } })
+  assert.equal(watchFile.status, 0, watchFile.stderr)
+  const file = watchFile.stdout.trim()
+  mkdirSync(join(file, '..'), { recursive: true })
+  writeFileSync(file, JSON.stringify({ root, session: 'fixture', pid: process.pid }))
+  const watched = hook(root, 'claude', 'Bash', wait, env)
+  assert.equal(watched?.hookSpecificOutput?.permissionDecision, 'deny')
+  assert.match(watched.hookSpecificOutput.permissionDecisionReason, /ndev watch reads these checks/)
 })

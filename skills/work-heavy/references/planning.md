@@ -7,7 +7,7 @@ Part of the `work-heavy` skill. This file covers the plan in the PR body and the
 **Read the project's glossary first, if it has one** (often `CONTEXT.md`). Name things the way it
 names them, and check each decision in the issue against it. A request that uses a word the glossary
 gives to a different thing will build the wrong thing. Read the architecture decision records for the
-area too (often `docs/adr/`). Those decisions are settled: the plan does not reopen them.
+area too, and the product decision records for it (`docs/adr/` and `docs/pdr/`; the `adr-pdr` skill searches both). Those decisions are settled: the plan does not reopen them. A decision that the plan makes, or a requirement that it amends, gets a record in the same PR (`adr-pdr` skill).
 
 Then list the files to create or change and what each one does. Break the work into small tasks.
 Each task is a **vertical slice**: a narrow but complete path through each layer it touches, which
