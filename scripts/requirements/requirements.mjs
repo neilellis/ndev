@@ -1,8 +1,8 @@
-#!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { CliError } from "../ndev/common.mjs";
 
 const DIR = "docs/formal/requirements";
 const HTML = `${DIR}/generated/requirements.html`;
@@ -37,7 +37,7 @@ const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|m
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"- Agreed: <name>, YYYY-MM-DD, text <hash>"`;
 const PROTECTED = ["Statement", "Source text"];
-const SCRIPT = "requirements.mjs";
+const SCRIPT = "ndev requirements";
 const RETIRED = `${DIR}/extra/retired.md`;
 const FROZEN = `${DIR}/extra/sources`;
 const RETIRED_ENTRY = /^- (\S+) ([0-9a-f]{12}) (\S+)(?: keep (\S+))?$/;
@@ -50,6 +50,10 @@ function parseArguments(argv) {
   const positional = [];
   const options = {};
   for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--") {
+      positional.push(...argv.slice(i + 1));
+      break;
+    }
     if (!argv[i].startsWith("--")) positional.push(argv[i]);
     else if (FLAGS.has(argv[i].slice(2))) options[argv[i].slice(2)] = true;
     else {
@@ -1146,34 +1150,38 @@ function link(root, id, url, options) {
   return `${entry.rel}: ${added.join(", ")}\n`;
 }
 
-try {
-  const { positional, options } = parseArguments(process.argv.slice(2));
-  const [command, ...rest] = positional;
-  const root = () => findRoot(options);
-  const commands = {
-    new: () => create(root(), rest[0], options),
-    list: () => list(root(), options),
-    search: () => search(root(), rest),
-    quote: () => quote(root(), rest[0], rest[1], rest[2]),
-    check: () => check(root()),
-    render: () => render(root(), options),
-    guard: () => guard(root(), options),
-    agree: () => agree(root(), rest[0], options),
-    sources: () => sources(root(), options),
-    ledger: () => ledger(root(), rest[0], rest[1], rest[2], rest[3]),
-    uncovered: () => uncovered(root(), rest),
-    untraced: () => untraced(root(), options),
-    link: () => link(root(), rest[0], rest[1], options),
-    narrate: () => narrate(root(), rest[0], options),
-    narrative: () => narrative(root()),
-    publish: () => publish(root(), options),
-    references: () => references(root(), rest[0]),
-    retire: () => retire(root(), rest, options),
-  };
-  if (!commands[command]) throw new Usage(`Unknown command "${command ?? ""}": use ${COMMANDS}`);
-  process.stdout.write(commands[command]());
-} catch (error) {
-  if (!(error instanceof Usage || error instanceof Failure)) throw error;
-  process.stderr.write(`requirements: ${error.message}\n`);
-  process.exitCode = error instanceof Usage ? 2 : 1;
+export function runRequirements(argv, { json } = {}) {
+  try {
+    const { positional, options } = parseArguments(argv);
+    const [command, ...rest] = positional;
+    const root = () => findRoot(options);
+    const commands = {
+      new: () => create(root(), rest[0], options),
+      list: () => list(root(), options),
+      search: () => search(root(), rest),
+      quote: () => quote(root(), rest[0], rest[1], rest[2]),
+      check: () => check(root()),
+      render: () => render(root(), options),
+      guard: () => guard(root(), options),
+      agree: () => agree(root(), rest[0], options),
+      sources: () => sources(root(), options),
+      ledger: () => ledger(root(), rest[0], rest[1], rest[2], rest[3]),
+      uncovered: () => uncovered(root(), rest),
+      untraced: () => untraced(root(), options),
+      link: () => link(root(), rest[0], rest[1], options),
+      narrate: () => narrate(root(), rest[0], options),
+      narrative: () => narrative(root()),
+      publish: () => publish(root(), options),
+      references: () => references(root(), rest[0]),
+      retire: () => retire(root(), rest, options),
+    };
+    if (!commands[command]) throw new Usage(`Unknown requirements command "${command ?? ""}": use ${COMMANDS}`);
+    const text = commands[command]();
+    if (json) return { text };
+    process.stdout.write(text);
+  } catch (error) {
+    if (error instanceof Usage) throw new CliError(2, error.message);
+    if (error instanceof Failure) throw new CliError(1, error.message);
+    throw error;
+  }
 }

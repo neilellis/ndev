@@ -129,6 +129,21 @@ const groups = {
       'post-tool-use': '', 'turn-start': '', 'turn-complete': '', 'session-end': '', compact: '',
     },
   },
+  requirements: {
+    description: 'Keep requirement records, their sources and their trace',
+    module: './requirements/requirements.mjs', run: 'runRequirements',
+    commands: {
+      new: '"<short title>" [--origin explicit|implied|PR] [--section <name>]',
+      list: '[--status <status>] [--section <name>]', search: '<term>...',
+      quote: '<path> <first line> <last line>', check: '', render: '[--check]',
+      guard: '--base <git ref>', agree: '<REQ-NNNN> --by "<name>"',
+      sources: '[--tier <n>]', ledger: '<path> <first line> <last line> "<reason>"',
+      uncovered: '[<path>...]', untraced: '--prs <file>',
+      link: '<REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]',
+      narrate: '"<section>" [--from <file>]', narrative: '', publish: '[--check]',
+      references: '<path>', retire: '<path>... --pdr <file> [--keep <file>,<file>]',
+    },
+  },
   watch: {
     description: 'Watch the session and its checks in an Orca terminal',
     module: './ndev/watch.mjs', run: 'runWatch',
@@ -186,7 +201,7 @@ async function execute(argv, wantsHelp, json) {
   const handler = implementation[definition.run]
   if (typeof handler !== 'function') throw new Error(`The ndev release does not export ${definition.run} from ${definition.module}.`)
   const subcommand = verb === undefined ? [] : [verb, ...tail]
-  if (group !== 'flow') return ['epic', 'triage', 'walk-doc'].includes(group) ? handler(subcommand, { json }) : handler(subcommand)
+  if (group !== 'flow') return ['epic', 'triage', 'walk-doc', 'requirements'].includes(group) ? handler(subcommand, { json }) : handler(subcommand)
   const result = await handler(subcommand, { json })
   if (verb === 'interview' && Array.isArray(result?.questions)) {
     const { publishPanel } = await import('./ndev/panes.mjs')

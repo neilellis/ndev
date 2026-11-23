@@ -7,12 +7,12 @@ description: "Publish the requirement records to the project's documentation app
 
 The records, their format and their rules are in `${CLAUDE_PLUGIN_ROOT}/kb/requirements.md` (read "Publication"). Read it first.
 
-The helper is `${CLAUDE_PLUGIN_ROOT}/scripts/requirements/requirements.mjs`. Run it with `node` from the project.
+The commands are `ndev requirements <command>`. Run them from the project.
 
 | Command | What it does |
 |---|---|
-| `requirements.mjs publish` | Writes the pages into the folder that `docs/formal/requirements/extra/publish.json` names. Removes the pages of the last publish that it no longer writes. |
-| `requirements.mjs publish --check` | Fails when a page is missing, is not current or is left from the last publish. Writes nothing. |
+| `ndev requirements publish` | Writes the pages into the folder that `docs/formal/requirements/extra/publish.json` names. Removes the pages of the last publish that it no longer writes. |
+| `ndev requirements publish --check` | Fails when a page is missing, is not current or is left from the last publish. Writes nothing. |
 
 ## Set up
 
@@ -37,16 +37,16 @@ Do this one time for each project.
 
 ## Procedure
 
-1. Run `requirements.mjs check` and `requirements.mjs narrative`. Fix each failure first: use the `requirements` and `requirements-document` skills.
-2. Run `requirements.mjs publish`.
+1. Run `ndev requirements check` and `ndev requirements narrative`. Fix each failure first: use the `requirements` and `requirements-document` skills.
+2. Run `ndev requirements publish`.
 3. Run the documentation app's own checks and build. When a check fails on front matter, add the key to `frontMatter` in `publish.json`. Do not edit a published page: the next publish overwrites it.
 4. Open the index and one section page in the app. Make sure that the links to the records, to the cited lines and between the pages go to the right place.
-5. Run `requirements.mjs publish --check`. Stop when it passes.
+5. Run `ndev requirements publish --check`. Stop when it passes.
 
 ## Finish
 
 1. Commit `publish.json` and the published folder with the records.
-2. Add `requirements.mjs publish --check` to the project's checks with `check`, `render --check` and `narrative`.
+2. Add `ndev requirements publish --check` to the project's checks with `check`, `render --check` and `narrative`.
 3. Report to the human: the folder, the number of pages, the app checks that you ran and their result, and each link that did not go to the right place.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

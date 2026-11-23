@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const CLI = path.join(import.meta.dirname, "..", "requirements.mjs");
+const NDEV = path.join(import.meta.dirname, "..", "..", "..", "bin", "ndev");
 const DIR = "docs/formal/requirements";
 const HTML = `${DIR}/generated/requirements.html`;
 
@@ -15,7 +15,7 @@ const put = (root, rel, text) => {
   writeFileSync(path.join(root, rel), text);
 };
 const run = (root, ...args) => {
-  const out = spawnSync(process.execPath, [CLI, "--root", root, ...args], { encoding: "utf8" });
+  const out = spawnSync(NDEV, ["requirements", ...args, "--root", root], { encoding: "utf8" });
   return { status: out.status, stdout: out.stdout, stderr: out.stderr };
 };
 const GUIDE = "# Guide\n\nThe report names each source.\nThe report refuses an unread source.\n\nEnd.\n";
@@ -360,7 +360,7 @@ describe("render", () => {
     const absent = run(root, "render", "--check");
     assert.equal(absent.status, 1);
     assert.match(absent.stderr, /requirements\.html/);
-    assert.match(absent.stderr, /requirements\.mjs render/);
+    assert.match(absent.stderr, /ndev requirements render/);
     run(root, "render");
     assert.equal(run(root, "render", "--check").status, 0);
     put(root, `${DIR}/0001-the-report-names-each-source.md`, record("0001", { title: "The report names every source" }));
@@ -393,7 +393,7 @@ const committed = (records) => {
   return root;
 };
 const inTerminal = (root, ...args) => {
-  const out = spawnSync("python3", ["-c", "import pty, sys; sys.exit(pty.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])) if hasattr(pty, 'waitstatus_to_exitcode') else __import__('os').waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))", process.execPath, CLI, "--root", root, ...args], { encoding: "utf8", input: "" });
+  const out = spawnSync("python3", ["-c", "import pty, sys; sys.exit(pty.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])) if hasattr(pty, 'waitstatus_to_exitcode') else __import__('os').waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))", NDEV, "requirements", ...args, "--root", root], { encoding: "utf8", input: "" });
   return { status: out.status, stdout: out.stdout, stderr: out.stderr };
 };
 const FILE = "0001-the-report-names-each-source.md";
@@ -440,7 +440,7 @@ describe("guard", () => {
     assert.match(out.stderr, new RegExp(`${DIR}/${FILE}: the Statement changed since base, and no human agreed`));
     assert.match(out.stderr, /old:\n {4}The report names each source\./);
     assert.match(out.stderr, /new:\n {4}The report names every source\./);
-    assert.match(out.stderr, /requirements\.mjs agree REQ-0001 --by "<name>"/);
+    assert.match(out.stderr, /ndev requirements agree REQ-0001 --by "<name>"/);
   });
 
   it("fails a changed quote in the Source text with no agreement", () => {
@@ -781,7 +781,7 @@ describe("untraced", () => {
     const root = withPrs({ [FILE]: record("0001", { trace: `- PR: ${PR12}` }), "0002-the-parser-reads-the-new-format.md": record("0002", { status: "Proposed", origin: "PR", decidedBy: "", sourceText: PR13_SOURCE }) });
     const out = run(root, "untraced", "--prs", "prs.json");
     assert.equal(out.status, 1);
-    assert.match(out.stderr, /REQ-0001 traces https:\/\/github\.com\/o\/r\/pull\/12, which closes https:\/\/github\.com\/o\/r\/issues\/5, and does not link it\. Run: requirements\.mjs link REQ-0001 https:\/\/github\.com\/o\/r\/pull\/12 --prs prs\.json/);
+    assert.match(out.stderr, /REQ-0001 traces https:\/\/github\.com\/o\/r\/pull\/12, which closes https:\/\/github\.com\/o\/r\/issues\/5, and does not link it\. Run: ndev requirements link REQ-0001 https:\/\/github\.com\/o\/r\/pull\/12 --prs prs\.json/);
   });
 
   it("needs --prs, and names a file that is not a list of pull requests", () => {
@@ -952,8 +952,8 @@ describe("narrative", () => {
     assert.equal(out.status, 1);
     assert.match(out.stdout, /^Report  stale$/m);
     assert.match(out.stdout, /^Sources  missing$/m);
-    assert.match(out.stderr, /Report: the records changed after the narrative was written\. Read them with: requirements\.mjs narrate "Report", then write it again with: requirements\.mjs narrate "Report" --from <file>/);
-    assert.match(out.stderr, /Sources: no narrative\. Write it with: requirements\.mjs narrate "Sources" --from <file>/);
+    assert.match(out.stderr, /Report: the records changed after the narrative was written\. Read them with: ndev requirements narrate "Report", then write it again with: ndev requirements narrate "Report" --from <file>/);
+    assert.match(out.stderr, /Sources: no narrative\. Write it with: ndev requirements narrate "Sources" --from <file>/);
     assert.match(out.stderr, /docs\/formal\/requirements\/generated\/narrative\/gone\.md names the section "Gone", which no record in force has\. Delete the file/);
   });
 });
@@ -1235,7 +1235,7 @@ describe("publish", () => {
     const changed = run(root, "publish", "--check");
     assert.equal(changed.status, 1);
     assert.match(changed.stderr, /site\/content\/requirements\/report\.md is not current/);
-    assert.match(changed.stderr, /requirements\.mjs publish/);
+    assert.match(changed.stderr, /ndev requirements publish/);
     rmSync(path.join(root, DIR, SOURCES_FILE));
     assert.match(run(root, "publish", "--check").stderr, /site\/content\/requirements\/sources\.md is left from the last publish/);
     assert.equal(run(root, "publish").status, 0);
@@ -1479,6 +1479,6 @@ describe("usage", () => {
   it("names the commands when the command is unknown", () => {
     const out = run(project(), "frobnicate");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish, references, retire/);
+    assert.match(out.stderr, /Unknown requirements command "frobnicate"\. Repair: ndev requirements --help/);
   });
 });

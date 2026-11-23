@@ -13,12 +13,12 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 | `docs/formal/requirements/NNNN-<title>.md` | One requirement record | An agent proposes; a human accepts |
 | `docs/formal/requirements/extra/` | Material that is not a requirement: glossary, copies of sources, samples, open questions | Humans |
 | `docs/formal/requirements/extra/outline.md` | The title of the document and the order of its sections | Humans |
-| `docs/formal/requirements/extra/ledger.md` | The lines of the documents that hold no requirement, each with its reason and a hash of the lines | An agent proposes with `requirements.mjs ledger`; a human reviews |
+| `docs/formal/requirements/extra/ledger.md` | The lines of the documents that hold no requirement, each with its reason and a hash of the lines | An agent proposes with `ndev requirements ledger`; a human reviews |
 | `docs/formal/requirements/generated/` | Generated documents. Do not edit them. | The script |
-| `docs/formal/requirements/extra/retired.md` | The retired documents, each with a hash of its frozen copy and its decision record | `requirements.mjs retire`, after a human agrees |
-| `docs/formal/requirements/extra/sources/` | The frozen copies of the retired documents, at their old paths. Do not edit them. | `requirements.mjs retire` |
-| `docs/formal/requirements/extra/publish.json` | Where and how `requirements.mjs publish` writes the pages for the documentation app | Humans |
-| `docs/formal/requirements/generated/narrative/` | The prose of each section, with a hash of the records it describes | An agent, through `requirements.mjs narrate` |
+| `docs/formal/requirements/extra/retired.md` | The retired documents, each with a hash of its frozen copy and its decision record | `ndev requirements retire`, after a human agrees |
+| `docs/formal/requirements/extra/sources/` | The frozen copies of the retired documents, at their old paths. Do not edit them. | `ndev requirements retire` |
+| `docs/formal/requirements/extra/publish.json` | Where and how `ndev requirements publish` writes the pages for the documentation app | Humans |
+| `docs/formal/requirements/generated/narrative/` | The prose of each section, with a hash of the records it describes | An agent, through `ndev requirements narrate` |
 
 ## Template
 
@@ -56,7 +56,7 @@ The requirement. This is the binding text.
 ## Notes
 ```
 
-`requirements.mjs new "<short title>"` creates the next numbered file from this template with the status `Proposed`. `requirements.mjs quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
+`ndev requirements new "<short title>"` creates the next numbered file from this template with the status `Proposed`. `ndev requirements quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
 
 ## The fields
 
@@ -65,12 +65,12 @@ The requirement. This is the binding text.
 | Status | `Proposed`: an agent wrote it and no human has accepted it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
 | Origin | `explicit`: a document states it. `implied`: a test, a schema constraint or a check enforces it, and no document states it. `PR`: no record covered a pull request, so the record was written from that pull request. |
 | Section | The section of the generated document that holds the record. |
-| Agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `requirements.mjs agree`, which runs only in a terminal. |
+| Agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `ndev requirements agree`, which runs only in a terminal. |
 | Verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. More than one is allowed, with commas. `unassigned` until a method is chosen. |
 
 ## Rules
 
-- **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. When the human agrees, the agent changes the text and the human runs `requirements.mjs agree`. The status, the trace and the notes are not protected.
+- **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. When the human agrees, the agent changes the text and the human runs `ndev requirements agree`. The status, the trace and the notes are not protected.
 - **A human accepts.** An agent writes `Proposed`. An accepted record names the human in `Decided by`. An agent never marks its own record `Accepted`.
 - **One requirement for each record.** If a statement has two requirements that can pass or fail apart, it is two records.
 - **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
@@ -80,7 +80,7 @@ The requirement. This is the binding text.
 
 ## Enforcement
 
-`requirements.mjs check` reads each record in `docs/formal/requirements/`. It ignores `README.md` and the folders. It fails:
+`ndev requirements check` reads each record in `docs/formal/requirements/`. It ignores `README.md` and the folders. It fails:
 
 - a bad file name, a duplicate number, or an `ID` that does not match the file number;
 - a status, an origin or a verification value that is not in the lists above;
@@ -92,7 +92,7 @@ The requirement. This is the binding text.
 
 When the quoted text only moved in its file, the check names the new lines, and the agent corrects the line numbers. When the text changed, the check sends the change to a human.
 
-`requirements.mjs guard --base <git ref>` compares each record with the same number at the base. It fails:
+`ndev requirements guard --base <git ref>` compares each record with the same number at the base. It fails:
 
 - a Statement or a Source text that changed, with no `Agreed` line, or with an `Agreed` line for other text;
 - a record that is at the base and is not in the working tree.
@@ -101,13 +101,13 @@ A record that is new since the base passes: the first creation is the exception.
 
 The guard proves that the `Agreed` line matches the text. It does not prove that a human wrote the line. In review, check that the human named in the line made the commit that adds it.
 
-`requirements.mjs render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check`, `render --check` and `guard --base <the target branch>` in the project's checks.
+`ndev requirements render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check`, `render --check` and `guard --base <the target branch>` in the project's checks.
 
 ## Finding the requirements in documents
 
 The `requirements-find` skill reads the project's documents and writes the records. Each prose line of a source document is accounted for: a record cites it, or the ledger holds it with a reason.
 
-`requirements.mjs sources` lists the tracked Markdown documents by tier:
+`ndev requirements sources` lists the tracked Markdown documents by tier:
 
 | Tier | Kind | Path |
 |---|---|---|
@@ -116,15 +116,15 @@ The `requirements-find` skill reads the project's documents and writes the recor
 | 3 | readme | `README.md` |
 | 4 | other | Each other document |
 
-`requirements.mjs uncovered [path...]` reads the named documents, or each tier 1 document. It skips front matter, headings, code blocks, comments, rules and table separators. It lists each other line that no record cites and no ledger entry holds, and marks a normative line (must, shall, should, never, always, only and the like). It fails while a line is not accounted for, and when the lines of a ledger entry changed after the entry was written. A record of any status accounts for the lines that it cites: a rejected record is a decision.
+`ndev requirements uncovered [path...]` reads the named documents, or each tier 1 document. It skips front matter, headings, code blocks, comments, rules and table separators. It lists each other line that no record cites and no ledger entry holds, and marks a normative line (must, shall, should, never, always, only and the like). It fails while a line is not accounted for, and when the lines of a ledger entry changed after the entry was written. A record of any status accounts for the lines that it cites: a rejected record is a decision.
 
 ## Tracing pull requests
 
 Each merged pull request traces to a record. The `requirements-retrospective` skill does this work for the pull requests merged before the records existed.
 
-`requirements.mjs untraced --prs <file>` reads the output of `gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences`. A record names a pull request in a `- PR:` line of its Trace, or as a link in its Source text. The command lists each pull request that no record names, the oldest first. It also fails a record that names a pull request and does not link each issue that the pull request closes.
+`ndev requirements untraced --prs <file>` reads the output of `gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences`. A record names a pull request in a `- PR:` line of its Trace, or as a link in its Source text. The command lists each pull request that no record names, the oldest first. It also fails a record that names a pull request and does not link each issue that the pull request closes.
 
-`requirements.mjs link <REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]` adds the `- PR:` line and the `- Issue:` lines to the Trace. With `--prs`, it adds the issues that the pull request closes. The Trace is not protected, so an agent can link. `check` fails a `- PR:` line that is not a link to a pull request, and an `- Issue:` line that is not a link to an issue.
+`ndev requirements link <REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]` adds the `- PR:` line and the `- Issue:` lines to the Trace. With `--prs`, it adds the issues that the pull request closes. The Trace is not protected, so an agent can link. `check` fails a `- PR:` line that is not a link to a pull request, and an `- Issue:` line that is not a link to an issue.
 
 ## The document
 
@@ -136,17 +136,17 @@ Each merged pull request traces to a record. The `requirements-retrospective` sk
 
 With an outline, `render` fails a record in force with no section or with a section that is not in the outline, an outline section with no record in force, a section named twice, a second title, and any line that is not a `#` or `##` heading. With no outline, the sections come in the order of the records.
 
-The `requirements-document` skill writes the narrative. `requirements.mjs narrate "<section>"` prints the records of the section and the state of its narrative. `narrate "<section>" --from <file>` stores the prose in `generated/narrative/` with a hash of the identifier and Statement of each record in force in the section. A change of status between `Proposed` and `Accepted` does not make it stale. It fails:
+The `requirements-document` skill writes the narrative. `ndev requirements narrate "<section>"` prints the records of the section and the state of its narrative. `narrate "<section>" --from <file>` stores the prose in `generated/narrative/` with a hash of the identifier and Statement of each record in force in the section. A change of status between `Proposed` and `Accepted` does not make it stale. It fails:
 
 - a sentence with a normative word (must, shall, should, never, cannot, only and the like) that cites no `REQ-NNNN`: the records state the requirements, and the narrative only points to them. Each list item is a sentence. A citation can come after the full stop, as in `... sources. (REQ-0001)`. An identifier in a code span is not a citation;
 - an identifier that is not a record in force in the section;
 - a heading.
 
-`requirements.mjs narrative` lists each section as `current`, `stale` or `missing`. It fails while a narrative is stale or missing, when a narrative names a section that no record in force has, when a record in force has no section, and when two sections give the same file name. `render` marks a stale narrative in the document, and `render --check` does not fail it: only `narrative` does. Run `narrative` in the project's checks with `check` and `render --check`.
+`ndev requirements narrative` lists each section as `current`, `stale` or `missing`. It fails while a narrative is stale or missing, when a narrative names a section that no record in force has, when a record in force has no section, and when two sections give the same file name. `render` marks a stale narrative in the document, and `render --check` does not fail it: only `narrative` does. Run `narrative` in the project's checks with `check` and `render --check`.
 
 ## Publication
 
-`requirements.mjs publish` writes the records into the project's documentation app. `docs/formal/requirements/extra/publish.json` sets it:
+`ndev requirements publish` writes the records into the project's documentation app. `docs/formal/requirements/extra/publish.json` sets it:
 
 | Key | Value |
 |---|---|
@@ -173,9 +173,9 @@ The `requirements-publish` skill sets up `publish.json` and publishes.
 
 When the records hold each requirement of a prose document, the document can go. Two copies of a requirement drift apart. Retirement does not change a Statement or a Source text, because only a human agrees to that change.
 
-`requirements.mjs references <path>` lists each line of a tracked file that names the path, or that has a Markdown link to it (inline or reference style). It does not find the bare file name. It leaves out the document, the records folder and the folder of the published pages.
+`ndev requirements references <path>` lists each line of a tracked file that names the path, or that has a Markdown link to it (inline or reference style). It does not find the bare file name. It leaves out the document, the records folder and the folder of the published pages.
 
-`requirements.mjs retire <path>... --pdr <file>` retires one or more documents together. A reference from one of them to another does not count. It changes nothing when one of them fails, and it fails when:
+`ndev requirements retire <path>... --pdr <file>` retires one or more documents together. A reference from one of them to another does not count. It changes nothing when one of them fails, and it fails when:
 
 - the path or the decision record is not a plain path from the repository root;
 - a frozen copy of the path is already there;

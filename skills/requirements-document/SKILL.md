@@ -7,13 +7,13 @@ description: "Write the prose of the generated requirements document: an introdu
 
 The records, their format and their rules are in `${CLAUDE_PLUGIN_ROOT}/kb/requirements.md` (read "The document"). Read it first.
 
-The helper is `${CLAUDE_PLUGIN_ROOT}/scripts/requirements/requirements.mjs`. Run it with `node` from the project.
+The commands are `ndev requirements <command>`. Run them from the project.
 
 | Command | What it does |
 |---|---|
-| `requirements.mjs narrative` | Lists each section as current, stale or missing. Fails while one is stale or missing. |
-| `requirements.mjs narrate "<section>"` | Prints the records of the section and the state of its narrative. |
-| `requirements.mjs narrate "<section>" --from <file>` | Stores the prose with a hash of the records. Fails a normative sentence that cites no record. |
+| `ndev requirements narrative` | Lists each section as current, stale or missing. Fails while one is stale or missing. |
+| `ndev requirements narrate "<section>"` | Prints the records of the section and the state of its narrative. |
+| `ndev requirements narrate "<section>" --from <file>` | Stores the prose with a hash of the records. Fails a normative sentence that cites no record. |
 
 ## The outline
 
@@ -21,8 +21,8 @@ A human owns `docs/formal/requirements/extra/outline.md`. If it does not exist, 
 
 ## Procedure
 
-1. Run `requirements.mjs narrative`. Work on each section that is stale or missing.
-2. Run `requirements.mjs narrate "<section>"` and read each record of the section. For a stale section, read the old narrative in `docs/formal/requirements/generated/narrative/` too.
+1. Run `ndev requirements narrative`. Work on each section that is stale or missing.
+2. Run `ndev requirements narrate "<section>"` and read each record of the section. For a stale section, read the old narrative in `docs/formal/requirements/generated/narrative/` too.
 3. Write the prose in a file outside the project, for example in your scratch folder:
    - Start with what the section is about and why it matters, in two or three sentences.
    - Then group the records and say how they relate: which one comes first, which one depends on another, and which ones go together.
@@ -30,12 +30,12 @@ A human owns `docs/formal/requirements/extra/outline.md`. If it does not exist, 
    - Never restate a requirement in other words. The record's Statement is the binding text; the prose points to it. Name what a group of records is about, not what each one requires.
    - When a record's Statement does not stand alone (for example, it starts with "It" or "That"), say what it refers to in the prose, and report the record to the human.
    - Use paragraphs and lists only. The heading comes from the outline.
-4. Run `requirements.mjs narrate "<section>" --from <file>`. The check reads words, not meaning: it fails each sentence with a normative word, even one that describes a reader or a user. When it fails a sentence, cite the record that states it, or reword the sentence so that it states no requirement. Never cite a record only to pass the check: the record must state the requirement.
-5. Run `requirements.mjs narrative` again. Stop when it passes.
+4. Run `ndev requirements narrate "<section>" --from <file>`. The check reads words, not meaning: it fails each sentence with a normative word, even one that describes a reader or a user. When it fails a sentence, cite the record that states it, or reword the sentence so that it states no requirement. Never cite a record only to pass the check: the record must state the requirement.
+5. Run `ndev requirements narrative` again. Stop when it passes.
 
 ## Finish
 
-1. Run `requirements.mjs render` and open the document. Read each section once from start to end.
+1. Run `ndev requirements render` and open the document. Read each section once from start to end.
 2. Commit `docs/formal/requirements/generated/`.
 3. Report to the human: the sections you wrote, the sections that were stale and why, and each place where the records of a section seemed to conflict or to leave a gap.
 
