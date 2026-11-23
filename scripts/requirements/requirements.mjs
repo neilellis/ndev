@@ -18,7 +18,11 @@ const SECTIONS = ["Statement", "Source text", "Trace", "Notes"];
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered";
+const LEDGER = `${DIR}/extra/ledger.md`;
+const LEDGER_ENTRY = /^- (.+)#L(\d+)-L(\d+) ([0-9a-f]{12}): (.+)$/;
+const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
+const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|may not|will not|refuses?|only)\b/i;
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"- Agreed: <name>, YYYY-MM-DD, text <hash>"`;
 const PROTECTED = ["Statement", "Source text"];
@@ -443,6 +447,132 @@ function agree(root, id, options) {
   return `${entry.rel}: ${line.slice(2)}\n`;
 }
 
+function tier(rel) {
+  const parts = rel.split("/");
+  const stem = parts.at(-1).replace(/\.mdx?$/i, "");
+  if (parts.slice(0, -1).some((p) => /^(requirements?|specs?|specifications?)$/i.test(p)) || /^(north[_-]?star|requirements?|specs?|specifications?|prd)$/i.test(stem)) return 1;
+  if (parts.some((p) => /^wiki$/i.test(p) || /\.wiki$/i.test(p))) return 2;
+  if (/^readme$/i.test(stem)) return 3;
+  return 4;
+}
+
+function documents(root) {
+  return git(root, ["ls-files", "-z", "--", "*.md", "*.mdx"]).split("\0").filter((rel) => rel && !rel.startsWith(`${DIR}/`)).map((rel) => ({ rel, tier: tier(rel) })).sort((a, b) => a.tier - b.tier || (a.rel < b.rel ? -1 : 1));
+}
+
+function sources(root, options) {
+  if (options.tier !== undefined && !TIERS.some(([n]) => String(n) === options.tier)) throw new Usage(`--tier takes ${TIERS.map(([n, kind]) => `${n} (${kind})`).join(", ")}`);
+  const found = documents(root).filter((d) => options.tier === undefined || String(d.tier) === options.tier);
+  if (!found.length) return `No tracked document${options.tier ? ` in tier ${options.tier}` : ""}\n`;
+  return found.map((d) => `${d.tier}  ${TIERS[d.tier - 1][1].padEnd(12)}  ${d.rel}`).join("\n") + "\n";
+}
+
+const linesHash = (lines) => createHash("sha256").update(lines.map((l) => l.trimEnd()).join("\n")).digest("hex").slice(0, 12);
+
+function ledgerEntries(root) {
+  const full = path.join(root, LEDGER);
+  if (!existsSync(full)) return { entries: [], problems: [] };
+  const entries = [];
+  const problems = [];
+  for (const line of readFileSync(full, "utf8").split("\n").filter((l) => l.startsWith("- "))) {
+    const m = line.match(LEDGER_ENTRY);
+    if (!m) problems.push(`${LEDGER}: "${line}" does not have the form "- <path>#L<first>-L<last> <hash>: <reason>". Write entries with: ${SCRIPT} ledger <path> <first> <last> "<reason>"`);
+    else entries.push({ rel: m[1], first: Number(m[2]), last: Number(m[3]), hash: m[4], reason: m[5], citation: `${m[1]}#L${m[2]}-L${m[3]}` });
+  }
+  return { entries, problems };
+}
+
+function ledger(root, rel, first, last, reason) {
+  if (!rel || !/^\d+$/.test(first ?? "") || !/^\d+$/.test(last ?? "") || !reason?.trim()) throw new Usage(`ledger needs <path> <first line> <last line> "<reason>", for example: ledger docs/guide.md 4 6 "background: the history of the tool"`);
+  const found = fileLines(root, rel);
+  if (found.error) throw new Failure(found.error);
+  const [a, b] = [Number(first), Number(last)];
+  if (!inRange(found.lines, a, b)) throw new Failure(outOfRange(rel, found.lines, a, b));
+  const citation = `${rel}#L${a}-L${b}`;
+  if (ledgerEntries(root).entries.some((e) => e.citation === citation)) throw new Failure(`${citation} is already in the ledger (${LEDGER}).`);
+  const full = path.join(root, LEDGER);
+  const head = existsSync(full) ? readFileSync(full, "utf8") : `# Ledger\n\nLines of the project's documents that hold no requirement, and why. Write entries with ${SCRIPT} ledger.\n\n`;
+  const entry = `- ${citation} ${linesHash(found.lines.slice(a - 1, b))}: ${reason.trim()}`;
+  mkdirSync(path.dirname(full), { recursive: true });
+  writeFileSync(full, `${head.replace(/\n*$/, "\n")}${head.includes("\n- ") ? "" : "\n"}${entry}\n`);
+  return `${LEDGER}: ${entry.slice(2)}\n`;
+}
+
+function prose(rel, lines, mdx) {
+  const out = [];
+  let start = 0;
+  if (lines[0]?.trim() === "---") {
+    const end = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+    if (end < 0) throw new Failure(`${rel}: the front matter that starts at line 1 has no closing "---". Close it, or remove the first line.`);
+    start = end + 1;
+  }
+  let fence = null;
+  let comment = false;
+  for (let i = start; i < lines.length; i++) {
+    const text = lines[i].trim();
+    if (comment) {
+      if (text.includes("-->")) comment = false;
+      continue;
+    }
+    if (fence) {
+      if (text.startsWith(fence)) fence = null;
+      continue;
+    }
+    const opened = text.match(/^(`{3,}|~{3,})/);
+    if (opened) {
+      fence = opened[1];
+      continue;
+    }
+    if (text.startsWith("<!--")) {
+      comment = !text.includes("-->");
+      continue;
+    }
+    if (/^(=+|-+)$/.test(text) && out.at(-1)?.number === i) {
+      out.pop();
+      continue;
+    }
+    if (!text || /^#{1,6}(\s|$)/.test(text) || /^([-*_]\s*){3,}$/.test(text) || (/^[|:\-\s]+$/.test(text) && text.includes("|") && text.includes("-")) || /^\[[^\]]+\]:\s/.test(text)) continue;
+    if (mdx && (/^(import|export)\s/.test(text) || /^<\/?[A-Z][^<>]*>$/.test(text))) continue;
+    out.push({ number: i + 1, text });
+  }
+  return out;
+}
+
+function uncovered(root, paths) {
+  const targets = paths.length ? paths : documents(root).filter((d) => d.tier === 1).map((d) => d.rel);
+  if (!targets.length) throw new Failure(`No tier 1 document to read. Name the documents: ${SCRIPT} uncovered <path>...`);
+  const cited = entries(root).filter((e) => NAME.test(e.file)).flatMap((e) => sourceText(read(e).sections["Source text"]).sources.filter((s) => s.rel));
+  const { entries: held, problems } = ledgerEntries(root);
+  const rows = [];
+  let total = 0;
+  let byRecord = 0;
+  let byLedger = 0;
+  const fresh = held.filter((entry) => {
+    const found = fileLines(root, entry.rel);
+    if (found.error) problems.push(`ledger entry ${entry.citation}: ${found.error} Remove the entry, or restore the file.`);
+    else if (inRange(found.lines, entry.first, entry.last) && linesHash(found.lines.slice(entry.first - 1, entry.last)) === entry.hash) return true;
+    else problems.push(`ledger entry ${entry.citation}: the lines changed after the entry was written. Read them again: write a record, or remove the entry and record the lines again with ${SCRIPT} ledger.`);
+    return false;
+  });
+  for (const rel of targets) {
+    const found = fileLines(root, rel);
+    if (found.error) throw new Failure(found.error);
+    for (const line of prose(rel, found.lines, rel.endsWith(".mdx"))) {
+      total++;
+      const covers = (s) => s.rel === rel && s.first <= line.number && line.number <= s.last;
+      if (cited.some(covers)) byRecord++;
+      else if (fresh.some(covers)) byLedger++;
+      else rows.push({ rel, ...line, normative: NORMATIVE.test(line.text) });
+    }
+  }
+  const files = `${targets.length} file${targets.length === 1 ? "" : "s"}`;
+  if (!rows.length && !problems.length) return `${total} prose line${total === 1 ? "" : "s"} in ${files}: ${byRecord} cited by records, ${byLedger} in the ledger, 0 not accounted for\n`;
+  process.stdout.write(rows.map((r) => `${r.rel}:${r.number}  ${r.normative ? "normative  " : ""}${r.text}`).join("\n") + (rows.length ? "\n" : ""));
+  const normative = rows.filter((r) => r.normative).length;
+  const summary = `${rows.length} of ${total} prose lines in ${files} not accounted for${normative ? ` (${normative} normative)` : ""}. Write a record for each requirement, and a ledger entry for the other lines.`;
+  throw new Failure([...problems, summary].join("\n"));
+}
+
 try {
   const { positional, options } = parseArguments(process.argv.slice(2));
   const [command, ...rest] = positional;
@@ -456,6 +586,9 @@ try {
     render: () => render(root(), options),
     guard: () => guard(root(), options),
     agree: () => agree(root(), rest[0], options),
+    sources: () => sources(root(), options),
+    ledger: () => ledger(root(), rest[0], rest[1], rest[2], rest[3]),
+    uncovered: () => uncovered(root(), rest),
   };
   if (!commands[command]) throw new Usage(`Unknown command "${command ?? ""}": use ${COMMANDS}`);
   process.stdout.write(commands[command]());

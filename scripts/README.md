@@ -63,7 +63,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
-| `requirements.mjs` | Creates, lists, searches and checks the requirement records in `docs/formal/requirements/`, prints a quoted source (`quote`), renders the records as one HTML file (`render`), fails a protected text that changed since a base with no human agreement (`guard`), and records that agreement from a human's terminal (`agree`). | requirements |
+| `requirements.mjs` | Creates, lists, searches and checks the requirement records in `docs/formal/requirements/`, prints a quoted source (`quote`), renders the records as one HTML file (`render`), fails a protected text that changed since a base with no human agreement (`guard`), records that agreement from a human's terminal (`agree`), lists the documents by tier (`sources`), records lines that hold no requirement (`ledger`) and lists the lines of a document that no record or ledger entry accounts for (`uncovered`). | requirements, requirements-find |
 
 ## wiki/
 

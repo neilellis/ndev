@@ -12,6 +12,7 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 |---|---|---|
 | `docs/formal/requirements/NNNN-<title>.md` | One requirement record | An agent proposes; a human accepts |
 | `docs/formal/requirements/extra/` | Material that is not a requirement: glossary, copies of sources, samples, open questions | Humans |
+| `docs/formal/requirements/extra/ledger.md` | The lines of the documents that hold no requirement, each with its reason and a hash of the lines | An agent proposes with `requirements.mjs ledger`; a human reviews |
 | `docs/formal/requirements/generated/` | Generated documents. Do not edit them. | The script |
 
 ## Template
@@ -93,3 +94,18 @@ A record that is new since the base passes: the first creation is the exception.
 The guard proves that the `Agreed` line matches the text. It does not prove that a human wrote the line. In review, check that the human named in the line made the commit that adds it.
 
 `requirements.mjs render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check`, `render --check` and `guard --base <the target branch>` in the project's checks.
+
+## Finding the requirements in documents
+
+The `requirements-find` skill reads the project's documents and writes the records. Each prose line of a source document is accounted for: a record cites it, or the ledger holds it with a reason.
+
+`requirements.mjs sources` lists the tracked Markdown documents by tier:
+
+| Tier | Kind | Path |
+|---|---|---|
+| 1 | requirements | A folder named `requirements`, `spec` or `specification`, or a file named `NORTH_STAR`, `REQUIREMENTS`, `SPEC` or `PRD` |
+| 2 | wiki | A folder named `wiki` |
+| 3 | readme | `README.md` |
+| 4 | other | Each other document |
+
+`requirements.mjs uncovered [path...]` reads the named documents, or each tier 1 document. It skips front matter, headings, code blocks, comments, rules and table separators. It lists each other line that no record cites and no ledger entry holds, and marks a normative line (must, shall, should, never, always, only and the like). It fails while a line is not accounted for, and when the lines of a ledger entry changed after the entry was written. A record of any status accounts for the lines that it cites: a rejected record is a decision.

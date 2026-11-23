@@ -1,0 +1,45 @@
+---
+name: requirements-find
+description: "Find the requirements in a project's documents (the requirement documents, the wiki, the README files and the other documents) and write them as requirement records, so that each prose line is cited by a record or held in the ledger with a reason. Use when a project starts requirement records, when a source document changed, or when the user says find requirements, extract requirements, requirements from the docs or account for each line."
+---
+
+# Find the requirements in documents
+
+The records, their format and their rules are in `${CLAUDE_PLUGIN_ROOT}/kb/requirements.md`, and the `requirements` skill holds the commands that write them. Read both first.
+
+The helper is `${CLAUDE_PLUGIN_ROOT}/scripts/requirements/requirements.mjs`. Run it with `node` from the project.
+
+| Command | What it does |
+|---|---|
+| `requirements.mjs sources [--tier N]` | Lists the tracked documents by tier: 1 requirements, 2 wiki, 3 readme, 4 other. |
+| `requirements.mjs uncovered [path...]` | Lists each prose line that no record cites and no ledger entry holds, and marks the normative lines. With no path, it reads the tier 1 documents. It fails while a line remains. |
+| `requirements.mjs ledger <path> <first> <last> "<reason>"` | Records lines that hold no requirement, with the reason and a hash of the lines. |
+
+## Order
+
+Work tier by tier: tier 1 first, then the wiki, then the README files, then the others. A statement in a lower tier that a higher tier already states is a duplicate: cite it in the same record only when the words are the same, and note it in `## Notes`.
+
+## Procedure
+
+For each document in the tier:
+
+1. Run `requirements.mjs uncovered <path>`. Read the document from start to end, not only the lines in the list.
+2. For each requirement, search the records first (`requirements.mjs search`). If a record covers it, do not write a second one.
+3. Write one record for each requirement that can pass or fail by itself:
+   - Use the document's words for the Statement. Make the Source text with `requirements.mjs quote <path> <first> <last>`.
+   - A statement that is the document's text word for word, in a document that a human approved, can start `Accepted` with that human in `Decided by` and the evidence of the approval in `## Notes`. Each other statement starts `Proposed`: a reworded, split or merged statement, and a requirement that you inferred.
+   - An implied requirement (enforced by a test, a schema constraint or a check, but stated in no document) has the origin `implied`, the status `Proposed`, and its evidence in `## Notes`.
+4. For each line that holds no requirement, write a ledger entry. Give a reason that a human can check in one look: `background`, `definition of <term>`, `example`, `history`, `navigation`, `lead-in to the list at L<a>-L<b>`, `source line for the list at L<a>-L<b>`, `source register row`, `edit log row`. Give one entry for a range of lines with the same reason. Never use the ledger for a requirement that is hard to write.
+5. Run `requirements.mjs uncovered <path>` again. Stop when it passes.
+
+## Conflicts
+
+When two sources disagree, or a source disagrees with the code, write each side as its own `Proposed` record, and say in `## Notes` of each which record it conflicts with. Do not choose. Report the conflict to the human with both citations.
+
+## Finish
+
+1. Run `requirements.mjs check`, `requirements.mjs render` and `requirements.mjs uncovered`.
+2. Commit the records, `docs/formal/requirements/extra/ledger.md` and the generated file.
+3. Report to the human: the documents you read, the number of records (Accepted and Proposed), the number of ledger entries by reason, each conflict, and each document you did not read.
+
+The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

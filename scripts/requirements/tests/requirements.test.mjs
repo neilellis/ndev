@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -571,10 +571,179 @@ describe("check of the Agreed line", () => {
   });
 });
 
+const LEDGER = `${DIR}/extra/ledger.md`;
+const tracked = (files) => {
+  const root = project();
+  for (const [rel, text] of Object.entries(files)) put(root, rel, text);
+  git(root, "init", "-q");
+  git(root, "add", "-A");
+  return root;
+};
+
+describe("sources", () => {
+  it("lists the tracked documents by tier, and leaves out the records and untracked files", () => {
+    const root = tracked({
+      "docs/requirements/model.md": "x\n",
+      "NORTH_STAR.md": "x\n",
+      "wiki/Home.md": "x\n",
+      "README.md": "x\n",
+      "packages/api/README.md": "x\n",
+      "docs/notes.md": "x\n",
+      "src/app.ts": "x\n",
+      [`${DIR}/${FILE}`]: record("0001"),
+    });
+    put(root, "docs/draft.md", "x\n");
+    const out = run(root, "sources");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, ["1  requirements  NORTH_STAR.md", "1  requirements  docs/requirements/model.md", "2  wiki          wiki/Home.md", "3  readme        README.md", "3  readme        packages/api/README.md", "4  other         docs/notes.md", ""].join("\n"));
+  });
+
+  it("filters by tier", () => {
+    const root = tracked({ "docs/spec.md": "x\n", "README.md": "x\n" });
+    assert.equal(run(root, "sources", "--tier", "1").stdout, "1  requirements  docs/spec.md\n");
+  });
+
+  it("fails outside a git repository and shows the git error", () => {
+    const out = run(project(), "sources");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /git ls-files .* exited 128/);
+  });
+});
+
+describe("ledger", () => {
+  it("records lines that are not a requirement, with a hash of the lines", () => {
+    const root = seeded();
+    const out = run(root, "ledger", "docs/guide.md", "6", "6", "background: the closing word");
+    assert.equal(out.status, 0, out.stderr);
+    const text = readFileSync(path.join(root, LEDGER), "utf8");
+    assert.match(text, /^- docs\/guide\.md#L6-L6 [0-9a-f]{12}: background: the closing word$/m);
+  });
+
+  it("refuses a missing reason, lines outside the file and a range already in the ledger", () => {
+    const root = seeded();
+    assert.equal(run(root, "ledger", "docs/guide.md", "6", "6").status, 2);
+    const past = run(root, "ledger", "docs/guide.md", "6", "9", "background");
+    assert.equal(past.status, 1);
+    assert.match(past.stderr, /has 6 lines/);
+    run(root, "ledger", "docs/guide.md", "6", "6", "background");
+    const again = run(root, "ledger", "docs/guide.md", "6", "6", "background");
+    assert.equal(again.status, 1);
+    assert.match(again.stderr, /docs\/guide\.md#L6-L6 is already in the ledger/);
+  });
+});
+
+describe("uncovered", () => {
+  it("lists each prose line that no record cites and no ledger entry holds, and fails", () => {
+    const out = run(seeded(), "uncovered", "docs/guide.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stdout, /^docs\/guide\.md:6 {2}End\.$/m);
+    assert.doesNotMatch(out.stdout, /docs\/guide\.md:[1-5] /);
+    assert.match(out.stderr, /1 of 3 prose lines in 1 file not accounted for/);
+  });
+
+  it("passes when the ledger holds the other lines, and gives the counts", () => {
+    const root = seeded();
+    run(root, "ledger", "docs/guide.md", "6", "6", "background");
+    const out = run(root, "uncovered", "docs/guide.md");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "3 prose lines in 1 file: 2 cited by records, 1 in the ledger, 0 not accounted for\n");
+  });
+
+  it("marks a normative line", () => {
+    const root = seeded();
+    put(root, "docs/rules.md", "The tool must stop on a bad row.\nThe tool was written in 2024.\n");
+    const out = run(root, "uncovered", "docs/rules.md");
+    assert.match(out.stdout, /^docs\/rules\.md:1 {2}normative {2}The tool must stop on a bad row\.$/m);
+    assert.match(out.stdout, /^docs\/rules\.md:2 {2}The tool was written in 2024\.$/m);
+    assert.match(out.stderr, /2 of 2 prose lines in 1 file not accounted for \(1 normative\)/);
+  });
+
+  it("skips front matter, headings, code blocks, comments, rules and table separators", () => {
+    const root = seeded();
+    put(root, "docs/shape.md", "---\ntitle: Shape\n---\n# Heading\n\n```sh\nrun it\n```\n<!-- note -->\n---\n| A | B |\n|---|---|\n| 1 | 2 |\n");
+    const out = run(root, "uncovered", "docs/shape.md");
+    assert.deepEqual(out.stdout.trim().split("\n"), ["docs/shape.md:11  | A | B |", "docs/shape.md:13  | 1 | 2 |"]);
+  });
+
+  it("fails front matter that is not closed, instead of skipping the file", () => {
+    const root = seeded();
+    put(root, "docs/open.md", "---\nThe tool must stop.\n");
+    const out = run(root, "uncovered", "docs/open.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/open\.md: the front matter that starts at line 1 has no closing "---"/);
+  });
+
+  it("counts a line that starts with two hyphens or with a hash and no space", () => {
+    const root = seeded();
+    put(root, "docs/marks.md", "--check must stop the run.\n#123 is the issue.\n");
+    const out = run(root, "uncovered", "docs/marks.md");
+    assert.match(out.stdout, /^docs\/marks\.md:1 /m);
+    assert.match(out.stdout, /^docs\/marks\.md:2 /m);
+  });
+
+  it("skips the lines inside a comment and a heading with an underline", () => {
+    const root = seeded();
+    put(root, "docs/hidden.md", "<!--\nThe tool must hide.\n-->\nTitle\n=====\n\nThe tool must stop.\n");
+    const out = run(root, "uncovered", "docs/hidden.md");
+    assert.deepEqual(out.stdout.trim().split("\n"), ["docs/hidden.md:7  normative  The tool must stop."]);
+  });
+
+  it("fails a stale ledger entry for a file that is not in the run, and one whose file is gone", () => {
+    const root = seeded();
+    put(root, "docs/other.md", "Background.\n");
+    put(root, "docs/gone.md", "History.\n");
+    run(root, "ledger", "docs/guide.md", "6", "6", "background");
+    run(root, "ledger", "docs/other.md", "1", "1", "background");
+    run(root, "ledger", "docs/gone.md", "1", "1", "history");
+    put(root, "docs/other.md", "The tool must stop.\n");
+    rmSync(path.join(root, "docs/gone.md"));
+    const out = run(root, "uncovered", "docs/guide.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /ledger entry docs\/other\.md#L1-L1: the lines changed/);
+    assert.match(out.stderr, /ledger entry docs\/gone\.md#L1-L1: docs\/gone\.md does not exist/);
+  });
+
+  it("skips the import, export and component lines of an MDX file", () => {
+    const root = seeded();
+    put(root, "docs/page.mdx", 'import { Box } from "./box";\nexport const meta = {};\n<Box source="a.md" />\n<Box>\nThe tool must stop.\n</Box>\n');
+    const out = run(root, "uncovered", "docs/page.mdx");
+    assert.deepEqual(out.stdout.trim().split("\n"), ["docs/page.mdx:5  normative  The tool must stop."]);
+  });
+
+  it("counts a line that a rejected record cites as accounted for", () => {
+    const root = seeded({ [FILE]: record("0001", { status: "Rejected" }) });
+    run(root, "ledger", "docs/guide.md", "6", "6", "background");
+    assert.equal(run(root, "uncovered", "docs/guide.md").status, 0);
+  });
+
+  it("fails a ledger entry whose lines changed, and asks for a new review", () => {
+    const root = seeded();
+    run(root, "ledger", "docs/guide.md", "6", "6", "background");
+    put(root, "docs/guide.md", GUIDE.replace("End.", "The report must end."));
+    const out = run(root, "uncovered", "docs/guide.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /ledger entry docs\/guide\.md#L6-L6: the lines changed after the entry was written/);
+    assert.match(out.stdout, /^docs\/guide\.md:6 {2}normative {2}The report must end\.$/m);
+  });
+
+  it("reads the tier 1 sources when no path is given", () => {
+    const root = tracked({ "docs/requirements/spec.md": "The tool must stop.\n", "README.md": "Hello.\n" });
+    const out = run(root, "uncovered");
+    assert.match(out.stdout, /^docs\/requirements\/spec\.md:1 /m);
+    assert.doesNotMatch(out.stdout, /README/);
+  });
+
+  it("fails a path that does not exist", () => {
+    const out = run(seeded(), "uncovered", "docs/missing.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/missing\.md does not exist/);
+  });
+});
+
 describe("usage", () => {
   it("names the commands when the command is unknown", () => {
     const out = run(project(), "frobnicate");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree/);
+    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered/);
   });
 });
