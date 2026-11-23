@@ -15,6 +15,7 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 | `docs/formal/requirements/extra/outline.md` | The title of the document and the order of its sections | Humans |
 | `docs/formal/requirements/extra/ledger.md` | The lines of the documents that hold no requirement, each with its reason and a hash of the lines | An agent proposes with `requirements.mjs ledger`; a human reviews |
 | `docs/formal/requirements/generated/` | Generated documents. Do not edit them. | The script |
+| `docs/formal/requirements/extra/publish.json` | Where and how `requirements.mjs publish` writes the pages for the documentation app | Humans |
 | `docs/formal/requirements/generated/narrative/` | The prose of each section, with a hash of the records it describes | An agent, through `requirements.mjs narrate` |
 
 ## Template
@@ -140,3 +141,28 @@ The `requirements-document` skill writes the narrative. `requirements.mjs narrat
 - a heading.
 
 `requirements.mjs narrative` lists each section as `current`, `stale` or `missing`. It fails while a narrative is stale or missing, when a narrative names a section that no record in force has, when a record in force has no section, and when two sections give the same file name. `render` marks a stale narrative in the document, and `render --check` does not fail it: only `narrative` does. Run `narrative` in the project's checks with `check` and `render --check`.
+
+## Publication
+
+`requirements.mjs publish` writes the records into the project's documentation app. `docs/formal/requirements/extra/publish.json` sets it:
+
+| Key | Value |
+|---|---|
+| `to` | The folder for the pages, inside the project. Give it a folder of its own. It cannot be the records folder or a folder in `.git`. |
+| `format` | `md` or `mdx`. The script escapes `<` outside code, and in `mdx` also `{` and `}`. Fenced blocks, code spans and bare web addresses stay as written. In `mdx`, the links between the pages are routes under `route`. |
+| `route` | The path at which the app serves the folder, for example `/requirements/formal`. It is necessary with `mdx`, because the app serves the index one level above the other pages. With `md`, the links between the pages are relative and the script ignores it. |
+| `source` | Optional. The web address under which the project's files show, for example `https://github.com/<owner>/<repo>/blob/main/`. The links to the records and to the cited lines start with it. Without it, those links are relative paths. |
+| `frontMatter` | Optional. Keys to add to the front matter of each page, after `title`. A value is text or a list of text. In a list, `{records}` becomes the paths of the records on the page. |
+| `meta` | Optional. `nextra` also writes `_meta.js`, which gives Nextra the order of the pages. |
+
+It writes:
+
+- `index.<format>`: the title of the outline, the count of the records by status, and a link to each page;
+- one page for each section, in the order of the outline: the narrative, then each record with an anchor `REQ-NNNN`, its fields, Statement, Source text, Trace and Notes. A bare `REQ-NNNN` links to the record on its page;
+- `not-in-force.<format>` for the records that are not in force;
+- `requirements.json`: the title and each record, with its page;
+- `.published`: the files that this publish wrote.
+
+It removes the files of the last publish that it no longer writes. It fails a file in the folder that the last publish did not write, and it does not change that file. `publish --check` writes nothing. It fails a file that is missing, that is not current or that is left from the last publish. A stale narrative shows with a note, as in `render`. Run `publish --check` in the project's checks with `check`, `render --check` and `narrative`.
+
+The `requirements-publish` skill sets up `publish.json` and publishes.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const DIR = "docs/formal/requirements";
@@ -18,7 +18,11 @@ const SECTIONS = ["Statement", "Source text", "Trace", "Notes"];
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish";
+const PUBLISH = `${DIR}/extra/publish.json`;
+const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
+const MANIFEST = ".published";
+const INLINE_PART = /(`[^`]+`|\[[^\]]+\]\((?:<[^>\n]*>|[^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)|https?:\/\/[^\s<>()]+)/;
 const OUTLINE = `${DIR}/extra/outline.md`;
 const NARRATIVE = `${DIR}/generated/narrative`;
 const REQ_ID = /\bREQ-\d{4}\b/g;
@@ -362,6 +366,11 @@ function narrativeHtml(narrative, current) {
   return [`<div class="narrative${current ? "" : " stale"}">`, ...warning, body, `</div>`];
 }
 
+function counted(records) {
+  const counts = STATUS_ORDER.map((status) => [status, records.filter((r) => r.status.startsWith(status)).length]).filter(([, n]) => n).map(([status, n]) => `${n} ${status}`);
+  return `${records.length} record${records.length === 1 ? "" : "s"}${counts.length ? `: ${counts.join(", ")}` : ""}.`;
+}
+
 function document(records, { title = "Requirements", order = [], narratives = new Map() } = {}) {
   const inForce = records.filter((r) => IN_FORCE.includes(r.status));
   const others = records.filter((r) => !IN_FORCE.includes(r.status));
@@ -369,8 +378,7 @@ function document(records, { title = "Requirements", order = [], narratives = ne
   for (const record of inForce) groups.set(record.section, [...(groups.get(record.section) ?? []), record]);
   const named = [...groups].map(([name, members]) => ({ id: `section-${slug(name) || "none"}`, name: name || "No section", members, narrative: narratives.get(name) }));
   if (others.length) named.push({ id: "not-in-force", name: "Not in force", members: others });
-  const counts = STATUS_ORDER.map((status) => [status, records.filter((r) => r.status.startsWith(status)).length]).filter(([, n]) => n).map(([status, n]) => `${n} ${status}`);
-  const summary = `${records.length} record${records.length === 1 ? "" : "s"}${counts.length ? `: ${counts.join(", ")}` : ""}.`;
+  const summary = counted(records);
   return [
     `<!doctype html>`,
     `<html lang="en">`,
@@ -537,6 +545,183 @@ function render(root, options) {
   mkdirSync(path.dirname(full), { recursive: true });
   writeFileSync(full, html);
   return `${full}\n`;
+}
+
+function publishConfig(root) {
+  const full = path.join(root, PUBLISH);
+  if (!existsSync(full)) throw new Failure(`${PUBLISH} does not exist. Write it with the keys "to" (the folder for the pages, inside the project) and "format" ("md" or "mdx"), and optionally "source", "route", "frontMatter" and "meta".`);
+  let config;
+  try {
+    config = JSON.parse(readFileSync(full, "utf8"));
+  } catch (error) {
+    throw new Failure(`${PUBLISH} is not valid JSON: ${error.message}`);
+  }
+  if (!config || typeof config !== "object" || Array.isArray(config)) throw new Failure(`${PUBLISH} is not a JSON object.`);
+  const problems = [];
+  for (const key of Object.keys(config)) if (!PUBLISH_KEYS.includes(key)) problems.push(`${PUBLISH}: unknown key "${key}". The keys are ${PUBLISH_KEYS.join(", ")}.`);
+  if (!["md", "mdx"].includes(config.format)) problems.push(`${PUBLISH}: "format" is ${JSON.stringify(config.format ?? null)}. Use "md" or "mdx".`);
+  const to = typeof config.to === "string" ? path.relative(root, path.resolve(root, config.to)) : "";
+  const first = to.split(path.sep)[0];
+  if (!to || first === ".." || first === ".git" || path.isAbsolute(to) || to.split(path.sep).join("/") === DIR) problems.push(`${PUBLISH}: "to" is ${JSON.stringify(config.to ?? null)}, which is not a folder inside the project.`);
+  if (config.source !== undefined && !/^https?:\/\/\S+$/.test(config.source)) problems.push(`${PUBLISH}: "source" is ${JSON.stringify(config.source)}. Use the web address under which the project's files show, for example https://github.com/<owner>/<repo>/blob/main/.`);
+  if (config.format === "mdx" && config.route === undefined) problems.push(`${PUBLISH}: "route" is needed with "format": "mdx". Set it to the path at which the app serves the folder, for example /requirements.`);
+  if (config.route !== undefined && !/^\/\S*$/.test(config.route)) problems.push(`${PUBLISH}: "route" is ${JSON.stringify(config.route)}. Use the path of the pages on the site, for example /requirements.`);
+  if (config.meta !== undefined && config.meta !== "nextra") problems.push(`${PUBLISH}: "meta" is ${JSON.stringify(config.meta)}. The only value is "nextra".`);
+  const front = config.frontMatter ?? {};
+  if (typeof front !== "object" || Array.isArray(front)) problems.push(`${PUBLISH}: "frontMatter" is not an object.`);
+  else
+    for (const [key, value] of Object.entries(front)) {
+      if (key === "title") problems.push(`${PUBLISH}: "frontMatter"."title" is not allowed. The title comes from the outline and the section.`);
+      else if (typeof value !== "string" && !(Array.isArray(value) && value.every((item) => typeof item === "string"))) problems.push(`${PUBLISH}: "frontMatter"."${key}" is not text or a list of text.`);
+    }
+  if (problems.length) throw new Failure(problems.join("\n"));
+  return { to: to.split(path.sep).join("/"), mdx: config.format === "mdx", ext: `.${config.format}`, source: config.source?.replace(/\/?$/, "/"), route: config.route?.replace(/\/$/, ""), front, meta: config.meta };
+}
+
+function publication(root, config) {
+  const records = valid(root);
+  const { title = "Requirements", order = [] } = outline(root, records);
+  const groups = sectionRecords(records);
+  const names = [...order.filter((name) => groups.has(name)), ...[...groups.keys()].filter((name) => !order.includes(name))];
+  const pages = names.map((name) => ({ name, slug: slug(name) || "none", members: groups.get(name) }));
+  const others = records.filter((r) => !IN_FORCE.includes(r.status));
+  if (others.length) pages.push({ name: "Not in force", slug: "not-in-force", members: others });
+  const seen = new Map();
+  for (const p of pages) {
+    if (p.slug === "index" || seen.has(p.slug)) throw new Failure(`The section "${p.name}" gives the page name ${p.slug}${config.ext}, which ${p.slug === "index" ? "the index uses" : `the section "${seen.get(p.slug)}" uses too`}. Rename the section.`);
+    seen.set(p.slug, p.name);
+  }
+  const route = (name) => (config.mdx ? `${config.route}/${name}` : `${name}${config.ext}`);
+  const fileLink = (rel) => (config.source ? `${config.source}${encodeURI(rel)}` : encodeURI(path.posix.relative(config.to, rel)));
+  const home = new Map(pages.flatMap((p) => p.members.map((r) => [r.id, p])));
+  const plain = (raw) => {
+    const escaped = raw.replace(/</g, "&lt;");
+    return config.mdx ? escaped.replace(/[{}]/g, "\\$&") : escaped;
+  };
+  const address = (href, base) => {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || /^[#/<]/.test(href)) return href;
+    const [file, fragment] = href.split(/(?=#)/);
+    return fileLink(path.posix.normalize(path.posix.join(base, file))) + (fragment ?? "");
+  };
+  const inline = (raw, base, here) =>
+    raw
+      .split(INLINE_PART)
+      .map((part, i) => {
+        if (i % 2 === 0) return here ? plain(part).replace(REQ_ID, (id) => (home.has(id) ? `[${id}](${home.get(id) === here ? "" : route(home.get(id).slug)}#${id})` : id)) : plain(part);
+        if (part.startsWith("`") || /^https?:/.test(part)) return part;
+        const [, label, href] = part.match(/^\[([^\]]+)\]\((.+)\)$/);
+        return `[${inline(label, base)}](${address(href, base)})`;
+      })
+      .join("");
+  const markdown = (raw, base, here) => {
+    const out = [];
+    let paragraph = [];
+    let fence;
+    const flush = () => {
+      if (paragraph.length) out.push(inline(paragraph.join("\n"), base, here));
+      paragraph = [];
+    };
+    for (const line of raw.split("\n")) {
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+      if (fence) {
+        out.push(line);
+        if (marker && marker[0] === fence[0] && marker.length >= fence.length && !line.trim().slice(marker.length).trim()) fence = undefined;
+      } else if (marker) {
+        flush();
+        fence = marker;
+        out.push(line);
+      } else if (!line.trim()) {
+        flush();
+        out.push(line);
+      } else paragraph.push(line);
+    }
+    flush();
+    return out.join("\n");
+  };
+  const text = (raw) => inline(raw, DIR);
+  const yaml = (value) => JSON.stringify(value);
+  const frontMatter = (name, members) => {
+    const lines = [`title: ${yaml(name)}`];
+    for (const [key, value] of Object.entries(config.front)) {
+      if (typeof value === "string") lines.push(`${key}: ${yaml(value)}`);
+      else lines.push(`${key}:`, ...value.flatMap((item) => (item === "{records}" ? members.map((r) => r.rel) : [item])).map((item) => `  - ${yaml(item)}`));
+    }
+    return `---\n${lines.join("\n")}\n---\n`;
+  };
+  const fence = (lines) => "`".repeat(Math.max(3, ...lines.map((line) => Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length + 1)))));
+  const sourceLink = (s) => s.url ?? `${fileLink(s.rel)}#L${s.first}-L${s.last}`;
+  const entry = (record, here) => {
+    const decided = record.field("Decided by") ? `Decided by ${record.field("Decided by")}, ${record.field("Date")}` : `Dated ${record.field("Date")}`;
+    const meta = [record.status, record.field("Origin"), `Verification: ${record.field("Verification")}`, decided].map(text).join(" · ");
+    const parts = [`<a id="${record.id}"></a>`, `## ${record.id} ${text(record.title)}`, `${meta} · [record](${fileLink(record.rel)})`, markdown(record.sections.Statement ?? "", DIR, here)];
+    const sources = sourceText(record.sections["Source text"]).sources;
+    if (sources.length) parts.push("### Source text", ...sources.map((s) => [`- [${text(s.citation)}](${sourceLink(s)})`, ...(s.quote.length ? [`${fence(s.quote)}text\n${s.quote.join("\n")}\n${fence(s.quote)}`] : [])].join("\n\n")));
+    for (const name of ["Trace", "Notes"]) if (record.sections[name]) parts.push(`### ${name}`, markdown(record.sections[name], DIR, here));
+    return parts.join("\n\n");
+  };
+  const stored = narratives(root);
+  const files = new Map();
+  for (const p of pages) {
+    const found = p.slug === "not-in-force" ? undefined : stored.get(p.name);
+    const prose = found ? [...(found.hash === sectionHash(p.members) ? [] : ["> The records of this section changed after this text was written."]), markdown(found.prose, NARRATIVE, p)] : [];
+    files.set(`${p.slug}${config.ext}`, `${frontMatter(p.name, p.members)}\n${[`# ${text(p.name)}`, ...prose, ...p.members.map((r) => entry(r, p))].join("\n\n")}\n`);
+  }
+  const listed = pages.map((p) => `- [${text(p.name)}](${route(p.slug)}) (${p.members.length})`).join("\n");
+  files.set(`index${config.ext}`, `${frontMatter(title, records)}\n# ${text(title)}\n\n${counted(records)}\n\n${listed}\n`);
+  const json = pages.flatMap((p) =>
+    p.members.map((r) => ({
+      id: r.id,
+      title: r.title,
+      status: r.status,
+      origin: r.field("Origin"),
+      section: r.section,
+      date: r.field("Date"),
+      decidedBy: r.field("Decided by") ?? "",
+      verification: r.field("Verification"),
+      statement: r.sections.Statement ?? "",
+      sources: sourceText(r.sections["Source text"]).sources.map((s) => ({ citation: s.citation, link: sourceLink(s) })),
+      trace: r.sections.Trace ?? "",
+      notes: r.sections.Notes ?? "",
+      page: route(p.slug),
+      record: fileLink(r.rel),
+    })),
+  );
+  files.set("requirements.json", `${JSON.stringify({ title, records: json }, null, 2)}\n`);
+  if (config.meta === "nextra") files.set("_meta.js", `export default {\n${[["index", title], ...pages.map((p) => [p.slug, p.name])].map(([key, name]) => `  ${yaml(key)}: ${yaml(name)}`).join(",\n")}\n};\n`);
+  return files;
+}
+
+function publish(root, options) {
+  const config = publishConfig(root);
+  const files = publication(root, config);
+  const dir = path.join(root, config.to);
+  const manifest = path.join(dir, MANIFEST);
+  const shown = (name) => `${config.to}/${name}`;
+  const last = new Set(existsSync(manifest) ? readFileSync(manifest, "utf8").split("\n").filter(Boolean) : []);
+  const strange = [...last].filter((name) => /[\/\\]/.test(name) || name === "." || name === "..");
+  if (strange.length) throw new Failure(strange.map((name) => `${shown(MANIFEST)}: "${name}" is not a plain file name. Correct the file, or delete it and the files that it names.`).join("\n"));
+  const listing = `${[...files.keys()].sort().join("\n")}\n`;
+  const problems = [];
+  for (const name of files.keys()) if (existsSync(path.join(dir, name)) && !last.has(name)) problems.push(`${shown(name)} exists and the last publish did not write it. Move it, or set "to" in ${PUBLISH} to a folder of its own.`);
+  const left = [...last].filter((name) => !files.has(name) && existsSync(path.join(dir, name)));
+  if (options.check) {
+    for (const [name, content] of files) {
+      const full = path.join(dir, name);
+      if (!existsSync(full)) problems.push(`${shown(name)} is missing.`);
+      else if (last.has(name) && readFileSync(full, "utf8") !== content) problems.push(`${shown(name)} is not current.`);
+    }
+    for (const name of left) problems.push(`${shown(name)} is left from the last publish.`);
+    if (!existsSync(manifest)) problems.push(`${shown(MANIFEST)} is missing.`);
+    else if (readFileSync(manifest, "utf8") !== listing) problems.push(`${shown(MANIFEST)} is not current.`);
+    if (problems.length) throw new Failure(`${problems.join("\n")}\nWrite them again with: ${SCRIPT} publish`);
+    return `${config.to}: ${files.size} files are current\n`;
+  }
+  if (problems.length) throw new Failure(problems.join("\n"));
+  mkdirSync(dir, { recursive: true });
+  for (const [name, content] of files) writeFileSync(path.join(dir, name), content);
+  for (const name of left) rmSync(path.join(dir, name));
+  writeFileSync(manifest, listing);
+  return `${config.to}: ${files.size} files written${left.length ? `, ${left.length} removed` : ""}\n`;
 }
 
 const unnumbered = (body) => (body ?? "").split("\n").map((line) => (line.startsWith("- ") && !/^- https:\/\//.test(line) && CITATION.test(line.slice(2).trim()) ? `- ${line.slice(2).trim().replace(CITATION, "$1")}` : line)).join("\n");
@@ -829,6 +1014,7 @@ try {
     link: () => link(root(), rest[0], rest[1], options),
     narrate: () => narrate(root(), rest[0], options),
     narrative: () => narrative(root()),
+    publish: () => publish(root(), options),
   };
   if (!commands[command]) throw new Usage(`Unknown command "${command ?? ""}": use ${COMMANDS}`);
   process.stdout.write(commands[command]());

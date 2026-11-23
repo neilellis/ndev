@@ -1013,10 +1013,236 @@ describe("render with the outline and the narrative", () => {
   });
 });
 
+const PUBLISH = `${DIR}/extra/publish.json`;
+const OUT = "site/content/requirements";
+const configured = (root, config = {}) => put(root, PUBLISH, JSON.stringify({ to: OUT, format: "md", ...config }));
+const page = (root, file) => readFileSync(path.join(root, OUT, file), "utf8");
+
+describe("publish", () => {
+  it("fails without a publish.json, and names the file and its keys", () => {
+    const out = run(seeded(), "publish");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/formal\/requirements\/extra\/publish\.json does not exist/);
+    assert.match(out.stderr, /"to"/);
+    assert.match(out.stderr, /"format"/);
+  });
+
+  it("fails an unknown key, a format that is not md or mdx, and a folder outside the project", () => {
+    const root = seeded();
+    put(root, PUBLISH, JSON.stringify({ to: "../elsewhere", format: "html", colour: "red" }));
+    const out = run(root, "publish");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /unknown key "colour"/);
+    assert.match(out.stderr, /"format" is "html"/);
+    assert.match(out.stderr, /"to" is "\.\.\/elsewhere", which is not a folder inside the project/);
+  });
+
+  it("writes an index, one page for each section, the records as JSON and a manifest", () => {
+    const root = twoSections();
+    configured(root);
+    const out = run(root, "publish");
+    assert.equal(out.status, 0, out.stderr);
+    assert.deepEqual(readdirSync(path.join(root, OUT)).sort(), [".published", "index.md", "report.md", "requirements.json", "sources.md"]);
+    assert.deepEqual(page(root, ".published").split("\n").filter(Boolean), ["index.md", "report.md", "requirements.json", "sources.md"]);
+    const report = page(root, "report.md");
+    assert.match(report, /^---\ntitle: "Report"\n---\n\n# Report\n/);
+    assert.match(report, /\n<a id="REQ-0001"><\/a>\n\n## REQ-0001 The report names each source\n\nAccepted · explicit · Verification: unassigned · Decided by Neil Ellis, 2026-01-02 · \[record\]\(\.\.\/\.\.\/\.\.\/docs\/formal\/requirements\/0001-the-report-names-each-source\.md\)\n\nThe report names each source\.\n/);
+    assert.match(report, /### Source text\n\n- \[docs\/guide\.md#L3-L4\]\(\.\.\/\.\.\/\.\.\/docs\/guide\.md#L3-L4\)\n\n```text\nThe report names each source\.\nThe report refuses an unread source\.\n```\n/);
+    const index = page(root, "index.md");
+    assert.match(index, /^---\ntitle: "Requirements"\n---\n\n# Requirements\n\n2 records: 2 Accepted\.\n/);
+    assert.match(index, /- \[Report\]\(report\.md\) \(1\)\n- \[Sources\]\(sources\.md\) \(1\)/);
+    const json = JSON.parse(page(root, "requirements.json"));
+    assert.equal(json.title, "Requirements");
+    assert.deepEqual(json.records.map((r) => [r.id, r.status, r.section, r.page]), [["REQ-0001", "Accepted", "Report", "report.md"], ["REQ-0002", "Accepted", "Sources", "sources.md"]]);
+    assert.equal(json.records[0].statement, "The report names each source.");
+    assert.deepEqual(json.records[0].sources, [{ citation: "docs/guide.md#L3-L4", link: "../../../docs/guide.md#L3-L4" }]);
+  });
+
+  it("follows the outline for the title and the order of the sections", () => {
+    const root = twoSections();
+    put(root, `${DIR}/extra/outline.md`, "# The FCC guide\n\n## Sources\n\n## Report\n");
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    const index = page(root, "index.md");
+    assert.match(index, /^---\ntitle: "The FCC guide"\n---\n\n# The FCC guide\n/);
+    assert.ok(index.indexOf("[Sources]") < index.indexOf("[Report]"));
+    assert.deepEqual(JSON.parse(page(root, "requirements.json")).records.map((r) => r.id), ["REQ-0002", "REQ-0001"]);
+  });
+
+  it("puts the narrative under the heading and links each bare id to its anchor, on this page or another", () => {
+    const root = twoSections();
+    put(root, `${DIR}/${FILE}`, record("0001", { notes: "Read with REQ-0002." }));
+    put(root, "prose.md", "Each report must name its sources (REQ-0001). See `REQ-0001` and [the record](#REQ-0001).\n");
+    assert.equal(run(root, "narrate", "Report", "--from", "prose.md").status, 0);
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    const report = page(root, "report.md");
+    assert.match(report, /# Report\n\nEach report must name its sources \(\[REQ-0001\]\(#REQ-0001\)\)\. See `REQ-0001` and \[the record\]\(#REQ-0001\)\.\n/);
+    assert.match(report, /### Notes\n\nRead with \[REQ-0002\]\(sources\.md#REQ-0002\)\./);
+  });
+
+  it("marks a stale narrative", () => {
+    const { root } = narrated();
+    put(root, `${DIR}/${FILE}`, record("0001", { statement: "The report names each source and its date." }));
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    assert.match(page(root, "report.md"), /# Report\n\n> The records of this section changed after this text was written\.\n\nThis section is about the report\./);
+  });
+
+  it("escapes MDX outside code spans, keeps a code span as it is, and links pages as routes", () => {
+    const root = twoSections();
+    put(root, `${DIR}/${FILE}`, record("0001", { statement: "The report keeps {braces} and <tags>, and `{code} <a>` as written. See REQ-0002." }));
+    configured(root, { format: "mdx", route: "/req" });
+    assert.equal(run(root, "publish").status, 0, run(root, "publish").stderr);
+    assert.deepEqual(readdirSync(path.join(root, OUT)).sort(), [".published", "index.mdx", "report.mdx", "requirements.json", "sources.mdx"]);
+    const report = page(root, "report.mdx");
+    assert.match(report, /The report keeps \\\{braces\\\} and &lt;tags>, and `\{code\} <a>` as written\. See \[REQ-0002\]\(\/req\/sources#REQ-0002\)\./);
+    assert.equal(JSON.parse(page(root, "requirements.json")).records[0].page, "/req/report");
+  });
+
+  it("links the pages under the route when one is given", () => {
+    const root = twoSections();
+    put(root, `${DIR}/${FILE}`, record("0001", { notes: "Read with REQ-0002." }));
+    configured(root, { format: "mdx", route: "/requirements/formal/" });
+    assert.equal(run(root, "publish").status, 0);
+    assert.match(page(root, "index.mdx"), /- \[Report\]\(\/requirements\/formal\/report\) \(1\)/);
+    assert.match(page(root, "report.mdx"), /Read with \[REQ-0002\]\(\/requirements\/formal\/sources#REQ-0002\)\./);
+  });
+
+  it("links records and cited lines under the source address when one is given", () => {
+    const root = seeded();
+    configured(root, { source: "https://github.com/o/r/blob/main/" });
+    assert.equal(run(root, "publish").status, 0);
+    const report = page(root, "report.md");
+    assert.match(report, /\[record\]\(https:\/\/github\.com\/o\/r\/blob\/main\/docs\/formal\/requirements\/0001-the-report-names-each-source\.md\)/);
+    assert.match(report, /- \[docs\/guide\.md#L3-L4\]\(https:\/\/github\.com\/o\/r\/blob\/main\/docs\/guide\.md#L3-L4\)/);
+  });
+
+  it("adds the front matter of the config, with {records} as the record files of the page", () => {
+    const root = twoSections();
+    configured(root, { frontMatter: { source: ["scripts/publish.mjs"], wiki: ["{records}"], hidden: "no" } });
+    assert.equal(run(root, "publish").status, 0);
+    assert.match(page(root, "report.md"), /^---\ntitle: "Report"\nsource:\n  - "scripts\/publish\.mjs"\nwiki:\n  - "docs\/formal\/requirements\/0001-the-report-names-each-source\.md"\nhidden: "no"\n---\n/);
+    assert.match(page(root, "index.md"), /wiki:\n  - "docs\/formal\/requirements\/0001-the-report-names-each-source\.md"\n  - "docs\/formal\/requirements\/0002-the-sources-list-names-each-file\.md"\n/);
+  });
+
+  it("fails a front matter value that is not text or a list of text", () => {
+    const root = seeded();
+    configured(root, { frontMatter: { order: 3 } });
+    const out = run(root, "publish");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /"frontMatter"\."order" is not text or a list of text/);
+  });
+
+  it("puts records that are not in force on their own page", () => {
+    const root = seeded({ [FILE]: record("0001"), [SOURCES_FILE]: record("0002", { status: "Retired", title: "The sources list names each file", statement: "The sources list names each file." }) });
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    assert.match(page(root, "not-in-force.md"), /## REQ-0002 The sources list names each file\n\nRetired · /);
+    assert.match(page(root, "index.md"), /- \[Not in force\]\(not-in-force\.md\) \(1\)/);
+  });
+
+  it("writes the order of the pages for Nextra when asked", () => {
+    const root = twoSections();
+    put(root, `${DIR}/extra/outline.md`, "# Guide\n\n## Sources\n\n## Report\n");
+    configured(root, { format: "mdx", route: "/req", meta: "nextra" });
+    assert.equal(run(root, "publish").status, 0);
+    assert.equal(page(root, "_meta.js"), 'export default {\n  "index": "Guide",\n  "sources": "Sources",\n  "report": "Report"\n};\n');
+    assert.ok(page(root, ".published").split("\n").includes("_meta.js"));
+  });
+
+  it("fails mdx with no route, a folder in .git, the records folder, and a manifest entry that is not a plain file name", () => {
+    const root = seeded();
+    configured(root, { format: "mdx" });
+    assert.match(run(root, "publish").stderr, /"route" is needed with "format": "mdx"/);
+    configured(root, { to: ".git/pages" });
+    assert.match(run(root, "publish").stderr, /"to" is "\.git\/pages", which is not a folder inside the project/);
+    configured(root, { to: DIR });
+    assert.match(run(root, "publish").stderr, /"to" is "docs\/formal\/requirements", which is not a folder inside the project/);
+    configured(root, { to: "..pages" });
+    assert.equal(run(root, "publish").status, 0);
+    configured(root);
+    put(root, `${OUT}/.published`, "index.md\n../../../docs/guide.md\n");
+    const out = run(root, "publish");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /site\/content\/requirements\/\.published: "\.\.\/\.\.\/\.\.\/docs\/guide\.md" is not a plain file name/);
+    assert.equal(readFileSync(path.join(root, "docs/guide.md"), "utf8"), GUIDE);
+  });
+
+  it("keeps code in a fenced block, a code span in a title or a label, and a paragraph's stray backtick as written", () => {
+    const root = twoSections();
+    const notes = "Press ` to quote {x}.\n\nLater `.\n\n```js\nconst s = `{a}` < 1; // REQ-0002\n```\n\nSee [`a<b` and REQ-0002](https://x.test/REQ-0002/y) and https://x.test/REQ-0002/z.";
+    put(root, `${DIR}/${FILE}`, record("0001", { title: "Use `{x}` in <b>", notes }));
+    configured(root, { format: "mdx", route: "/req" });
+    const out = run(root, "publish");
+    assert.equal(out.status, 0, out.stderr);
+    const report = page(root, "report.mdx");
+    assert.match(report, /## REQ-0001 Use `\{x\}` in &lt;b>\n/);
+    assert.match(report, /Press ` to quote \\\{x\\\}\.\n\nLater `\.\n\n```js\nconst s = `\{a\}` < 1; \/\/ REQ-0002\n```\n\nSee \[`a<b` and REQ-0002\]\(https:\/\/x\.test\/REQ-0002\/y\) and https:\/\/x\.test\/REQ-0002\/z\./);
+  });
+
+  it("does not link an id inside a link whose address has a space", () => {
+    const root = twoSections();
+    put(root, `${DIR}/${FILE}`, record("0001", { notes: "See [the note on REQ-0002](<a b.md>)." }));
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    assert.match(page(root, "report.md"), /See \[the note on REQ-0002\]\(<a b\.md>\)\./);
+  });
+
+  it("fences a quote with a longer fence than any run of backticks in it", () => {
+    const root = project();
+    put(root, "docs/guide.md", "# Guide\n\nRun ```npm test``` first.\n");
+    put(root, `${DIR}/${FILE}`, record("0001", { sourceText: "- docs/guide.md#L3-L3\n\n> Run ```npm test``` first." }));
+    configured(root);
+    assert.equal(run(root, "publish").status, 0, run(root, "publish").stderr);
+    assert.match(page(root, "report.md"), /````text\nRun ```npm test``` first\.\n````\n/);
+  });
+
+  it("removes the pages of the last publish that it no longer writes", () => {
+    const root = twoSections();
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    rmSync(path.join(root, DIR, SOURCES_FILE));
+    const out = run(root, "publish");
+    assert.equal(out.status, 0, out.stderr);
+    assert.deepEqual(readdirSync(path.join(root, OUT)).sort(), [".published", "index.md", "report.md", "requirements.json"]);
+  });
+
+  it("refuses to overwrite a file that it did not write", () => {
+    const root = seeded();
+    configured(root);
+    put(root, `${OUT}/report.md`, "Written by hand.\n");
+    const out = run(root, "publish");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /site\/content\/requirements\/report\.md exists and the last publish did not write it/);
+    assert.equal(page(root, "report.md"), "Written by hand.\n");
+  });
+
+  it("checks that the published files are current", () => {
+    const root = twoSections();
+    configured(root);
+    const before = run(root, "publish", "--check");
+    assert.equal(before.status, 1);
+    assert.match(before.stderr, /site\/content\/requirements\/index\.md is missing/);
+    assert.equal(run(root, "publish").status, 0);
+    assert.equal(run(root, "publish", "--check").status, 0);
+    put(root, `${DIR}/${FILE}`, record("0001", { statement: "The report names each source and its date." }));
+    const changed = run(root, "publish", "--check");
+    assert.equal(changed.status, 1);
+    assert.match(changed.stderr, /site\/content\/requirements\/report\.md is not current/);
+    assert.match(changed.stderr, /requirements\.mjs publish/);
+    rmSync(path.join(root, DIR, SOURCES_FILE));
+    assert.match(run(root, "publish", "--check").stderr, /site\/content\/requirements\/sources\.md is left from the last publish/);
+    assert.equal(run(root, "publish").status, 0);
+    put(root, `${OUT}/.published`, `${page(root, ".published")}missing.md\n`);
+    assert.match(run(root, "publish", "--check").stderr, /site\/content\/requirements\/\.published is not current/);
+  });
+});
+
 describe("usage", () => {
   it("names the commands when the command is unknown", () => {
     const out = run(project(), "frobnicate");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative/);
+    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish/);
   });
 });
