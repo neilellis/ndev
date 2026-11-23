@@ -624,6 +624,7 @@ function publishConfig(root) {
   else
     for (const [key, value] of Object.entries(front)) {
       if (key === "title") problems.push(`${PUBLISH}: "frontMatter"."title" is not allowed. The title comes from the outline and the section.`);
+      else if (key === "description") problems.push(`${PUBLISH}: "frontMatter"."description" is not allowed. Each page has its own description, made from its records.`);
       else if (typeof value !== "string" && !(Array.isArray(value) && value.every((item) => typeof item === "string"))) problems.push(`${PUBLISH}: "frontMatter"."${key}" is not text or a list of text.`);
     }
   if (problems.length) throw new Failure(problems.join("\n"));
@@ -692,8 +693,9 @@ function publication(root, config) {
   };
   const text = (raw) => inline(raw, DIR);
   const yaml = (value) => JSON.stringify(value);
-  const frontMatter = (name, members) => {
-    const lines = [`title: ${yaml(name)}`];
+  const counting = (n) => `${n} requirement record${n === 1 ? "" : "s"}`;
+  const frontMatter = (name, members, description) => {
+    const lines = [`title: ${yaml(name)}`, `description: ${yaml(description)}`];
     for (const [key, value] of Object.entries(config.front)) {
       if (typeof value === "string") lines.push(`${key}: ${yaml(value)}`);
       else lines.push(`${key}:`, ...value.flatMap((item) => (item === "{records}" ? members.map((r) => r.rel) : [item])).map((item) => `  - ${yaml(item)}`));
@@ -717,10 +719,10 @@ function publication(root, config) {
   for (const p of pages) {
     const found = p.slug === "not-in-force" ? undefined : stored.get(p.name);
     const prose = found ? [...(found.hash === sectionHash(p.members) ? [] : ["> The records of this section changed after this text was written."]), markdown(found.prose, NARRATIVE, p)] : [];
-    files.set(`${p.slug}${config.ext}`, `${frontMatter(p.name, p.members)}\n${[`# ${text(p.name)}`, ...prose, ...p.members.map((r) => entry(r, p))].join("\n\n")}\n`);
+    files.set(`${p.slug}${config.ext}`, `${frontMatter(p.name, p.members, `${counting(p.members.length)} in the ${p.name} section.`)}\n${[`# ${text(p.name)}`, ...prose, ...p.members.map((r) => entry(r, p))].join("\n\n")}\n`);
   }
   const listed = pages.map((p) => `- [${text(p.name)}](${route(p.slug)}) (${p.members.length})`).join("\n");
-  files.set(`index${config.ext}`, `${frontMatter(title, records)}\n# ${text(title)}\n\n${counted(records)}\n\n${listed}\n`);
+  files.set(`index${config.ext}`, `${frontMatter(title, records, `${counting(records.length)} in ${pages.length} section${pages.length === 1 ? "" : "s"}.`)}\n# ${text(title)}\n\n${counted(records)}\n\n${listed}\n`);
   const json = pages.flatMap((p) =>
     p.members.map((r) => ({
       id: r.id,

@@ -39,7 +39,7 @@ Do this one time for each project.
 
 1. Run `ndev requirements check` and `ndev requirements narrative`. Fix each failure first: use the `requirements` and `requirements-document` skills.
 2. Run `ndev requirements publish`.
-3. Run the documentation app's own checks and build. When a check fails on front matter, add the key to `frontMatter` in `publish.json`. Do not edit a published page: the next publish overwrites it.
+3. Run the documentation app's own checks and build. Each page has `title` and a `description` from the count of its records. When a check fails on another front matter key, add the key to `frontMatter` in `publish.json`. Do not edit a published page: the next publish overwrites it.
 4. Open the index and one section page in the app. Make sure that the links to the records, to the cited lines and between the pages go to the right place.
 5. Run `ndev requirements publish --check`. Stop when it passes.
 

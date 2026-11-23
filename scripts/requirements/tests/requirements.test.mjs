@@ -1050,11 +1050,11 @@ describe("publish", () => {
     assert.deepEqual(readdirSync(path.join(root, OUT)).sort(), [".published", "index.md", "report.md", "requirements.json", "sources.md"]);
     assert.deepEqual(page(root, ".published").split("\n").filter(Boolean), ["index.md", "report.md", "requirements.json", "sources.md"]);
     const report = page(root, "report.md");
-    assert.match(report, /^---\ntitle: "Report"\n---\n\n# Report\n/);
+    assert.match(report, /^---\ntitle: "Report"\ndescription: "1 requirement record in the Report section\."\n---\n\n# Report\n/);
     assert.match(report, /\n<a id="REQ-0001"><\/a>\n\n## REQ-0001 The report names each source\n\nAccepted · explicit · Verification: unassigned · Decided by Neil Ellis, 2026-01-02 · \[record\]\(\.\.\/\.\.\/\.\.\/docs\/formal\/requirements\/0001-the-report-names-each-source\.md\)\n\nThe report names each source\.\n/);
     assert.match(report, /### Source text\n\n- \[docs\/guide\.md#L3-L4\]\(\.\.\/\.\.\/\.\.\/docs\/guide\.md#L3-L4\)\n\n```text\nThe report names each source\.\nThe report refuses an unread source\.\n```\n/);
     const index = page(root, "index.md");
-    assert.match(index, /^---\ntitle: "Requirements"\n---\n\n# Requirements\n\n2 records: 2 Accepted\.\n/);
+    assert.match(index, /^---\ntitle: "Requirements"\ndescription: "2 requirement records in 2 sections\."\n---\n\n# Requirements\n\n2 records: 2 Accepted\.\n/);
     assert.match(index, /- \[Report\]\(report\.md\) \(1\)\n- \[Sources\]\(sources\.md\) \(1\)/);
     const json = JSON.parse(page(root, "requirements.json"));
     assert.equal(json.title, "Requirements");
@@ -1069,7 +1069,7 @@ describe("publish", () => {
     configured(root);
     assert.equal(run(root, "publish").status, 0);
     const index = page(root, "index.md");
-    assert.match(index, /^---\ntitle: "The FCC guide"\n---\n\n# The FCC guide\n/);
+    assert.match(index, /^---\ntitle: "The FCC guide"\ndescription: "2 requirement records in 2 sections\."\n---\n\n# The FCC guide\n/);
     assert.ok(index.indexOf("[Sources]") < index.indexOf("[Report]"));
     assert.deepEqual(JSON.parse(page(root, "requirements.json")).records.map((r) => r.id), ["REQ-0002", "REQ-0001"]);
   });
@@ -1127,8 +1127,30 @@ describe("publish", () => {
     const root = twoSections();
     configured(root, { frontMatter: { source: ["scripts/publish.mjs"], wiki: ["{records}"], hidden: "no" } });
     assert.equal(run(root, "publish").status, 0);
-    assert.match(page(root, "report.md"), /^---\ntitle: "Report"\nsource:\n  - "scripts\/publish\.mjs"\nwiki:\n  - "docs\/formal\/requirements\/0001-the-report-names-each-source\.md"\nhidden: "no"\n---\n/);
+    assert.match(page(root, "report.md"), /^---\ntitle: "Report"\ndescription: "1 requirement record in the Report section."\nsource:\n  - "scripts\/publish\.mjs"\nwiki:\n  - "docs\/formal\/requirements\/0001-the-report-names-each-source\.md"\nhidden: "no"\n---\n/);
+    assert.match(page(root, "index.md"), /^---\ntitle: "[^"\n]+"\ndescription: "2 requirement records in 2 sections\."\n/);
+    assert.match(page(root, "sources.md"), /^---\ntitle: "Sources"\ndescription: "1 requirement record in the Sources section\."\n/);
     assert.match(page(root, "index.md"), /wiki:\n  - "docs\/formal\/requirements\/0001-the-report-names-each-source\.md"\n  - "docs\/formal\/requirements\/0002-the-sources-list-names-each-file\.md"\n/);
+  });
+
+  it("refuses a description in the config, because each page has its own", () => {
+    const root = seeded();
+    configured(root, { frontMatter: { description: "All pages" } });
+    const out = run(root, "publish");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /"frontMatter"\."description" is not allowed\. Each page has its own description, made from its records\./);
+  });
+
+  it("quotes a section name in the description, and describes the page of the records not in force", () => {
+    const root = seeded({ [FILE]: record("0001", { section: 'Auth "v2": a\\b' }), [SOURCES_FILE]: record("0002", { title: "The sources list names each file", status: "Rejected", statement: "The sources list names each file." }) });
+    configured(root);
+    const out = run(root, "publish");
+    assert.equal(out.status, 0, out.stderr);
+    const pages = readdirSync(path.join(root, OUT));
+    const auth = pages.find((file) => file.startsWith("auth"));
+    assert.ok(auth, `no page for the section in ${pages.join(", ")}`);
+    assert.match(page(root, auth), /^---\ntitle: "Auth \\"v2\\": a\\\\b"\ndescription: "1 requirement record in the Auth \\"v2\\": a\\\\b section\."\n---\n/);
+    assert.match(page(root, "not-in-force.md"), /^---\ntitle: "Not in force"\ndescription: "1 requirement record in the Not in force section\."\n---\n/);
   });
 
   it("fails a front matter value that is not text or a list of text", () => {

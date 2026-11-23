@@ -170,11 +170,12 @@ The `requirements-document` skill writes the narrative. `ndev requirements narra
 | `format` | `md` or `mdx`. The script escapes `<` outside code, and in `mdx` also `{` and `}`. Fenced blocks, code spans and bare web addresses stay as written. In `mdx`, the links between the pages are routes under `route`. |
 | `route` | The path at which the app serves the folder, for example `/requirements/formal`. It is necessary with `mdx`, because the app serves the index one level above the other pages. With `md`, the links between the pages are relative and the script ignores it. |
 | `source` | Optional. The web address under which the project's files show, for example `https://github.com/<owner>/<repo>/blob/main/`. The links to the records and to the cited lines start with it. Without it, those links are relative paths. |
-| `frontMatter` | Optional. Keys to add to the front matter of each page, after `title`. A value is text or a list of text. In a list, `{records}` becomes the paths of the records on the page. |
+| `frontMatter` | Optional. Keys to add to the front matter of each page, after `title` and `description`. A value is text or a list of text. In a list, `{records}` becomes the paths of the records on the page. The script makes `description` from the count of the records, so `frontMatter` cannot set it. |
 | `meta` | Optional. `nextra` also writes `_meta.js`, which gives Nextra the order of the pages. |
 
 It writes:
 
+- in the front matter of each page, `title` and `description`. The description of a page is "N requirement records in the <section> section". The description of the index is "N requirement records in M sections";
 - `index.<format>`: the title of the outline, the count of the records by status, and a link to each page;
 - one page for each section, in the order of the outline: the narrative, then each record with an anchor `REQ-NNNN`, its fields, Statement, Source text, Trace and Notes. A bare `REQ-NNNN` links to the record on its page;
 - `not-in-force.<format>` for the records that are not in force;
