@@ -13,6 +13,8 @@ The commands are `ndev requirements <command>`. Run them from the project.
 |---|---|
 | `ndev requirements untraced --prs <file>` | Lists each merged pull request that no record names. Fails a record that names a pull request and does not link the issues that it closes. |
 | `ndev requirements link <REQ-NNNN> <pull request link> --prs <file>` | Adds the pull request and the issues that it closes to the record's Trace. |
+| `ndev requirements file <REQ-NNNN> <path or pattern>...` | Adds the files that implement the record to its Trace. A pattern can use `*`, `**` and `?`. |
+| `ndev requirements trace --prs <file> --issues <file>` | Checks the links in both directions: records to pull requests, issues and files, and pull requests and files to records. |
 
 ## Procedure
 
@@ -25,12 +27,13 @@ The commands are `ndev requirements <command>`. Run them from the project.
    - **It implements one or more records.** Run `ndev requirements link <REQ-NNNN> <link> --prs <file>` for each record. Link only a record whose behaviour the pull request adds, changes or fixes. When it adds more than one requirement, link it to a record for each one.
    - **No record matches.** Write a record: `ndev requirements new "<title>" --origin PR --section <name>`. The Statement is the requirement that the pull request meets, in the words of the pull request or its issue where they state it. The Source text is `- <link to the pull request>` and its quoted words. The status stays `Proposed`. For the section, use a section that `ndev requirements list` shows, or the name of the application or package that the pull request changes. Then run `link` with `--prs` for the issues.
    - **It changes no behaviour** (a dependency update, a formatting change, a build or CI change, a fix to a test only). It still traces to a record: link it to the record that the change keeps working or that the test guards, or write a `Proposed` record of origin `PR` that states the constraint (for example, the build runs on the supported runtime). Do not skip it.
-5. Never change the Statement or the Source text of a record that exists. When a pull request shows that a record is wrong or out of date, say so in `## Notes` and report it to the human.
-6. Run `ndev requirements untraced --prs <file>` again. Stop when it passes.
+5. For each record that you link, run `ndev requirements file <REQ-NNNN> <path or pattern>...` with the files of the pull request that implement the record. Use a pattern such as `src/report/**` when a folder implements it. Do not list a file that the pull request only touched in passing.
+6. Never change the Statement or the Source text of a record that exists. When a pull request shows that a record is wrong or out of date, say so in `## Notes` and report it to the human.
+7. Run `ndev requirements untraced --prs <file>` again. Stop when it passes.
 
 ## Finish
 
-1. Run `ndev requirements check` and `ndev requirements render`.
+1. Write the list of issues: `gh issue list --state all --limit 10000 --json url,state > <issues file>`. Run `ndev requirements trace --prs <file> --issues <issues file>`, `ndev requirements check` and `ndev requirements render`.
 2. Commit the records and the generated file.
 3. Report to the human: the number of pull requests, how many link to records from documents, how many new records of origin `PR` you wrote, each record that a pull request showed to be wrong, and the pull requests you did not read.
 

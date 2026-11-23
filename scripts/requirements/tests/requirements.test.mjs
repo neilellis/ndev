@@ -1482,3 +1482,140 @@ describe("usage", () => {
     assert.match(out.stderr, /Unknown requirements command "frobnicate"\. Repair: ndev requirements --help/);
   });
 });
+
+const ISSUES = [{ url: ISSUE5, state: "CLOSED" }];
+const PARSER = "0002-the-parser-reads-the-new-format.md";
+const parser = () => record("0002", { status: "Proposed", origin: "PR", decidedBy: "", sourceText: PR13_SOURCE });
+const LINKED = `- PR: ${PR12}\n- Issue: ${ISSUE5}\n- File: src/**`;
+const traced = ({ records = { [FILE]: record("0001", { trace: LINKED }), [PARSER]: parser() }, files = { "src/report.js": "export const cited = 'REQ-0001';\n", "src/util.js": "export const plain = 1;\n" }, prs = PRS, issues = ISSUES } = {}) => {
+  const root = seeded(records);
+  for (const [rel, text] of Object.entries(files)) put(root, rel, text);
+  put(root, "prs.json", JSON.stringify(prs));
+  put(root, "issues.json", JSON.stringify(issues));
+  git(root, "init", "-q");
+  git(root, "add", "-A");
+  return root;
+};
+const trace = (root) => run(root, "trace", "--prs", "prs.json", "--issues", "issues.json");
+
+describe("trace", () => {
+  it("passes when records, pull requests, issues and files link both ways", () => {
+    const out = trace(traced());
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "2 records trace both ways: 2 merged pull requests, 1 issue, 1 file that cites a record\n");
+  });
+
+  it("needs --prs and --issues", () => {
+    const root = traced();
+    assert.equal(run(root, "trace", "--prs", "prs.json").status, 2);
+    const out = run(root, "trace", "--issues", "issues.json");
+    assert.equal(out.status, 2);
+    assert.match(out.stderr, /trace needs --prs <file> and --issues <file>, made with: gh pr list .* and gh issue list --state all --limit 10000 --json url,state/);
+  });
+
+  it("fails an accepted record that lists no file, and passes a proposed one", () => {
+    const out = trace(traced({ records: { [FILE]: record("0001", { trace: `- PR: ${PR12}\n- Issue: ${ISSUE5}` }), [PARSER]: parser() }, files: {} }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /^ndev: REQ-0001 lists no file that implements it\. Add each file or pattern with: ndev requirements file REQ-0001 <path or pattern>$/m);
+    assert.doesNotMatch(out.stderr, /REQ-0002/);
+  });
+
+  it("fails a file pattern that matches no tracked file", () => {
+    const out = trace(traced({ records: { [FILE]: record("0001", { trace: `${LINKED}\n- File: lib/**` }), [PARSER]: parser() } }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0001: "- File: lib\/\*\*" matches no tracked file\./);
+  });
+
+  it("fails a file that cites an unknown record, a record not in force, or a record that does not list it", () => {
+    const records = { [FILE]: record("0001", { trace: LINKED }), [PARSER]: parser(), "0003-the-old-rule.md": record("0003", { status: "Retired" }) };
+    const files = { "src/report.js": "// REQ-0001\n", "src/unknown.js": "// REQ-0009\n", "src/old.js": "// REQ-0003\n", "lib/other.js": "\n// REQ-0001 and REQ-0002\n" };
+    const out = trace(traced({ records, files }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /src\/unknown\.js:1 cites REQ-0009, which is not a record in docs\/formal\/requirements\./);
+    assert.match(out.stderr, /src\/old\.js:1 cites REQ-0003, which is Retired\. Cite the record in force\./);
+    assert.match(out.stderr, /lib\/other\.js:2 cites REQ-0001, whose record does not list the file\. Run: ndev requirements file REQ-0001 lib\/other\.js/);
+    assert.match(out.stderr, /lib\/other\.js:2 cites REQ-0002, whose record does not list the file\. Run: ndev requirements file REQ-0002 lib\/other\.js/);
+  });
+
+  it("fails a linked pull request that is not merged, and a linked issue that is open or unknown", () => {
+    const records = { [FILE]: record("0001", { trace: `${LINKED}\n- PR: https://github.com/o/r/pull/99\n- Issue: https://github.com/o/r/issues/7` }), [PARSER]: parser() };
+    const out = trace(traced({ records, issues: [{ url: ISSUE5, state: "OPEN" }] }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0001 links https:\/\/github\.com\/o\/r\/pull\/99, which is not a merged pull request in prs\.json\./);
+    assert.match(out.stderr, /REQ-0001 links https:\/\/github\.com\/o\/r\/issues\/5, which is OPEN in issues\.json\. Close the issue, or remove the link\./);
+    assert.match(out.stderr, /REQ-0001 links https:\/\/github\.com\/o\/r\/issues\/7, which is not in issues\.json\./);
+  });
+
+  it("fails a merged pull request that traces to no record", () => {
+    const out = trace(traced({ records: { [FILE]: record("0001", { trace: LINKED }) } }));
+    assert.equal(out.status, 1);
+    assert.equal(out.stdout, `#13  Bump the parser  ${PR13}\n`);
+    assert.match(out.stderr, /1 of 2 merged pull requests trace to no record/);
+  });
+
+  it("fails a malformed File line, which does not count as a file", () => {
+    const out = trace(traced({ records: { [FILE]: record("0001", { trace: `- PR: ${PR12}\n- Issue: ${ISSUE5}\n- File: src/**.js` }), [PARSER]: parser() }, files: {} }));
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0001: "- File: src\/\*\*\.js" is not a path or pattern inside the project\./);
+    assert.match(out.stderr, /REQ-0001 lists no file that implements it/);
+  });
+
+  it("checks only the Trace links against the pull requests, not a pull request quoted in the Source text", () => {
+    const open = "https://github.com/o/r/pull/77";
+    const records = { [FILE]: record("0001", { trace: LINKED }), [PARSER]: parser(), "0003-an-open-change.md": record("0003", { status: "Proposed", origin: "PR", decidedBy: "", sourceText: `- ${open}\n\n> An open change` }) };
+    const out = trace(traced({ records }));
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("does not scan the --prs and --issues files for citations", () => {
+    const prs = [{ ...PRS[0], title: "Implements REQ-0002" }, PRS[1]];
+    const out = trace(traced({ prs }));
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("names an issues file that is not a list of issues", () => {
+    const root = traced();
+    put(root, "issues.json", JSON.stringify([{ url: ISSUE5 }]));
+    const out = trace(root);
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /issues\.json: entry 1 has no state\. Make the file with: gh issue list --state all --limit 10000 --json url,state > issues\.json/);
+  });
+});
+
+describe("file", () => {
+  it("adds each pattern to the record's Trace once, and matches globs from the root", () => {
+    const root = traced({ files: { "src/report.js": "// REQ-0001\n", "src/a/b.js": "x\n", "docs/notes.md": "n\n" } });
+    const out = run(root, "file", "REQ-0001", "/docs/*.md", "src/a/**", "src/report.js");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(run(root, "file", "REQ-0001", "src/report.js").stdout, "REQ-0001 already lists src/report.js\n");
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.match(text, /- File: src\/\*\*\n- File: \/docs\/\*\.md\n- File: src\/a\/\*\*\n- File: src\/report\.js\n/);
+  });
+
+  it("refuses a pattern that matches no tracked file, and a single star does not cross a folder", () => {
+    const root = traced({ files: { "src/report.js": "// REQ-0001\n", "src/a/b.js": "x\n" } });
+    const out = run(root, "file", "REQ-0001", "src/a/*.ts");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /"src\/a\/\*\.ts" matches no tracked file/);
+    assert.equal(run(root, "file", "REQ-0001", "src/*.js").status, 0);
+    assert.doesNotMatch(readFileSync(path.join(root, DIR, FILE), "utf8"), /lib/);
+    assert.equal(run(root, "file", "REQ-0001", "*/b.js").status, 1);
+  });
+
+  it("lists a file whose name holds a space", () => {
+    const root = traced({ files: { "src/report.js": "// REQ-0001\n", "docs/My Notes.md": "REQ-0001\n" } });
+    assert.equal(run(root, "file", "REQ-0001", "docs/My Notes.md").status, 0);
+    assert.equal(trace(root).status, 0);
+  });
+
+  it("refuses a path outside the project, and check fails such a File line", () => {
+    const root = traced();
+    const out = run(root, "file", "REQ-0001", "../x.js");
+    assert.equal(out.status, 2);
+    assert.match(out.stderr, /"\.\.\/x\.js" is not a path or pattern inside the project/);
+    edit(root, (text) => text.replace("- File: src/**", "- File: ../x.js"));
+    const checked = run(root, "check");
+    assert.equal(checked.status, 1);
+    assert.match(checked.stderr, /trace line "- File: \.\.\/x\.js" is not a path or pattern inside the project/);
+  });
+});

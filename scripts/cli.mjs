@@ -140,6 +140,7 @@ const groups = {
       sources: '[--tier <n>]', ledger: '<path> <first line> <last line> "<reason>"',
       uncovered: '[<path>...]', untraced: '--prs <file>',
       link: '<REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]',
+      file: '<REQ-NNNN> <path or pattern>...', trace: '--prs <file> --issues <file>',
       narrate: '"<section>" [--from <file>]', narrative: '', publish: '[--check]',
       references: '<path>', retire: '<path>... --pdr <file> [--keep <file>,<file>]',
     },

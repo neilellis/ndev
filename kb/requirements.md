@@ -52,6 +52,7 @@ The requirement. This is the binding text.
 
 - PR: <link to a pull request that implements it>
 - Issue: <link to an issue that the pull request closes>
+- File: <path or pattern of a file that implements it>
 
 ## Notes
 ```
@@ -125,6 +126,21 @@ Each merged pull request traces to a record. The `requirements-retrospective` sk
 `ndev requirements untraced --prs <file>` reads the output of `gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences`. A record names a pull request in a `- PR:` line of its Trace, or as a link in its Source text. The command lists each pull request that no record names, the oldest first. It also fails a record that names a pull request and does not link each issue that the pull request closes.
 
 `ndev requirements link <REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]` adds the `- PR:` line and the `- Issue:` lines to the Trace. With `--prs`, it adds the issues that the pull request closes. The Trace is not protected, so an agent can link. `check` fails a `- PR:` line that is not a link to a pull request, and an `- Issue:` line that is not a link to an issue.
+
+## Tracing files
+
+A record lists each file that implements it, in `- File:` lines of its Trace. A line holds a path from the project root, or a pattern: `*` matches inside one folder, `**` matches any number of folders, and `?` matches one character. A leading `/` is the project root. For example, `- File: src/report/**` or `- File: /docs/*.md`. Each source file that implements a record cites its ID (`REQ-NNNN`), for example in the name of a test or in a line of the file.
+
+`ndev requirements file <REQ-NNNN> <path or pattern>...` adds the `- File:` lines. It refuses a pattern that matches no tracked file. `check` fails a `- File:` line that is not a path or pattern inside the project.
+
+`ndev requirements trace --prs <file> --issues <file>` checks the links in both directions. Make the issues file with `gh issue list --state all --limit 10000 --json url,state`. It fails:
+
+- each merged pull request that no record names, as `untraced` does;
+- each `- PR:` link that is not a merged pull request in the file, and each `- Issue:` link that is not a closed issue in the file;
+- each Accepted record with no `- File:` line, and each `- File:` line of a record in force that matches no tracked file;
+- each `REQ-NNNN` in a tracked file that names no record, names a record that is not in force, or names a record whose `- File:` lines do not match that file.
+
+The scan of the files skips the records folder and the publish folder.
 
 ## The document
 

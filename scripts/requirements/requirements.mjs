@@ -18,7 +18,7 @@ const SECTIONS = ["Statement", "Source text", "Trace", "Notes"];
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, file, trace, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -28,7 +28,8 @@ const NARRATIVE = `${DIR}/generated/narrative`;
 const REQ_ID = /\bREQ-\d{4}\b/g;
 const PULL_URL = /^https:\/\/\S+\/pull\/\d+$/;
 const ISSUE_URL = /^https:\/\/\S+\/issues\/\d+$/;
-const TRACE_LINK = /^- (PR|Issue): (.*)$/;
+const TRACE_LINK = /^- (PR|Issue|File): (.*)$/;
+const GH_ISSUES = "gh issue list --state all --limit 10000 --json url,state";
 const GH_PRS = "gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences";
 const LEDGER = `${DIR}/extra/ledger.md`;
 const LEDGER_ENTRY = /^- (.+)#L(\d+)-L(\d+) ([0-9a-f]{12}): (.+)$/;
@@ -251,6 +252,7 @@ function inspect(root) {
       const link = line.trim().match(TRACE_LINK);
       if (link?.[1] === "PR" && !PULL_URL.test(link[2].trim())) fail(`trace line "${line.trim()}" is not a link to a pull request.`);
       if (link?.[1] === "Issue" && !ISSUE_URL.test(link[2].trim())) fail(`trace line "${line.trim()}" is not a link to an issue.`);
+      if (link?.[1] === "File" && !filePattern(link[2].trim())) fail(`trace line "${line.trim()}" is not a path or pattern inside the project.`);
     }
     for (const source of sources) {
       if (source.bad) fail(`citation "${source.citation}" is not a path with lines or an https link. ${form}`);
@@ -1093,38 +1095,47 @@ function pullRequests(root, file) {
 function traces(record) {
   const prs = new Set();
   const issues = new Set();
+  const files = new Set();
   for (const line of (record.sections.Trace ?? "").split("\n")) {
     const link = line.trim().match(TRACE_LINK);
-    if (link) (link[1] === "PR" ? prs : issues).add(link[2].trim());
+    if (link) ({ PR: prs, Issue: issues, File: files })[link[1]].add(link[2].trim());
   }
+  const linkedPrs = new Set(prs);
   for (const source of sourceText(record.sections["Source text"]).sources) {
     const pull = source.url?.match(PULL)?.[0];
     if (pull) prs.add(pull);
   }
-  return { prs, issues };
+  return { prs, linkedPrs, issues, files };
 }
 
-function untraced(root, options) {
-  const prs = pullRequests(root, options.prs);
-  const records = entries(root).filter((e) => NAME.test(e.file)).map((e) => read(e)).map((r) => ({ ...r, links: traces(r) }));
+const linkedRecords = (root) => entries(root).filter((e) => NAME.test(e.file)).map((e) => read(e)).map((r) => ({ ...r, links: traces(r) }));
+
+function pullProblems(prs, records, file) {
   const missing = [];
   const problems = [];
   for (const pr of prs) {
     const tracing = records.filter((r) => r.links.prs.has(pr.url));
     if (!tracing.length) missing.push(pr);
-    for (const record of tracing) for (const issue of pr.issues) if (!record.links.issues.has(issue)) problems.push(`${record.id} traces ${pr.url}, which closes ${issue}, and does not link it. Run: ${SCRIPT} link ${record.id} ${pr.url} --prs ${options.prs}`);
+    for (const record of tracing) for (const issue of pr.issues) if (!record.links.issues.has(issue)) problems.push(`${record.id} traces ${pr.url}, which closes ${issue}, and does not link it. Run: ${SCRIPT} link ${record.id} ${pr.url} --prs ${file}`);
   }
-  if (!missing.length && !problems.length) return `${prs.length} merged pull request${prs.length === 1 ? "" : "s"}: each traces to a record, with the issues it closes\n`;
   missing.sort((a, b) => a.number - b.number);
-  process.stdout.write(missing.map((pr) => `#${pr.number}  ${pr.title}  ${pr.url}`).join("\n") + (missing.length ? "\n" : ""));
   if (missing.length) problems.push(`${missing.length} of ${prs.length} merged pull requests trace to no record. Link each to the records it implements with ${SCRIPT} link, or write a record with: ${SCRIPT} new "<title>" --origin PR`);
+  return { missing, problems };
+}
+
+const listed = (missing) => process.stdout.write(missing.map((pr) => `#${pr.number}  ${pr.title}  ${pr.url}`).join("\n") + (missing.length ? "\n" : ""));
+
+function untraced(root, options) {
+  const prs = pullRequests(root, options.prs);
+  const { missing, problems } = pullProblems(prs, linkedRecords(root), options.prs);
+  if (!problems.length) return `${prs.length} merged pull request${prs.length === 1 ? "" : "s"}: each traces to a record, with the issues it closes\n`;
+  listed(missing);
   throw new Failure(problems.join("\n"));
 }
 
 function link(root, id, url, options) {
   if (!/^REQ-\d{4}$/.test(id ?? "") || !PULL_URL.test(url ?? "") || (options.issue !== undefined && !ISSUE_URL.test(options.issue))) throw new Usage(`link needs <REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>], for example: link REQ-0001 https://github.com/o/r/pull/12 --prs prs.json`);
-  const entry = entries(root).find((e) => e.id === id && NAME.test(e.file));
-  if (!entry) throw new Failure(`${id} is not a record in ${DIR}.`);
+  const entry = recordEntry(root, id);
   const issues = [];
   if (options.prs) {
     const pr = pullRequests(root, options.prs).find((p) => p.url === url);
@@ -1132,10 +1143,16 @@ function link(root, id, url, options) {
     issues.push(...pr.issues);
   }
   if (options.issue) issues.push(options.issue);
+  const added = appendTrace(entry, [`- PR: ${url}`, ...issues.map((issue) => `- Issue: ${issue}`)]);
+  if (!added.length) return `${id} already links ${url}${issues.length ? " and the issues it closes" : ""}\n`;
+  return `${entry.rel}: ${added.join(", ")}\n`;
+}
+
+function appendTrace(entry, wanted) {
   const record = read(entry);
   const held = (record.sections.Trace ?? "").split("\n").map((line) => line.trim());
-  const added = [`- PR: ${url}`, ...issues.map((issue) => `- Issue: ${issue}`)].filter((line, i, all) => !held.includes(line) && all.indexOf(line) === i);
-  if (!added.length) return `${id} already links ${url}${issues.length ? " and the issues it closes" : ""}\n`;
+  const added = wanted.filter((line, i, all) => !held.includes(line) && all.indexOf(line) === i);
+  if (!added.length) return added;
   const eol = record.text.includes("\r\n") ? "\r\n" : "\n";
   const lines = record.text.split(/\r?\n/);
   const start = lines.findIndex((line) => line.trim() === "## Trace");
@@ -1147,7 +1164,126 @@ function link(root, id, url, options) {
   while (body.length && !body.at(-1).trim()) body.pop();
   const tail = lines.slice(end);
   writeFileSync(entry.full, [...lines.slice(0, start + 1), "", ...body, ...added, ...(tail.length ? ["", ...tail] : [""])].join(eol));
+  return added;
+}
+
+function filePattern(raw) {
+  const pattern = raw.startsWith("/") ? raw.slice(1) : raw;
+  if (!pattern || pattern !== pattern.trim() || /[\t\r\n]/.test(pattern) || pattern.includes("\\")) return undefined;
+  if (pattern.split("/").some((part) => !part || part === "." || part === "..")) return undefined;
+  let source = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "*" && pattern[i + 1] === "*") {
+      const whole = (i === 0 || pattern[i - 1] === "/") && (i + 2 === pattern.length || pattern[i + 2] === "/");
+      if (!whole) return undefined;
+      source += i + 2 === pattern.length ? ".*" : "(?:.*/)?";
+      i += 2;
+    } else if (c === "*") source += "[^/]*";
+    else if (c === "?") source += "[^/]";
+    else source += escaped(c);
+  }
+  return new RegExp(`^${source}$`);
+}
+
+function trackedFiles(root) {
+  return git(root, ["ls-files", "-z"]).split("\0").filter((rel, i, all) => rel && all.indexOf(rel) === i && existsSync(path.join(root, rel)) && lstatSync(path.join(root, rel)).isFile()).sort();
+}
+
+function recordEntry(root, id) {
+  const entry = entries(root).find((e) => e.id === id && NAME.test(e.file));
+  if (!entry) throw new Failure(`${id} is not a record in ${DIR}.`);
+  return entry;
+}
+
+function fileLinks(root, id, patterns) {
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !patterns.length) throw new Usage(`file needs <REQ-NNNN> <path or pattern>..., for example: file REQ-0001 src/report.ts "src/report/**"`);
+  for (const pattern of patterns) if (!filePattern(pattern)) throw new Usage(`"${pattern}" is not a path or pattern inside the project. Use a path from the project root, with *, ** or ? where needed.`);
+  const entry = recordEntry(root, id);
+  const files = trackedFiles(root);
+  const empty = patterns.filter((pattern) => !files.some((file) => filePattern(pattern).test(file)));
+  if (empty.length) throw new Failure(empty.map((pattern) => `"${pattern}" matches no tracked file. Check the path, and git add a new file first.`).join("\n"));
+  const added = appendTrace(entry, patterns.map((pattern) => `- File: ${pattern}`));
+  if (!added.length) return `${id} already lists ${patterns.join(", ")}\n`;
   return `${entry.rel}: ${added.join(", ")}\n`;
+}
+
+function issueStates(root, file) {
+  const full = path.resolve(root, file);
+  if (!existsSync(full)) throw new Failure(`${file} does not exist. Make it with: ${GH_ISSUES} > ${file}`);
+  let data;
+  try {
+    data = JSON.parse(readFileSync(full, "utf8"));
+  } catch (error) {
+    throw new Failure(`${file} is not JSON: ${error.message}. Make it with: ${GH_ISSUES} > ${file}`);
+  }
+  if (!Array.isArray(data)) throw new Failure(`${file} is not a list of issues. Make it with: ${GH_ISSUES} > ${file}`);
+  return new Map(data.map((issue, i) => {
+    if (!ISSUE_URL.test(issue?.url ?? "")) throw new Failure(`${file}: entry ${i + 1} has no issue url. Make the file with: ${GH_ISSUES} > ${file}`);
+    if (typeof issue.state !== "string" || !issue.state) throw new Failure(`${file}: entry ${i + 1} has no state. Make the file with: ${GH_ISSUES} > ${file}`);
+    return [issue.url, issue.state];
+  }));
+}
+
+function citations(root, files, inputs) {
+  const generated = publishedFolder(root);
+  const skipped = inputs.map((input) => path.relative(root, path.resolve(root, input)).split(path.sep).join("/"));
+  const found = [];
+  for (const file of files) {
+    if (file.startsWith(`${DIR}/`) || (generated && file.startsWith(`${generated}/`)) || skipped.includes(file)) continue;
+    const text = readFileSync(path.join(root, file), "utf8");
+    if (text.includes("\0")) continue;
+    text.split("\n").forEach((line, i) => {
+      for (const id of new Set(line.match(REQ_ID) ?? [])) found.push({ file, number: i + 1, id });
+    });
+  }
+  return found;
+}
+
+function traceAll(root, options) {
+  if (!options.prs || !options.issues) throw new Usage(`trace needs --prs <file> and --issues <file>, made with: ${GH_PRS} and ${GH_ISSUES}`);
+  const prs = pullRequests(root, options.prs);
+  const issues = issueStates(root, options.issues);
+  const records = linkedRecords(root);
+  const files = trackedFiles(root);
+  const { missing, problems } = pullProblems(prs, records, options.prs);
+  const merged = new Set(prs.map((pr) => pr.url));
+  const patterns = new Map();
+  for (const record of records) {
+    const inForce = IN_FORCE.includes(record.status);
+    for (const url of record.links.linkedPrs) if (!merged.has(url)) problems.push(`${record.id} links ${url}, which is not a merged pull request in ${options.prs}.`);
+    for (const url of record.links.issues) {
+      const state = issues.get(url);
+      if (state === undefined) problems.push(`${record.id} links ${url}, which is not in ${options.issues}.`);
+      else if (state !== "CLOSED") problems.push(`${record.id} links ${url}, which is ${state} in ${options.issues}. Close the issue, or remove the link.`);
+    }
+    const compiled = [];
+    for (const raw of record.links.files) {
+      const regex = filePattern(raw);
+      if (regex) compiled.push({ raw, regex });
+      else problems.push(`${record.id}: "- File: ${raw}" is not a path or pattern inside the project. Correct it: a path from the project root, with *, ** or ? where needed.`);
+    }
+    patterns.set(record.id, compiled);
+    if (record.status === "Accepted" && !compiled.length) problems.push(`${record.id} lists no file that implements it. Add each file or pattern with: ${SCRIPT} file ${record.id} <path or pattern>`);
+    if (inForce) for (const { raw, regex } of compiled) if (!files.some((file) => regex.test(file))) problems.push(`${record.id}: "- File: ${raw}" matches no tracked file. Correct the path, or remove the line.`);
+  }
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const cited = citations(root, files, [options.prs, options.issues]);
+  for (const { file, number, id } of cited) {
+    const record = byId.get(id);
+    const where = `${file}:${number} cites ${id}`;
+    if (!record) problems.push(`${where}, which is not a record in ${DIR}.`);
+    else if (!IN_FORCE.includes(record.status)) problems.push(`${where}, which is ${record.status}. Cite the record in force.`);
+    else if (!patterns.get(id).some(({ regex }) => regex.test(file))) problems.push(`${where}, whose record does not list the file. Run: ${SCRIPT} file ${id} ${file}`);
+  }
+  if (problems.length) {
+    listed(missing);
+    throw new Failure(problems.join("\n"));
+  }
+  const linkedIssues = new Set(records.flatMap((record) => [...record.links.issues])).size;
+  const citing = new Set(cited.map((c) => c.file)).size;
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  return `${plural(records.length, "record traces", "records trace")} both ways: ${plural(prs.length, "merged pull request", "merged pull requests")}, ${plural(linkedIssues, "issue", "issues")}, ${plural(citing, "file that cites a record", "files that cite a record")}\n`;
 }
 
 export function runRequirements(argv, { json } = {}) {
@@ -1169,6 +1305,8 @@ export function runRequirements(argv, { json } = {}) {
       uncovered: () => uncovered(root(), rest),
       untraced: () => untraced(root(), options),
       link: () => link(root(), rest[0], rest[1], options),
+      file: () => fileLinks(root(), rest[0], rest.slice(1)),
+      trace: () => traceAll(root(), options),
       narrate: () => narrate(root(), rest[0], options),
       narrative: () => narrative(root()),
       publish: () => publish(root(), options),
