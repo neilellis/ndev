@@ -25,6 +25,8 @@ Issue, milestone, sub-issue and blocker queries use `${CLAUDE_PLUGIN_ROOT}/scrip
 
 ## Select and classify
 
+Search the decision records (`adr-pdr` skill) for each issue's area. An issue that asks to change an accepted record needs a human ruling and a PDR or ADR first.
+
 1. Expand each epic through its sub-issues (`gh.sh subissues list <n>`). Read every candidate and its comments.
 2. Search for an open or merged PR for each one. Read the code and the test before you call an issue solved.
 3. Classify each issue as solved, partly solved or not solved, with evidence.

@@ -15,7 +15,7 @@ The helper is `scripts/second-opinion.mjs` in this skill's folder. Call it with 
 - When two designs compete and the evidence does not choose between them.
 - When the user asks for a second opinion.
 
-Do not ask about a decision that a test, the code or the user already settles. Do not ask again about the same question with the same evidence.
+Do not ask about a decision that a test, the code or the user already settles. Do not ask again about the same question with the same evidence. An accepted ADR or PDR already settles its question. After a decision that follows an opinion, record it with the options that lost (`adr-pdr` skill).
 
 ## Run it
 

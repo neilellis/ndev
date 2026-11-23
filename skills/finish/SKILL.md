@@ -64,7 +64,7 @@ If the preview asks for a sign-in that you cannot pass, use the host's own acces
 
 ## Decisions
 
-If a fix needs a decision from the user, stop the loop. Ask one short, plain question, with the options and your recommendation. After they answer, apply it and restart the loop with `--restart`, which resets the round count.
+If a fix needs a decision from the user, stop the loop. If the answer changes the design or a requirement, record it with the `adr-pdr` skill. Ask one short, plain question, with the options and your recommendation. After they answer, apply it and restart the loop with `--restart`, which resets the round count.
 
 ## Report
 

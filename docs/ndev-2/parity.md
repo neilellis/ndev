@@ -193,6 +193,7 @@ Install each retained skill as `ndev-<name>`. Tests check native discovery, link
 
 | Feature | Source | ndev 2.0 | Work item | Acceptance test |
 | --- | --- | --- | --- | --- |
+| `adr-pdr` skill | `skills/adr-pdr/SKILL.md` | `ndev-adr-pdr` skill | Installer | Discover `ndev-adr-pdr` and resolve its references in each harness. |
 | `adversarial-review` skill | `skills/adversarial-review/SKILL.md` | `ndev-adversarial-review` skill | Installer | Discover `ndev-adversarial-review` and resolve its references in each harness. |
 | `archify` skill | `skills/archify/SKILL.md` | `ndev-archify` skill | Installer | Discover `ndev-archify` and resolve its references in each harness. |
 | `are-we-done` skill | `skills/are-we-done/SKILL.md` | `ndev-are-we-done` skill | Installer | Discover `ndev-are-we-done` and resolve its references in each harness. |

@@ -58,6 +58,8 @@ While a workflow runs, it watches the PR for you. Otherwise run the wait helper 
 4. Use `ast-grep` for code structure. For callers, search both `NAME($$$)` and `$_.NAME($$$)`. Check aliases and string dispatch where the interface uses them. For an exhaustive structural search, use the `ast-grep` skill's `find.sh`.
 5. Widen to imports, callers or neighbouring packages only when a named question stays open.
 
+Search the decision records for the area before you design or change behaviour: `adr-pdr` skill, `records.mjs search <terms>`. An accepted ADR or PDR is settled; do not reopen it without new evidence.
+
 Keep a short path list in the task note and reuse it. If a known path is absent, make one scoped search and correct the stale map. Absence is not proof that the feature is gone.
 
 For an external API, find the installed version and the local call site before you search the web. Fetch the relevant section of the official documentation. Do not repeat a broad search.
@@ -124,7 +126,7 @@ Choose the checks from the affected behaviour. Use the commands named in the pro
 
 Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states, in a comment on the PR. With no PR, put them in the commit message.
 
-One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. Follow the `remember` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
+One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. When the change decides how the system is built, or amends a requirement, record it with the `adr-pdr` skill in the same PR. Follow the `remember` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
 
 While a workflow runs, push with `mcp__ndev__checkpoint`. Otherwise push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Hooks run. Never use `--no-verify` and never change the hooks path to skip them. Resolve base conflicts and commit before you continue.
 

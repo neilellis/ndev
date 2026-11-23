@@ -71,6 +71,6 @@ Find and fix contradictions, broken or stale links, duplicate facts in two place
 ## What the wiki is not
 
 - Not a changelog. Git holds the history.
-- Not a decision record. Decisions and their rejected options go in [ADRs](adr.md).
+- Not a decision record. Design decisions and their rejected options go in [ADRs](adr.md). Amendments to scope and requirements go in [PDRs](pdr.md).
 - Not a plan store, except `future/`.
 - Not private memory. An agent's personal memory stays outside the repository.

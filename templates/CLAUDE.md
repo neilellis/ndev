@@ -62,7 +62,8 @@ bash scripts/push-checked.sh -u origin HEAD          # the only way to push
 | Testing lanes and guards | `<docs/wiki/dev/testing/testing.md>` |
 | CI workflows and gates | `<docs/wiki/dev/ci/ci.md>` |
 | Deployment | `<docs/wiki/dev/deployment.md>` |
-| Decisions | `<docs/adr/>` |
+| Design decisions (ADRs) | `<docs/adr/>` |
+| Requirement amendments (PDRs) | `<docs/pdr/>` |
 | Issue tracker and board | `<docs/agents/issue-tracker.md>` |
 | The general method | the plugin's `kb/README.md` |
 

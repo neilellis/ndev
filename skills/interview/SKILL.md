@@ -12,7 +12,7 @@ Reach a shared understanding with the human before you plan or write code. Ask o
 ## Read first
 
 1. Read each `.neil-dev.issue-*.json` file at the root of the worktree. Each file holds the questions and answers of one issue in `rounds` and `draft`, beside its workflow state, which is not an answer: read only those keys, with `jq '{issue, rounds, draft}'`. A parent's files come to a worker that `followUp` started.
-2. Read the issue and the code that it names.
+2. Read the issue and the code that it names. Search the decision records for the area (`adr-pdr` skill). An accepted record settles its question: cite it and do not ask again.
 3. Do not ask again what these files answer. List those answers in the `intro` of the first round, each with its source issue, so that the human can correct one.
 
 A parent can say in the brief that a worker asks nothing. Then call `interview()` with no arguments.
@@ -83,6 +83,8 @@ The first line of the answer is JSON. Each entry of `answers` has `id` and `sele
 | `dismissed: true` | The human closed the round for now. The answers so far are saved, and `notAnswered` lists the other questions. | Ask again later, or call `mcp__ndev__blocked` with what you need. |
 
 The answers go to the file, to one comment on the issue and to one comment on the PR. If GitHub fails, the tool gives you the failed command and its output. Repair the cause and call `interview()`. It refuses until both comments are posted.
+
+A decision that changes the design or amends a requirement needs a record. The issue comment that holds the answer is its source. Write it with the `adr-pdr` skill, with the human as the one who decided.
 
 ## In Orca Chat
 

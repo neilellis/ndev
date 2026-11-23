@@ -18,7 +18,7 @@ The `mcp__ndev__*` tools carry each development session: call `mcp__ndev__starte
 
 ## Prepare
 
-Before you ask questions, read the project's glossary (for example `CONTEXT.md`), its domain notes, the relevant pages of the project's wiki (start at its index) and the applicable decision records (ADRs). Look up facts in the repository; do not ask the user for them.
+Before you ask questions, read the project's glossary (for example `CONTEXT.md`), its domain notes, the relevant pages of the project's wiki (start at its index) and the applicable decision records (ADRs in `docs/adr/`, PDRs in `docs/pdr/`; search both with the `adr-pdr` skill). Look up facts in the repository; do not ask the user for them.
 
 ## Interview
 
@@ -27,6 +27,7 @@ Before you ask questions, read the project's glossary (for example `CONTEXT.md`)
 - Do not reopen a recorded decision without new evidence.
 - Agree one or a few observable `Test entry point:` locations. Prefer an existing entry point at the highest boundary that can see the changed behaviour. Use the `testing` skill for test-tier and resource rules.
 - Record assumptions and what is out of scope.
+- Write each decision that changes the design as an ADR, and each that amends a requirement as a PDR (`adr-pdr` skill), with the user's answer as its source.
 
 ## Deliver
 

@@ -24,7 +24,7 @@ Classify open work:
 
 Uncommitted or unpushed work, a draft PR, a red or unmergeable PR and an unverified deployment are unfinished.
 
-If the session found a durable, non-obvious lesson, use the `remember` skill. If it found a documented claim that the code contradicts, use the `forget` skill. Ask before `remember` only when the lesson is optional and the case is close.
+If the session decided how something is built, or amended a requirement, check that its ADR or PDR exists (`adr-pdr` skill) and is still `Proposed` until a human accepts it. If the session found a durable, non-obvious lesson, use the `remember` skill. If it found a documented claim that the code contradicts, use the `forget` skill. Ask before `remember` only when the lesson is optional and the case is close.
 
 Answer in one paragraph. Start with "Done" or with what remains. Name each unverified claim and the concrete action the user must take. If everything is closed, say so and stop.
 

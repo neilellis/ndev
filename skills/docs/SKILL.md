@@ -19,7 +19,8 @@ While a workflow runs, this skill is one step of the current stage. Commit each 
 | wiki `dev/` | Facts about this codebase: implementation, operations and behaviour. |
 | wiki `visual/` | The design system, copy and UX rules (optional section). |
 | wiki `future/` | Plans not yet built. A plan moves to `domain/` or `dev/` when it ships. |
-| ADRs | Significant decisions and the rejected alternatives that are not obvious. |
+| ADRs (`docs/adr/`) | Significant design decisions and the rejected alternatives that are not obvious. |
+| PDRs (`docs/pdr/`) | Amendments to scope or requirements: who decided, the source and the options. |
 | glossary (for example `CONTEXT.md`) | One definition for each domain term. |
 | `CLAUDE.md` / `AGENTS.md` | Short contributor rules and pointers into the wiki. |
 | human docs site | Curated explainers derived from verified wiki pages. |
@@ -33,7 +34,7 @@ The routing test: **would this fact still be true if the system were rewritten i
 - Each page has a breadcrumb to its parent and is reachable from the index file.
 - Link a domain concept to its implementation. Do not copy one into the other.
 - A domain page summarises and cites its raw sources.
-- Wiki prose describes the present. ADRs keep the reasons for decisions. Git keeps the change history.
+- Wiki prose describes the present. ADRs and PDRs keep the reasons for decisions (`adr-pdr` skill). Git keeps the change history.
 
 After a durable change, do an ingest:
 

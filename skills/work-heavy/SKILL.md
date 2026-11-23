@@ -9,6 +9,8 @@ Read [the ndev CLI skill](${CLAUDE_PLUGIN_ROOT}/skills/cli/SKILL.md) for native 
 
 Read the applicable parts of the project’s `NORTH_STAR.md`.
 
+Search the project's decision records (`docs/adr`, `docs/pdr`) before you plan: `adr-pdr` skill. A decision that the plan makes, or a requirement that it amends, gets a record in the same PR.
+
 Use this skill for one larger or riskier development task. For a focused fix or a small feature, use
 `work-light`, which is the default. Choose `work-heavy` when the change has several steps, crosses
 modules, touches schema, auth or migrations, or needs a plan, independent reviews and staged

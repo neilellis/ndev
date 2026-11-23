@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Implement a spec
 
-Treat the spec as a dependency graph of tickets. Read the spec, the tickets and the relevant repository guidance first. Point to those files; do not copy long explanations.
+Treat the spec as a dependency graph of tickets. Read the spec, the tickets, the relevant repository guidance and the decision records for the area (`adr-pdr` skill) first. Point to those files; do not copy long explanations.
 
 1. Find the frontier (tickets with no open blocker) and the dependencies. Explore code or external documentation only as needed. Save large findings outside the repository.
 2. Use one branch and one PR, which `mcp__ndev__started` opens. The PR closes the spec issue and all its tickets. A ticket never gets its own branch or PR.

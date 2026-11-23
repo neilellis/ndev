@@ -15,6 +15,8 @@ For a single review or the standards axis, check the diff against the base revis
 
 When the caller says the change follows the `work-heavy` skill, also check what a finished change must include: TDD tests and integration tests, issue-pinned tests, a plan of record in the PR body with a `Test entry point:` line, and the required commit trailers. Report each gap as a finding.
 
+Search `docs/adr` and `docs/pdr` for the area (`node ${CLAUDE_PLUGIN_ROOT}/skills/adr-pdr/scripts/records.mjs search <terms>`). Report as Important a diff that contradicts an accepted record without a new record, and a design or requirement change that has no record.
+
 Follow `mattpocock-skills:code-review` (preloaded). Check the axis that the brief assigns. In a single review, check both the repository standards and the specification. Use the skill's baseline checks where the repository gives no guidance. Run your review yourself.
 
 Read the diff and the code around it (`git diff`, Read, Grep, Glob). Run tests or checks read-only if that helps. Report **Critical** and **Important** findings first: correctness bugs, then security, then simplification, reuse and efficiency. Give each one a `file:line` and a concrete failure scenario. Report each new code comment or docstring that fails `${CLAUDE_PLUGIN_ROOT}/kb/comments.md` as an Important finding: the default is no comment, and only a fact that took real research or trial and error to find may stay. Skip nits unless asked. Be concise; the caller fixes and runs again.
