@@ -12,8 +12,10 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 |---|---|---|
 | `docs/formal/requirements/NNNN-<title>.md` | One requirement record | An agent proposes; a human accepts |
 | `docs/formal/requirements/extra/` | Material that is not a requirement: glossary, copies of sources, samples, open questions | Humans |
+| `docs/formal/requirements/extra/outline.md` | The title of the document and the order of its sections | Humans |
 | `docs/formal/requirements/extra/ledger.md` | The lines of the documents that hold no requirement, each with its reason and a hash of the lines | An agent proposes with `requirements.mjs ledger`; a human reviews |
 | `docs/formal/requirements/generated/` | Generated documents. Do not edit them. | The script |
+| `docs/formal/requirements/generated/narrative/` | The prose of each section, with a hash of the records it describes | An agent, through `requirements.mjs narrate` |
 
 ## Template
 
@@ -120,3 +122,21 @@ Each merged pull request traces to a record. The `requirements-retrospective` sk
 `requirements.mjs untraced --prs <file>` reads the output of `gh pr list --state merged --limit 1000 --json number,title,url,closingIssuesReferences`. A record names a pull request in a `- PR:` line of its Trace, or as a link in its Source text. The command lists each pull request that no record names, the oldest first. It also fails a record that names a pull request and does not link each issue that the pull request closes.
 
 `requirements.mjs link <REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]` adds the `- PR:` line and the `- Issue:` lines to the Trace. With `--prs`, it adds the issues that the pull request closes. The Trace is not protected, so an agent can link. `check` fails a `- PR:` line that is not a link to a pull request, and an `- Issue:` line that is not a link to an issue.
+
+## The document
+
+`render` writes one HTML document from three parts:
+
+- the records;
+- the outline, `docs/formal/requirements/extra/outline.md`, which a human writes: `# <title>`, then one `## <section>` line for each section, in order;
+- the narrative: for each section, prose that introduces it and links its records.
+
+With an outline, `render` fails a record in force whose section is not in the outline, an outline section with no record in force, and a line that is not a heading. With no outline, the sections come in the order of the records.
+
+The `requirements-document` skill writes the narrative. `requirements.mjs narrate "<section>"` prints the records of the section and the state of its narrative. `narrate "<section>" --from <file>` stores the prose in `generated/narrative/` with a hash of the identifier, status and Statement of each record in force in the section. It fails:
+
+- a sentence with a normative word (must, shall, should, never, only and the like) that cites no `REQ-NNNN`: the records state the requirements, and the narrative only points to them;
+- an identifier that is not a record in force in the section;
+- a heading.
+
+`requirements.mjs narrative` lists each section as `current`, `stale` or `missing`. It fails while a narrative is stale or missing, and when a narrative names a section that no record in force has. `render` marks a stale narrative in the document. Run `narrative` in the project's checks with `check` and `render --check`.

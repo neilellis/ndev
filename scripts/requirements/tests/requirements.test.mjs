@@ -864,10 +864,108 @@ describe("check of the Trace links", () => {
   });
 });
 
+const NARRATIVE = `${DIR}/generated/narrative/report.md`;
+const SOURCES_FILE = "0002-the-sources-list-names-each-file.md";
+const twoSections = () => seeded({ [FILE]: record("0001"), [SOURCES_FILE]: record("0002", { title: "The sources list names each file", section: "Sources", statement: "The sources list names each file." }) });
+const narrated = (prose = "This section is about the report. Each report must name its sources (REQ-0001).\n") => {
+  const root = seeded();
+  put(root, "prose.md", prose);
+  return { root, out: run(root, "narrate", "Report", "--from", "prose.md") };
+};
+
+describe("narrate", () => {
+  it("prints the records of a section and the state of its narrative", () => {
+    const out = run(seeded(), "narrate", "Report");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /^REQ-0001 Accepted: The report names each source\.$/m);
+    assert.match(out.stdout, /^Narrative: missing$/m);
+  });
+
+  it("stores the prose with a hash of the records in force in the section", () => {
+    const { root, out } = narrated();
+    assert.equal(out.status, 0, out.stderr);
+    const text = readFileSync(path.join(root, NARRATIVE), "utf8");
+    assert.match(text, /^- Section: Report\n- Records: [0-9a-f]{12}\n\nThis section is about the report\. Each report must name its sources \(REQ-0001\)\.\n$/);
+    assert.match(run(root, "narrate", "Report").stdout, /^Narrative: current$/m);
+  });
+
+  it("fails a normative sentence that cites no record, a record of another section, and a heading, and writes nothing", () => {
+    const root = twoSections();
+    put(root, "prose.md", "# Report\n\nThe report must name its sources. See REQ-0002 and REQ-0001.\n");
+    const out = run(root, "narrate", "Report", "--from", "prose.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /prose\.md: "The report must name its sources\." has the normative word "must" and cites no REQ-NNNN/);
+    assert.match(out.stderr, /prose\.md: REQ-0002 is not a record in force in the section "Report"/);
+    assert.match(out.stderr, /prose\.md: line 1 is a heading/);
+    assert.equal(existsSync(path.join(root, NARRATIVE)), false);
+  });
+
+  it("refuses a section with no record in force", () => {
+    const out = run(seeded(), "narrate", "Nowhere");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /No record in force has the section "Nowhere"\. The sections are: Report/);
+  });
+});
+
+describe("narrative", () => {
+  it("passes when each section has a current narrative", () => {
+    const { root } = narrated();
+    const out = run(root, "narrative");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "Report  current\n1 section: each narrative is current\n");
+  });
+
+  it("fails a missing narrative, a stale one, and one for a section that does not exist", () => {
+    const { root } = narrated();
+    put(root, `${DIR}/${SOURCES_FILE}`, record("0002", { section: "Sources", statement: "The sources list names each file." }));
+    put(root, `${DIR}/${FILE}`, record("0001", { statement: "The report names each source and its date." }));
+    put(root, `${DIR}/generated/narrative/gone.md`, "- Section: Gone\n- Records: 000000000000\n\nOld.\n");
+    const out = run(root, "narrative");
+    assert.equal(out.status, 1);
+    assert.match(out.stdout, /^Report  stale$/m);
+    assert.match(out.stdout, /^Sources  missing$/m);
+    assert.match(out.stderr, /Report: the records changed after the narrative was written\. Read them with: requirements\.mjs narrate "Report", then write it again with: requirements\.mjs narrate "Report" --from <file>/);
+    assert.match(out.stderr, /Sources: no narrative\. Write it with: requirements\.mjs narrate "Sources" --from <file>/);
+    assert.match(out.stderr, /docs\/formal\/requirements\/generated\/narrative\/gone\.md names the section "Gone", which no record in force has\. Delete the file/);
+  });
+});
+
+describe("render with the outline and the narrative", () => {
+  it("orders the sections as the outline does, and puts each narrative under its heading with links", () => {
+    const root = twoSections();
+    put(root, `${DIR}/extra/outline.md`, "# The FCC guide\n\n## Sources\n\n## Report\n");
+    put(root, "prose.md", "Each report must name its sources (REQ-0001).\n");
+    assert.equal(run(root, "narrate", "Report", "--from", "prose.md").status, 0);
+    const out = run(root, "render");
+    assert.equal(out.status, 0, out.stderr);
+    const html = readFileSync(path.join(root, HTML), "utf8");
+    assert.match(html, /<title>The FCC guide<\/title>/);
+    assert.ok(html.indexOf('id="section-sources"') < html.indexOf('id="section-report"'));
+    assert.match(html, /<h2>Report<\/h2>\n<div class="narrative">\n<p>Each report must name its sources \(<a href="#REQ-0001">REQ-0001<\/a>\)\.<\/p>\n<\/div>/);
+  });
+
+  it("marks a stale narrative", () => {
+    const { root } = narrated();
+    put(root, `${DIR}/${FILE}`, record("0001", { statement: "The report names each source and its date." }));
+    assert.equal(run(root, "render").status, 0);
+    assert.match(readFileSync(path.join(root, HTML), "utf8"), /<div class="narrative stale">\n<p class="warning">The records of this section changed after this text was written\.<\/p>/);
+  });
+
+  it("fails a section that is not in the outline, an outline section with no record, and a line that is not a heading", () => {
+    const root = twoSections();
+    put(root, `${DIR}/extra/outline.md`, "# Guide\n\nSome words.\n\n## Report\n\n## Empty\n");
+    const out = run(root, "render");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0002 has the section "Sources", which is not in docs\/formal\/requirements\/extra\/outline\.md/);
+    assert.match(out.stderr, /docs\/formal\/requirements\/extra\/outline\.md: the section "Empty" has no record in force/);
+    assert.match(out.stderr, /docs\/formal\/requirements\/extra\/outline\.md: line 3 is not a heading/);
+  });
+});
+
 describe("usage", () => {
   it("names the commands when the command is unknown", () => {
     const out = run(project(), "frobnicate");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link/);
+    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative/);
   });
 });
