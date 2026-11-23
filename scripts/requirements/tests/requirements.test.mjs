@@ -969,6 +969,16 @@ describe("uncovered", () => {
     assert.doesNotMatch(out.stdout, /README/);
   });
 
+  it("skips a tier 1 document that is tracked but deleted from the disk", () => {
+    const root = tracked({ "docs/requirements/spec.md": "The tool must stop.\n", "docs/requirements/gone.md": "The tool must go.\n" });
+    rmSync(path.join(root, "docs/requirements/gone.md"));
+    const out = run(root, "uncovered");
+    assert.equal(out.status, 1);
+    assert.match(out.stdout, /^docs\/requirements\/spec\.md:1 /m);
+    assert.doesNotMatch(out.stdout + out.stderr, /gone\.md/);
+    assert.doesNotMatch(run(root, "sources").stdout, /gone\.md/);
+  });
+
   it("fails a path that does not exist", () => {
     const out = run(seeded(), "uncovered", "docs/missing.md");
     assert.equal(out.status, 1);

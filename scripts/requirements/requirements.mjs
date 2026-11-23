@@ -1089,7 +1089,7 @@ function tier(rel) {
 
 function documents(root) {
   const generated = publishedFolder(root);
-  return git(root, ["ls-files", "-z", "--", "*.md", "*.mdx"]).split("\0").filter((rel) => rel && !rel.startsWith(`${DIR}/`) && !(generated && rel.startsWith(`${generated}/`))).map((rel) => ({ rel, tier: tier(rel) })).sort((a, b) => a.tier - b.tier || (a.rel < b.rel ? -1 : 1));
+  return git(root, ["ls-files", "-z", "--", "*.md", "*.mdx"]).split("\0").filter((rel) => rel && !rel.startsWith(`${DIR}/`) && !(generated && rel.startsWith(`${generated}/`)) && existsSync(path.join(root, rel))).map((rel) => ({ rel, tier: tier(rel) })).sort((a, b) => a.tier - b.tier || (a.rel < b.rel ? -1 : 1));
 }
 
 function sources(root, options) {
