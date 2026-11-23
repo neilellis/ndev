@@ -19,12 +19,16 @@ The helper is `${CLAUDE_PLUGIN_ROOT}/scripts/requirements/requirements.mjs`. Run
 | `requirements.mjs quote <path> <first line> <last line>` | Prints a citation and the lines as a quote, ready for the Source text. |
 | `requirements.mjs check` | Fails a record that breaks the format, and a record whose cited lines do not hold its quoted source text. |
 | `requirements.mjs render [--check]` | Writes `docs/formal/requirements/generated/requirements.html`. With `--check`, fails when that file is not current. |
+| `requirements.mjs guard --base <git ref>` | Fails a record whose Statement or Source text changed since the base with no human agreement, and a deleted record. Shows the old and the new text. |
+| `requirements.mjs agree <REQ-NNNN> --by "<name>"` | Records a human's agreement to the current Statement and Source text. **Only a human runs it.** It refuses to run without a terminal. |
 
 ## The protected parts
 
 **Never change the `## Statement` or the `## Source text` of a record that exists, unless a human agrees to that change.** The first creation of a record is the only exception.
 
 - When `check` says that the cited lines no longer hold the source text, do not copy the new lines into the record. Show the human the old text and the new text, and wait for the answer.
+- When the human agrees, change the text, then ask the human to run `requirements.mjs agree <REQ-NNNN> --by "<name>"`. Never run `agree` yourself, and never write the `Agreed` line.
+- When `guard` fails, show the human its old and new text. Do not restore or change the text without an answer.
 - When `check` says that the text is now at other lines, the text did not change. Correct the line numbers in the citation.
 - When a statement looks wrong, incomplete or in conflict with another record, say so with the evidence. A change to an accepted statement needs a PDR (the `adr-pdr` skill).
 - You can change the status links, `## Trace` and `## Notes`.

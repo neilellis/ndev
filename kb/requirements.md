@@ -26,6 +26,7 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 - Date: YYYY-MM-DD
 - Decided by: <name>
 - Verification: unassigned | test | check | model | eval | review
+- Agreed: <name>, YYYY-MM-DD, text <hash>    (only after a change that a human agreed to)
 
 ## Statement
 
@@ -55,11 +56,12 @@ The requirement. This is the binding text.
 | Status | `Proposed`: an agent wrote it and no human has accepted it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
 | Origin | `explicit`: a document states it. `implied`: a test, a schema constraint or a check enforces it, and no document states it. `PR`: no record covered a pull request, so the record was written from that pull request. |
 | Section | The section of the generated document that holds the record. |
+| Agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `requirements.mjs agree`, which runs only in a terminal. |
 | Verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. More than one is allowed, with commas. `unassigned` until a method is chosen. |
 
 ## Rules
 
-- **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. The status, the trace and the notes are not protected.
+- **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. When the human agrees, the agent changes the text and the human runs `requirements.mjs agree`. The status, the trace and the notes are not protected.
 - **A human accepts.** An agent writes `Proposed`. An accepted record names the human in `Decided by`. An agent never marks its own record `Accepted`.
 - **One requirement for each record.** If a statement has two requirements that can pass or fail apart, it is two records.
 - **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
@@ -81,4 +83,13 @@ The requirement. This is the binding text.
 
 When the quoted text only moved in its file, the check names the new lines, and the agent corrects the line numbers. When the text changed, the check sends the change to a human.
 
-`requirements.mjs render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check` and `render --check` in the project's checks.
+`requirements.mjs guard --base <git ref>` compares each record with the same number at the base. It fails:
+
+- a Statement or a Source text that changed, with no `Agreed` line, or with an `Agreed` line for other text;
+- a record that is at the base and is not in the working tree.
+
+A record that is new since the base passes: the first creation is the exception. A citation whose line numbers changed, with the same path and quote, passes: the text only moved. The check also fails an `Agreed` line that does not have the form above.
+
+The guard proves that the `Agreed` line matches the text. It does not prove that a human wrote the line. In review, check that the human named in the line made the commit that adds it.
+
+`requirements.mjs render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check`, `render --check` and `guard --base <the target branch>` in the project's checks.

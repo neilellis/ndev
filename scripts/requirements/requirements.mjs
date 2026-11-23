@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -17,7 +18,10 @@ const SECTIONS = ["Statement", "Source text", "Trace", "Notes"];
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree";
+const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
+const AGREED_FORM = `"- Agreed: <name>, YYYY-MM-DD, text <hash>"`;
+const PROTECTED = ["Statement", "Source text"];
 const SCRIPT = "requirements.mjs";
 
 class Usage extends Error {}
@@ -61,7 +65,10 @@ function sectionBody(text, name) {
 }
 
 function read(entry) {
-  const text = readFileSync(entry.full, "utf8");
+  return parse(entry, readFileSync(entry.full, "utf8"));
+}
+
+function parse(entry, text) {
   const field = (name) => text.match(new RegExp(`^- ${name}:[ \\t]*(.*)$`, "m"))?.[1].trim();
   const title = text.match(/^# (.+)$/m)?.[1].trim();
   const sections = Object.fromEntries(SECTIONS.map((name) => [name, sectionBody(text, name)]));
@@ -159,6 +166,8 @@ function inspect(root) {
     const verification = record.field("Verification");
     if (!verification) fail(`no "- Verification:" value. Use unassigned, or one or more of ${METHODS.join(", ")}.`);
     else if (verification !== "unassigned") for (const method of verification.split(",").map((m) => m.trim())) if (!METHODS.includes(method)) fail(`verification "${method}" is not unassigned, ${METHODS.slice(0, -1).join(", ")} or ${METHODS.at(-1)}.`);
+    const agreed = record.field("Agreed");
+    if (agreed !== undefined && !AGREED.test(agreed)) fail(`"- Agreed: ${agreed}" does not have the form ${AGREED_FORM}. Only a human writes it, with: ${SCRIPT} agree ${entry.id} --by "<name>"`);
     const proposed = record.status === "Proposed";
     for (const name of ["Section", "Decided by"]) {
       const value = record.field(name);
@@ -373,6 +382,67 @@ function render(root, options) {
   return `${full}\n`;
 }
 
+const unnumbered = (body) => (body ?? "").split("\n").map((line) => (line.startsWith("- ") && !/^- https:\/\//.test(line) && CITATION.test(line.slice(2).trim()) ? `- ${line.slice(2).trim().replace(CITATION, "$1")}` : line)).join("\n");
+const protectedParts = (record) => ({ Statement: record.sections.Statement ?? "", "Source text": unnumbered(record.sections["Source text"]) });
+const textHash = (record) => createHash("sha256").update(PROTECTED.map((name) => `## ${name}\n${protectedParts(record)[name]}`).join("\n")).digest("hex").slice(0, 12);
+const indented = (text) => (text || "(empty)").split("\n").map((line) => `    ${line}`).join("\n");
+
+function git(root, args) {
+  const out = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (out.status !== 0) throw new Failure(`git ${args.join(" ")} exited ${out.status}: ${out.stderr.trim()}`);
+  return out.stdout;
+}
+
+function guard(root, options) {
+  const base = options.base;
+  if (!base) throw new Usage("guard needs --base <git ref>, for example: guard --base origin/main");
+  git(root, ["rev-parse", "--verify", `${base}^{commit}`]);
+  const named = entries(root).filter((e) => NAME.test(e.file));
+  const problems = [];
+  for (const id of new Set(named.map((e) => e.id))) {
+    const files = named.filter((e) => e.id === id).map((e) => e.rel);
+    if (files.length > 1) problems.push(`duplicate number ${id.slice(4)}: ${files.join(", ")}. Numbers are never reused: renumber the newer file.`);
+  }
+  const current = new Map(named.map((e) => [e.id, read(e)]));
+  for (const rel of git(root, ["ls-tree", "--name-only", base, "--", `${DIR}/`]).split("\n").filter(Boolean)) {
+    const file = path.posix.basename(rel);
+    if (!NAME.test(file)) continue;
+    const old = parse({ file, rel, id: `REQ-${file.slice(0, 4)}` }, git(root, ["show", `${base}:./${rel}`]));
+    const now = current.get(old.id);
+    if (!now) {
+      problems.push(`${old.id} (${rel} at ${base}) is deleted. A record is never deleted: restore it, and give it the status Retired or Rejected.`);
+      continue;
+    }
+    const before = protectedParts(old);
+    const after = protectedParts(now);
+    const changed = PROTECTED.filter((name) => before[name] !== after[name]);
+    if (!changed.length) continue;
+    const agreed = now.field("Agreed")?.match(AGREED);
+    if (agreed && agreed[3] === textHash(now)) continue;
+    const parts = changed.map((name) => `the ${name}`).join(" and ");
+    const why = agreed ? "the Agreed line is for other text: the text changed after the human agreed" : "no human agreed to the change";
+    const diff = changed.map((name) => `  ${name}, old:\n${indented(old.sections[name])}\n  ${name}, new:\n${indented(now.sections[name])}`).join("\n");
+    problems.push(`${now.rel}: ${parts} changed since ${base}, and ${why}.\n${diff}\n  Show the human the old and the new text. When they agree, they run: ${SCRIPT} agree ${now.id} --by "<name>". Otherwise, restore the old text.`);
+  }
+  if (problems.length) throw new Failure(problems.join("\n"));
+  return `${current.size} record${current.size === 1 ? "" : "s"} guarded against ${base}: no protected text changed without agreement\n`;
+}
+
+function agree(root, id, options) {
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !options.by?.trim()) throw new Usage(`agree needs <REQ-NNNN> --by "<name>", for example: agree REQ-0001 --by "Ann Smith"`);
+  if (!process.stdin.isTTY) throw new Failure(`agree records the agreement of a human to a changed Statement or Source text, so only a human runs it, in a terminal. Show the human the old and the new text, and ask them to run: ${SCRIPT} agree ${id} --by "<name>"`);
+  const entry = entries(root).find((e) => e.id === id && NAME.test(e.file));
+  if (!entry) throw new Failure(`${id} is not a record in ${DIR}.`);
+  const record = read(entry);
+  const line = `- Agreed: ${options.by.trim()}, ${new Date().toISOString().slice(0, 10)}, text ${textHash(record)}`;
+  let text;
+  if (/^- Agreed:.*$/m.test(record.text)) text = record.text.replace(/^- Agreed:.*$/m, () => line);
+  else if (/^- Verification:.*$/m.test(record.text)) text = record.text.replace(/^- Verification:.*$/m, (found) => `${found}\n${line}`);
+  else throw new Failure(`${entry.rel} has no "- Verification:" line, so the Agreed line has no place. Run: ${SCRIPT} check`);
+  writeFileSync(entry.full, text);
+  return `${entry.rel}: ${line.slice(2)}\n`;
+}
+
 try {
   const { positional, options } = parseArguments(process.argv.slice(2));
   const [command, ...rest] = positional;
@@ -384,6 +454,8 @@ try {
     quote: () => quote(root(), rest[0], rest[1], rest[2]),
     check: () => check(root()),
     render: () => render(root(), options),
+    guard: () => guard(root(), options),
+    agree: () => agree(root(), rest[0], options),
   };
   if (!commands[command]) throw new Usage(`Unknown command "${command ?? ""}": use ${COMMANDS}`);
   process.stdout.write(commands[command]());

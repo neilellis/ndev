@@ -379,10 +379,202 @@ describe("render", () => {
   });
 });
 
+const git = (root, ...args) => {
+  const out = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  assert.equal(out.status, 0, `git ${args.join(" ")}: ${out.stderr}`);
+  return out.stdout;
+};
+const committed = (records) => {
+  const root = seeded(records);
+  git(root, "init", "-q");
+  git(root, "add", "-A");
+  git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "base");
+  git(root, "tag", "base");
+  return root;
+};
+const inTerminal = (root, ...args) => {
+  const out = spawnSync("python3", ["-c", "import pty, sys; sys.exit(pty.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])) if hasattr(pty, 'waitstatus_to_exitcode') else __import__('os').waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))", process.execPath, CLI, "--root", root, ...args], { encoding: "utf8", input: "" });
+  return { status: out.status, stdout: out.stdout, stderr: out.stderr };
+};
+const FILE = "0001-the-report-names-each-source.md";
+const edit = (root, change) => {
+  const full = path.join(root, DIR, FILE);
+  writeFileSync(full, change(readFileSync(full, "utf8")));
+};
+
+describe("guard", () => {
+  it("passes a record that is new since the base", () => {
+    const root = committed();
+    put(root, `${DIR}/0002-a-new-record.md`, record("0002", { statement: "A new statement." }));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /2 records guarded against base: no protected text changed without agreement/);
+  });
+
+  it("passes changes to the status, the trace and the notes", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("- Status: Accepted", "- Status: Retired").replace("## Trace\n", "## Trace\n\n- scripts/report.mjs\n").replace("## Notes\n", "## Notes\n\nA note.\n"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("passes a citation whose line numbers changed while its path and quote did not", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("docs/guide.md#L3-L4", "docs/guide.md#L5-L6"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("matches a record by its number when its file name changed", () => {
+    const root = committed();
+    git(root, "mv", `${DIR}/${FILE}`, `${DIR}/0001-the-report-names-every-source.md`);
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("fails a changed Statement with no agreement, and shows the old and the new text", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("The report names each source.\n\n## Source", "The report names every source.\n\n## Source"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, new RegExp(`${DIR}/${FILE}: the Statement changed since base, and no human agreed`));
+    assert.match(out.stderr, /old:\n {4}The report names each source\./);
+    assert.match(out.stderr, /new:\n {4}The report names every source\./);
+    assert.match(out.stderr, /requirements\.mjs agree REQ-0001 --by "<name>"/);
+  });
+
+  it("fails a changed quote in the Source text with no agreement", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("> The report refuses an unread source.", "> The report refuses a source."));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the Source text changed since base, and no human agreed/);
+  });
+
+  it("fails a changed citation path with no agreement", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("docs/guide.md#L3-L4", "docs/other.md#L3-L4"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the Source text changed/);
+  });
+
+  it("fails a record that was deleted", () => {
+    const root = committed();
+    git(root, "rm", "-q", `${DIR}/${FILE}`);
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0001 \(docs\/formal\/requirements\/0001-the-report-names-each-source\.md at base\) is deleted\. A record is never deleted/);
+  });
+
+  it("passes a change that a human agreed to, and fails it again when the text changes after the agreement", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("The report names each source.\n\n## Source", "The report names every source.\n\n## Source"));
+    const agreed = inTerminal(root, "agree", "REQ-0001", "--by", "Neil Ellis");
+    assert.equal(agreed.status, 0, agreed.stdout);
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.match(text, /^- Agreed: Neil Ellis, \d{4}-\d{2}-\d{2}, text [0-9a-f]{12}$/m);
+    assert.equal(run(root, "check").status, 0);
+    assert.equal(run(root, "guard", "--base", "base").status, 0);
+    edit(root, (t) => t.replace("The report names every source.", "The report names all sources."));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the Agreed line is for other text/);
+  });
+
+  it("keeps an agreement valid when only the line numbers move afterwards", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("The report names each source.\n\n## Source", "The report names every source.\n\n## Source"));
+    assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Neil Ellis").status, 0);
+    edit(root, (text) => text.replace("docs/guide.md#L3-L4", "docs/guide.md#L5-L6"));
+    assert.equal(run(root, "guard", "--base", "base").status, 0);
+  });
+
+  it("fails a duplicate number instead of comparing only one of the files", () => {
+    const root = committed();
+    edit(root, (text) => text.replace("The report names each source.\n\n## Source", "The report names every source.\n\n## Source"));
+    put(root, `${DIR}/0001-zz-copy.md`, record("0001"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /duplicate number 0001/);
+  });
+
+  it("fails a changed line anchor in a link, which is not a moved citation", () => {
+    const root = committed({ [FILE]: record("0001", { sourceText: "- https://example.com/doc#L1-L5\n\n> The report names each source." }) });
+    edit(root, (text) => text.replace("doc#L1-L5", "doc#L9-L12"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the Source text changed/);
+  });
+
+  it("reads the base when the project is a folder inside the repository", () => {
+    const outer = project();
+    const root = path.join(outer, "app");
+    put(root, "docs/guide.md", GUIDE);
+    put(root, `${DIR}/${FILE}`, record("0001"));
+    git(outer, "init", "-q");
+    git(outer, "add", "-A");
+    git(outer, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "base");
+    const out = run(root, "guard", "--base", "HEAD");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("needs a base, and names a base that git cannot read", () => {
+    const root = committed();
+    const missing = run(root, "guard");
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /guard needs --base <git ref>/);
+    const bad = run(root, "guard", "--base", "no-such-ref");
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /no-such-ref.*exited 128: fatal: /s);
+  });
+});
+
+describe("agree", () => {
+  it("refuses to run when standard input is not a terminal", () => {
+    const root = committed();
+    const out = run(root, "agree", "REQ-0001", "--by", "Neil Ellis");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /agree records the agreement of a human/);
+    assert.doesNotMatch(readFileSync(path.join(root, DIR, FILE), "utf8"), /Agreed/);
+  });
+
+  it("needs a known record and a name", () => {
+    const root = committed();
+    assert.match(inTerminal(root, "agree", "REQ-0009", "--by", "Neil Ellis").stdout, /REQ-0009 is not a record/);
+    assert.match(inTerminal(root, "agree", "REQ-0001").stdout, /agree needs <REQ-NNNN> --by "<name>"/);
+  });
+
+  it("replaces an earlier Agreed line", () => {
+    const root = committed();
+    assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Ann").status, 0);
+    assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Bob").status, 0);
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.equal(text.match(/^- Agreed:/gm).length, 1);
+    assert.match(text, /^- Agreed: Bob, /m);
+  });
+
+  it("writes a name that holds replacement patterns as it is", () => {
+    const root = committed();
+    assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "Ann").status, 0);
+    assert.equal(inTerminal(root, "agree", "REQ-0001", "--by", "A$'B$&").status, 0);
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), /^- Agreed: A\$'B\$&, \d{4}/m);
+  });
+});
+
+describe("check of the Agreed line", () => {
+  it("fails an Agreed line that does not have the form", () => {
+    const root = seeded({ [FILE]: record("0001").replace("- Verification: unassigned", "- Verification: unassigned\n- Agreed: yes") });
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /"- Agreed: yes" does not have the form "- Agreed: <name>, YYYY-MM-DD, text <hash>"/);
+  });
+});
+
 describe("usage", () => {
   it("names the commands when the command is unknown", () => {
     const out = run(project(), "frobnicate");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /new, list, search, quote, check, render/);
+    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree/);
   });
 });
