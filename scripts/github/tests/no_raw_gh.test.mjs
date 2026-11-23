@@ -32,13 +32,23 @@ const EXCEPTIONS = [
   { file: "skills/video-finish/scripts/finish.mjs", pattern: /"gh", \["run", "view"|gh run view/, reason: "gh run view --log-failed has no REST equivalent" },
   { file: "hooks/fix-all-prs.tsx", pattern: /\['gh', 'pr', 'view', String\(r\.number\), '--web'\]/, reason: "gh pr view --web opens the browser; gh.sh has no route for it. The hooks are another owner's files, left as they are" },
   { file: "hooks/triage.tsx", pattern: /\['gh', 'pr', 'view', String\(g\.pr\), '--repo', v\.repo!, '--web'\]/, reason: "gh pr view --web opens the browser; gh.sh has no route for it. The hooks are another owner's files, left as they are" },
-  { file: "scripts/ndev/epic.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
-  { file: "scripts/ndev/fix-prs.mjs", pattern: /(?:json|checked)\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
-  { file: "scripts/ndev/project.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
-  { file: "scripts/ndev/triage.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
-  { file: "scripts/ndev/waits.mjs", pattern: /remoteJson\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
-  { file: "scripts/ndev/watch.mjs", pattern: /checked\('gh'/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
-  { file: "skills/multi-epic-triage/scripts/apply_triage.py", pattern: /subprocess\.run\(\["gh", \*args\]/, reason: "the ndev CLI module calls gh directly through its own checked helper and reports the failure with a repair; moving it to gh.sh is tracked in issue #192" },
+  { file: "scripts/ndev/epic.mjs", pattern: /checked\('gh', args, \{ cwd: root, repair: 'Check gh auth status/, reason: "reads a REST endpoint with gh api, paged on request, through the checked helper of the epic module (issue #195)" },
+  { file: "scripts/ndev/epic.mjs", pattern: /checked\('gh', \['issue','list'/, reason: "searches issues for the request marker so that a retry finds the epic that it filed; not yet on gh.sh issue-search (issue #195)" },
+  { file: "scripts/ndev/epic.mjs", pattern: /checked\('gh', \['issue','create'/, reason: "files the epic issue with the body on stdin; not yet on gh.sh issue-new (issue #195)" },
+  { file: "scripts/ndev/epic.mjs", pattern: /checked\('gh', \['pr', 'view', String\(pr\)/, reason: "reads closingIssuesReferences of a PR; not yet on gh.sh view-json (issue #195)" },
+  { file: "scripts/ndev/epic.mjs", pattern: /checked\('gh', \['pr','view',String\(sub\.pr\)/, reason: "reads the head and the check rollup of a sub-issue PR; not yet on gh.sh view-json (issue #195)" },
+  { file: "scripts/ndev/fix-prs.mjs", pattern: /json\('gh', \['repo', 'view', '--json', 'nameWithOwner'\]/, reason: "reads the name of the current repository; not yet on gh.sh repo (issue #195)" },
+  { file: "scripts/ndev/fix-prs.mjs", pattern: /json\('gh', \['api', 'user'\]/, reason: "reads the signed-in login; not yet on gh.sh me (issue #195)" },
+  { file: "scripts/ndev/fix-prs.mjs", pattern: /json\('gh', \['pr', 'list'/, reason: "lists the open PRs of the author for the queue; not yet on gh.sh pr-list (issue #195)" },
+  { file: "scripts/ndev/fix-prs.mjs", pattern: /json\('gh', \['pr', 'view', String\(number\)/, reason: "reads the merge state and the check rollup of one PR; not yet on gh.sh view-json (issue #195)" },
+  { file: "scripts/ndev/fix-prs.mjs", pattern: /json\('gh', \['repo', 'view', repo, '--json', 'squashMergeAllowed/, reason: "reads which merge methods the repository allows; not yet on gh.sh repo-read (issue #195)" },
+  { file: "scripts/ndev/fix-prs.mjs", pattern: /checked\('gh', args, \{ cwd: root, repair: `Check PR #/, reason: "merges a PR with --match-head-commit, a flag that gh.sh pr-merge does not pass (issue #195)" },
+  { file: "scripts/ndev/project.mjs", pattern: /checked\('gh', \['issue', 'create'/, reason: "files the ndev bug report issue; not yet on gh.sh issue-new (issue #195)" },
+  { file: "scripts/ndev/triage.mjs", pattern: /checked\('gh', \['issue', 'close'/, reason: "closes an issue with a reason and a comment; gh.sh has no issue-close command (issue #195)" },
+  { file: "scripts/ndev/waits.mjs", pattern: /remoteJson\('gh', \['pr', 'view'/, reason: "reads the state of a PR for a wait, through the remote-capable helper of the waits module; not yet on gh.sh pr-read (issue #195)" },
+  { file: "scripts/ndev/waits.mjs", pattern: /remoteJson\('gh', \['issue', 'view'/, reason: "reads the state of an issue for a wait, through the remote-capable helper of the waits module; not yet on gh.sh issue-read (issue #195)" },
+  { file: "scripts/ndev/watch.mjs", pattern: /checked\('gh', args, \{ cwd: root, repair: 'Run gh auth status and retry ndev watch/, reason: "reads PR fields for the watcher with the fields that the caller names; not yet on gh.sh view-json (issue #195)" },
+  { file: "skills/multi-epic-triage/scripts/apply_triage.py", pattern: /subprocess\.run\(\["gh", \*args\]/, reason: "runs the gh command of each triage verdict with subprocess.run, a Python script with no gh.sh call (issue #195)" },
   { file: "scripts/github/dump.py", pattern: /"gh", "auth", "token"/, reason: "gh auth * is a listed exception; it reads the token to fetch images" },
 ];
 
@@ -127,5 +137,28 @@ test("a raw gh call in a temp file is a finding, a gh.sh call is not", () => {
     assert.deepEqual(findRaw("clean.sh", clean), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a new raw gh call in a listed file is a finding, and a listed call is not", () => {
+  const listed = EXCEPTIONS.filter((e) => e.file.startsWith("scripts/ndev/") || e.file.endsWith("apply_triage.py"));
+  assert.ok(listed.length >= 7);
+  const fresh = {
+    "scripts/ndev/epic.mjs": "const x = checked('gh', ['pr','merge','5'], { cwd: root })",
+    "scripts/ndev/fix-prs.mjs": "const x = json('gh', ['pr', 'merge', '5'], root)",
+    "scripts/ndev/project.mjs": "const x = checked('gh', ['pr', 'merge', '5'], { cwd: root })",
+    "scripts/ndev/triage.mjs": "checked('gh', ['pr', 'merge', '5'], { cwd: root })",
+    "scripts/ndev/waits.mjs": "const x = await remoteJson('gh', ['pr', 'merge', '5'], settings)",
+    "scripts/ndev/watch.mjs": "const x = checked('gh', ['pr', 'merge', '5'], { cwd: root })",
+    "skills/multi-epic-triage/scripts/apply_triage.py": 'r = subprocess.run(["gh", "pr", "merge", "5"], capture_output=True)',
+  };
+  for (const [file, text] of Object.entries(fresh)) {
+    const hit = findRaw(file, text);
+    assert.equal(hit.length, 1, `${file} sample should be a raw call`);
+    assert.equal(excepted(hit[0]), false, `${file}: a new raw gh call must not match an exception`);
+  }
+  const { hits } = scan();
+  for (const e of listed) {
+    assert.equal(hits.filter((h) => h.file === e.file && e.pattern.test(h.text)).length, 1, `exception for ${e.file} must match exactly one existing call: ${e.pattern}`);
   }
 });
