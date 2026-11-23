@@ -24,6 +24,12 @@ implementation and the test still passes. Three ways this goes wrong:
 - **Written in bulk before the code.** All tests first, then all code, tests behaviour that you only
   imagined. Write one test, then its code, then the next.
 
+**Keep the model and the records in step with the code.** When a task changes behaviour that the
+plan's `Model:` line names, change the model in the same task. Prove each new invariant with a mutant
+and each witness with `quint run --invariant "not(<witness>)"`, and record both in the PR body
+(`${CLAUDE_PLUGIN_ROOT}/kb/requirements.md`, "Prove the model"). Cite `REQ-NNNN` and the model path in
+the source, and add the `- File:` lines to the Trace.
+
 **Mock only at the edges of the system**: a third-party API, the clock, the network. A mock of
 something inside the module under test is the first anti-pattern in a different form.
 

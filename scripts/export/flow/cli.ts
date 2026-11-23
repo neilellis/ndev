@@ -368,7 +368,7 @@ function sweepDeadCode(wf: Workflow): Sweep[] {
 const AXES: Record<string, string> = {
   review: 'Review the change for correctness, security and simplification.',
   standards: 'Axis: standards. Check that the change follows the documented standards of this repository (AGENTS.md, CLAUDE.md, CONTRIBUTING and the like).',
-  specification: 'Axis: specification. Check that the change does what the issue asks, all of it and nothing else.',
+  specification: 'Axis: specification. Check that the change does what the issue asks, all of it and nothing else. When the plan has a "Requirements:" line, read each record that it names in docs/formal/requirements and check that the diff meets its Statement. When the plan has a "Model:" line, check that the PR body proves each new invariant with a mutant and each witness with a run that reaches it.',
 }
 function reviewerFile(): string | undefined {
   const dir = PROFILE.agentsDir
@@ -1019,11 +1019,46 @@ function finishedInterview(wf: Workflow, config: Config) {
   return report(wf, config, notes)
 }
 
+const RECORDS_DIR = 'docs/formal/requirements'
+
+function planLine(text: string, name: string): string | undefined {
+  return new RegExp(`^[\\s>*+-]*(?:\\*\\*|__)?${name}(?:\\*\\*|__)?:(?:\\*\\*|__)?[ \\t]*(.*)$`, 'im').exec(text)?.[1].trim()
+}
+
+function planRecordProblems(root: string, text: string): string[] {
+  const records = join(root, RECORDS_DIR)
+  if (!existsSync(records)) return []
+  const problems: string[] = []
+  const requirements = planLine(text, 'Requirements')
+  if (requirements === undefined) problems.push('it has no "Requirements:" line')
+  else if (!requirements) problems.push('its "Requirements:" line is empty; write the value on the same line')
+  else {
+    const files = readdirSync(records)
+    for (const id of new Set(requirements.match(/\bREQ-\d{4}\b/g) ?? [])) {
+      if (!files.some(f => f.startsWith(`${id.slice(4)}-`) && f.endsWith('.md'))) problems.push(`${id} has no record in ${RECORDS_DIR}`)
+    }
+  }
+  const model = planLine(text, 'Model')
+  if (model === undefined) problems.push('it has no "Model:" line')
+  else {
+    const none = /^none\b/i.test(model)
+    const paths = none ? [] : model.match(/[^\s,;`()[\]"'|<>]+\.qnt\b/g) ?? []
+    if (none ? !/^none\b\W*\w/i.test(model) : !paths.length) problems.push(`"Model: ${model || 'none'}" needs a reason: write "Model: none, <reason>", or name the .qnt files`)
+    for (const path of paths) {
+      if (path.startsWith('/') || path.split('/').includes('..')) problems.push(`the model ${path} is outside the worktree: name it relative to ${root}`)
+      else if (!existsSync(join(root, path))) problems.push(`the model ${path} does not exist in ${root}`)
+    }
+  }
+  return problems
+}
+
 function finishedPlan(wf: Workflow, config: Config, args: Args) {
   const file = need(args, 'file')
   const to = moveFor(wf, config, 'finishedPlan')
   const text = standalone ? readFileSync(file, 'utf8') : publicCli!.inputFile(file)
   if (!/Test entry point:/i.test(text)) throw new Fail(2, `ndev-flow: the plan ${file} has no "Test entry point:" line. Repair: add one, then run the command again.`)
+  const recordProblems = planRecordProblems(wf.root, text)
+  if (recordProblems.length) throw new Fail(2, `ndev-flow: the plan ${file} does not name its requirement records and model:\n${recordProblems.map(p => `- ${p}`).join('\n')}\nRepair: add "Requirements: REQ-NNNN, ..." (or "none, <reason>") and "Model: <path.qnt[#name]>, ..." (or "none, <reason>"), as kb/requirements.md "In the workflow" says. Then run the command again.`)
   const body = `${text.trimEnd()}\n\nCloses #${wf.issue}\n`
   if (wf.prTitle && !wf.prs.length) wf.prBody = body
   else gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', body)])

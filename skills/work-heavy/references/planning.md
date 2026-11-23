@@ -1,6 +1,6 @@
-# Planning (F2, F2a)
+# Planning (F2, F2a, F2d)
 
-Part of the `work-heavy` skill. This file covers the plan in the PR body and the test entry point.
+Part of the `work-heavy` skill. This file covers the plan in the PR body, the test entry point, and the requirement records and model.
 
 ## F2 — Plan
 
@@ -22,6 +22,7 @@ the next pass resumes from it. For a batched PR, write one section per member is
 
 - a short statement of what is wrong, what this changes and what you need from the reader;
 - a **`Seam:`** line and a **`Test entry point:`** line ([F2a](#f2a--agree-the-test-entry-point));
+- in a project with `docs/formal/requirements/`, a **`Requirements:`** line and a **`Model:`** line ([F2d](#f2d--name-the-records-and-the-model));
 - the tasks, and an **Assumptions** heading for each decision you made without the user;
 - one `Closes #<k>` line per issue the PR closes.
 
@@ -78,3 +79,12 @@ Test entry point: run `<tool> export --format csv` on a fixture file — assert 
 **Attended?** Give the entry point to the user in that plain form before you write the test, and
 get agreement. **Unattended?** Choose it with the rules above and write it down. An entry point that
 nobody wrote down is one that nobody can disagree with.
+
+### F2d — Name the records and the model
+
+Search the requirement records with the words of the issue (`requirements` skill). List the records
+that the change touches in a `Requirements:` line, and add each new record that you propose. When the
+change touches state, order, concurrency or a protocol, write or change the Quint model before the
+code. Run `quint typecheck`, and name the model in a `Model:` line. Else write `Model: none, <reason>`.
+`${CLAUDE_PLUGIN_ROOT}/kb/requirements.md`, section "In the workflow", has the rule and the form.
+`finishedPlan` refuses a plan without these lines, or with a record or a model that does not exist.

@@ -192,6 +192,24 @@ test('heavy runs pre-push-check.sh in finishedPlan, before the sign-off reaches 
   expect(w.alerts.length).toBeGreaterThan(0)
 })
 
+test('in a project with requirement records, finishedPlan refuses a plan that does not name its records and model', async ($, on) => {
+  const plan = `${ROOT}/plan.md`
+  const files = { [plan]: 'Test entry point: the CLI\nRequirements: REQ-0008\n', [`${ROOT}/docs/formal/requirements/0007-one-version.md`]: '---\nid: REQ-0007\n---\n', [`${ROOT}/docs/formal/models/migrations.qnt`]: 'module migrations {}\n' }
+  const w = engine(on, { wf: { state: 'planning', mode: 'heavy', baseCheck: undefined }, files })
+  await start($, w)
+  const refused = await tool($, 'finishedPlan', { issue: 7, markdown_file: plan })
+  expect(refused.isError).toBe(true)
+  expect(refused.text).toContain('REQ-0008 has no record in docs/formal/requirements')
+  expect(refused.text).toContain('no "Model:" line')
+  expect(w.state()?.state).toBe('planning')
+  w.files.set(plan, 'Test entry point: the CLI\n**Requirements:** REQ-0007\n**Model:** ../outside.qnt\n')
+  expect((await tool($, 'finishedPlan', { issue: 7, markdown_file: plan })).text).toContain('the model ../outside.qnt is outside the worktree')
+  w.files.set(plan, 'Test entry point: the CLI\n**Requirements:** REQ-0007\n**Model:** the lock (docs/formal/models/migrations.qnt).\n')
+  const r = await tool($, 'finishedPlan', { issue: 7, markdown_file: plan })
+  expect(r.isError).toBe(false)
+  expect(w.state()?.state).toBe('developing')
+})
+
 test('heavy needs no finishedInterview after finishedPlan', async ($, on) => {
   const plan = `${ROOT}/plan.md`
   const w = engine(on, { wf: { state: 'planning', mode: 'heavy', baseCheck: undefined }, files: { [plan]: 'Test entry point: the CLI\n' } })

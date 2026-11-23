@@ -60,6 +60,8 @@ While a workflow runs, it watches the PR for you. Otherwise run the wait helper 
 
 Search the decision records for the area before you design or change behaviour: `adr-pdr` skill, `records.mjs search <terms>`. An accepted ADR or PDR is settled; do not reopen it without new evidence.
 
+When the project has `docs/formal/requirements/`, also find the requirement records that the change touches: `ndev requirements search <terms>` (the `requirements` skill). The change must meet each `Accepted` record. Read the Quint models in their `model` lists. `${CLAUDE_PLUGIN_ROOT}/kb/requirements.md`, section "In the workflow", says what to do with them at each stage, and when a model is necessary.
+
 Keep a short path list in the task note and reuse it. If a known path is absent, make one scoped search and correct the stale map. Absence is not proof that the feature is gone.
 
 For an external API, find the installed version and the local call site before you search the web. Fetch the relevant section of the official documentation. Do not repeat a broad search.
@@ -100,6 +102,8 @@ If baseline health matters, check it once on the base commit. An unrelated basel
 - Use independent expected values. Mock only external boundaries. Keep the regression test as the permanent guard.
 - Add integration or browser coverage only when it detects a different failure.
 - For an architectural guard, prove that a bad example fails and a valid example passes.
+- When the change alters behaviour that a record's model specifies, change the model first, then prove it with a mutant and a witness (kb/requirements.md, "Prove the model").
+- Keep the Trace current: add `- File:` lines with `ndev requirements file`, cite `REQ-NNNN` in the source, and propose a record for new behaviour. Never change a Statement or a Source text without the human's agreement.
 - Documentation-only changes need validation of the artefact, not artificial failing tests.
 - Never hide a failure, weaken a rule, or add a recovery path that nobody approved.
 - Every error message prints the failed identifier and useful diagnostics. When the repair is known, the message names it.
@@ -126,7 +130,7 @@ Choose the checks from the affected behaviour. Use the commands named in the pro
 
 Run each required check once against the finished change. After a fix or base update, rerun only what it can affect. Report **passed**, **failed**, **skipped (with reason)** and **not run** as separate states, in a comment on the PR. With no PR, put them in the commit message.
 
-One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Update documentation when a durable fact changes. When the change decides how the system is built, or amends a requirement, record it with the `adr-pdr` skill in the same PR. Follow the `remember` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
+One PR per coherent unit of work, in draft while work remains. Move the task note into the PR body (while a workflow runs, with `body_file`): problem, resulting behaviour, test evidence, limits, `Test entry point:`, closing issue references and the required commit trailers. Link the PR and its issues in the Trace of each touched record with `ndev requirements link`. Then run `ndev requirements check` and `guard`. Update documentation when a durable fact changes. When the change decides how the system is built, or amends a requirement, record it with the `adr-pdr` skill in the same PR. Follow the `remember` skill before the PR leaves draft. While a workflow runs, its result goes to `mcp__ndev__finishedReview` as `remembered`.
 
 While a workflow runs, push with `mcp__ndev__checkpoint`. Otherwise push with the repo's checked-push command named in its CLAUDE.md, else `git push`. Hooks run. Never use `--no-verify` and never change the hooks path to skip them. Resolve base conflicts and commit before you continue.
 

@@ -84,6 +84,8 @@ The first line of the answer is JSON. Each entry of `answers` has `id` and `sele
 
 The answers go to the file, to one comment on the issue and to one comment on the PR. If GitHub fails, the tool gives you the failed command and its output. Repair the cause and call `interview()`. It refuses until both comments are posted.
 
+When the project has requirement records, search them before the first round (`requirements` skill). Ask about each conflict between the issue and a record, and show the Statement of each new record that you propose. Never change the Statement of a record that exists without the human's agreement.
+
 A decision that changes the design or amends a requirement needs a record. The issue comment that holds the answer is its source. Write it with the `adr-pdr` skill, with the human as the one who decided.
 
 ## In Orca Chat

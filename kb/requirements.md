@@ -194,6 +194,97 @@ Write the model with the `quint-modeling` skill (https://github.com/quint-co/qui
 
 `check` does not run Quint. Run `quint typecheck` and `quint test` on the models in the project's own checks.
 
+### Install the Quint skills
+
+The `quint-modeling` and `quint-lang` skills come from the Quint project. ndev refers to them and does not copy them, because the Quint team keeps them current with the language. Install them once for each harness:
+
+```sh
+npx skills add quint-co/quint --skill quint-modeling quint-lang
+```
+
+When the skills are not installed, say so, and read them from the link above.
+
+### Prove the model
+
+A model that passes says nothing until you prove that it can fail. For each model that you write or change:
+
+1. Run `quint typecheck <model>`.
+2. **Prove each invariant with a mutant.** Change the model so that it breaks the property that the invariant names, for example a save that ignores its base. Run the model and see the invariant fail. Then remove the mutant. An invariant that no mutant breaks is true by construction: rewrite it. Give the model each path that the code has, not only the usual path.
+3. **Prove each witness is reachable.** A witness is a state that the model must be able to reach. Run `quint run --invariant "not(<witness>)" <model>`. The run must fail, and its trace shows the state. A witness that never fails is not reachable.
+4. Write the tests in `<model>_test.qnt`, as runs with names that end in `Test`. `quint test` runs only those names.
+5. Record the mutants and the witnesses in the PR body, with the command and the result of each.
+
+Traps:
+
+- `next` is a reserved word. Do not use it as a name.
+- Write `x' = (a or b)` with the parentheses.
+- An invariant that fails by design records a known bug. Keep it out of the formal check, and link the issue that fixes the bug.
+
+### Add a formal check to a project
+
+When a project has models and no formal check, add `scripts/ci/formal-check.sh`, and run it from `scripts/ndev/workflow/pre-commit-check.sh` and from CI. The script:
+
+- installs Quint as a project dependency, so that each run uses the same version;
+- runs `quint typecheck` on each `.qnt` file in the models folder;
+- runs `quint test --main <module> --match 'Test$'` on each `*_test.qnt` file;
+- fails when Quint is missing, with the install command;
+- fails when the models folder has no `.qnt` file;
+- fails a run in a test file whose name does not end in `Test`, because `quint test` skips it;
+- fails a test file in which no test ran;
+- prints the model and Quint's own output for each failure;
+- prints the count of the models and of the tests that passed.
+
+The workflow runs the base version of each check script, so a branch cannot remove its own formal check.
+
+## In the workflow
+
+The records and the models enter the work at each stage. The agent:
+
+| Stage | Records | Models |
+|---|---|---|
+| Start | Run `ndev requirements search` with the words of the issue, and read each record that the change touches. A `Proposed` record is a question for the human. | Read the models in the `model` list of those records. |
+| Interview | Ask about a conflict between the issue and a record. Show the Statement of each new record that you propose. | Ask the questions that the model shows to be open. |
+| Plan (heavy) | Write a `Requirements:` line. | Write a `Model:` line. Write or change the model, and run `quint typecheck`, before `finished-plan`. |
+| Development | Add the `- File:` lines and the citations in the source. Propose a record for new behaviour. | Keep the model in step with the code. Prove the model (above). Cite the model in the source. |
+| Review (heavy) | The specification reviewer compares the diff with the records in the plan. | The specification reviewer reads the mutants and the witnesses in the PR body. |
+| Pull request | Add the `- PR:` and `- Issue:` lines with `ndev requirements link`, then run `check` and `guard`. | Set the `model` list with `ndev requirements model`. |
+
+The plan lines have this form:
+
+```
+Requirements: REQ-0007, REQ-0012, and a new record for the lock
+Model: docs/formal/models/migrations.qnt#neverTwoVersions
+```
+
+When nothing applies, give the reason: `Requirements: none, <reason>` or `Model: none, <reason>`.
+
+### When a model is necessary
+
+| The change | Model |
+|---|---|
+| It changes behaviour that a record in force specifies with a `model` | Necessary, in each mode. Change the model first. |
+| Heavy mode: it touches state, order, concurrency or a protocol | Necessary. Write the model before the code. |
+| Light mode: it adds state, order or concurrency | Optional. When the behaviour has more cases than the tests can show, change to heavy mode. |
+| A fixed fact, a pure function that the tests cover, text, layout, configuration or documentation | Not necessary. Write `Model: none, <reason>`. |
+
+`ndev flow finished-plan` enforces the plan lines in a project with `docs/formal/requirements/`. It refuses a plan:
+
+- with no `Requirements:` line, or with an empty one;
+- that names a `REQ-NNNN` with no record;
+- with no `Model:` line;
+- that names a `.qnt` file that does not exist, or a file outside the worktree;
+- with `Model: none` and no reason.
+
+Write each value on the same line as its label. The label can be bold or a list item.
+
+Only heavy mode has a plan, so only heavy mode has this gate. Light mode depends on the skill, on `ndev requirements check` and on the project's formal check.
+
+The gate is at the plan because the plan is the last point before the code. A model written there checks the design while a change costs little. The gate checks only that the lines are present and that the files exist. It does not run Quint. The version of Quint and the folder of the models belong to the project. Thus the project's formal check runs Quint at each commit, and a second run in the workflow adds nothing.
+
+### The protected text
+
+The work changes the Trace, the `model` list and the Notes of a record. It never changes a Statement or a Source text without a human's agreement. The first creation of a record is the only exception. See [Rules](#rules).
+
 ## The document
 
 `render` writes one HTML document from three parts:

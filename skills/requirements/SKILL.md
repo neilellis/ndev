@@ -55,7 +55,7 @@ Search before you plan, design or change behaviour. Use the words of the area, t
 2. Create the record with `ndev requirements new`. Give one requirement only.
 3. Write the Statement. When a document states the requirement, use its words.
 4. Add the Source text with `ndev requirements quote`. For a link (an issue, a pull request, a message), write `- <https link>` and then the quoted text. A record of origin `PR` names its pull request.
-5. When the requirement is about state, order or concurrency, write a Quint model with the `quint-modeling` skill and set it with `ndev requirements model`. The section "Models" of the format page tells when a model is needed. Each source file that cites the record also cites the model path.
+5. When the requirement is about state, order or concurrency, write a Quint model with the `quint-modeling` skill and set it with `ndev requirements model`. The section "In the workflow" of the format page tells when a model is needed, and "Prove the model" tells how to prove it with mutants and witnesses. Each source file that cites the record also cites the model path.
 6. Leave the status `Proposed`. A human accepts: then set `status: Accepted`, `decided_by` and the `date`, and add a Log entry. Never accept your own record.
 7. Run `ndev requirements check`, then `ndev requirements render`, and commit the record with the generated file.
 

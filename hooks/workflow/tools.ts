@@ -1108,6 +1108,39 @@ function planBody(old: string, issue: number, plan: string): string {
   return `${plans}\n\n${kept ? `${kept}\n` : ''}${refs.map(n => `Closes #${n}\n`).join('')}${SECTION.exec(old)?.[0] ?? ''}`
 }
 
+const RECORDS_DIR = 'docs/formal/requirements'
+
+function planLine(text: string, name: string): string | undefined {
+  return new RegExp(`^[\\s>*+-]*(?:\\*\\*|__)?${name}(?:\\*\\*|__)?:(?:\\*\\*|__)?[ \\t]*(.*)$`, 'im').exec(text)?.[1].trim()
+}
+
+async function planRecordProblems($: EngineInterface, root: string, text: string): Promise<string[]> {
+  const records = `${root}/${RECORDS_DIR}`
+  if (!(await $.fs.exists(records))) return []
+  const problems: string[] = []
+  const requirements = planLine(text, 'Requirements')
+  if (requirements === undefined) problems.push('it has no "Requirements:" line')
+  else if (!requirements) problems.push('its "Requirements:" line is empty; write the value on the same line')
+  else {
+    const files = (await $.fs.list(records)).map(e => e.name)
+    for (const id of new Set(requirements.match(/\bREQ-\d{4}\b/g) ?? [])) {
+      if (!files.some(f => f.startsWith(`${id.slice(4)}-`) && f.endsWith('.md'))) problems.push(`${id} has no record in ${RECORDS_DIR}`)
+    }
+  }
+  const model = planLine(text, 'Model')
+  if (model === undefined) problems.push('it has no "Model:" line')
+  else {
+    const none = /^none\b/i.test(model)
+    const paths = none ? [] : model.match(/[^\s,;`()[\]"'|<>]+\.qnt\b/g) ?? []
+    if (none ? !/^none\b\W*\w/i.test(model) : !paths.length) problems.push(`"Model: ${model || 'none'}" needs a reason: write "Model: none, <reason>", or name the .qnt files`)
+    for (const path of paths) {
+      if (path.startsWith('/') || path.split('/').includes('..')) problems.push(`the model ${path} is outside the worktree: name it relative to ${root}`)
+      else if (!(await $.fs.exists(`${root}/${path}`))) problems.push(`the model ${path} does not exist in ${root}`)
+    }
+  }
+  return problems
+}
+
 async function finishedPlan($: EngineInterface, c: Ctx): Promise<string> {
   const { args, project } = c
   const wf = await current($, c)
@@ -1119,6 +1152,8 @@ async function finishedPlan($: EngineInterface, c: Ctx): Promise<string> {
   if (!name || !(await $.fs.exists(path))) throw new Refuse(`Refused: the plan file ${path || '(none given)'} does not exist. Nothing changed.`)
   const plan = await $.fs.read(path)
   if (!/^\W*(Test entry point|Seam):/im.test(plan)) throw new Refuse(`Refused: ${path} has no "Test entry point:" line. Name the public interface that the tests go through, and call finishedPlan again.`)
+  const recordProblems = await planRecordProblems($, wf.root, plan)
+  if (recordProblems.length) throw new Refuse(`Refused: the plan ${path} does not name its requirement records and model:\n${recordProblems.map(p => `- ${p}`).join('\n')}\nAdd "Requirements: REQ-NNNN, ..." (or "none, <reason>") and "Model: <path.qnt[#name]>, ..." (or "none, <reason>"), as kb/requirements.md "In the workflow" says, and call finishedPlan again.`)
   await editBody($, wf, old => planBody(old, wf.issue, plan))
   // Before the sign-off, so that the human reads the plan and the state of the base together.
   const base = await runBaseCheck($, wf, facts)
@@ -1649,7 +1684,7 @@ async function startCodeReview($: EngineInterface, wf: Workflow, facts: Facts, u
 }
 
 const AXIS_STANDARDS = 'Review axis: standards. Where does this diff break a rule that this repository wrote down? Cite the file and the rule. Read AGENTS.md or CLAUDE.md, and the F3c section of skills/work-heavy/references/implement.md in the plugin. Do not judge whether the change meets the issue: another reviewer does that.'
-const AXIS_SPECIFICATION = 'Review axis: specification. Does this diff do what the issue, the plan in the PR body and the interview answers (the keys rounds and draft of the .neil-dev.issue-*.json files at the worktree root) ask, and all of it? Name each requirement that is missing, partial or wrong, and each change that nothing asked for. Do not judge the code style: another reviewer does that.'
+const AXIS_SPECIFICATION = 'Review axis: specification. Does this diff do what the issue, the plan in the PR body and the interview answers (the keys rounds and draft of the .neil-dev.issue-*.json files at the worktree root) ask, and all of it? Name each requirement that is missing, partial or wrong, and each change that nothing asked for. When the plan has a "Requirements:" line, read each record that it names in docs/formal/requirements and check that the diff meets its Statement. When the plan has a "Model:" line, check that the PR body proves each new invariant with a mutant and each witness with a run that reaches it. Do not judge the code style: another reviewer does that.'
 
 export async function recordOfReviewer($: EngineInterface, root: string, agentId: string): Promise<Workflow | undefined> {
   const { issues, prs } = await readHeld($, root)

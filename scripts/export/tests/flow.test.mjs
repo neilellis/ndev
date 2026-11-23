@@ -474,6 +474,64 @@ test('a fresh start waits for a real push before creating its draft PR', () => {
 })
 
 
+test('in a project with requirement records, a heavy plan names the records it touches and its model', () => {
+  const p = project({ config: { mode: 'heavy', steering: 'auto' } })
+  mkdirSync(join(p.work, 'docs/formal/requirements'), { recursive: true })
+  mkdirSync(join(p.work, 'docs/formal/models'), { recursive: true })
+  writeFileSync(join(p.work, 'docs/formal/requirements/0007-one-version.md'), '---\nid: REQ-0007\n---\n')
+  writeFileSync(join(p.work, 'docs/formal/models/migrations.qnt'), 'module migrations {}\n')
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  const plan = join(dirname(p.work), 'plan.md')
+  const refused = body => {
+    writeFileSync(plan, `Implement the thing.\n\nTest entry point: the public command.\n${body}`)
+    const r = p.flow(['finishedPlan', '--file', plan])
+    assert.equal(r.status, 2, r.all)
+    assert.equal(p.record().state, 'planning')
+    return r.all
+  }
+  assert.match(refused(''), /no "Requirements:" line[\s\S]*no "Model:" line/)
+  assert.match(refused('Requirements: REQ-0007\n'), /no "Model:" line/)
+  assert.match(refused('Requirements: REQ-0008\nModel: none, no state changes\n'), /REQ-0008 has no record in docs\/formal\/requirements/)
+  assert.match(refused('Requirements: REQ-0007\nModel: docs/formal/models/missing.qnt#neverTwo\n'), /docs\/formal\/models\/missing\.qnt does not exist/)
+  assert.match(refused('Requirements: REQ-0007\nModel: none\n'), /"Model: none" needs a reason/)
+  assert.match(refused('Requirements:\nModel: none, the change is a label\n'), /"Requirements:" line is empty/)
+  writeFileSync(plan, 'Implement the thing.\n\nTest entry point: the public command.\nRequirements: REQ-0007, and a new record for the lock\nModel: docs/formal/models/migrations.qnt#neverTwo\n')
+  ok(p.flow(['finishedPlan', '--file', plan]), 'finishedPlan')
+  assert.equal(p.record().state, 'developing')
+})
+
+test('the plan lines may be bold, and a model path may sit in brackets or end a sentence', () => {
+  const planned = body => {
+    const p = project({ config: { mode: 'heavy', steering: 'auto' } })
+    mkdirSync(join(p.work, 'docs/formal/requirements'), { recursive: true })
+    mkdirSync(join(p.work, 'docs/formal/models'), { recursive: true })
+    writeFileSync(join(p.work, 'docs/formal/requirements/0007-one-version.md'), '---\nid: REQ-0007\n---\n')
+    writeFileSync(join(p.work, 'docs/formal/models/migrations.qnt'), 'module migrations {}\n')
+    writeFileSync(join(dirname(p.work), 'outside.qnt'), 'module outside {}\n')
+    ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+    const plan = join(dirname(p.work), 'plan.md')
+    writeFileSync(plan, `Implement the thing.\n\nTest entry point: the public command.\n${body}`)
+    const r = p.flow(['finishedPlan', '--file', plan])
+    return { r, state: p.record().state }
+  }
+  const refused = body => {
+    const { r, state } = planned(body)
+    assert.equal(r.status, 2, r.all)
+    assert.equal(state, 'planning')
+    return r.all
+  }
+  const accepted = body => {
+    const { r, state } = planned(body)
+    assert.equal(r.status, 0, r.all)
+    assert.equal(state, 'developing')
+  }
+  accepted('**Requirements:** REQ-0007\n**Model:** none, no state changes\n')
+  accepted('- Requirements: REQ-0007\n- Model: none, the lock is in docs/formal/models/later.qnt\n')
+  accepted('Requirements: REQ-0007\nModel: the lock (docs/formal/models/migrations.qnt).\n')
+  assert.match(refused('**Requirements:**\n**Model:** none, no state changes\n'), /"Requirements:" line is empty; write the value on the same line/)
+  assert.match(refused('Requirements: REQ-0007\nModel: ../outside.qnt\n'), /the model \.\.\/outside\.qnt is outside the worktree/)
+})
+
 test('the first push keeps the saved plan and can retry PR creation without another commit', () => {
   const p = project({ config: { mode: 'heavy', steering: 'auto' } })
   ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')

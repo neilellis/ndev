@@ -48,7 +48,7 @@ Read only the reference for the current fragment:
 | Reference | Fragments |
 |---|---|
 | `references/setup.md` | F0 resume and blockers, F0b default-branch health, F0c `incomprehensible` label, F1 worktree and draft PR |
-| `references/planning.md` | F2 plan, F2a test entry point (seam) |
+| `references/planning.md` | F2 plan, F2a test entry point (seam), F2d requirement records and model |
 | `references/prose.md`, `references/writing.md` | F2b writing for humans, F2c readability gate |
 | `references/implement.md` | F3 TDD, F3b comments, F3b1 naming, F3b2 logging, F3c two-axis review, F3d dead-code sweep |
 | `references/verify.md` | F4 verify loop, F5 knowledge ingest |
