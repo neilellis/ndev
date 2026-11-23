@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const DIR = "docs/formal/requirements";
@@ -18,7 +18,7 @@ const SECTIONS = ["Statement", "Source text", "Trace", "Notes"];
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -38,6 +38,10 @@ const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"- Agreed: <name>, YYYY-MM-DD, text <hash>"`;
 const PROTECTED = ["Statement", "Source text"];
 const SCRIPT = "requirements.mjs";
+const RETIRED = `${DIR}/extra/retired.md`;
+const FROZEN = `${DIR}/extra/sources`;
+const RETIRED_ENTRY = /^- (\S+) ([0-9a-f]{12}) (\S+)(?: keep (\S+))?$/;
+const RETIRED_FORM = `"- <path> <hash> <decision record>", with "keep <file>,<file>" after it when files keep a reference`;
 
 class Usage extends Error {}
 class Failure extends Error {}
@@ -90,9 +94,50 @@ function parse(entry, text) {
   return { ...entry, text, field, status: field("Status"), section: field("Section") ?? "", title: title ?? entry.file, hasTitle: title !== undefined, sections };
 }
 
+const outside = (root, rel) => path.isAbsolute(rel) || path.relative(root, path.resolve(root, rel)).split(path.sep)[0] === "..";
+const frozenCopy = (rel) => `${FROZEN}/${rel}`;
+const contentHash = (text) => createHash("sha256").update(text).digest("hex").slice(0, 12);
+
+function retiredEntries(root) {
+  const full = path.join(root, RETIRED);
+  if (!existsSync(full)) return { entries: [], problems: [] };
+  const entries = [];
+  const problems = [];
+  for (const line of readFileSync(full, "utf8").split("\n").filter((l) => l.startsWith("- "))) {
+    const m = line.match(RETIRED_ENTRY);
+    const keep = m?.[4]?.split(",") ?? [];
+    if (!m || [m[1], m[3], ...keep].some((rel) => !rel || outside(root, rel))) problems.push(`${RETIRED}: "${line}" does not have the form ${RETIRED_FORM}, with paths inside the project. Retire a document with: ${SCRIPT} retire <path> --pdr <decision record>`);
+    else entries.push({ rel: m[1], hash: m[2], pdr: m[3], keep, copy: frozenCopy(m[1]) });
+  }
+  return { entries, problems };
+}
+
+const retiredCache = new Map();
+const retiredPaths = (root) => {
+  if (!retiredCache.has(root)) retiredCache.set(root, new Set(retiredEntries(root).entries.map((e) => e.rel)));
+  return retiredCache.get(root);
+};
+
+function retiredProblems(root) {
+  const { entries, problems } = retiredEntries(root);
+  const seen = new Set();
+  for (const entry of entries) {
+    if (seen.has(entry.rel)) problems.push(`${RETIRED}: ${entry.rel} is on more than one line. Remove the repeated line.`);
+    seen.add(entry.rel);
+    if (existsSync(path.join(root, entry.rel))) problems.push(`${entry.rel} is retired and exists again. Delete it, or remove its line from ${RETIRED} and delete its frozen copy ${entry.copy}.`);
+    const copy = path.join(root, entry.copy);
+    if (!existsSync(copy)) problems.push(`${entry.copy}, the frozen copy of ${entry.rel}, is missing. Restore it from the git history.`);
+    else if (contentHash(readFileSync(copy, "utf8")) !== entry.hash) problems.push(`${entry.copy}, the frozen copy of ${entry.rel}, changed after it was frozen. A frozen copy does not change: restore it from the git history.`);
+    if (!existsSync(path.join(root, entry.pdr))) problems.push(`${entry.pdr}, the decision record for ${entry.rel}, does not exist.`);
+    for (const file of entry.keep) if (!existsSync(path.join(root, file))) problems.push(`${file}, kept with a reference to the retired ${entry.rel}, does not exist. Remove it from the keep list of ${entry.rel} in ${RETIRED}.`);
+  }
+  return problems;
+}
+
 function fileLines(root, rel) {
-  const full = path.resolve(root, rel);
-  if (path.isAbsolute(rel) || path.relative(root, full).startsWith("..")) return { error: `${rel} is outside the project. Name a file by its path from the repository root.` };
+  if (outside(root, rel)) return { error: `${rel} is outside the project. Name a file by its path from the repository root.` };
+  let full = path.resolve(root, rel);
+  if (!existsSync(full) && retiredPaths(root).has(rel)) full = path.join(root, frozenCopy(rel));
   if (!existsSync(full)) return { error: `${rel} does not exist.` };
   const lines = readFileSync(full, "utf8").split("\n");
   if (lines.at(-1) === "") lines.pop();
@@ -212,6 +257,7 @@ function inspect(root) {
       }
     }
   }
+  problems.push(...retiredProblems(root));
   return { problems, records };
 }
 
@@ -324,8 +370,8 @@ function blocks(markdown) {
   return out.join("\n");
 }
 
-function article(record) {
-  const sources = sourceText(record.sections["Source text"]).sources.map((s) => `<li><a href="${escape(s.url ?? `${UP}${encodeURI(s.rel)}#L${s.first}-L${s.last}`)}">${escape(s.citation)}</a>\n<blockquote class="source">${escape(s.quote.join("\n"))}</blockquote></li>`);
+function article(record, retired) {
+  const sources = sourceText(record.sections["Source text"]).sources.map((s) => `<li><a href="${escape(s.url ?? `${UP}${encodeURI(retired.has(s.rel) ? frozenCopy(s.rel) : s.rel)}#L${s.first}-L${s.last}`)}">${escape(s.citation)}</a>\n<blockquote class="source">${escape(s.quote.join("\n"))}</blockquote></li>`);
   const decided = record.field("Decided by") ? `Decided by ${escape(record.field("Decided by"))}, ${escape(record.field("Date"))}` : `Dated ${escape(record.field("Date"))}`;
   const meta = [escape(record.status), escape(record.field("Origin")), `Verification: ${escape(record.field("Verification"))}`, decided, `<a href="../${encodeURI(record.file)}">record</a>`];
   const optional = ["Trace", "Notes"].filter((name) => record.sections[name]).map((name) => `<h4>${name}</h4>\n${blocks(record.sections[name])}`);
@@ -371,7 +417,7 @@ function counted(records) {
   return `${records.length} record${records.length === 1 ? "" : "s"}${counts.length ? `: ${counts.join(", ")}` : ""}.`;
 }
 
-function document(records, { title = "Requirements", order = [], narratives = new Map() } = {}) {
+function document(records, { title = "Requirements", order = [], narratives = new Map(), retired = new Set() } = {}) {
   const inForce = records.filter((r) => IN_FORCE.includes(r.status));
   const others = records.filter((r) => !IN_FORCE.includes(r.status));
   const groups = new Map(order.map((name) => [name, []]));
@@ -395,7 +441,7 @@ function document(records, { title = "Requirements", order = [], narratives = ne
     `<nav>\n<ul>\n${named.map((g) => `<li><a href="#${g.id}">${escape(g.name)}</a> (${g.members.length})</li>`).join("\n")}\n</ul>\n</nav>`,
     `</header>`,
     `<main>`,
-    ...named.map((g) => [`<section id="${g.id}">`, `<h2>${escape(g.name)}</h2>`, ...narrativeHtml(g.narrative, g.narrative?.hash === sectionHash(g.members)), ...g.members.map(article), `</section>`].join("\n")),
+    ...named.map((g) => [`<section id="${g.id}">`, `<h2>${escape(g.name)}</h2>`, ...narrativeHtml(g.narrative, g.narrative?.hash === sectionHash(g.members)), ...g.members.map((r) => article(r, retired)), `</section>`].join("\n")),
     `</main>`,
     `</body>`,
     `</html>`,
@@ -535,7 +581,7 @@ function narrative(root) {
 
 function render(root, options) {
   const records = valid(root);
-  const html = document(records, { ...outline(root, records), narratives: narratives(root) });
+  const html = document(records, { ...outline(root, records), narratives: narratives(root), retired: retiredPaths(root) });
   const full = path.join(root, HTML);
   if (options.check) {
     if (!existsSync(full)) throw new Failure(`${HTML} does not exist. Write it with: ${SCRIPT} render`);
@@ -649,7 +695,8 @@ function publication(root, config) {
     return `---\n${lines.join("\n")}\n---\n`;
   };
   const fence = (lines) => "`".repeat(Math.max(3, ...lines.map((line) => Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length + 1)))));
-  const sourceLink = (s) => s.url ?? `${fileLink(s.rel)}#L${s.first}-L${s.last}`;
+  const retired = retiredPaths(root);
+  const sourceLink = (s) => s.url ?? `${fileLink(retired.has(s.rel) ? frozenCopy(s.rel) : s.rel)}#L${s.first}-L${s.last}`;
   const entry = (record, here) => {
     const decided = record.field("Decided by") ? `Decided by ${record.field("Decided by")}, ${record.field("Date")}` : `Dated ${record.field("Date")}`;
     const meta = [record.status, record.field("Origin"), `Verification: ${record.field("Verification")}`, decided].map(text).join(" · ");
@@ -795,7 +842,8 @@ function tier(rel) {
 }
 
 function documents(root) {
-  return git(root, ["ls-files", "-z", "--", "*.md", "*.mdx"]).split("\0").filter((rel) => rel && !rel.startsWith(`${DIR}/`)).map((rel) => ({ rel, tier: tier(rel) })).sort((a, b) => a.tier - b.tier || (a.rel < b.rel ? -1 : 1));
+  const generated = publishedFolder(root);
+  return git(root, ["ls-files", "-z", "--", "*.md", "*.mdx"]).split("\0").filter((rel) => rel && !rel.startsWith(`${DIR}/`) && !(generated && rel.startsWith(`${generated}/`))).map((rel) => ({ rel, tier: tier(rel) })).sort((a, b) => a.tier - b.tier || (a.rel < b.rel ? -1 : 1));
 }
 
 function sources(root, options) {
@@ -876,9 +924,7 @@ function prose(rel, lines, mdx) {
   return out;
 }
 
-function uncovered(root, paths) {
-  const targets = paths.length ? paths : documents(root).filter((d) => d.tier === 1).map((d) => d.rel);
-  if (!targets.length) throw new Failure(`No tier 1 document to read. Name the documents: ${SCRIPT} uncovered <path>...`);
+function coverage(root, targets) {
   const cited = entries(root).filter((e) => NAME.test(e.file)).flatMap((e) => sourceText(read(e).sections["Source text"]).sources.filter((s) => s.rel));
   const { entries: held, problems } = ledgerEntries(root);
   const rows = [];
@@ -903,12 +949,118 @@ function uncovered(root, paths) {
       else rows.push({ rel, ...line, normative: NORMATIVE.test(line.text) });
     }
   }
+  return { rows, problems, total, byRecord, byLedger };
+}
+
+const coverageSummary = (rows, total, targets) => {
+  const normative = rows.filter((r) => r.normative).length;
+  return `${rows.length} of ${total} prose lines in ${targets.length} file${targets.length === 1 ? "" : "s"} not accounted for${normative ? ` (${normative} normative)` : ""}. Write a record for each requirement, and a ledger entry for the other lines.`;
+};
+const coverageRows = (rows) => rows.map((r) => `${r.rel}:${r.number}  ${r.normative ? "normative  " : ""}${r.text}`);
+
+function uncovered(root, paths) {
+  const targets = paths.length ? paths : documents(root).filter((d) => d.tier === 1).map((d) => d.rel);
+  if (!targets.length) throw new Failure(`No tier 1 document to read. Name the documents: ${SCRIPT} uncovered <path>...`);
+  const { rows, problems, total, byRecord, byLedger } = coverage(root, targets);
   const files = `${targets.length} file${targets.length === 1 ? "" : "s"}`;
   if (!rows.length && !problems.length) return `${total} prose line${total === 1 ? "" : "s"} in ${files}: ${byRecord} cited by records, ${byLedger} in the ledger, 0 not accounted for\n`;
-  process.stdout.write(rows.map((r) => `${r.rel}:${r.number}  ${r.normative ? "normative  " : ""}${r.text}`).join("\n") + (rows.length ? "\n" : ""));
-  const normative = rows.filter((r) => r.normative).length;
-  const summary = `${rows.length} of ${total} prose lines in ${files} not accounted for${normative ? ` (${normative} normative)` : ""}. Write a record for each requirement, and a ledger entry for the other lines.`;
-  throw new Failure([...problems, summary].join("\n"));
+  process.stdout.write(coverageRows(rows).join("\n") + (rows.length ? "\n" : ""));
+  throw new Failure([...problems, coverageSummary(rows, total, targets)].join("\n"));
+}
+
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function publishedFolder(root) {
+  if (!existsSync(path.join(root, PUBLISH))) return undefined;
+  return publishConfig(root).to;
+}
+
+const namePattern = (rel) => new RegExp(`(?<![\\w-])(?<![\\w-][./])${escaped(rel)}(?![\\w/-]|\\.\\w)`);
+const plainPath = (rel) => /^\S+$/.test(rel) && path.posix.normalize(rel) === rel && rel.split("/")[0] !== "..";
+const DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/;
+
+function referenceLines(root, rels, skip = []) {
+  const named = rels.map(namePattern);
+  const generated = publishedFolder(root);
+  const left = (file) => rels.includes(file) || file.startsWith(`${DIR}/`) || skip.includes(file) || (generated && file.startsWith(`${generated}/`));
+  const found = [];
+  for (const file of git(root, ["ls-files", "-z"]).split("\0").filter((f) => f && !left(f)).sort()) {
+    const full = path.join(root, file);
+    if (!existsSync(full) || !lstatSync(full).isFile()) continue;
+    const text = readFileSync(full, "utf8");
+    if (text.includes("\0")) continue;
+    const markdown = /\.mdx?$/i.test(file);
+    text.split("\n").forEach((line, i) => {
+      const links = markdown ? [...line.matchAll(LINK)].map((m) => m[2]).concat(line.match(DEFINITION)?.[1] ?? []) : [];
+      const target = (href) => {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("#")) return undefined;
+        const raw = href.split(/[#?]/)[0];
+        let linked;
+        try {
+          linked = decodeURI(raw);
+        } catch {
+          linked = raw;
+        }
+        return linked.startsWith("/") ? linked.slice(1) : path.posix.normalize(path.posix.join(path.posix.dirname(file), linked));
+      };
+      const linked = links.map(target);
+      const matched = rels.filter((rel, j) => named[j].test(line) || linked.includes(rel));
+      if (matched.length) found.push({ file, number: i + 1, text: line.trim(), rels: matched });
+    });
+  }
+  return found;
+}
+
+const shownReference = (hit) => `${hit.file}:${hit.number}  ${hit.text}`;
+
+function references(root, rel) {
+  if (!rel) throw new Usage(`references needs <path>, for example: references docs/guide.md`);
+  const found = referenceLines(root, [rel]);
+  return found.length ? `${found.map(shownReference).join("\n")}\n` : `No tracked file references ${rel}\n`;
+}
+
+function retire(root, rels, options) {
+  if (!rels.length || !options.pdr) throw new Usage(`retire needs <path>... --pdr <decision record> [--keep <file>,<file>], for example: retire docs/guide.md --pdr docs/pdr/0003-retire-the-guide.md --keep supabase/migrations/0001_init.sql`);
+  const keep = [...new Set(options.keep === undefined ? [] : options.keep.split(","))].sort();
+  for (const given of [...rels, options.pdr, ...keep]) if (!plainPath(given) || outside(root, given)) throw new Failure(`${given} is not a plain path: name the file by its path from the repository root, with no spaces, no "./" or "../" and no repeated "/".`);
+  const already = retiredPaths(root);
+  const problems = [];
+  for (const rel of new Set(rels)) {
+    if (already.has(rel)) problems.push(`${rel} is already retired (${RETIRED}).`);
+    else if (!existsSync(path.join(root, rel))) problems.push(`${rel} does not exist.`);
+    else if (existsSync(path.join(root, frozenCopy(rel)))) problems.push(`${frozenCopy(rel)} exists, and ${RETIRED} does not name ${rel}. Find out why the copy is there, and move or delete it.`);
+  }
+  if (problems.length) throw new Failure(problems.join("\n"));
+  const targets = [...new Set(rels)];
+  const pdr = path.join(root, options.pdr);
+  if (!existsSync(pdr)) throw new Failure(`${options.pdr} does not exist. Write the decision record first.`);
+  const decision = readFileSync(pdr, "utf8");
+  const unnamed = targets.filter((rel) => !namePattern(rel).test(decision));
+  if (unnamed.length) throw new Failure(unnamed.map((rel) => `${options.pdr} does not name ${rel}. The decision record names each document that it retires.`).join("\n"));
+  const { rows, problems: stale, total } = coverage(root, targets);
+  if (rows.length || stale.length) throw new Failure([...coverageRows(rows), ...stale, ...(rows.length ? [coverageSummary(rows, total, targets)] : []), `A document is retired only when each of its lines is accounted for.`].join("\n"));
+  const referring = referenceLines(root, targets, [options.pdr]);
+  const idle = keep.filter((file) => !referring.some((hit) => hit.file === file));
+  if (idle.length) throw new Failure(idle.map((file) => `${file} is in --keep and does not reference ${targets.join(" or ")}. Remove it from --keep.`).join("\n"));
+  const found = referring.filter((hit) => !keep.includes(hit.file));
+  if (found.length) {
+    const files = new Set(found.map((hit) => hit.file)).size;
+    throw new Failure(`${found.map(shownReference).join("\n")}\n${found.length} line${found.length === 1 ? "" : "s"} in ${files} file${files === 1 ? "" : "s"} reference${found.length === 1 ? "s" : ""} ${targets.join(", ")}. Point each one at the records or the published pages, then retire. A file that is history and does not change, such as an applied migration, goes in --keep.`);
+  }
+  const lines = [];
+  for (const rel of targets) {
+    const text = readFileSync(path.join(root, rel), "utf8");
+    const copy = path.join(root, frozenCopy(rel));
+    mkdirSync(path.dirname(copy), { recursive: true });
+    writeFileSync(copy, text);
+    const kept = keep.filter((file) => referring.some((hit) => hit.file === file && hit.rels.includes(rel)));
+    lines.push(`- ${rel} ${contentHash(text)} ${options.pdr}${kept.length ? ` keep ${kept.join(",")}` : ""}`);
+  }
+  const list = path.join(root, RETIRED);
+  const head = existsSync(list) ? readFileSync(list, "utf8") : `# Retired documents\n\nDocuments whose lines the records and the ledger hold. Each has a frozen copy in ${FROZEN}. Retire a document with ${SCRIPT} retire.\n\n`;
+  writeFileSync(list, `${head.replace(/\n*$/, "\n")}${head.includes("\n- ") ? "" : "\n"}${lines.join("\n")}\n`);
+  for (const rel of targets) rmSync(path.join(root, rel));
+  return targets.map((rel) => `${rel} retired: frozen copy ${frozenCopy(rel)}, decision ${options.pdr}\n`).join("");
 }
 
 function pullRequests(root, file) {
@@ -1015,6 +1167,8 @@ try {
     narrate: () => narrate(root(), rest[0], options),
     narrative: () => narrative(root()),
     publish: () => publish(root(), options),
+    references: () => references(root(), rest[0]),
+    retire: () => retire(root(), rest, options),
   };
   if (!commands[command]) throw new Usage(`Unknown command "${command ?? ""}": use ${COMMANDS}`);
   process.stdout.write(commands[command]());

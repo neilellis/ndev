@@ -15,6 +15,8 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 | `docs/formal/requirements/extra/outline.md` | The title of the document and the order of its sections | Humans |
 | `docs/formal/requirements/extra/ledger.md` | The lines of the documents that hold no requirement, each with its reason and a hash of the lines | An agent proposes with `requirements.mjs ledger`; a human reviews |
 | `docs/formal/requirements/generated/` | Generated documents. Do not edit them. | The script |
+| `docs/formal/requirements/extra/retired.md` | The retired documents, each with a hash of its frozen copy and its decision record | `requirements.mjs retire`, after a human agrees |
+| `docs/formal/requirements/extra/sources/` | The frozen copies of the retired documents, at their old paths. Do not edit them. | `requirements.mjs retire` |
 | `docs/formal/requirements/extra/publish.json` | Where and how `requirements.mjs publish` writes the pages for the documentation app | Humans |
 | `docs/formal/requirements/generated/narrative/` | The prose of each section, with a hash of the records it describes | An agent, through `requirements.mjs narrate` |
 
@@ -166,3 +168,30 @@ It writes:
 It removes the files of the last publish that it no longer writes. It fails a file in the folder that the last publish did not write, and it does not change that file. `publish --check` writes nothing. It fails a file that is missing, that is not current or that is left from the last publish. A stale narrative shows with a note, as in `render`. Run `publish --check` in the project's checks with `check`, `render --check` and `narrative`.
 
 The `requirements-publish` skill sets up `publish.json` and publishes.
+
+## Retirement
+
+When the records hold each requirement of a prose document, the document can go. Two copies of a requirement drift apart. Retirement does not change a Statement or a Source text, because only a human agrees to that change.
+
+`requirements.mjs references <path>` lists each line of a tracked file that names the path, or that has a Markdown link to it (inline or reference style). It does not find the bare file name. It leaves out the document, the records folder and the folder of the published pages.
+
+`requirements.mjs retire <path>... --pdr <file>` retires one or more documents together. A reference from one of them to another does not count. It changes nothing when one of them fails, and it fails when:
+
+- the path or the decision record is not a plain path from the repository root;
+- a frozen copy of the path is already there;
+
+- the decision record does not exist, or does not name each path;
+- a line of the document is not accounted for (as `uncovered`);
+- a line of another tracked file references the document. The decision record is not counted, and neither is a file named in `--keep <file>,<file>`. Use `--keep` only for history that does not change, such as an applied migration. A file in `--keep` must reference the document.
+
+Then it copies the document to `docs/formal/requirements/extra/sources/<path>`, deletes the document, and adds `- <path> <hash> <decision record>`, then `keep <file>,<file>` when there are kept files, to `docs/formal/requirements/extra/retired.md`.
+
+After that, the citations of the records and the ledger entries read the cited lines from the frozen copy. `render` and `publish` link to the frozen copy. `check` fails when:
+
+- a line of `retired.md` does not have the form;
+- the frozen copy is missing, or its hash changed;
+- the decision record is missing;
+- a kept file is missing;
+- the retired document exists again.
+
+The `requirements-retire` skill does the retirement with the human.

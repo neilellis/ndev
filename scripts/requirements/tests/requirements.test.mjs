@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -596,6 +596,11 @@ describe("sources", () => {
     const out = run(root, "sources");
     assert.equal(out.status, 0, out.stderr);
     assert.equal(out.stdout, ["1  requirements  NORTH_STAR.md", "1  requirements  docs/requirements/model.md", "2  wiki          wiki/Home.md", "3  readme        README.md", "3  readme        packages/api/README.md", "4  other         docs/notes.md", ""].join("\n"));
+  });
+
+  it("leaves out the folder of the published pages", () => {
+    const root = tracked({ "docs/requirements/model.md": "x\n", "site/requirements/report.md": "x\n", [PUBLISH]: JSON.stringify({ to: "site/requirements", format: "md" }) });
+    assert.equal(run(root, "sources").stdout, "1  requirements  docs/requirements/model.md\n");
   });
 
   it("filters by tier", () => {
@@ -1239,10 +1244,241 @@ describe("publish", () => {
   });
 });
 
+const RETIRED = `${DIR}/extra/retired.md`;
+const COPY = `${DIR}/extra/sources/docs/guide.md`;
+const PDR = "docs/pdr/0001-retire-the-guide.md";
+const retirable = (files = {}) => {
+  const root = tracked({ "docs/guide.md": GUIDE, [`${DIR}/${FILE}`]: record("0001"), [PDR]: "# Retire the guide\n\nThe records hold docs/guide.md now.\n", ...files });
+  assert.equal(run(root, "ledger", "docs/guide.md", "6", "6", "background: the closing word").status, 0);
+  git(root, "add", "-A");
+  return root;
+};
+const retired = (files) => {
+  const root = retirable(files);
+  const out = run(root, "retire", "docs/guide.md", "--pdr", PDR);
+  assert.equal(out.status, 0, out.stderr);
+  return root;
+};
+
+describe("references", () => {
+  it("lists each tracked line that names the document or links to it, and leaves out the records, the document and other paths", () => {
+    const root = tracked({
+      "docs/guide.md": "See docs/guide.md.\n",
+      "README.md": "Read docs/guide.md for the rules.\nRead docs/guide.mdx too.\nRead lib/docs/guide.md too.\n",
+      "docs/index.md": "Read [the guide](guide.md#top).\n[rules]: ./guide.md\n",
+      "notes/plan.md": "[back](../docs/guide.md)\n[web](https://example.com/guide.md)\n",
+      "src/load.ts": "load('docs/guide.md');\n",
+      [`${DIR}/${FILE}`]: record("0001"),
+    });
+    put(root, "untracked.md", "docs/guide.md\n");
+    const out = run(root, "references", "docs/guide.md");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, ["README.md:1  Read docs/guide.md for the rules.", "docs/index.md:1  Read [the guide](guide.md#top).", "docs/index.md:2  [rules]: ./guide.md", "notes/plan.md:1  [back](../docs/guide.md)", "src/load.ts:1  load('docs/guide.md');", ""].join("\n"));
+  });
+
+  it("passes over a tracked entry that is not a file, and leaves out the published pages", () => {
+    const root = tracked({ "docs/guide.md": GUIDE, "README.md": "Read docs/guide.md.\n", "site/content/requirements/report.md": "[s](../../../docs/guide.md#L3-L4)\n", [PUBLISH]: JSON.stringify({ to: "site/content/requirements", format: "md" }) });
+    symlinkSync("docs", path.join(root, "linked"));
+    git(root, "add", "-A");
+    const out = run(root, "references", "docs/guide.md");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "README.md:1  Read docs/guide.md.\n");
+  });
+
+  it("says when no tracked file references the document", () => {
+    const out = run(tracked({ "docs/guide.md": GUIDE }), "references", "docs/guide.md");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "No tracked file references docs/guide.md\n");
+  });
+
+  it("needs a path", () => {
+    assert.equal(run(tracked({ "docs/guide.md": GUIDE }), "references").status, 2);
+  });
+});
+
+describe("retire", () => {
+  it("needs a path and --pdr", () => {
+    const root = retirable();
+    assert.equal(run(root, "retire", "docs/guide.md").status, 2);
+    assert.equal(run(root, "retire", "--pdr", PDR).status, 2);
+  });
+
+  it("refuses a decision record that does not exist or does not name the document", () => {
+    const root = retirable({ "docs/pdr/0002-other.md": "# Other\n\nNothing here.\n" });
+    const missing = run(root, "retire", "docs/guide.md", "--pdr", "docs/pdr/0009-none.md");
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /docs\/pdr\/0009-none\.md does not exist/);
+    const silent = run(root, "retire", "docs/guide.md", "--pdr", "docs/pdr/0002-other.md");
+    assert.equal(silent.status, 1);
+    assert.match(silent.stderr, /docs\/pdr\/0002-other\.md does not name docs\/guide\.md/);
+    assert.ok(existsSync(path.join(root, "docs/guide.md")));
+  });
+
+  it("refuses while a line of the document is not accounted for", () => {
+    const root = tracked({ "docs/guide.md": GUIDE, [`${DIR}/${FILE}`]: record("0001"), [PDR]: "Retire docs/guide.md.\n" });
+    const out = run(root, "retire", "docs/guide.md", "--pdr", PDR);
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/guide\.md:6 {2}End\./);
+    assert.match(out.stderr, /1 of 3 prose lines in 1 file not accounted for/);
+    assert.ok(existsSync(path.join(root, "docs/guide.md")));
+    assert.equal(existsSync(path.join(root, RETIRED)), false);
+  });
+
+  it("refuses while another tracked file references the document, and names the line", () => {
+    const root = retirable({ "README.md": "Read docs/guide.md.\n" });
+    const out = run(root, "retire", "docs/guide.md", "--pdr", PDR);
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /README\.md:1 {2}Read docs\/guide\.md\./);
+    assert.match(out.stderr, /1 line in 1 file references docs\/guide\.md/);
+    assert.ok(existsSync(path.join(root, "docs/guide.md")));
+  });
+
+  it("keeps the references in the files named with --keep, and records them", () => {
+    const root = retirable({ "README.md": "Read docs/guide.md.\n", "db/0001_init.sql": "-- from docs/guide.md\n", "CHANGELOG.md": "Wrote docs/guide.md.\n" });
+    const partly = run(root, "retire", "docs/guide.md", "--pdr", PDR, "--keep", "db/0001_init.sql,CHANGELOG.md");
+    assert.equal(partly.status, 1);
+    assert.match(partly.stderr, /README\.md:1/);
+    assert.doesNotMatch(partly.stderr, /CHANGELOG|0001_init/);
+    put(root, "README.md", "Read the records.\n");
+    const out = run(root, "retire", "docs/guide.md", "--pdr", PDR, "--keep", "db/0001_init.sql,CHANGELOG.md");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(readFileSync(path.join(root, RETIRED), "utf8"), /^- docs\/guide\.md [0-9a-f]{12} docs\/pdr\/0001-retire-the-guide\.md keep CHANGELOG\.md,db\/0001_init\.sql$/m);
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("refuses a kept file that does not reference the document", () => {
+    const root = retirable({ "CHANGELOG.md": "Nothing.\n" });
+    const out = run(root, "retire", "docs/guide.md", "--pdr", PDR, "--keep", "CHANGELOG.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /CHANGELOG\.md is in --keep and does not reference docs\/guide\.md/);
+  });
+
+  it("retires several documents together, and passes over the references between them", () => {
+    const root = retirable({ "docs/notes.md": "See [the guide](guide.md).\n", [PDR]: "Retire docs/guide.md and docs/notes.md.\n" });
+    assert.equal(run(root, "ledger", "docs/notes.md", "1", "1", "a pointer").status, 0);
+    const alone = run(root, "retire", "docs/guide.md", "--pdr", PDR);
+    assert.equal(alone.status, 1);
+    assert.match(alone.stderr, /docs\/notes\.md:1/);
+    const out = run(root, "retire", "docs/guide.md", "docs/notes.md", "--pdr", PDR);
+    assert.equal(out.status, 0, out.stderr);
+    for (const rel of ["docs/guide.md", "docs/notes.md"]) {
+      assert.equal(existsSync(path.join(root, rel)), false);
+      assert.ok(existsSync(path.join(root, DIR, "extra/sources", rel)));
+    }
+    assert.equal(readFileSync(path.join(root, RETIRED), "utf8").split("\n").filter((l) => l.startsWith("- ")).length, 2);
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("refuses the whole set when one document fails, and changes nothing", () => {
+    const root = retirable({ "docs/notes.md": "Loose words.\n", [PDR]: "Retire docs/guide.md and docs/notes.md.\n" });
+    const out = run(root, "retire", "docs/guide.md", "docs/notes.md", "--pdr", PDR);
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/notes\.md:1 {2}Loose words\./);
+    assert.ok(existsSync(path.join(root, "docs/guide.md")));
+    assert.equal(existsSync(path.join(root, RETIRED)), false);
+  });
+
+  it("freezes a copy, deletes the document and records the retirement", () => {
+    const root = retired();
+    assert.equal(existsSync(path.join(root, "docs/guide.md")), false);
+    assert.equal(readFileSync(path.join(root, COPY), "utf8"), GUIDE);
+    assert.match(readFileSync(path.join(root, RETIRED), "utf8"), /^- docs\/guide\.md [0-9a-f]{12} docs\/pdr\/0001-retire-the-guide\.md$/m);
+  });
+
+  it("keeps the records and the ledger valid through the frozen copy", () => {
+    const root = retired();
+    assert.equal(run(root, "check").status, 0, run(root, "check").stderr);
+    const covered = run(root, "uncovered", "docs/guide.md");
+    assert.equal(covered.status, 0, covered.stderr);
+    assert.equal(covered.stdout, "3 prose lines in 1 file: 2 cited by records, 1 in the ledger, 0 not accounted for\n");
+    assert.equal(run(root, "quote", "docs/guide.md", "3", "3").status, 0);
+  });
+
+  it("links the sources of the rendered and the published pages to the frozen copy", () => {
+    const root = retirable();
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    git(root, "add", "-A");
+    const out = run(root, "retire", "docs/guide.md", "--pdr", PDR);
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(run(root, "render").status, 0);
+    assert.match(readFileSync(path.join(root, HTML), "utf8"), /href="(\.\.\/){4}docs\/formal\/requirements\/extra\/sources\/docs\/guide\.md#L3-L4"/);
+    assert.equal(run(root, "publish").status, 0);
+    assert.ok(page(root, "report.md").includes("](../../../docs/formal/requirements/extra/sources/docs/guide.md#L3-L4)"));
+  });
+
+  it("refuses a path that is not in its plain form, before it writes anything", () => {
+    const root = retirable({ "docs/my guide.md": GUIDE, "docs/pdr/0002-spaced.md": "Retire docs/my guide.md.\n" });
+    for (const [rel, pdr] of [["./docs/guide.md", PDR], ["docs//guide.md", PDR], ["docs/my guide.md", "docs/pdr/0002-spaced.md"]]) {
+      const out = run(root, "retire", rel, "--pdr", pdr);
+      assert.equal(out.status, 1, `${rel}: ${out.stderr}`);
+      assert.match(out.stderr, /is not a plain path/);
+    }
+    assert.ok(existsSync(path.join(root, "docs/guide.md")));
+    assert.ok(existsSync(path.join(root, "docs/my guide.md")));
+    assert.equal(existsSync(path.join(root, RETIRED)), false);
+  });
+
+  it("refuses a decision record that names only a longer path", () => {
+    const root = retirable({ "docs/pdr/0002-other.md": "Retire old-docs/guide.md and docs/guide.md.bak.\n" });
+    const out = run(root, "retire", "docs/guide.md", "--pdr", "docs/pdr/0002-other.md");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /does not name docs\/guide\.md/);
+  });
+
+  it("refuses when a frozen copy is already there, and changes nothing", () => {
+    const root = retirable();
+    put(root, COPY, "old copy\n");
+    const out = run(root, "retire", "docs/guide.md", "--pdr", PDR);
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/formal\/requirements\/extra\/sources\/docs\/guide\.md exists/);
+    assert.equal(readFileSync(path.join(root, COPY), "utf8"), "old copy\n");
+    assert.ok(existsSync(path.join(root, "docs/guide.md")));
+    assert.equal(existsSync(path.join(root, RETIRED)), false);
+  });
+
+  it("refuses a document that is already retired", () => {
+    const root = retired();
+    const out = run(root, "retire", "docs/guide.md", "--pdr", PDR);
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/guide\.md is already retired/);
+  });
+});
+
+describe("check of the retired documents", () => {
+  it("fails a frozen copy that changed or is missing", () => {
+    const root = retired();
+    put(root, COPY, GUIDE.replace("End.", "The end."));
+    assert.match(run(root, "check").stderr, /docs\/formal\/requirements\/extra\/sources\/docs\/guide\.md, the frozen copy of docs\/guide\.md, changed/);
+    rmSync(path.join(root, COPY));
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the frozen copy of docs\/guide\.md, is missing/);
+  });
+
+  it("fails a retired document that exists again, and a decision record that is missing", () => {
+    const root = retired();
+    put(root, "docs/guide.md", GUIDE);
+    rmSync(path.join(root, PDR));
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /docs\/guide\.md is retired and exists again/);
+    assert.match(out.stderr, /docs\/pdr\/0001-retire-the-guide\.md, the decision record for docs\/guide\.md, does not exist/);
+  });
+
+  it("fails a line of retired.md that does not have the form", () => {
+    const root = retired();
+    put(root, RETIRED, `${readFileSync(path.join(root, RETIRED), "utf8")}- docs/other.md\n`);
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /"- docs\/other\.md" does not have the form "- <path> <hash> <decision record>"/);
+  });
+});
+
 describe("usage", () => {
   it("names the commands when the command is unknown", () => {
     const out = run(project(), "frobnicate");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish/);
+    assert.match(out.stderr, /new, list, search, quote, check, render, guard, agree, sources, ledger, uncovered, untraced, link, narrate, narrative, publish, references, retire/);
   });
 });

@@ -251,6 +251,7 @@ Install each retained skill as `ndev-<name>`. Tests check native discovery, link
 | `requirements-retrospective` skill | `skills/requirements-retrospective/SKILL.md` | `ndev-requirements-retrospective` skill | Installer | Discover `ndev-requirements-retrospective` and resolve its references in each harness. |
 | `requirements-document` skill | `skills/requirements-document/SKILL.md` | `ndev-requirements-document` skill | Installer | Discover `ndev-requirements-document` and resolve its references in each harness. |
 | `requirements-publish` skill | `skills/requirements-publish/SKILL.md` | `ndev-requirements-publish` skill | Installer | Discover `ndev-requirements-publish` and resolve its references in each harness. |
+| `requirements-retire` skill | `skills/requirements-retire/SKILL.md` | `ndev-requirements-retire` skill | Installer | Discover `ndev-requirements-retire` and resolve its references in each harness. |
 | `reset` skill | `skills/reset/SKILL.md` | `ndev-reset` skill | Installer | Discover `ndev-reset` and resolve its references in each harness. |
 | `resolving-merge-conflicts` skill | `skills/resolving-merge-conflicts/SKILL.md` | `ndev-resolving-merge-conflicts` skill | Installer | Discover `ndev-resolving-merge-conflicts` and resolve its references in each harness. |
 | `responsive-check` skill | `skills/responsive-check/SKILL.md` | `ndev-responsive-check` skill | Installer | Discover `ndev-responsive-check` and resolve its references in each harness. |
