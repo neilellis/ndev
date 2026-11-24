@@ -79,9 +79,9 @@ function callerRecord(root, values, { optional = false } = {}) {
   }
   const all = readWorkflowRecords(root)
   const record = findRecord(all, caller)
-  if (!record && (!optional || caller.issue || caller.pr || all.length > 1)) {
-    throw new CliError(2, `No single workflow for ${caller.issue ? `issue #${caller.issue}` : caller.pr ? `PR #${caller.pr}` : root}.`, { repair })
-  }
+  if (record || (optional && caller.pr)) return record
+  if (caller.issue) throw new CliError(2, `No workflow record for issue #${caller.issue} in ${root}.`, { repair: `Run ndev flow start ${caller.issue} to start its workflow, or give --pr <n> to wait on a pull request that no workflow holds.` })
+  if (!optional || all.length > 1) throw new CliError(2, `No single workflow in ${root}.`, { repair })
   return record
 }
 

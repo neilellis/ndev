@@ -69,3 +69,22 @@ test('a second CLI call unblocks the active wait and restores its state', async 
   assert.equal((await exit)[0], 4, stdout)
   assert.equal(JSON.parse(stdout).error.details.answer, 'Continue with the answer')
 })
+
+test('wait accepts a PR that no workflow record holds, and moves no workflow state', t => {
+  const { root, state } = fixture(t)
+  const result = sync(['wait', 'seconds', '--pr', '99', '0.03'], root)
+  assert.equal(result.status, 0, result.stdout || result.stderr)
+  assert.equal(JSON.parse(result.stdout).result.outcome, 'satisfied')
+  assert.equal(state().state, 'developing')
+  assert.equal(state().wait, undefined)
+})
+
+test('wait for an issue that no workflow record holds names the command that starts it, not --issue again', t => {
+  const { root } = fixture(t)
+  const result = sync(['wait', 'seconds', '--issue', '99', '0.03'], root)
+  assert.equal(result.status, 2, result.stdout || result.stderr)
+  const { error } = JSON.parse(result.stdout)
+  assert.match(error.message, /No workflow record for issue #99/)
+  assert.match(error.repair, /ndev flow start 99/)
+  assert.match(error.repair, /--pr/)
+})
