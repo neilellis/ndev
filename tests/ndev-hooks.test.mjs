@@ -557,6 +557,47 @@ test('the ci check wait is refused only while this session has a live ndev watch
   assert.match(watched.hookSpecificOutput.permissionDecisionReason, /ndev watch reads these checks/)
 })
 
+function liveWatcherFixture(t) {
+  const root = fixture(t)
+  const state = mkdtempSync(join(tmpdir(), 'ndev-hook-state-'))
+  t.after(() => rmSync(state, { recursive: true, force: true }))
+  writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({ version: 1, issue: 17, workflow: {
+    issue: 17, root, repo: 'o/r', state: 'ci', branch: 'topic', base: 'main', prs: [18],
+  } }))
+  const env = { XDG_STATE_HOME: state, ORCA_AGENT_SESSION_ID: 'fixture' }
+  const watchFile = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import { realpathSync } from 'node:fs'; import { hookSessionFile } from ${JSON.stringify(new URL('../scripts/ndev/hooks.mjs', import.meta.url).href)}; console.log(hookSessionFile(realpathSync(process.argv[1]), 'fixture').replace(/\\.json$/, '.watch.json'))`, root,
+  ], { encoding: 'utf8', env: { ...process.env, ...env } })
+  assert.equal(watchFile.status, 0, watchFile.stderr)
+  mkdirSync(join(watchFile.stdout.trim(), '..'), { recursive: true })
+  writeFileSync(watchFile.stdout.trim(), JSON.stringify({ root, session: 'fixture', pid: process.pid }))
+  return { root, env }
+}
+
+const denied = decision => decision?.hookSpecificOutput?.permissionDecision === 'deny'
+
+test('a live ndev watch does not refuse the ndev wait checks command, and the refusal of the old helper names it', t => {
+  const { root, env } = liveWatcherFixture(t)
+  const allowed = hook(root, 'claude', 'Bash', 'ndev wait checks 18', env)
+  assert.equal(denied(allowed), false, JSON.stringify(allowed))
+  const helper = hook(root, 'claude', 'Bash', '/x/scripts/github/wait-for-pr-change.sh 18 --skip-success --json', env)
+  assert.equal(denied(helper), true)
+  assert.match(helper.hookSpecificOutput.permissionDecisionReason, /Run ndev wait checks 18 for one blocking wait/)
+})
+
+test('a bug report that only quotes the helper path is not refused, and a quoted helper that runs still is', t => {
+  const { root, env } = liveWatcherFixture(t)
+  const helper = '/x/scripts/github/wait-for-pr-change.sh 18 --skip-success --json'
+  for (const command of [
+    `gh issue create --title "Wait is refused" --body "Flow status says run ${helper}, and the hook refuses it"`,
+    `ndev issue create --body 'Evidence: gh pr checks 18 --watch and gh run watch 5 are refused too'`,
+    `printf '%s' "${helper}" > report.txt`,
+  ]) assert.equal(denied(hook(root, 'claude', 'Bash', command, env)), false, command)
+  for (const command of [`bash -c "${helper}"`, `bash "${helper}"`, `"/x/scripts/github/wait-for-pr-change.sh" 18`, `gh pr checks 18 --watch`]) {
+    assert.equal(denied(hook(root, 'claude', 'Bash', command, env)), true, command)
+  }
+})
+
 function recordsFixture(t) {
   const root = fixture(t)
   writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')

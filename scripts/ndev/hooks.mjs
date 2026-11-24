@@ -197,7 +197,7 @@ function rawGitReason(command, workspace, workflow, helperCwd, watched) {
   if (!workflow) return undefined
   const label = `Issue #${workflow.issue} is in ${workflow.state}.`
   if (OWN_WAIT.test(gitCode(command)) && (workflow.state === 'ci' || workflow.doneWaitsFor) && watched) {
-    return `${label} ndev watch reads these checks. Use ndev flow status for its current result.`
+    return `${label} ndev watch reads these checks, so this helper would only repeat them. Run ndev wait checks ${workflow.pr ?? workflow.prs?.[0] ?? '<pr>'} for one blocking wait, or ndev flow status for the current result.`
   }
   const normalized = gitCode(command)
   const workflowDir = findWorkspace(workflow.root ?? workspace.root)

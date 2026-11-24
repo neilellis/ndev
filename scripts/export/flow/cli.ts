@@ -32,6 +32,7 @@ const CHECK_DIR = 'scripts/ndev/workflow'
 const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh']
 const CHECK_MAX_MS = 20 * 60_000
 const WAIT_PR = `${HOME}/scripts/github/wait-for-pr-change.sh`
+const waitChecks = (pr: number | string) => standalone ? `${WAIT_PR} ${pr} --skip-success --json` : `ndev wait checks ${pr}`
 const WAIT_PID = `${HOME}/scripts/work/wait_for_process_end.sh`
 const now = () => Date.now()
 const OWNER_LIVE_MS = 10 * 60_000
@@ -496,8 +497,8 @@ function greenOrFail(wf: Workflow, sha: string): Checks {
   if (pr.mergeable === false) throw new Fail(1, `PR #${prOf(wf)} has merge conflicts with ${wf.base}. Merge origin/${wf.base} into the branch, resolve them (the ndev-resolving-merge-conflicts skill), and commit with ndev-flow checkpoint.`)
   const checks = readChecks(wf, sha)
   if (wf.direct && (checks.red.length || checks.pending.length)) throw new Fail(1, `Checks on ${sha} in ${wf.base}: ${[...checks.red, ...checks.pending].join(', ')}. Rerun ndev flow finished-checks when green.`)
-  if (checks.red.length) throw new Fail(1, `Checks failed on ${sha.slice(0, 8)}: ${checks.red.join(', ')}. Fix each one and commit with ndev-flow checkpoint, then wait with ${WAIT_PR} ${prOf(wf)} --skip-success --json.`)
-  if (checks.pending.length) throw new Fail(1, `Checks still run on ${sha.slice(0, 8)}: ${checks.pending.join(', ')}. Wait with one blocking call: ${WAIT_PR} ${prOf(wf)} --skip-success --json. Then run ndev-flow finishedChecks again.`)
+  if (checks.red.length) throw new Fail(1, `Checks failed on ${sha.slice(0, 8)}: ${checks.red.join(', ')}. Fix each one and commit with ndev-flow checkpoint, then wait with ${waitChecks(prOf(wf))}.`)
+  if (checks.pending.length) throw new Fail(1, `Checks still run on ${sha.slice(0, 8)}: ${checks.pending.join(', ')}. Wait with one blocking call: ${waitChecks(prOf(wf))}. Then run ndev-flow finishedChecks again.`)
   return checks
 }
 const changedPaths = (wf: Workflow) => git(wf.root, 'diff', '--name-only', `origin/${wf.base}...HEAD`).stdout.split('\n').filter(Boolean)
@@ -508,7 +509,7 @@ function rewrite(text: string, wf?: Workflow): string {
     .replace(/The plugin started [^:]+:[\s\S]*?because its answer comes to you\./, () => (wf ? reviewText(wf) : 'ndev-flow started the review.'))
     .replaceAll('The plugin ran the dead-code sweep', 'ndev-flow ran the dead-code sweep')
     .replaceAll('When the answer comes,', 'When the review ends,')
-    .replace(/Do not run a wait helper: the workflow watches[^.]*\. If nothing else is open, end your turn\. When it prompts you,/, `Nothing watches the checks for you in this harness. Wait for them with one blocking call: ${WAIT_PR} ${pr} --skip-success --json. When it returns,`)
+    .replace(/Do not run a wait helper: the workflow watches[^.]*\. If nothing else is open, end your turn\. When it prompts you,/, standalone ? `Nothing watches the checks for you in this harness. Wait for them with one blocking call: ${waitChecks(pr)}. When it returns,` : `Wait for the checks with one blocking call: ${waitChecks(pr)}. It reads the newest run of each check, and exits 1 with the failed check and its log URL. When it returns,`)
     .replaceAll('Ask with interview(interviewJson).', `${PROFILE.askHuman ?? 'Ask the human in the chat and end your turn.'} Ask at most one round at a time.`)
     .replaceAll('in the interview pane or in the chat', 'in the chat')
     .replaceAll("the project's CLAUDE.md", "the project's AGENTS.md or CLAUDE.md")
@@ -917,7 +918,7 @@ function doneProblems(wf: Workflow, sha: string, pr: Pr): { problems: string[]; 
   if (!humanSkip) {
     const checks = readChecks(wf, sha)
     if (checks.red.length) problems.push(`Red checks on HEAD: ${checks.red.join(', ')}.`)
-    if (checks.pending.length) problems.push(`Pending checks on HEAD: ${checks.pending.join(', ')}. Wait with one blocking call: ${WAIT_PR} ${pr.number} --skip-success --json.`)
+    if (checks.pending.length) problems.push(`Pending checks on HEAD: ${checks.pending.join(', ')}. Wait with one blocking call: ${waitChecks(pr.number)}.`)
   }
   if (wf.evidence?.checks?.sha !== sha) problems.push('finishedChecks has no record for HEAD. Run ndev-flow finishedChecks.')
   if (wf.evidence?.smoke && wf.evidence.smoke.sha !== sha) problems.push(`The smoke evidence is for ${String(wf.evidence.smoke.sha).slice(0, 8)}, not HEAD.`)
@@ -1261,7 +1262,7 @@ const CLAUDE_ONLY: Record<string, string> = {
   hotfix: 'Instead, file the fix with ndev-flow followUp --mode issue_only, and start it in its own worktree with ndev-flow started.',
   create: 'Instead, file the issue with ndev-flow followUp --mode issue_only, or with gh.sh issue-new.',
   off: 'Instead, stop calling ndev-flow for this issue. The record stays in the issue file.',
-  wait: `Instead, run the blocking helper for what you wait on: ${WAIT_PR} <pr> --skip-success --json, or ${WAIT_PID} <pid>.`,
+  wait: `Instead, run the blocking helper for what you wait on: ${waitChecks('<pr>')}, or ${WAIT_PID} <pid>.`,
   epic: 'Instead, run each sub-issue as its own issue with ndev-flow started, in its own worktree.',
 }
 function claudeOnly(command: string): string | undefined {

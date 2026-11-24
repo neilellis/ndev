@@ -4,7 +4,7 @@
 // substitutions. A pattern over the raw text cannot, as an apostrophe in a comment would hide the next line.
 
 const OPENER = /<<(-?)\s*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([\w.-]+))/y
-const NAMES_GIT = /\bgit\b|\bpush[\w-]*\.sh\b/
+const NAMES_GIT = /\bgit\b|\bpush[\w-]*\.sh\b|wait-for-(?:pr-change|run)\.sh|\bgh\s+(?:run\s+watch|pr\s+checks)\b/
 const SHELL = '(?:ba|z|da|k)?sh'
 // The word after these runs. For other programs, a word after -c or -e is a count or a pattern.
 const RUNS_NEXT = new RegExp(`(?:^|[\\s;&|(/\`])(?:(?:${SHELL}|python[\\d.]*|node|bun|deno|perl|ruby)(?:\\s+-[a-zA-Z-]+)*\\s+-[a-zA-Z]*[ce](?:\\s+--)?|eval|${SHELL}\\s*<<<)\\s*$`)
