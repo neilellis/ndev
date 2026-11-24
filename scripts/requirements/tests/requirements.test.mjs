@@ -248,6 +248,23 @@ describe("check", () => {
     assert.match(copy.stderr, /the Explanation repeats the Statement\./);
   });
 
+  it("names each status in the error for a status that is not in the list", () => {
+    const out = run(seeded({ "0001-a.md": record("0001", { status: "Done" }) }), "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /status "Done" is not Proposed, Open, Accepted, Rejected, Retired or Superseded by NNNN\./);
+  });
+
+  it("passes an Open record that is as incomplete as a Proposed record may be", () => {
+    const out = run(seeded({ "0001-a.md": record("0001", { status: "Open", statement: "", explanation: "", sourceText: "", section: "", decidedBy: "" }) }), "check");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("fails an Open record with a Statement and no Explanation", () => {
+    const out = run(seeded({ "0001-a.md": record("0001", { status: "Open", explanation: "" }) }), "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the section "## Explanation" is empty, and the Statement has text\./);
+  });
+
   it("passes a Proposed record whose Statement and Explanation are both empty", () => {
     const out = run(seeded({ "0001-a.md": record("0001", { status: "Proposed", statement: "", explanation: "", section: "", decidedBy: "" }) }), "check");
     assert.equal(out.status, 0, out.stderr);
@@ -355,6 +372,21 @@ describe("render", () => {
     assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     assert.match(html, /A &lt;b&gt;bold&lt;\/b&gt; title/);
     assert.doesNotMatch(html, /href="javascript:/);
+  });
+
+  it("shows an Open record in its section, marked as Open, and counts it", () => {
+    const root = seeded({
+      "0001-a.md": record("0001", { section: "Report" }),
+      "0002-b.md": record("0002", { section: "Report", title: "The report has a date", status: "Open" }),
+    });
+    assert.equal(run(root, "render").status, 0);
+    const html = readFileSync(path.join(root, HTML), "utf8");
+    assert.match(html, /<article id="REQ-0002" class="status-open">/);
+    assert.match(html, /\.status-open\{[^}]+\}/);
+    assert.match(html, /2 records: 1 Accepted, 1 Open\./);
+    assert.ok(html.indexOf('<section id="section-report"') < html.indexOf('<article id="REQ-0002"'));
+    assert.equal(html.indexOf('<section id="not-in-force"'), -1);
+    assert.match(run(root, "list", "--status", "Open").stdout, /^REQ-0002 {2}Open {2,}The report has a date {2}\S+\n$/);
   });
 
   it("groups the records in force by section and lists the others apart", () => {
@@ -1238,8 +1270,8 @@ describe("a Trace with no implementation or plan", () => {
   const nfr = (text, value = "true") => text.replace("\n---\n\n## Statement", `\nnfr: ${value}\n---\n\n## Statement`);
   const guarded = (text) => run(committed({ [FILE]: text }), "guard", "--base", "base");
 
-  it("fails the guard for a Proposed or Accepted record with no File, Issue or PR line, and names the repair", () => {
-    for (const status of ["Proposed", "Accepted"]) {
+  it("fails the guard for a Proposed, Open or Accepted record with no File, Issue or PR line, and names the repair", () => {
+    for (const status of ["Proposed", "Open", "Accepted"]) {
       const out = guarded(record("0001", { status, trace: "" }));
       assert.equal(out.status, 1, out.stdout);
       assert.match(out.stderr, /0001-the-report-names-each-source\.md: the Trace has no link to what implements the requirement or plans to implement it\./);
@@ -2298,6 +2330,13 @@ describe("cites", () => {
     assert.equal(out.stdout, "");
   });
 
+  it("passes an issue whose body cites an Open record", () => {
+    const root = seeded({ ...RECORDS, "0003-an-open-rule.md": record("0003", { status: "Open" }) });
+    const out = run(root, "cites", body(root, "Asks about REQ-0003."), "--kind", "issue");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "The issue cites REQ-0003\n");
+  });
+
   it("passes an issue whose body cites a record in force", () => {
     const root = seeded(RECORDS);
     const out = run(root, "cites", body(root, "Implements REQ-0001."), "--kind", "issue");
@@ -2309,7 +2348,7 @@ describe("cites", () => {
     const root = seeded(RECORDS);
     const out = run(root, "cites", body(root, "A new feature."), "--kind", "issue");
     assert.equal(out.status, 1);
-    assert.match(out.stderr, /The body of this issue cites no requirement record in force \(Proposed or Accepted\) in docs\/formal\/requirements\. Each issue and pull request traces to a requirement\. Find the record with: ndev requirements search <words>\. If none fits, create a Proposed record with: ndev requirements new "<title>" --author "<who asked for it>"\. Then cite its ID, such as REQ-0001, in the body\./);
+    assert.match(out.stderr, /The body of this issue cites no requirement record in force \(Proposed, Open or Accepted\) in docs\/formal\/requirements\. Each issue and pull request traces to a requirement\. Find the record with: ndev requirements search <words>\. If none fits, create a Proposed record with: ndev requirements new "<title>" --author "<who asked for it>"\. Then cite its ID, such as REQ-0001, in the body\./);
   });
 
   it("fails a body that cites only a record that does not exist or is not in force", () => {
@@ -2332,5 +2371,121 @@ describe("cites", () => {
     assert.equal(bad.status, 1);
     assert.match(bad.stderr, /The body of this pull request cites no requirement record in force/);
     assert.match(bad.stderr, /#6 cites no record in force either/);
+  });
+});
+
+const FLAG = "The Statement says /admin/, but the route is /app/.";
+const flagged = (text, reason = FLAG) => text.replace("\n---\n\n## Statement", `\nflagged: ${JSON.stringify(reason)}\n---\n\n## Statement`);
+
+describe("flag", () => {
+  it("sets a flag that check passes, and replaces it", () => {
+    const root = seeded();
+    const out = run(root, "flag", "REQ-0001", FLAG);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /0001-the-report-names-each-source\.md: flagged: The Statement says/);
+    const full = path.join(root, DIR, FILE);
+    assert.match(readFileSync(full, "utf8"), /\nprs: \[\]\nflagged: "The Statement says \/admin\/, but the route is \/app\/\."\n---\n/);
+    assert.equal(run(root, "check").status, 0, run(root, "check").stderr);
+    assert.equal(run(root, "flag", "REQ-0001", "The route is wrong.").status, 0);
+    const text = readFileSync(full, "utf8");
+    assert.equal(text.match(/^flagged:/gm).length, 1);
+    assert.match(text, /^flagged: The route is wrong\.$/m);
+    assert.doesNotMatch(text, /## Log\n\n.*\n- /);
+  });
+
+  it("clears a flag with --clear", () => {
+    const root = seeded({ [FILE]: flagged(record("0001")) });
+    const out = run(root, "flag", "REQ-0001", "--clear");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /0001-the-report-names-each-source\.md: flag cleared/);
+    assert.doesNotMatch(readFileSync(path.join(root, DIR, FILE), "utf8"), /flagged/);
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("refuses a flag with no text or with text and --clear, and a record that does not exist", () => {
+    const root = seeded();
+    for (const args of [["REQ-0001"], ["REQ-0001", "  "], ["REQ-0001", "Two\nlines"], ["REQ-0001", FLAG, "--clear"], ["REQ-0001", "The", "route", "is", "wrong"]]) {
+      const out = run(root, "flag", ...args);
+      assert.equal(out.status, 2, args.join(" "));
+      assert.match(out.stderr, /flag needs <REQ-NNNN> "<why the record looks wrong>" on one line, in quotes, or <REQ-NNNN> --clear/);
+    }
+    const missing = run(root, "flag", "REQ-0042", FLAG);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /REQ-0042/);
+  });
+
+  it("reads back flag text with special characters, and escapes it in the rendered page", () => {
+    const root = seeded();
+    const reason = `#1 says: "<b>x</b>" & - [] it's wrong:`;
+    assert.equal(run(root, "flag", "REQ-0001", reason).status, 0);
+    assert.equal(run(root, "check").status, 0);
+    assert.equal(run(root, "list", "--flagged").stdout.split("\n")[1], `  Flagged: ${reason}`);
+    assert.equal(run(root, "render").status, 0);
+    assert.match(readFileSync(path.join(root, HTML), "utf8"), /<p class="flagged">Flagged: #1 says: &quot;&lt;b&gt;x&lt;\/b&gt;&quot; &amp; - \[\] it's wrong:<\/p>/);
+  });
+
+  it("clears a flag written as a list, with CRLF line ends, and says when there is no flag", () => {
+    const root = seeded({ [FILE]: record("0001").replace("\n---\n\n## Statement", "\nflagged:\n  - a\n  - b\n---\n\n## Statement").replace(/\n/g, "\r\n") });
+    assert.equal(run(root, "check").status, 1);
+    assert.match(run(root, "flag", "REQ-0001", "--clear").stdout, /flag cleared/);
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.equal(text, record("0001").replace(/\n/g, "\r\n"));
+    assert.match(run(root, "flag", "REQ-0001", "--clear").stdout, /no flag to clear/);
+  });
+
+  it("fails check on an empty flag", () => {
+    const root = seeded({ [FILE]: flagged(record("0001"), "") });
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /0001-the-report-names-each-source\.md: "flagged" has no text\. Give the reason the record looks wrong, or remove it with: ndev requirements flag REQ-0001 --clear/);
+  });
+
+  it("lists only the flagged records, each with its reason", () => {
+    const root = seeded({
+      "0001-a.md": record("0001"),
+      "0002-b.md": flagged(record("0002", { title: "The report has a date", status: "Proposed" })),
+    });
+    const out = run(root, "list", "--flagged");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /^REQ-0002 {2}Proposed {2}The report has a date {2}\S+\n {2}Flagged: The Statement says \/admin\/, but the route is \/app\/\.\n$/);
+    assert.match(run(seeded(), "list", "--flagged").stdout, /^No record matches the filter/);
+  });
+
+  it("passes a change to the flag with no Log entry and no agreement in guard", () => {
+    const root = committed();
+    edit(root, (text) => flagged(text));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+  });
+
+  it("shows the flag in the rendered page and counts the flagged records", () => {
+    const root = seeded({
+      "0001-a.md": record("0001"),
+      "0002-b.md": flagged(record("0002", { title: "The report has a date" })),
+    });
+    assert.equal(run(root, "render").status, 0);
+    const html = readFileSync(path.join(root, HTML), "utf8");
+    assert.match(html, /<p class="meta">[^\n]*<\/p>\n<p class="flagged">Flagged: The Statement says \/admin\/, but the route is \/app\/\.<\/p>/);
+    assert.match(html, /\.flagged\{[^}]+\}/);
+    assert.match(html, /2 records: 2 Accepted\. 1 flagged\./);
+    assert.equal(html.match(/class="flagged"/g).length, 1);
+  });
+
+  it("shows the flag in the published page, the index count and the JSON", () => {
+    const root = seeded({ [FILE]: flagged(record("0001")) });
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    assert.match(page(root, "report.md"), /\[record\]\([^)]+\)\n\n> \*\*Flagged:\*\* The Statement says \/admin\/, but the route is \/app\/\.\n\nThe report names each source\./);
+    assert.match(page(root, "index.md"), /1 record: 1 Accepted\. 1 flagged\./);
+    const json = JSON.parse(page(root, "requirements.json"));
+    assert.equal(json.records[0].flagged, FLAG);
+  });
+
+  it("publishes an empty flag in the JSON of a record with no flag", () => {
+    const root = seeded();
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    assert.equal(JSON.parse(page(root, "requirements.json")).records[0].flagged, "");
+    assert.doesNotMatch(page(root, "index.md"), /flagged/);
   });
 });

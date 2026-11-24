@@ -26,7 +26,7 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 ---
 id: REQ-NNNN
 title: <short title>
-status: Proposed | Accepted | Rejected | Retired | Superseded by NNNN
+status: Proposed | Open | Accepted | Rejected | Retired | Superseded by NNNN
 origin: explicit | implied | PR
 section: <the section of the document that holds it>
 date: YYYY-MM-DD
@@ -41,6 +41,7 @@ issues: []    (or a list of the numbers of the issues in the Trace: "  - 5")
 prs: []    (or a list of the numbers of the pull requests in the Trace and the Source text: "  - 12")
 nfr: true    (only for a non-functional requirement)
 agreed: <name>, YYYY-MM-DD, text <hash>    (only after a change that a human agreed to)
+flagged: "<why the record looks wrong>"    (only while a reader suspects a fault)
 ---
 
 ## Statement
@@ -87,13 +88,14 @@ These commands write the record:
 - `ndev requirements sync [<REQ-NNNN>...]` writes the `source`, `issues` and `prs` fields from the Source text and the Trace. With no id, it writes each record whose fields are different.
 - `ndev requirements link` and `ndev requirements file` add to the Trace, and write `issues` and `prs`.
 - `ndev requirements log <REQ-NNNN> "<what changed>"` adds an entry with the date of today to the Log.
+- `ndev requirements flag <REQ-NNNN> "<why it looks wrong>"` sets or replaces the `flagged` field. `ndev requirements flag <REQ-NNNN> --clear` removes it.
 - `ndev requirements quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
 
 ## The fields
 
 | Field | Values |
 |---|---|
-| status | `Proposed`: an agent wrote it and no human has accepted it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
+| status | `Proposed`: an agent wrote it and no human has accepted it. `Open`: like `Proposed`, but it needs feedback from a human before anyone can decide it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
 | origin | `explicit`: a document states it. `implied`: a test, a schema constraint or a check enforces it, and no document states it. `PR`: no record covered a pull request, so the record was written from that pull request. |
 | section | The section of the generated document that holds the record. |
 | source | The citations of the Source text, in the same order: a path with lines, or an https link to a pull request, an issue or a web document. One value when there is one citation, and a list when there are more. `ndev requirements check` fails a `source` that is different from the Source text. |
@@ -103,6 +105,7 @@ These commands write the record:
 | nfr | Optional. `true` for a non-functional requirement: a quality of the system, such as a limit on time, cost or size. Leave it out for a functional requirement. An NFR usually needs a link in the Trace too. Only an NFR with nothing to link gives `- None: <reason>`. |
 | decided_by | The human who accepted, rejected or retired the record. |
 | agreed | Optional. A human's agreement to the current Statement and Source text. The hash covers both parts, without the line numbers of the citations. Written by `ndev requirements agree`, which runs only in a terminal. |
+| flagged | Optional, on a record of any status. The reason why a reader suspects that the record is wrong, for example a Statement that does not match the code. It keeps the doubt in the record until a human decides. It is not part of the requirement: it is not protected, and a change to it needs no Log entry. `ndev requirements list --flagged` lists the flagged records, and `render` and `publish` show the flag. |
 | verification | How the requirement is shown to be met: a `test`, a static `check`, a formal `model`, an `eval`, or a `review` by a person. Give a list for one or more methods. `unassigned` until a method is chosen. |
 | model | Optional. The Quint models that specify the requirement, as a list. Each entry is a `.qnt` path from the project root. Add `#<name>` for one part of the model: a `val`, `def`, `action`, `temporal` or `run`. See [Models](#models). |
 
@@ -110,7 +113,7 @@ These commands write the record:
 
 - **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. When the human agrees, the agent changes the text and the human runs `ndev requirements agree`. The status, the explanation, the trace and the notes are not protected.
 - **Each record explains its Statement.** The `## Explanation` comes after the Statement. It tells what the requirement entails, in simple English, so that a reader who does not know the domain understands it. It defines each glossary, technical or jargon term that the Statement uses. It does not repeat the Statement. It is not binding: when the two disagree, the Statement wins, and the agent corrects the Explanation. A record written before this rule fails `check` until it has an Explanation.
-- **A human accepts.** An agent writes `Proposed`. An accepted record names the human in `decided_by`. An agent never marks its own record `Accepted`.
+- **A human accepts.** An agent writes `Proposed`. When a record needs feedback from a human, an agent sets `Open`, says in the Notes what feedback it needs, and adds a Log entry with `ndev requirements log`. An accepted record names the human in `decided_by`. An agent never marks its own record `Accepted`.
 - **One requirement for each record.** If a statement has two requirements that can pass or fail apart, it is two records.
 - **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
 - **The Log records each change to the requirement.** `ndev requirements new` writes the first entry, `Created.`. When the title, the status, the Statement or the Source text changes, add an entry with `ndev requirements log`: what changed, and why. Never change or remove an entry.
@@ -126,12 +129,13 @@ These commands write the record:
 - a bad file name, a duplicate number, or an `ID` that does not match the file number;
 - a status, an origin or a verification value that is not in the lists above;
 - a `Superseded by` that names no record, itself or an older record;
-- a record that is not `Proposed` and has no statement, source text, section or approver;
+- a record that is not `Proposed` or `Open` and has no statement, source text, section or approver;
 - a source that is not a path with lines or an https link, or that has no quote;
 - a record of origin `PR` whose source text names no pull request;
 - a record in force whose cited lines do not hold the quoted text;
 - a `source`, `issues` or `prs` field that is different from the Source text and the Trace;
 - an `nfr` value that is not `true`;
+- a `flagged` field with no text;
 - a `- None:` line in a record without `nfr: true`, with no reason, or in a Trace that has a link;
 - a `- PDR:` line that is not a Markdown file in a `pdr` folder, an `- ADR:` line that is not a Markdown file in an `adr` or `decisions` folder, and, for a record in force, a decision record that does not exist;
 - for a record in force, a `model` entry that is not a `.qnt` path, a model file that does not exist, a model that does not cite the record ID, and a `#<name>` that the model does not declare;
@@ -140,7 +144,7 @@ These commands write the record:
 
 When the quoted text only moved in its file, the check names the new lines, and the agent corrects the line numbers. When the text changed, the check sends the change to a human.
 
-`ndev requirements guard --base <git ref>` fails each record in force (`Proposed` or `Accepted`) whose Trace has no `- File:`, `- Issue:` or `- PR:` line. A record with `nfr: true` and a `- None: <reason>` line passes. The guard also compares each record with the same number at the base. It fails:
+`ndev requirements guard --base <git ref>` fails each record in force (`Proposed`, `Open` or `Accepted`) whose Trace has no `- File:`, `- Issue:` or `- PR:` line. A record with `nfr: true` and a `- None: <reason>` line passes. The guard also compares each record with the same number at the base. It fails:
 
 - a Statement or a Source text that changed, with no `agreed` field, or with an `agreed` field for other text;
 - a title, a status, a Statement or a Source text that changed, with no new entry in the Log;
@@ -167,7 +171,7 @@ A record that is not in force can keep a closed link and a removed file, but not
 
 ### Each issue and pull request cites a record
 
-In a project with records, each issue and pull request traces to a record in force (`Proposed` or `Accepted`). `ndev requirements cites <body file> --kind issue|pr` passes a body that cites a record ID in force. A pull request also passes when an issue that it closes (`Closes #N`) cites one. When no record fits, create a `Proposed` record with `ndev requirements new` and cite it.
+In a project with records, each issue and pull request traces to a record in force (`Proposed`, `Open` or `Accepted`). `ndev requirements cites <body file> --kind issue|pr` passes a body that cites a record ID in force. A pull request also passes when an issue that it closes (`Closes #N`) cites one. When no record fits, create a `Proposed` record with `ndev requirements new` and cite it.
 
 The gates:
 
@@ -283,7 +287,7 @@ The records and the models enter the work at each stage. The agent:
 
 | Stage | Records | Models |
 |---|---|---|
-| Start | Run `ndev requirements search` with the words of the issue, and read each record that the change touches. A `Proposed` record is a question for the human. | Read the models in the `model` list of those records. |
+| Start | Run `ndev requirements search` with the words of the issue, and read each record that the change touches. A `Proposed` record is a question for the human. An `Open` record waits for their feedback. | Read the models in the `model` list of those records. |
 | Interview | Ask about a conflict between the issue and a record. Show the Statement of each new record that you propose. | Ask the questions that the model shows to be open. |
 | Plan (heavy) | Write a `Requirements:` line. | Write a `Model:` line. Write or change the model, and run `quint typecheck`, before `finished-plan`. |
 | Development | Add the `- File:` lines and the citations in the source. Propose a record for new behaviour. | Keep the model in step with the code. Prove the model (above). Cite the model in the source. |
@@ -336,7 +340,7 @@ The work changes the Trace, the `model` list and the Notes of a record. It never
 
 With an outline, `render` fails a record in force with no section or with a section that is not in the outline, an outline section with no record in force, a section named twice, a second title, and any line that is not a `#` or `##` heading. With no outline, the sections come in the order of the records.
 
-The `requirements-document` skill writes the narrative. `ndev requirements narrate "<section>"` prints the records of the section and the state of its narrative. `narrate "<section>" --from <file>` stores the prose in `generated/narrative/` with a hash of the identifier and Statement of each record in force in the section. A change of status between `Proposed` and `Accepted` does not make it stale. It fails:
+The `requirements-document` skill writes the narrative. `ndev requirements narrate "<section>"` prints the records of the section and the state of its narrative. `narrate "<section>" --from <file>` stores the prose in `generated/narrative/` with a hash of the identifier and Statement of each record in force in the section. A change of status between `Proposed`, `Open` and `Accepted` does not make it stale. It fails:
 
 - a sentence with a normative word (must, shall, should, never, cannot, only and the like) that cites no `REQ-NNNN`: the records state the requirements, and the narrative only points to them. Each list item is a sentence. A citation can come after the full stop, as in `... sources. (REQ-0001)`. An identifier in a code span is not a citation;
 - an identifier that is not a record in force in the section;

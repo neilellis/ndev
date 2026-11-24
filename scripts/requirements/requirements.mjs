@@ -8,9 +8,10 @@ const DIR = "docs/formal/requirements";
 const HTML = `${DIR}/generated/requirements.html`;
 const UP = "../".repeat(HTML.split("/").length - 1);
 const NAME = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
-const STATUS = /^(Proposed|Accepted|Rejected|Retired|Superseded by (\d{4}))$/;
-const STATUS_ORDER = ["Accepted", "Proposed", "Rejected", "Retired", "Superseded"];
-const IN_FORCE = ["Proposed", "Accepted"];
+const STATUS = /^(Proposed|Open|Accepted|Rejected|Retired|Superseded by (\d{4}))$/;
+const STATUS_ORDER = ["Accepted", "Proposed", "Open", "Rejected", "Retired", "Superseded"];
+const IN_FORCE = ["Proposed", "Open", "Accepted"];
+const UNDECIDED = ["Proposed", "Open"];
 const ORIGINS = ["explicit", "implied", "PR"];
 const PULL = /^https:\/\/\S+\/pull\/\d+/;
 const METHODS = ["test", "check", "model", "eval", "review"];
@@ -18,8 +19,8 @@ const SECTIONS = ["Statement", "Explanation", "Source text", "Trace", "Notes", "
 const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
-const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, cites, narrate, narrative, publish, references, retire";
+const FLAGS = new Set(["check", "clear", "flagged"]);
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, cites, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -41,7 +42,7 @@ const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
 const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|may not|will not|refuses?|only)\b/i;
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"agreed: <name>, YYYY-MM-DD, text <hash>"`;
-const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Model: "model", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed" };
+const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Model: "model", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed", Flagged: "flagged" };
 const KEYS = Object.values(FIELDS);
 const LISTS = ["source", "author", "verification", "model", "issues", "prs"];
 const MODEL_ENTRY = /^([^#\s]+\.qnt)(?:#([A-Za-z_][A-Za-z0-9_]*))?$/;
@@ -185,12 +186,16 @@ function setField(entry, key, value) {
   };
   const at = (k) => lines.findIndex((line, i) => i > 0 && i < end && line.startsWith(`${k}:`));
   const found = at(key);
-  if (found > 0) lines.splice(found, extent(found) - found, ...yamlLines(key, value));
+  if (value === undefined) {
+    if (found < 0) return false;
+    lines.splice(found, extent(found) - found);
+  } else if (found > 0) lines.splice(found, extent(found) - found, ...yamlLines(key, value));
   else {
     const before = KEYS.slice(0, KEYS.indexOf(key)).map(at).filter((i) => i > 0);
     lines.splice(before.length ? extent(Math.max(...before)) : 1, 0, ...yamlLines(key, value));
   }
   writeFileSync(entry.full, lines.join(eol));
+  return true;
 }
 
 const outside = (root, rel) => path.isAbsolute(rel) || path.relative(root, path.resolve(root, rel)).split(path.sep)[0] === "..";
@@ -334,7 +339,7 @@ function inspect(root) {
     const id = record.field("ID");
     if (id !== entry.id) fail(`"id: ${id ?? ""}" does not match the file number. Use "id: ${entry.id}".`);
     if (record.status === undefined) fail(`no "status". Add "status: Proposed".`);
-    else if (!STATUS.test(record.status)) fail(`status "${record.status}" is not Proposed, Accepted, Rejected, Retired or Superseded by NNNN.`);
+    else if (!STATUS.test(record.status)) fail(`status "${record.status}" is not Proposed, Open, Accepted, Rejected, Retired or Superseded by NNNN.`);
     else {
       const by = record.status.match(/^Superseded by (\d{4})$/)?.[1];
       if (by && by === number) fail(`${record.status} names itself. Name the record that replaces it.`);
@@ -351,16 +356,17 @@ function inspect(root) {
     if (IN_FORCE.includes(record.status)) for (const model of modelEntries(record)) for (const problem of modelProblems(root, entry.id, model)) fail(problem);
     const agreed = record.field("Agreed");
     if (agreed !== undefined && !AGREED.test(agreed)) fail(`"agreed: ${agreed}" does not have the form ${AGREED_FORM}. Only a human writes it, with: ${SCRIPT} agree ${entry.id} --by "<name>"`);
-    const proposed = record.status === "Proposed";
+    if ("flagged" in record.data && (typeof record.data.flagged !== "string" || !record.data.flagged.trim())) fail(`"flagged" has no text. Give the reason the record looks wrong, or remove it with: ${SCRIPT} flag ${entry.id} --clear`);
+    const proposed = UNDECIDED.includes(record.status);
     for (const name of ["Section", "Decided by"]) {
       const value = record.field(name);
       if (value === undefined) fail(`no "${FIELDS[name]}" in the front matter.`);
-      else if (!value && !proposed) fail(`"${FIELDS[name]}" has no value, and the status is ${record.status}. Fill it, or keep the status Proposed.`);
+      else if (!value && !proposed) fail(`"${FIELDS[name]}" has no value, and the status is ${record.status}. Fill it, or keep the status Proposed or Open.`);
     }
     for (const name of ["Statement", "Source text"]) {
       const body = record.sections[name];
       if (body === undefined) fail(`missing the section "## ${name}".`);
-      else if (!body && !proposed) fail(`the section "## ${name}" is empty, and the status is ${record.status}. Fill it, or keep the status Proposed.`);
+      else if (!body && !proposed) fail(`the section "## ${name}" is empty, and the status is ${record.status}. Fill it, or keep the status Proposed or Open.`);
     }
     for (const problem of explanationProblems(record)) fail(problem);
     if (record.sections.Log === undefined) fail(`missing the section "## Log".`);
@@ -416,17 +422,17 @@ function check(root) {
   return `${count} record${count === 1 ? "" : "s"} checked: no problems\n`;
 }
 
-function row(records) {
+function row(records, { flags = false } = {}) {
   const width = Math.max(...records.map((r) => (r.status ?? "NO STATUS").length));
-  return records.map((r) => `${r.id}  ${(r.status ?? "NO STATUS").padEnd(width)}  ${r.title}  ${r.rel}`).join("\n") + "\n";
+  return records.map((r) => `${r.id}  ${(r.status ?? "NO STATUS").padEnd(width)}  ${r.title}  ${r.rel}${flags ? `\n  Flagged: ${r.field("Flagged")}` : ""}`).join("\n") + "\n";
 }
 
 function list(root, options) {
   const all = entries(root).map(read);
   if (!all.length) return `No records in ${DIR}\n`;
-  const records = all.filter((r) => (options.status === undefined || (r.status ?? "").startsWith(options.status)) && (options.section === undefined || r.section === options.section));
+  const records = all.filter((r) => (options.status === undefined || (r.status ?? "").startsWith(options.status)) && (options.section === undefined || r.section === options.section) && (!options.flagged || Boolean(r.field("Flagged"))));
   if (!records.length) return `No record matches the filter (${all.length} record${all.length === 1 ? "" : "s"} in ${DIR})\n`;
-  return row(records);
+  return row(records, { flags: Boolean(options.flagged) });
 }
 
 function search(root, terms) {
@@ -525,6 +531,7 @@ function article(record, retired) {
     `<article id="${record.id}" class="status-${record.status.split(" ")[0].toLowerCase()}">`,
     `<h3><a href="#${record.id}">${record.id}</a> ${escape(record.title)}</h3>`,
     `<p class="meta">${meta.join(" · ")}</p>`,
+    ...(record.field("Flagged") ? [`<p class="flagged">Flagged: ${escape(record.field("Flagged"))}</p>`] : []),
     `<div class="statement">\n${blocks(record.sections.Statement ?? "")}\n</div>`,
     ...(record.sections.Explanation ? [`<h4>Explanation</h4>\n<div class="explanation">\n${blocks(record.sections.Explanation)}\n</div>`] : []),
     ...(sources.length ? [`<h4>Source text</h4>\n<ul>\n${sources.join("\n")}\n</ul>`] : []),
@@ -544,6 +551,8 @@ article h4{margin:1rem 0 .25rem;font-size:.85rem;color:var(--soft)}
 .meta,.summary{margin:0;color:var(--soft);font-size:.85rem}
 .statement{margin-top:.75rem}
 .status-proposed{border-style:dashed}
+.status-open{border-style:dashed;border-color:var(--link)}
+.flagged{margin:.5rem 0 0;padding:.25rem .75rem;border-left:3px solid var(--link);font-size:.9rem}
 .status-rejected,.status-retired,.status-superseded{background:var(--tint)}
 blockquote{margin:.75rem 0;padding:.1rem 1rem;border-left:3px solid var(--line)}
 code{font-size:.9em}
@@ -561,7 +570,8 @@ function narrativeHtml(narrative, current) {
 
 function counted(records) {
   const counts = STATUS_ORDER.map((status) => [status, records.filter((r) => r.status.startsWith(status)).length]).filter(([, n]) => n).map(([status, n]) => `${n} ${status}`);
-  return `${records.length} record${records.length === 1 ? "" : "s"}${counts.length ? `: ${counts.join(", ")}` : ""}.`;
+  const flagged = records.filter((r) => r.field("Flagged")).length;
+  return `${records.length} record${records.length === 1 ? "" : "s"}${counts.length ? `: ${counts.join(", ")}` : ""}.${flagged ? ` ${flagged} flagged.` : ""}`;
 }
 
 function document(records, { title = "Requirements", order = [], narratives = new Map(), retired = new Set() } = {}) {
@@ -849,7 +859,7 @@ function publication(root, config) {
   const entry = (record, here) => {
     const decided = record.field("Decided by") ? `Decided by ${record.field("Decided by")}, ${record.field("Date")}` : `Dated ${record.field("Date")}`;
     const meta = [record.status, record.field("Origin"), `Verification: ${record.field("Verification")}`, `Author: ${record.author.join(", ")}`, decided].map(text).join(" · ");
-    const parts = [`<a id="${record.id}"></a>`, `## ${record.id} ${text(record.title)}`, `${meta} · [record](${fileLink(record.rel)})`, markdown(record.sections.Statement ?? "", DIR, here)];
+    const parts = [`<a id="${record.id}"></a>`, `## ${record.id} ${text(record.title)}`, `${meta} · [record](${fileLink(record.rel)})`, ...(record.field("Flagged") ? [`> **Flagged:** ${text(record.field("Flagged"))}`] : []), markdown(record.sections.Statement ?? "", DIR, here)];
     if (record.sections.Explanation) parts.push("### Explanation", markdown(record.sections.Explanation, DIR, here));
     const sources = sourceText(record.sections["Source text"]).sources;
     if (sources.length) parts.push("### Source text", ...sources.map((s) => [`- [${text(s.citation)}](${sourceLink(s)})`, ...(s.quote.length ? [`${fence(s.quote)}text\n${s.quote.join("\n")}\n${fence(s.quote)}`] : [])].join("\n\n")));
@@ -876,6 +886,7 @@ function publication(root, config) {
       author: r.author,
       decidedBy: r.field("Decided by") ?? "",
       verification: r.field("Verification"),
+      flagged: r.field("Flagged") ?? "",
       statement: r.sections.Statement ?? "",
       explanation: r.sections.Explanation ?? "",
       sources: sourceText(r.sections["Source text"]).sources.map((s) => ({ citation: s.citation, link: sourceLink(s) })),
@@ -989,6 +1000,17 @@ function agree(root, id, options) {
   const value = `${options.by.trim()}, ${new Date().toISOString().slice(0, 10)}, text ${textHash(read(entry))}`;
   setField(entry, "agreed", value);
   return `${entry.rel}: agreed: ${value}\n`;
+}
+
+function flag(root, [id, reason, ...extra], options) {
+  const what = (reason ?? "").trim();
+  if (!/^REQ-\d{4}$/.test(id ?? "") || extra.length || Boolean(options.clear) === Boolean(what) || /[\r\n]/.test(what)) throw new Usage(`flag needs <REQ-NNNN> "<why the record looks wrong>" on one line, in quotes, or <REQ-NNNN> --clear, for example: flag REQ-0001 "The Statement names a route that the code does not have."`);
+  const entry = recordEntry(root, id);
+  if (!options.clear) {
+    setField(entry, "flagged", what);
+    return `${entry.rel}: flagged: ${what}\n`;
+  }
+  return setField(entry, "flagged", undefined) ? `${entry.rel}: flag cleared\n` : `${entry.rel}: no flag to clear\n`;
 }
 
 const logEntries = (record) => (record.sections.Log ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
@@ -1707,7 +1729,7 @@ function bodyCites(root, file, options) {
       notes.push(`${label} cites no record in force either.`, ...closed.bad);
     }
   }
-  throw new Failure([`The body of this ${name} cites no requirement record in force (Proposed or Accepted) in ${DIR}. Each issue and pull request traces to a requirement. Find the record with: ${SCRIPT} search <words>. If none fits, create a Proposed record with: ${SCRIPT} new "<title>" --author "<who asked for it>". Then cite its ID, such as REQ-0001, in the body.${kind === "pr" ? " A pull request also passes when it closes an issue whose body cites a record in force." : ""}`, ...notes].join("\n"));
+  throw new Failure([`The body of this ${name} cites no requirement record in force (Proposed, Open or Accepted) in ${DIR}. Each issue and pull request traces to a requirement. Find the record with: ${SCRIPT} search <words>. If none fits, create a Proposed record with: ${SCRIPT} new "<title>" --author "<who asked for it>". Then cite its ID, such as REQ-0001, in the body.${kind === "pr" ? " A pull request also passes when it closes an issue whose body cites a record in force." : ""}`, ...notes].join("\n"));
 }
 
 export function runRequirements(argv, { json } = {}) {
@@ -1724,6 +1746,7 @@ export function runRequirements(argv, { json } = {}) {
       render: () => render(root(), options),
       guard: () => guard(root(), options),
       agree: () => agree(root(), rest[0], options),
+      flag: () => flag(root(), rest, options),
       author: () => author(root(), rest[0], rest.slice(1)),
       model: () => model(root(), rest[0], rest.slice(1)),
       sync: () => sync(root(), rest),
