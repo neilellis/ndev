@@ -63,6 +63,6 @@ Fix the cause of each problem: a wrong address, a missing page, a failing script
 
 ## The workflow
 
-A check that is part of the smoke stage goes to `mcp__ndev__finishedSmoke(report)`, and the report names the HEAD commit. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+A check that is part of the smoke stage goes to `mcp__ndev__finishedSmoke(report)`. Put the HEAD commit in the report. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Skill-local scripts stay in this skill’s `scripts/` folder.

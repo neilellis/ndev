@@ -17,7 +17,7 @@ If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `
 - Front-load the meaning. Use a specific label ("Delete 3 reports", "Billing"), not an umbrella word ("Manage", "Settings", "Submit").
 - A headline says what this product does, and for whom, with the product's own nouns. If it still fits after you swap in a competitor's name, rewrite it. Use only facts that are already on the page.
 - A page title names the context (the page, the period, the project), not a greeting such as "Welcome back, Sam! 👋".
-- No exclamation marks in interface text. No hype words (supercharge, seamless, unlock, magic, revolutionise) and no "AI-powered" label on each feature: say what the feature does.
+- No exclamation marks in interface text. No hype words (`supercharge`, `seamless`, `unlock`, `magic`, `revolutionise`) and no "AI-powered" label on each feature: say what the feature does.
 - Labels, buttons, headings and captions have no final full stop. Only text of two or more sentences keeps its full stops.
 - A placeholder is a short hint or example ("Search", "DD/MM/YYYY"), not a sentence ("Search anything..."). It does not replace the visible label.
 - A change names its comparison: "+12% vs last month", not "+12%".

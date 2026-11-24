@@ -1,6 +1,6 @@
 ---
 name: milestone-release-notes
-description: "Produce stakeholder-facing release notes for a GitHub milestone by reading all included issues and merged PRs."
+description: "Produce release notes for a GitHub milestone, for readers outside the development team, by reading all included issues and merged PRs."
 disable-model-invocation: true
 ---
 
@@ -43,7 +43,7 @@ Without the Workflow tool, do the same steps by hand: read each issue in full, w
 
 - Classify by the outcome that a user sees, not by labels alone: new features, improvements, fixes, then a short "Other" section for internal work.
 - Group related issues and remove duplicates. Keep caveats that matter.
-- Write for stakeholders: what changed and why it matters, with little implementation detail and no unsupported claims.
+- Write for readers outside the development team: what changed and why it matters, with little implementation detail and no unsupported claims.
 - Include the milestone, the date, a short headline led by the outcome, and a short section for work that did not ship or needs follow-up.
 - Check each issue number and status against GitHub before you finish.
 

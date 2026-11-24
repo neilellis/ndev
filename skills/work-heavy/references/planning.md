@@ -45,11 +45,11 @@ read it once for clarity, then move the card to *In progress* (`board.sh move <i
 
 ### F2a — Agree the test entry point
 
-**The test entry point (the seam) is where a test calls the code and observes the result, without
+**The test entry point is where a test calls the code and observes the result, without
 reaching inside.** You can test the same change from several places. Choose **before you write a
 test**, so that the tests survive a refactor.
 
-| Kind of change | Usual seam |
+| Kind of change | Usual test entry point |
 |---|---|
 | A command-line tool | Run the CLI with arguments; assert its output, exit code and side effects |
 | An HTTP service | Call the route; assert the status and the body |
@@ -57,7 +57,7 @@ test**, so that the tests survive a refactor.
 | A web page | Drive the page in a real browser; assert what the user sees |
 | A database change | Apply the migration, then run the query the application runs |
 
-The project's `CLAUDE.md` or wiki may list its concrete seams and where each kind of test lives. Read
+The project's `CLAUDE.md` or wiki may list its concrete test entry points and where each kind of test lives. Read
 it, because CI often selects tests by package: a test in the wrong place runs on every change or on
 none. The `testing` skill has the tier definitions and resource rules.
 

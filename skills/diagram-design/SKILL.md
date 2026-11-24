@@ -123,7 +123,7 @@ The pattern owns semantic primitives and its tighter budget; the type owns layou
 | Integration topology of a data platform — sources → core → consumers | **DP integration** | [type-dp-integration.md](references/type-dp-integration.md) |
 | Per-role / per-component access permissions matrix | **DP security matrix** | [type-dp-security-matrix.md](references/type-dp-security-matrix.md) |
 | A quantity splitting and merging across stages, band width = amount | **Sankey** | [type-sankey.md](references/type-sankey.md) |
-| Causes of one observed effect, grouped by category (root-cause analysis) | **Fishbone** | [type-fishbone.md](references/type-fishbone.md) |
+| Causes of one observed effect, grouped by category (cause-and-effect analysis) | **Fishbone** | [type-fishbone.md](references/type-fishbone.md) |
 | Value chain against evolution — what to build, buy, and what is moving | **Wardley map** | [type-wardley.md](references/type-wardley.md) |
 | Work-in-progress by state, with WIP limits and blocked items | **Kanban** | [type-kanban.md](references/type-kanban.md) |
 | What a person does across stages of an experience, and how it feels | **User journey** | [type-journey.md](references/type-journey.md) |

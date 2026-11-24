@@ -24,7 +24,7 @@ The project's wiki is a compounding, interlinked, current-state knowledge base t
 | a plan not yet built | wiki `future/...` |
 | a decision about how it is built, with the options turned down | an ADR in `docs/adr/` (`adr-pdr` skill) |
 | an amendment to scope or to a requirement | a PDR in `docs/pdr/` (`adr-pdr` skill), and the requirement's own text edited to match |
-| explainer for stakeholders | the human docs site, if the project has one |
+| explainer for readers outside the development team | the human docs site, if the project has one |
 | reusable agent procedure for this project | the project's skill (`.claude/skills/<skill>/SKILL.md`, and `.agents/skills/` for Codex) |
 | repository convention | `CLAUDE.md` / `AGENTS.md`, or the guide that applies |
 | reusable lesson across projects | the `dev-wiki` skill |

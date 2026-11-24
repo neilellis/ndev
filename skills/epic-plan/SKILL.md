@@ -29,7 +29,7 @@ The plan is finished when a worker who has only the spec and one sub-issue can i
 Ask the human, in one round, for what code cannot tell you:
 
 - **The aim**: one or two sentences on what the product is for and what this epic changes for it. Every brief and every ruling later quotes it.
-- **The posture**: how much durability, backward compatibility and migration care this stage of the project deserves. A prototype and a bank get different specs; reviewers push toward the bank unless the spec says otherwise.
+- **The posture**: how much durability, backward compatibility and migration care this stage of the project deserves. A prototype and a bank get different specs; without a stated posture, reviewers push toward the bank.
 - **The form**: where the spec lives, its format, and how deep it goes. The default is one document in the repository's docs folder with diagrams, written so that another agent can implement from it alone.
 - **The gates**: which actions stay with the human (paid calls, hosted data, publishes, merges).
 
@@ -69,7 +69,7 @@ When the human asks a question, answer it before any other work. In a status lin
 
 ## Spec review
 
-Send the spec to a reviewer on a different model (an Orca worker, see the `orchestration` skill; for a second opinion use a second model and forbid it to read the first review until its own is written). The brief asks for findings in these groups: contradictions; wrong claims about current code; design faults; omissions; sequencing and size; risks to the project's rules; strengths. Each finding names the spec section, quotes the passage, gives `file:line`, the reason and the fix. Name the one file the reviewer may write. Tell it to read a long file in ranges.
+Send the spec to a reviewer on a different model (an Orca worker, see the `orchestration` skill; for a second opinion use a second model and forbid it to read the first review until its own is written). The brief asks for findings in these groups: contradictions; wrong claims about current code; design faults; omissions; sequencing and size; risks to the rules in `CLAUDE.md`, `AGENTS.md`, the wiki and the ADRs; strengths. Each finding names the spec section, quotes the passage, gives `file:line`, the reason and the fix. Name the one file the reviewer may write. Tell it to read a long file in ranges.
 
 Rule on every finding against the aim and the posture: **fix** (amend the spec) or **dropped** with the reason, most often over-engineering. Write the table of findings and rulings into the spec. Take to the human only the findings that change a decision they made.
 
