@@ -143,6 +143,12 @@ function performMerge(root, file, state, pr) {
   return recordOperation(file, started, current => settled(current, pr.number, 'merged', 'merged after its head checks passed', pr.headRefOid))
 }
 
+function workerStatus(root, dispatch) {
+  const worker = orca(root, ['orchestration', 'worker-show', '--dispatch', dispatch, '--full'])
+  const liveness = worker.projection?.liveness?.verdict
+  return { liveness, ended: liveness === 'exited' && worker.terminalState === 'released', terminal: worker.terminalState }
+}
+
 function dispatch(root, file, state, pr, summary) {
   const listed = orca(root, ['worktree', 'list'])
   let workspace = listed.worktrees?.find(tree => tree.projectId === `github:${state.repo.toLowerCase()}` && (tree.branch?.replace(/^refs\/heads\//, '') === pr.headRefName || tree.linkedPR === pr.number))
@@ -190,17 +196,16 @@ function runTick(root, file, state) {
     }))
   }
   if (state.worker) {
-    const worker = orca(root, ['orchestration', 'worker-show', '--dispatch', state.worker])
+    const worker = workerStatus(root, state.worker)
     if (worker.liveness === 'live') return state
-    const ended = ['dead', 'exited', 'lost'].includes(worker.liveness) || ['failed', 'abandoned', 'finished', 'completed'].includes(worker.state)
-    if (!ended && Date.now() - state.workerAt < fixInterval) return state
-    if (!ended) {
-      return boundUpdate(file, state, current => ({ ...current, phase: 'paused', error: `PR #${pr.number}: Orca cannot prove worker ${state.worker} stopped. Inspect it before retrying.` }))
+    if (!worker.ended && Date.now() - state.workerAt < fixInterval) return state
+    if (!worker.ended) {
+      return boundUpdate(file, state, current => ({ ...current, phase: 'paused', error: `PR #${pr.number}: Orca cannot prove worker ${state.worker} exited and released (liveness ${worker.liveness || 'unverifiable'}, terminal ${worker.terminal || 'unobserved'}). Run orca orchestration worker-show --dispatch ${state.worker} --json before retrying.` }))
     }
-    if (state.workerHead === pr.headRefOid) {
+    if (state.workerHead === pr.headRefOid && state.step !== 'awaiting-head') {
       return boundUpdate(file, state, current => settled(current, pr.number, 'blocked', `worker ${state.worker} ended before a new head was available`, pr.headRefOid))
     }
-    state = boundUpdate(file, state, current => ({ ...current, worker: null, step: 'checks' }))
+    state = boundUpdate(file, state, current => ({ ...current, worker: null, step: state.step === 'awaiting-head' ? 'awaiting-head' : 'checks' }))
   }
   if (state.step === 'awaiting-head' && state.workerHead === pr.headRefOid) {
     const elapsed = Date.now() - (state.reportedAt ?? 0)
@@ -291,11 +296,10 @@ function inspectCurrent(root, state, pr) {
     })
   }
   if (!state.worker) return
-  const worker = orca(root, ['orchestration', 'worker-show', '--dispatch', state.worker])
-  const ended = ['dead', 'exited', 'lost'].includes(worker.liveness) || ['failed', 'abandoned', 'finished', 'completed'].includes(worker.state)
-  if (worker.liveness === 'live' || !ended) {
-    throw new CliError(1, `PR #${pr} worker ${state.worker} is ${worker.liveness || 'of unknown liveness'}.`, {
-      repair: `Wait for it or stop it with orca orchestration worker-stop --dispatch ${state.worker}, then retry.`,
+  const worker = workerStatus(root, state.worker)
+  if (!worker.ended) {
+    throw new CliError(1, `PR #${pr} worker ${state.worker} is not proven exited and released (liveness ${worker.liveness || 'unverifiable'}, terminal ${worker.terminal || 'unobserved'}).`, {
+      repair: `Wait for it or stop it with orca orchestration worker-stop --dispatch ${state.worker}, confirm with orca orchestration worker-show --dispatch ${state.worker} --json, then retry.`,
     })
   }
 }
@@ -351,7 +355,7 @@ export async function runFixPrs([verb, ...argv]) {
       throw new CliError(2, 'Report pushed, or blocked with --reason <text>.', { repair })
     }
     if (outcome === 'blocked') return settled(current, pr, 'blocked', values.reason)
-    return { ...current, step: 'awaiting-head', nextAt: 0, worker: null, reportedAt: Date.now(), log: logEntry(current, `PR #${pr}: worker reported push`) }
+    return { ...current, step: 'awaiting-head', nextAt: 0, reportedAt: Date.now(), log: logEntry(current, `PR #${pr}: worker reported push`) }
   })
   if (verb === 'resume' || verb === 'retry' || verb === 'report' && positionals[1] === 'pushed') {
     return (await tickFixPrs(root)) ?? view(root, state)

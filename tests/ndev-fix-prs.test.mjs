@@ -32,7 +32,7 @@ case "$1 $2" in
   'api user') printf '%s\n' '{"login":"tester"}' ;;
   'pr list') printf '%s\n' '[{"number":20,"title":"Newer","createdAt":"2026-08-01"},{"number":10,"title":"Older","createdAt":"2026-07-01"}]' ;;
   'pr view') case "$3" in
-    10) printf '%s\n' '{"number":10,"title":"Older","headRefOid":"abc123","headRefName":"fix/ten","mergeStateStatus":"CLEAN","state":"OPEN","isDraft":false,"statusCheckRollup":[{"name":"test","conclusion":"${red ? 'FAILURE' : 'SUCCESS'}"}]}' ;;
+    10) head=$(cat "${root}/head-10" 2>/dev/null || echo abc123); printf '%s\n' '{"number":10,"title":"Older","headRefOid":"'"$head"'","headRefName":"fix/ten","mergeStateStatus":"CLEAN","state":"OPEN","isDraft":false,"statusCheckRollup":[{"name":"test","conclusion":"${red ? 'FAILURE' : 'SUCCESS'}"}]}' ;;
     20) printf '%s\n' '{"number":20,"title":"Newer","headRefOid":"def456","headRefName":"fix/twenty","mergeStateStatus":"CLEAN","state":"OPEN","isDraft":false,"statusCheckRollup":[{"name":"test","conclusion":"SUCCESS"}]}' ;;
   esac ;;
   *) printf '%s\n' "unexpected gh $*" >&2; exit 1 ;;
@@ -44,7 +44,7 @@ case "$1 $2" in
   'worktree list') printf '%s\n' '${JSON.stringify({ ok: true, result: { worktrees: existing ? [{ id: 'worker-id', path: worker, projectId: 'github:fixture/demo', branch: 'fix/ten' }] : [] } })}' ;;
   'worktree create') printf '%s\n' '${JSON.stringify({ ok: true, result: { worktree: { id: 'worker-id', path: worker } } })}' ;;
   'orchestration worker-start') cp "${worker}/.neil-dev.worktree.json" "${root}/launch-settings.json"; printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_active"}}' ;;
-  'orchestration worker-show') printf '%s\n' '{"ok":true,"result":{"liveness":"live","state":"ready"}}' ;;
+  'orchestration worker-show') if [ -f "${root}/worker-show" ]; then cat "${root}/worker-show"; else printf '%s\n' '{"ok":true,"result":{"projection":{"liveness":{"verdict":"live"}},"state":"ready"}}'; fi ;;
   *) exit 1 ;;
 esac
 `, { mode: 0o755 })
@@ -52,8 +52,13 @@ esac
     const result = spawnSync(ndev, ['fix-prs', ...argv, '--json'], { cwd: root, env, encoding: 'utf8' })
     return { status: result.status, response: JSON.parse(result.stdout) }
   }
-  return { root, worker, run }
+  const workerShow = result => writeFileSync(join(root, 'worker-show'), JSON.stringify({ ok: true, result }))
+  const pushHead = head => writeFileSync(join(root, 'head-10'), head)
+  const dispatches = () => (readFileSync(join(root, 'orca-log'), 'utf8').match(/worker-start/g) ?? []).length
+  return { root, worker, run, workerShow, pushHead, dispatches }
 }
+
+const exited = { projection: { liveness: { verdict: 'exited' } }, terminalState: 'released', state: 'finished' }
 
 test('fix-prs starts existing and new worker sessions with light mode and auto steering', t => {
   for (const existing of [false, true]) {
@@ -122,3 +127,51 @@ test('retry and skip preserve the current dispatch while its worker is live', t 
   }
   assert.equal(run('status').response.result.worker, 'ctx_active')
 })
+
+test('a pushed report keeps the live owner and dispatches no second worker on a failing new head', t => {
+  const { run, pushHead, dispatches } = fixture(t, { red: true })
+  assert.equal(run('start', '--no-merge').response.result.worker, 'ctx_active')
+  pushHead('new456')
+  const reported = run('report', '10', 'pushed')
+  assert.equal(reported.status, 0, JSON.stringify(reported.response))
+  assert.equal(reported.response.result.worker, 'ctx_active')
+  assert.equal(dispatches(), 1)
+  const resumed = run('resume')
+  assert.equal(resumed.status, 0, JSON.stringify(resumed.response))
+  assert.equal(resumed.response.result.worker, 'ctx_active')
+  assert.equal(dispatches(), 1)
+})
+
+test('after the owner has exited and released, a failing pushed head gets a new worker', t => {
+  const { run, pushHead, workerShow, dispatches } = fixture(t, { red: true })
+  run('start', '--no-merge')
+  pushHead('new456')
+  run('report', '10', 'pushed')
+  workerShow(exited)
+  const resumed = run('resume')
+  assert.equal(resumed.status, 0, JSON.stringify(resumed.response))
+  assert.equal(dispatches(), 2)
+})
+
+for (const [name, receipt] of [
+  ['a failed task state with unverifiable liveness', { state: 'failed' }],
+  ['a completed task state with a lost verdict', { state: 'completed', projection: { liveness: { verdict: 'lost' } } }],
+  ['an exited process whose terminal is not released', { state: 'finished', projection: { liveness: { verdict: 'exited' } }, terminalState: 'stop_unknown' }],
+]) {
+  test(`fix-prs treats ${name} as no proof that the worker ended`, t => {
+    const { run, pushHead, workerShow, dispatches } = fixture(t, { red: true })
+    run('start', '--no-merge')
+    pushHead('new456')
+    workerShow(receipt)
+    const resumed = run('resume')
+    assert.equal(resumed.status, 0, JSON.stringify(resumed.response))
+    assert.equal(dispatches(), 1)
+    const state = run('status').response.result
+    assert.equal(state.worker, 'ctx_active')
+    assert.deepEqual(state.outcomes, {})
+    const retry = run('retry', '10')
+    assert.equal(retry.status, 1, JSON.stringify(retry.response))
+    assert.match(retry.response.error.message, /ctx_active/)
+    assert.equal(run('status').response.result.worker, 'ctx_active')
+  })
+}
