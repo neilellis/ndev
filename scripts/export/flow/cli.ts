@@ -812,14 +812,25 @@ function finishedReview(wf: Workflow, config: Config, args: Args) {
   }
   const alive = waived ? [] : reviewAlive(wf)
   if (alive.length) throw new Fail(1, `ndev-flow: the review still runs: ${alive.join(', ')}. Wait with ${WAIT_PID} <pid>, read its report, then run ndev-flow finishedReview again.`)
+  if (!wf.direct) assertRemoteHeld(wf, reviewed)
   const notes: string[] = []
-  const note = runCheck(wf, 'pre-ready-check.sh', [], wf.changeTypes ?? [])
-  if (!standalone) assertHead(wf, reviewed)
+  const mergeBase = mergeBaseOf(wf)
+  const receipt = wf.preReady
+  let note: string | undefined
+  if (receipt?.sha === reviewed && receipt.mergeBase === mergeBase && !git(wf.root, 'status', '--porcelain').stdout) {
+    note = receipt.note
+    notes.push(`pre-ready-check.sh already passed on ${reviewed.slice(0, 8)}, so it is not rerun.`)
+  } else {
+    note = runCheck(wf, 'pre-ready-check.sh', [], wf.changeTypes ?? [])
+    if (!standalone) assertHead(wf, reviewed)
+    wf.preReady = { sha: reviewed, mergeBase, at: now(), ...(note ? { note } : {}) }
+    save(wf)
+  }
   if (note) notes.push(note)
   push(wf)
   const sha = headSha(wf.root)
   if (!wf.direct) {
-    if (!standalone) confirmPrHead(wf, readPr(wf, prOf(wf)), sha)
+    if (!standalone) awaitPrHead(wf, sha)
     gh(wf, ['pr-ready', String(prOf(wf))])
   }
   const text = `review: ${fields.review}\ndeadcode: ${fields.deadcode}\nremembered: ${fields.remembered}`
@@ -828,6 +839,7 @@ function finishedReview(wf: Workflow, config: Config, args: Args) {
     assertHead(wf, reviewed)
     if (!wf.direct) confirmPrHead(wf, readPr(wf, prOf(wf)), reviewed)
   }
+  delete wf.preReady
   wf.evidence = { ...wf.evidence, review: { sha, text } }
   const firedAt = now()
   wf.hooks = { ...wf.hooks, review: { firedAt: wf.hooks?.review?.firedAt ?? firedAt, result: fields.review.slice(0, 2000) }, remember: { firedAt: wf.hooks?.remember?.firedAt ?? firedAt, result: fields.remembered.slice(0, 2000) } }
@@ -1378,6 +1390,39 @@ function assertHead(wf: Workflow, expected: string) {
 }
 function confirmPrHead(wf: Workflow, pr: Pr, sha: string) {
   if (pr.head?.sha !== sha || pr.head?.ref !== wf.branch) throw new Fail(1, `PR #${pr.number} points to ${pr.head?.ref}@${pr.head?.sha}; expected ${wf.branch}@${sha}. Refresh the PR and retry on its current head.`)
+}
+function mergeBaseOf(wf: Workflow): string {
+  const r = git(wf.root, 'merge-base', `origin/${wf.base}`, 'HEAD')
+  return r.status === 0 ? r.stdout.trim() : ''
+}
+function assertRemoteHeld(wf: Workflow, head: string) {
+  const ref = `refs/heads/${wf.branch}`
+  const remote = gitOk(wf.root, 'ls-remote', '--heads', 'origin', ref).split('\t')[0]!
+  if (!remote || remote === head) return
+  if (git(wf.root, 'cat-file', '-e', `${remote}^{commit}`).status !== 0) gitOk(wf.root, 'fetch', '--no-tags', 'origin', ref)
+  const held = git(wf.root, 'merge-base', '--is-ancestor', remote, head)
+  if (held.status === 0) return
+  if (held.status !== 1) throw new Fail(1, `git merge-base --is-ancestor ${remote} ${head} exited ${held.status}: ${said(held)}. Repair: git fetch origin ${wf.branch}, then retry.`)
+  throw new Fail(1, `Remote ${wf.branch} is at ${remote}, and HEAD ${head} does not contain it, so a push would lose or reject commits. Repair: git pull --rebase origin ${wf.branch}, commit with ndev-flow checkpoint, and run the review again.`)
+}
+function envMs(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined) return fallback
+  if (!/^\d+$/.test(raw)) throw new Fail(2, `ndev-flow: ${name} must be a whole number of milliseconds, not "${raw}".`)
+  return Number(raw)
+}
+function awaitPrHead(wf: Workflow, sha: string) {
+  const waitMs = envMs('NDEV_FLOW_PR_HEAD_WAIT_MS', 30_000)
+  const pollMs = envMs('NDEV_FLOW_PR_HEAD_POLL_MS', 1_000)
+  const deadline = Date.now() + waitMs
+  for (;;) {
+    const pr = readPr(wf, prOf(wf))
+    if (pr.head?.sha === sha && pr.head?.ref === wf.branch) return pr
+    if (pr.head?.ref !== wf.branch) confirmPrHead(wf, pr, sha)
+    assertHead(wf, sha)
+    if (Date.now() >= deadline) throw new Fail(1, `PR #${pr.number} still points to ${pr.head?.ref}@${pr.head?.sha} ${waitMs} ms after the push; expected ${wf.branch}@${sha}. The pre-ready check passed on ${sha.slice(0, 8)} and is kept. Repair: run ndev flow finished-review again with the same arguments once the PR shows ${sha.slice(0, 8)}.`)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollMs)
+  }
 }
 function orca(root: string, environment: string, args: string[]) {
   const result = run(process.env.ORCA_CLI_COMMAND || 'orca', [...args, ...(environment ? ['--environment', environment] : []), '--json'], { cwd: root, timeout: 120_000 })
