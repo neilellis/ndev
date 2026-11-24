@@ -72,6 +72,8 @@ test('fix-prs starts existing and new worker sessions with light mode and auto s
     const log = readFileSync(join(root, 'orca-log'), 'utf8')
     assert.match(log, /worker-start[\s\S]*--worktree id:worker-id[\s\S]*--agent codex/)
     assert.match(log, /ndev flow repair --issue <issue> --pr 10/)
+    assert.match(log, /rerun it with --take-over/)
+    assert.match(log, /never open a second pull request/)
     assert.doesNotMatch(log, /ndev flow start <issue>/)
     assert.equal(log.includes('worktree create'), !existing)
   }

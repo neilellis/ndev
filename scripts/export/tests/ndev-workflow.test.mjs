@@ -793,6 +793,24 @@ test('repair accepts a confirmed finished owner only with explicit take-over, pr
   assert.equal(repaired.state, 'interviewing')
 })
 
+test('start with an explicit PR rebinds an alias record and its duplicate PR once the prior owner is confirmed ended', () => {
+  const p = repairProject()
+  p.setRecord({ prs: [9], owner: { session: 'ended-owner', at: 1 } })
+  const refused = flow(p, ['start', '7', '--pr', '10'], p.fake)
+  assert.equal(refused.status, 1)
+  assert.match(refused.stderr, /ended-owner.*--take-over/)
+  assert.deepEqual(p.read().prs, [9])
+  const owner = join(p.dir, 'owner.json')
+  writeFileSync(owner, JSON.stringify({ ok: true, result: { orcaSessionId: 'ended-owner', places: [{ state: 'closed' }] } }))
+  const resumed = JSON.parse(output(flow(p, ['start', '7', '--pr', '10', '--take-over'], { ...p.fake, REPAIR_OWNER: owner }))).workflow
+  assert.deepEqual(resumed.prs, [10])
+  assert.equal(resumed.branch, 'canonical')
+  assert.equal(resumed.localBranch, 'feature')
+  assert.equal(resumed.owner.session, 'session-A')
+  assert.equal(git(p.work, 'branch', '--show-current'), 'feature')
+  assert.doesNotMatch(readFileSync(p.fake.GH_LOG, 'utf8'), /pr-new/)
+})
+
 for (const places of [[{ state: 'working' }], [{ state: 'idle' }], [{ state: 'unknown' }], []]) {
   test(`repair refuses unconfirmed ended ownership: ${JSON.stringify(places)}`, () => {
     const p = repairProject()
