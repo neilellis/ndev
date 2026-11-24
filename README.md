@@ -86,3 +86,5 @@ $ndev-triage launch
 - [The scripts guide](scripts/README.md) lists shared tools.
 
 Run `npm test` for the CLI, installer, and panel regression suites, and every other tracked `*.test.mjs` file except those in `scripts/test/exceptions.json`. Set `NDEV_TEST_NATIVE_HARNESSES=1` to include native install trials when all three harnesses are available. The install tests use temporary homes.
+
+The `sdk` job of the CI workflow runs the retained `*.test.ts` and `*.test.tsx` suite with `node scripts/test/sdk.mjs`, on the runtime that `scripts/test/sdk-runtime.json` pins. `CONTRIBUTING.md` says how to run it here.

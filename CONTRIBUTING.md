@@ -13,7 +13,16 @@ This repository holds the ndev CLI and installer, plus retained Claude Code plug
 
 ## Tests
 
-Run `npm test` for the native CLI and installer tests. It runs every `*.test.mjs` file that git tracks, except the files in `scripts/test/exceptions.json`. Each exception gives the reason and the command that runs it. A new test file runs when you `git add` it. Run `claude plugin test .` for the retained SDK suite.
+Run `npm test` for the native CLI and installer tests. It runs every `*.test.mjs` file that git tracks, except the files in `scripts/test/exceptions.json`. Each exception gives the reason and the command that runs it. A new test file runs when you `git add` it.
+
+The retained SDK suite is every tracked `*.test.ts` and `*.test.tsx` file. The `sdk` job of `.github/workflows/ndev.yml` runs it with `node scripts/test/sdk.mjs`. The runtime is the `claude` binary, which runs `claude plugin test .` without a model call or a login. `scripts/test/sdk-runtime.json` pins its npm package and version. To run the suite here:
+
+```
+npm install --prefix <folder> @anthropic-ai/claude-code@<version in sdk-runtime.json>
+NDEV_SDK_CLAUDE=<folder>/node_modules/.bin/claude node scripts/test/sdk.mjs
+```
+
+The runner fails on a missing runtime, a runtime of another version, a failing test, a skipped test, a tracked test file that the run did not report, and a run that did not finish. A failure that you cannot fix at once goes in `scripts/test/sdk-known-failures.json` as `{"test": "<test file>: <test name>", "reason": "<why, with the issue>"}`. The runner fails on a failure that is not listed, and on a listed test that passes or that the run did not report. The list is empty now. Raise the version in `sdk-runtime.json` on purpose, and run the suite on the new version first.
 
 SDK integration tests import `expect` and `test` from `./sdk-testing`. Async callbacks have a default execution allowance of 30 seconds, including fixture setup and calls to the SDK. A test can set `timeoutMs` explicitly. The adapter preserves that value. Synchronous callbacks keep the SDK's default, including in files that also have integration tests.
 

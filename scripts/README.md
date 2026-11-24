@@ -39,6 +39,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 |---|---|---|
 | `worktree_claim.sh` | Claims a worktree for one task (issue number or branch slug), and refuses one with uncommitted or unpushed work. | work-light, work-light-auto, work-heavy, work-heavy-auto, goal-work, implement-spec, github, command-reuse, agent issue-implementer |
 | `peer_activity.sh` | Tells if another live session works in an issue's worktree. | work-heavy-auto, work-light-auto |
+| `test/sdk.mjs` | Runs the retained `*.test.ts` and `*.test.tsx` suite with `claude plugin test .` on the runtime pinned in `test/sdk-runtime.json`. Fails on a missing or different runtime, a failing or skipped test, a tracked file that the run did not report, and an unlisted failure; `test/sdk-known-failures.json` lists the failures that are allowed, and a listed test that passes fails the run. Test: `node --test scripts/test/tests/sdk.test.mjs`. | CI job `sdk` |
 | `gates.sh` | Artefact gates (plan of record, pinned tests, and others) that a unit must pass before it leaves the implement loop. | work-heavy, work-heavy-auto, work-light-auto, agent plan-scout |
 | `pr_feedback.sh` | Finds new human feedback on PRs. Calls `board/board.sh`. | work-heavy, work-heavy-auto |
 | `work-status.sh` | One call for PR, branch, worktree and ownership status. Wrapper for `work_status.py`. | work-light, fix-ci, pick-up-prs, command-reuse |
