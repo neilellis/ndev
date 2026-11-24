@@ -556,3 +556,71 @@ test('the ci check wait is refused only while this session has a live ndev watch
   assert.equal(watched?.hookSpecificOutput?.permissionDecision, 'deny')
   assert.match(watched.hookSpecificOutput.permissionDecisionReason, /ndev watch reads these checks/)
 })
+
+function recordsFixture(t) {
+  const root = fixture(t)
+  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  const env = { HOME: root, PATH: process.env.PATH }
+  const git = (...args) => {
+    const result = spawnSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', ...args], { cwd: root, env, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+  }
+  const recordFile = join(root, 'docs/formal/requirements/0001-the-report-names-each-source.md')
+  const record = trace => `---\nid: REQ-0001\ntitle: "The report names each source"\nstatus: Accepted\norigin: explicit\nsection: "Report"\ndate: 2026-01-02\nsource: []\nauthor:\n  - "Neil Ellis"\ndecided_by: "Neil Ellis"\nverification: unassigned\nissues: []\nprs: []\n---\n\n## Statement\n\nThe report names each source.\n\n## Source text\n\n## Trace\n\n${trace}\n\n## Notes\n\n## Log\n\n- 2026-01-02: Created.\n`
+  mkdirSync(join(root, 'docs/formal/requirements'), { recursive: true })
+  mkdirSync(join(root, 'src'))
+  writeFileSync(join(root, 'src/report.js'), 'export {}\n')
+  writeFileSync(recordFile, record('- File: src/report.js'))
+  git('add', '-A')
+  git('commit', '-q', '-m', 'fixture')
+  const call = (event, toolName, input, response = {}) => {
+    const result = spawnSync(ndev, ['hook', event, '--harness', 'claude'], {
+      cwd: root, encoding: 'utf8', env,
+      input: JSON.stringify({ session_id: 'fixture', cwd: root, tool_name: toolName, tool_input: input, tool_response: response }),
+    })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim() ? JSON.parse(result.stdout) : null
+  }
+  return { root, recordFile, record, call }
+}
+
+test('a project with requirement records refuses a raw gh issue or pr create and names gh.sh', t => {
+  const { call } = recordsFixture(t)
+  for (const command of ['gh issue create --title T --body B', 'cd x && gh -R o/r pr create --fill']) {
+    const reason = call('pre-tool-use', 'Bash', { command })?.hookSpecificOutput?.permissionDecisionReason ?? ''
+    assert.match(reason, /must cite one in force.*gh\.sh (issue|pr)-new/, command)
+  }
+  assert.equal(call('pre-tool-use', 'Bash', { command: 'gh issue view 3' }), null)
+  assert.equal(call('pre-tool-use', 'Bash', { command: 'echo "gh issue create"' }), null)
+})
+
+test('a project with no requirement records allows a raw gh issue create', t => {
+  const root = fixture(t)
+  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  assert.equal(hook(root, 'claude', 'Bash', 'gh issue create --title T --body B', { HOME: root, PATH: process.env.PATH }), null)
+})
+
+test('a changed record that links a missing file is reported once after the edit, and refuses a commit until it is corrected', t => {
+  const { recordFile, record, call } = recordsFixture(t)
+  assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -m clean' }), null)
+  writeFileSync(recordFile, record('- File: src/report.js\n- File: src/gone.js'))
+  const note = call('post-tool-use', 'Edit', { file_path: recordFile }).hookSpecificOutput.additionalContext
+  assert.match(note, /"- File: src\/gone\.js" matches no tracked file/)
+  assert.equal(call('post-tool-use', 'Bash', { command: 'ls' }, { exitCode: 0 }), null)
+  for (const command of ['git commit -am change', 'ndev flow checkpoint --issue 3']) {
+    const reason = call('pre-tool-use', 'Bash', { command }).hookSpecificOutput.permissionDecisionReason
+    assert.match(reason, /link problems, so this commit is refused:[\s\S]*src\/gone\.js[\s\S]*ndev requirements links --base HEAD/, command)
+  }
+  writeFileSync(recordFile, record('- File: src/report.js'))
+  assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
+})
+
+test('a commit is checked again after a link problem is repaired outside the record', t => {
+  const { root, recordFile, record, call } = recordsFixture(t)
+  writeFileSync(recordFile, record('- File: src/new.js'))
+  writeFileSync(join(root, 'src/new.js'), 'export {}\n')
+  assert.match(call('post-tool-use', 'Edit', { file_path: recordFile }).hookSpecificOutput.additionalContext, /src\/new\.js" matches no tracked file/)
+  assert.match(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }).hookSpecificOutput.permissionDecisionReason, /src\/new\.js/)
+  spawnSync('git', ['add', 'src/new.js'], { cwd: root })
+  assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
+})

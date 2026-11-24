@@ -76,7 +76,7 @@ test('a read that fails both ways exits non-zero and names both failures and the
 
 test('issue-read works through gh, and through REST when gh fails', () => {
   const viaGh = ghsh(['issue-read', '340'], [{ match: 'issue view 340', out: '{"number":340,"title":"T","state":"OPEN","body":"b","url":"u"}' }])
-  assert.deepEqual(json(viaGh), { number: 340, title: 'T', state: 'open', body: 'b', url: 'u' })
+  assert.deepEqual(json(viaGh), { number: 340, title: 'T', state: 'open', state_reason: null, body: 'b', url: 'u' })
   assert.equal(viaGh.calls.filter(viaRest).length, 0)
   // The failure that started this: REST is out, and gh is what still works; and the reverse.
   const rest = ghsh(['issue-read', '340'], [{ match: 'issue view', err: 'GraphQL: rate limit', exit: 1 }, { match: 'api repos/o/r/issues/340', out: '{"number":340,"title":"T","state":"open","body":"b","html_url":"u","id":9}' }])
@@ -567,4 +567,61 @@ test('pr-merge refuses without --stack and names each open PR below, and says so
   assert.match(unread.err, /Server Error \(HTTP 500\)/)
   assert.match(unread.err, /--stack/)
   assert.ok(!unread.calls.some(c => c.includes('merge-async')), unread.calls.join('\n'))
+})
+
+function recordsProject(origin = 'https://github.com/o/r.git') {
+  const dir = mkdtempSync(join(tmpdir(), 'gh-records-'))
+  const sh = (...args) => assert.equal(spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).status, 0)
+  sh('init', '-q')
+  sh('remote', 'add', 'origin', origin)
+  mkdirSync(join(dir, 'docs/formal/requirements'), { recursive: true })
+  writeFileSync(join(dir, 'docs/formal/requirements/0001-the-report-names-each-source.md'), '---\nid: REQ-0001\ntitle: "The report names each source"\nstatus: Proposed\n---\n\n## Statement\n\n## Source text\n\n## Trace\n\n## Notes\n\n## Log\n\n- 2026-01-02: Created.\n')
+  const body = text => { const f = join(dir, 'body.md'); writeFileSync(f, text); return f }
+  return { dir, body }
+}
+
+test('issue-new and pr-new refuse a body that cites no requirement record, before any GitHub call', () => {
+  const { dir, body } = recordsProject()
+  const issue = ghsh(['issue-new', '--title', 'T', '--body-file', body('A new feature.')], [{ match: 'issue create', out: 'https://github.com/o/r/issues/41\n' }], { cwd: dir })
+  assert.equal(issue.code, 3)
+  assert.deepEqual(issue.calls, [])
+  assert.match(issue.err, /gh\.sh: refusing to create the issue in o\/r: The body of this issue cites no requirement record in force/)
+  assert.match(issue.err, /ndev requirements new "<title>"/)
+  const pr = ghsh(['pr-new', '--title', 'T', '--body-file', body('Plan incoming.'), '--base', 'main', '--head', 'feat'], [{ match: 'pr create', out: 'https://github.com/o/r/pull/7\n' }], { cwd: dir })
+  assert.equal(pr.code, 3)
+  assert.deepEqual(pr.calls, [])
+})
+
+test('issue-new passes a cited record, and pr-new passes when its closed issue cites one', () => {
+  const { dir, body } = recordsProject()
+  const issue = ghsh(['issue-new', '--title', 'T', '--body-file', body('Traces REQ-0001.')], [{ match: 'issue create', out: 'https://github.com/o/r/issues/41\n' }], { cwd: dir })
+  assert.equal(issue.code, 0, issue.err)
+  assert.match(issue.err, /The issue cites REQ-0001/)
+  const pr = ghsh(['pr-new', '--title', 'T', '--body-file', body('Plan incoming.\n\nCloses #41\n'), '--base', 'main', '--head', 'feat'], [
+    { match: 'issue view 41', out: JSON.stringify({ number: 41, title: 'T', state: 'OPEN', stateReason: null, body: 'Traces REQ-0001.', url: 'u' }) },
+    { match: 'pr create', out: 'https://github.com/o/r/pull/7\n' },
+  ], { cwd: dir })
+  assert.equal(pr.code, 0, pr.err)
+  assert.match(pr.err, /closes #41, which cites REQ-0001/)
+})
+
+test('the requirement gate leaves alone a project with no records and a target that is another repository', () => {
+  const none = mkdtempSync(join(tmpdir(), 'gh-records-none-'))
+  spawnSync('git', ['init', '-q'], { cwd: none })
+  const bodyFile = join(none, 'body.md')
+  writeFileSync(bodyFile, 'No record.')
+  const plain = ghsh(['issue-new', '--title', 'T', '--body-file', bodyFile], [{ match: 'issue create', out: 'https://github.com/o/r/issues/41\n' }], { cwd: none })
+  assert.equal(plain.code, 0, plain.err)
+  const { dir, body } = recordsProject('git@github.com:other/tool.git')
+  const elsewhere = ghsh(['issue-new', '--title', 'T', '--body-file', body('A bug in the tool.')], [{ match: 'issue create', out: 'https://github.com/o/r/issues/41\n' }], { cwd: dir })
+  assert.equal(elsewhere.code, 0, elsewhere.err)
+})
+
+test('issue-read gives the state reason in REST words through both routes', () => {
+  const viaGh = ghsh(['issue-read', '3'], [{ match: 'issue view 3', out: '{"number":3,"title":"T","state":"CLOSED","stateReason":"NOT_PLANNED","body":"b","url":"u"}' }])
+  assert.equal(viaGh.code, 0, viaGh.err)
+  assert.ok(viaGh.calls[0].includes('stateReason'), viaGh.calls[0])
+  const rest = ghsh(['issue-read', '3'], [{ match: 'issue view', err: 'GraphQL: rate limit', exit: 1 }, { match: 'api repos/o/r/issues/3', out: '{"number":3,"title":"T","state":"closed","state_reason":"not_planned","body":"b","html_url":"u"}' }])
+  assert.deepEqual(json(viaGh), json(rest))
+  assert.equal(json(rest).state_reason, 'not_planned')
 })

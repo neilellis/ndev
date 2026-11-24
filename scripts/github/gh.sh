@@ -79,6 +79,19 @@ check_body() {
   fi
 }
 
+check_requirement() {
+  local file="$1" kind="$2" root origin here out
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  [ -d "$root/docs/formal/requirements" ] || return 0
+  origin="$(git -C "$root" remote get-url origin 2>/dev/null || true)"
+  [[ "$origin" =~ github\.com[:/]([^/]+/[^/]+)$ ]] || return 0
+  here="$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]%.git}")"
+  [ "$here" = "$(tr '[:upper:]' '[:lower:]' <<<"$REPO")" ] || return 0
+  out="$(GH_REPO="$REPO" node "$DIR/../cli.mjs" requirements cites "$file" --kind "$kind" --root "$root" 2>&1)" \
+    || die "refusing to create the $kind in $REPO: ${out#ndev: }" 3
+  echo "gh.sh: $out" >&2
+}
+
 # --- project board ---------------------------------------------------------
 board_env() {
   [ -n "${GH_PROJECT_OWNER:-}" ] && [ -n "${GH_PROJECT_NUMBER:-}" ] \
@@ -349,8 +362,8 @@ case "$cmd" in
   issue-read)
     need_repo
     n="${1:?issue number required}"
-    rest_issue() { GH api "repos/$REPO/issues/$n" | jq -c '{number, title, state, body, url: .html_url}'; }
-    gh_first "read issue #$n of $REPO" '{number, title, state: (.state | ascii_downcase), body, url}' rest_issue issue view "$n" --repo "$REPO" --json number,title,state,body,url
+    rest_issue() { GH api "repos/$REPO/issues/$n" | jq -c '{number, title, state, state_reason, body, url: .html_url}'; }
+    gh_first "read issue #$n of $REPO" '{number, title, state: (.state | ascii_downcase), state_reason: (.stateReason // "" | ascii_downcase | if . == "" then null else . end), body, url}' rest_issue issue view "$n" --repo "$REPO" --json number,title,state,stateReason,body,url
     ;;
 
   pr-read)
@@ -684,6 +697,7 @@ case "$cmd" in
     done
     [ -n "$title" ] && [ -n "$bodyfile" ] || die "issue-new: --title and --body-file are both required"
     check_body "$bodyfile"
+    check_requirement "$bodyfile" issue
     rest_issue_new() { GH api -X POST "repos/$REPO/issues" -f "title=$title" -F "body=@$bodyfile" ${extra[@]+"${extra[@]}"} --jq .html_url; }
     if [ -n "$milestone$type" ]; then
       # gh takes a milestone by title and has no flag for a type, so these go to REST.
@@ -728,6 +742,7 @@ case "$cmd" in
     [ -n "$head" ] || head="$(git rev-parse --abbrev-ref HEAD)"
     [ -n "$base" ] || base="$(default_branch | jq -r .default_branch)"
     check_body "$bodyfile"
+    check_requirement "$bodyfile" pr
     rest_pr_new() { GH api -X POST "repos/$REPO/pulls" -f "title=$title" -F "body=@$bodyfile" -f "head=$head" -f "base=$base" -F "draft=$draft" --jq '.html_url'; }
     ghdraft=(--draft); [ "$draft" = true ] || ghdraft=()
     url="$(GH_FIRST_POST=1 gh_first "create the PR '$head' -> '$base' in $REPO" "" rest_pr_new pr create --repo "$REPO" --head "$head" --base "$base" --title "$title" --body-file "$bodyfile" ${ghdraft[@]+"${ghdraft[@]}"} | tail -n 1)"

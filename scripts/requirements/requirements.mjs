@@ -19,7 +19,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, cites, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -1566,6 +1566,126 @@ function traceAll(root, options) {
   return `${plural(records.length, "record traces", "records trace")} both ways: ${plural(prs.length, "merged pull request", "merged pull requests")}, ${plural(linkedIssues, "issue", "issues")}, ${plural(citing, "file that cites a record", "files that cite a record")}\n`;
 }
 
+const GITHUB_LINK = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/(issues|pull)\/(\d+)$/;
+const CLOSING = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/issues\/(\d+)|([\w.-]+\/[\w.-]+)?#(\d+))/gi;
+const UNIMPLEMENTED = { not_planned: "closed as not planned", duplicate: "closed as a duplicate" };
+
+function ghRead(root, repo, kind, number) {
+  const script = process.env.NDEV_REQUIREMENTS_GH || path.join(import.meta.dirname, "../github/gh.sh");
+  const command = kind === "pull" ? "pr-read" : "issue-read";
+  const out = spawnSync("bash", [script, command, number], { cwd: root, encoding: "utf8", env: { ...process.env, GH_REPO: repo } });
+  if (out.status !== 0) return { error: `gh.sh ${command} ${number} in ${repo} exited ${out.status}: ${(out.stderr.trim() || out.stdout.trim() || "no output").slice(0, 300)}` };
+  try {
+    return { item: JSON.parse(out.stdout) };
+  } catch (error) {
+    return { error: `gh.sh ${command} ${number} in ${repo} printed no JSON (${error.message}): ${out.stdout.slice(0, 200)}` };
+  }
+}
+
+function changedRecords(root, base) {
+  const changed = git(root, ["diff", "--name-only", base, "--", DIR]).split("\n");
+  const added = git(root, ["ls-files", "--others", "--exclude-standard", "--", DIR]).split("\n");
+  const names = new Set([...changed, ...added].filter(Boolean).map((rel) => path.basename(rel)));
+  return entries(root).filter((e) => NAME.test(e.file) && names.has(e.file));
+}
+
+function linkProblems(root, record, files) {
+  const problems = [];
+  const counts = { Issue: 0, PR: 0, File: 0 };
+  const inForce = IN_FORCE.includes(record.status);
+  const repair = `${SCRIPT} links ${record.id}`;
+  for (const line of traceLines(record)) {
+    const link = line.match(TRACE_LINK);
+    if (!link) continue;
+    counts[link[1]] += 1;
+    const target = link[2].trim();
+    const where = `${record.id}: "${line}"`;
+    if (link[1] === "File") {
+      const regex = filePattern(target);
+      if (inForce && regex && !files().some((file) => regex.test(file))) problems.push(`${where} matches no tracked file. Correct the path, git add the file, or remove the line.`);
+      continue;
+    }
+    const parts = target.match(GITHUB_LINK);
+    if (!parts) {
+      problems.push(`${where} is not a link of the form https://github.com/<owner>/<repo>/issues/<n> or https://github.com/<owner>/<repo>/pull/<n>, so links cannot read it. Correct the link.`);
+      continue;
+    }
+    const { item, error } = ghRead(root, parts[1], parts[2], parts[3]);
+    if (error) problems.push(`${where} could not be read: ${error}. If it does not exist, remove the line. Otherwise repair GitHub access and run: ${repair}`);
+    else if (!inForce) continue;
+    else if (link[1] === "Issue" && item.state === "closed" && UNIMPLEMENTED[item.state_reason]) problems.push(`${where} was ${UNIMPLEMENTED[item.state_reason]}, so it does not implement or plan the requirement. Remove the line, or link the issue or pull request that does.`);
+    else if (link[1] === "PR" && item.state === "closed" && item.merged !== true) problems.push(`${where} was closed without a merge, so it does not implement the requirement. Remove the line, or link the pull request that does.`);
+  }
+  return { problems, counts };
+}
+
+function recordLinks(root, ids, options) {
+  if (!ids.length && !options.base) throw new Usage(`links needs record IDs, or --base <ref> for the records that changed since that ref`);
+  const chosen = options.base ? changedRecords(root, options.base) : ids.map((id) => recordEntry(root, id));
+  if (!chosen.length) return `No record changed since ${options.base}\n`;
+  let tracked;
+  const files = () => (tracked ??= trackedFiles(root));
+  const problems = [];
+  const lines = [];
+  for (const entry of chosen) {
+    const record = read(entry);
+    const result = linkProblems(root, record, files);
+    problems.push(...result.problems);
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    lines.push(`${record.id}: ${plural(result.counts.Issue, "issue", "issues")}, ${plural(result.counts.PR, "pull request", "pull requests")} and ${plural(result.counts.File, "file line", "file lines")} link what exists`);
+  }
+  if (problems.length) throw new Failure(problems.join("\n"));
+  return lines.join("\n") + "\n";
+}
+
+function inForceCitations(root, text) {
+  const records = new Map(entries(root).filter((e) => NAME.test(e.file)).map((e) => [e.id, e]));
+  const good = [];
+  const bad = [];
+  for (const id of new Set(text.match(REQ_ID) ?? [])) {
+    const entry = records.get(id);
+    if (!entry) bad.push(`${id} is not a record in ${DIR}.`);
+    else {
+      const status = read(entry).status;
+      if (IN_FORCE.includes(status)) good.push(id);
+      else bad.push(`${id} is ${status}. Cite the record in force.`);
+    }
+  }
+  return { good, bad };
+}
+
+function bodyCites(root, file, options) {
+  if (!file) throw new Usage(`cites needs the body file: cites <file> --kind issue|pr`);
+  const kind = options.kind;
+  if (!["issue", "pr"].includes(kind)) throw new Usage(`cites needs --kind issue or --kind pr`);
+  if (!existsSync(path.join(root, DIR))) return "";
+  const name = kind === "pr" ? "pull request" : "issue";
+  const text = readFileSync(file, "utf8");
+  const { good, bad } = inForceCitations(root, text);
+  if (good.length) return `The ${name} cites ${good.join(", ")}\n`;
+  const notes = [...bad];
+  if (kind === "pr") {
+    for (const match of text.matchAll(CLOSING)) {
+      const repo = match[1] ?? match[3] ?? process.env.GH_REPO;
+      const number = match[2] ?? match[4];
+      const label = match[1] || match[3] ? `${repo}#${number}` : `#${number}`;
+      if (!repo) {
+        notes.push(`${label} could not be read: GH_REPO is not set. Run from gh.sh, or set GH_REPO.`);
+        continue;
+      }
+      const { item, error } = ghRead(root, repo, "issues", number);
+      if (error) {
+        notes.push(`${label} could not be read: ${error}.`);
+        continue;
+      }
+      const closed = inForceCitations(root, item.body ?? "");
+      if (closed.good.length) return `The pull request closes ${label}, which cites ${closed.good.join(", ")}\n`;
+      notes.push(`${label} cites no record in force either.`, ...closed.bad);
+    }
+  }
+  throw new Failure([`The body of this ${name} cites no requirement record in force (Proposed or Accepted) in ${DIR}. Each issue and pull request traces to a requirement. Find the record with: ${SCRIPT} search <words>. If none fits, create a Proposed record with: ${SCRIPT} new "<title>" --author "<who asked for it>". Then cite its ID, such as REQ-0001, in the body.${kind === "pr" ? " A pull request also passes when it closes an issue whose body cites a record in force." : ""}`, ...notes].join("\n"));
+}
+
 export function runRequirements(argv, { json } = {}) {
   try {
     const { positional, options } = parseArguments(argv);
@@ -1592,6 +1712,8 @@ export function runRequirements(argv, { json } = {}) {
       file: () => fileLinks(root(), rest[0], rest.slice(1)),
       decision: () => decisionLinks(root(), rest[0], rest.slice(1)),
       trace: () => traceAll(root(), options),
+      links: () => recordLinks(root(), rest, options),
+      cites: () => bodyCites(root(), rest[0], options),
       narrate: () => narrate(root(), rest[0], options),
       narrative: () => narrative(root()),
       publish: () => publish(root(), options),

@@ -2134,3 +2134,149 @@ describe("decision records", () => {
     assert.equal(out.status, 0, out.stderr);
   });
 });
+
+const fakeGh = (answers) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "fake-gh-"));
+  const log = path.join(dir, "calls.log");
+  writeFileSync(path.join(dir, "answers.json"), JSON.stringify(answers));
+  writeFileSync(path.join(dir, "gh.cjs"), `const fs = require("fs");
+const [command, number] = process.argv.slice(2);
+const key = process.env.GH_REPO + " " + command + " " + number;
+fs.appendFileSync(${JSON.stringify(log)}, key + "\\n");
+const answer = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(dir, "answers.json"))}, "utf8"))[key];
+if (!answer) { process.stderr.write("gh.sh: read " + key + ": HTTP 404: Not Found"); process.exit(1); }
+process.stdout.write(JSON.stringify(answer));
+`);
+  writeFileSync(path.join(dir, "gh.sh"), `#!/usr/bin/env bash\nexec node ${JSON.stringify(path.join(dir, "gh.cjs"))} "$@"\n`);
+  return { script: path.join(dir, "gh.sh"), calls: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : []) };
+};
+const runWith = (gh, root, ...args) => {
+  const out = spawnSync(NDEV, ["requirements", ...args, "--root", root], { encoding: "utf8", env: { ...process.env, NDEV_REQUIREMENTS_GH: gh.script } });
+  return { status: out.status, stdout: out.stdout, stderr: out.stderr };
+};
+const ISSUE = (n) => `https://github.com/o/r/issues/${n}`;
+const PULL = (n) => `https://github.com/o/r/pull/${n}`;
+const issueAnswer = (number, state, state_reason = null, body = "") => ({ number, title: "T", state, state_reason, body, url: ISSUE(number) });
+const pullAnswer = (number, state, merged) => ({ number, state, merged, title: "T", body: "", url: PULL(number) });
+
+describe("links", () => {
+  const linked = (records, files = {}) => tracked({ "docs/guide.md": GUIDE, "src/report.js": "export {}\n", ...files, ...Object.fromEntries(Object.entries(records).map(([file, text]) => [`${DIR}/${file}`, text])) });
+  const ANSWERS = {
+    "o/r issue-read 1": issueAnswer(1, "open"),
+    "o/r issue-read 2": issueAnswer(2, "closed", "completed"),
+    "o/r issue-read 3": issueAnswer(3, "closed", "not_planned"),
+    "o/r issue-read 4": issueAnswer(4, "closed", "duplicate"),
+    "o/r pr-read 10": pullAnswer(10, "closed", true),
+    "o/r pr-read 11": pullAnswer(11, "open", false),
+    "o/r pr-read 12": pullAnswer(12, "closed", false),
+  };
+
+  it("passes a record whose issues, pull requests and files exist and are implemented or planned", () => {
+    const gh = fakeGh(ANSWERS);
+    const root = linked({ [FILE]: record("0001", { trace: `- File: src/*.js\n- Issue: ${ISSUE(1)}\n- Issue: ${ISSUE(2)}\n- PR: ${PULL(10)}\n- PR: ${PULL(11)}` }) });
+    const out = runWith(gh, root, "links", "REQ-0001");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "REQ-0001: 2 issues, 2 pull requests and 1 file line link what exists\n");
+    assert.deepEqual(gh.calls().sort(), ["o/r issue-read 1", "o/r issue-read 2", "o/r pr-read 10", "o/r pr-read 11"]);
+  });
+
+  it("fails a missing issue or pull request, an issue closed without implementation, a pull request closed without a merge, and a file line that matches nothing", () => {
+    const gh = fakeGh(ANSWERS);
+    const root = linked({ [FILE]: record("0001", { trace: `- File: docs/guide.md\n- File: src/gone.js\n- Issue: ${ISSUE(3)}\n- Issue: ${ISSUE(4)}\n- Issue: ${ISSUE(9)}\n- PR: ${PULL(12)}\n- PR: ${PULL(99)}` }) });
+    const out = runWith(gh, root, "links", "REQ-0001");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0001: "- Issue: https:\/\/github\.com\/o\/r\/issues\/3" was closed as not planned, so it does not implement or plan the requirement\. Remove the line, or link the issue or pull request that does\./);
+    assert.match(out.stderr, /REQ-0001: "- Issue: https:\/\/github\.com\/o\/r\/issues\/4" was closed as a duplicate/);
+    assert.match(out.stderr, /REQ-0001: "- Issue: https:\/\/github\.com\/o\/r\/issues\/9" could not be read: gh\.sh issue-read 9 in o\/r exited 1: gh\.sh: read o\/r issue-read 9: HTTP 404: Not Found\. If it does not exist, remove the line\. Otherwise repair GitHub access and run: ndev requirements links REQ-0001/);
+    assert.match(out.stderr, /REQ-0001: "- PR: https:\/\/github\.com\/o\/r\/pull\/12" was closed without a merge/);
+    assert.match(out.stderr, /REQ-0001: "- PR: https:\/\/github\.com\/o\/r\/pull\/99" could not be read/);
+    assert.match(out.stderr, /REQ-0001: "- File: src\/gone\.js" matches no tracked file\. Correct the path, git add the file, or remove the line\./);
+    assert.doesNotMatch(out.stderr, /docs\/guide\.md/);
+  });
+
+  it("lets a record that is not in force keep a closed link and a removed file, but not a missing link", () => {
+    const gh = fakeGh(ANSWERS);
+    const root = linked({ [FILE]: record("0001", { status: "Rejected", trace: `- File: src/gone.js\n- Issue: ${ISSUE(3)}\n- PR: ${PULL(12)}\n- PR: ${PULL(99)}` }) });
+    const out = runWith(gh, root, "links", "REQ-0001");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /pull\/99" could not be read/);
+    assert.doesNotMatch(out.stderr, /issues\/3|pull\/12"|gone\.js/);
+  });
+
+  it("with --base, checks only the records that changed since the base, including new ones", () => {
+    const gh = fakeGh(ANSWERS);
+    const SECOND = "0002-a-retry-keeps-the-first-result.md";
+    const root = linked({ [FILE]: record("0001", { trace: `- File: src/gone.js` }), [SECOND]: record("0002", { trace: `- Issue: ${ISSUE(1)}` }) });
+    git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base");
+    assert.equal(runWith(gh, root, "links", "--base", "HEAD").stdout, "No record changed since HEAD\n");
+    put(root, `${DIR}/${SECOND}`, record("0002", { trace: `- Issue: ${ISSUE(1)}\n- PR: ${PULL(12)}` }));
+    put(root, `${DIR}/0003-a-new-record.md`, record("0003", { trace: `- Issue: ${ISSUE(2)}` }));
+    const out = runWith(gh, root, "links", "--base", "HEAD");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0002: "- PR: https:\/\/github\.com\/o\/r\/pull\/12" was closed without a merge/);
+    assert.doesNotMatch(out.stderr, /REQ-0001|REQ-0003/);
+    assert.deepEqual(gh.calls().sort(), ["o/r issue-read 1", "o/r issue-read 2", "o/r pr-read 12"]);
+  });
+
+  it("refuses a call with no record and no base, and an unknown record", () => {
+    const root = linked({ [FILE]: record("0001") });
+    const none = run(root, "links");
+    assert.equal(none.status, 2);
+    assert.match(none.stderr, /links needs record IDs, or --base <ref> for the records that changed since that ref/);
+    const unknown = run(root, "links", "REQ-0042");
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /REQ-0042 is not a record/);
+  });
+});
+
+describe("cites", () => {
+  const body = (root, text) => {
+    const file = path.join(root, ".body.md");
+    writeFileSync(file, text);
+    return file;
+  };
+  const RECORDS = { [FILE]: record("0001"), "0002-a-retired-rule.md": record("0002", { status: "Retired" }) };
+
+  it("passes any body in a project that has no records", () => {
+    const root = project();
+    const out = run(root, "cites", body(root, "No link here."), "--kind", "issue");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "");
+  });
+
+  it("passes an issue whose body cites a record in force", () => {
+    const root = seeded(RECORDS);
+    const out = run(root, "cites", body(root, "Implements REQ-0001."), "--kind", "issue");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "The issue cites REQ-0001\n");
+  });
+
+  it("fails a body that cites no record, and names how to find or create one", () => {
+    const root = seeded(RECORDS);
+    const out = run(root, "cites", body(root, "A new feature."), "--kind", "issue");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /The body of this issue cites no requirement record in force \(Proposed or Accepted\) in docs\/formal\/requirements\. Each issue and pull request traces to a requirement\. Find the record with: ndev requirements search <words>\. If none fits, create a Proposed record with: ndev requirements new "<title>" --author "<who asked for it>"\. Then cite its ID, such as REQ-0001, in the body\./);
+  });
+
+  it("fails a body that cites only a record that does not exist or is not in force", () => {
+    const root = seeded(RECORDS);
+    const out = run(root, "cites", body(root, "See REQ-0002 and REQ-0042."), "--kind", "issue");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0002 is Retired/);
+    assert.match(out.stderr, /REQ-0042 is not a record/);
+  });
+
+  it("passes a pull request that closes an issue whose body cites a record in force, and fails one whose issue cites none", () => {
+    const root = seeded(RECORDS);
+    const gh = fakeGh({ "o/r issue-read 5": issueAnswer(5, "open", null, "Traces REQ-0001."), "o/r issue-read 6": issueAnswer(6, "open", null, "No record.") });
+    const env = { ...process.env, NDEV_REQUIREMENTS_GH: gh.script, GH_REPO: "o/r" };
+    const cites = (text) => spawnSync(NDEV, ["requirements", "cites", body(root, text), "--kind", "pr", "--root", root], { encoding: "utf8", env });
+    const good = cites("Plan incoming.\n\nCloses #5\n");
+    assert.equal(good.status, 0, good.stderr);
+    assert.equal(good.stdout, "The pull request closes #5, which cites REQ-0001\n");
+    const bad = cites("Plan incoming.\n\nCloses #6\n");
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /The body of this pull request cites no requirement record in force/);
+    assert.match(bad.stderr, /#6 cites no record in force either/);
+  });
+});

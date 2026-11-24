@@ -24,6 +24,8 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 | `ndev requirements check` | Fails a record that breaks the format, and a record whose cited lines do not hold its quoted source text. |
 | `ndev requirements render [--check]` | Writes `docs/formal/requirements/generated/requirements.html`. With `--check`, fails when that file is not current. |
 | `ndev requirements guard --base <git ref>` | Fails a record in force whose Trace has no File, Issue or PR link. Fails a record whose Statement or Source text changed since the base with no human agreement, a change to the title, the status, the Statement or the Source text with no new Log entry, a changed Log entry, and a deleted record. Shows the old and the new text. |
+| `ndev requirements links <REQ-NNNN>... \| --base <git ref>` | Fails a Trace link that does not exist: a File line that matches no tracked file, and an issue or pull request that GitHub cannot read. In a record in force, it also fails an issue closed as not planned or as a duplicate, and a pull request closed without a merge. |
+| `ndev requirements cites <body file> --kind issue\|pr` | Passes a body that cites a record in force, or a pull request that closes an issue that cites one. Otherwise it fails and says how to find or create the record. `gh.sh issue-new` and `pr-new` run it first. |
 | `ndev requirements agree <REQ-NNNN> --by "<name>"` | Records a human's agreement to the current Statement and Source text. **Only a human runs it.** It refuses to run without a terminal. |
 
 ## The protected parts

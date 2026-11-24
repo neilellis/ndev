@@ -145,6 +145,28 @@ A record that is new since the base passes the comparison: the first creation is
 
 The guard proves that the `agreed` field matches the text. It does not prove that a human wrote the field. In review, check that the human named in the field made the commit that adds it.
 
+### Links that exist
+
+`ndev requirements links <REQ-NNNN>...` reads each Trace link of the named records. `links --base <git ref>` reads the records that changed or are new since the ref. It fails:
+
+- a `- File:` line, in a record in force, that matches no tracked file;
+- an `- Issue:` or `- PR:` line that is not a GitHub issue or pull request link, or that GitHub cannot read;
+- in a record in force, an issue that was closed as not planned or as a duplicate, and a pull request that was closed without a merge.
+
+A record that is not in force can keep a closed link and a removed file, but not a link that does not exist.
+
+### Each issue and pull request cites a record
+
+In a project with records, each issue and pull request traces to a record in force (`Proposed` or `Accepted`). `ndev requirements cites <body file> --kind issue|pr` passes a body that cites a record ID in force. A pull request also passes when an issue that it closes (`Closes #N`) cites one. When no record fits, create a `Proposed` record with `ndev requirements new` and cite it.
+
+The gates:
+
+- `gh.sh issue-new` and `gh.sh pr-new` run `cites` before the GitHub call, and refuse with exit 3. They check only when the target repository is the repository of the current folder.
+- The agent hook refuses a raw `gh issue create` and `gh pr create`, and names the `gh.sh` command.
+- After a tool call changes a record, the agent hook runs `links --base HEAD` and reports the problems once. It refuses `git commit`, `ndev flow checkpoint` and `ndev flow finished-development` while a changed record has a link problem.
+
+A call through `gh api` is not gated.
+
 `ndev requirements render` writes `docs/formal/requirements/generated/requirements.html`, one file with every record. `render --check` fails when that file is not current. Run `check`, `render --check` and `guard --base <the target branch>` in the project's checks.
 
 ## Finding the requirements in documents
