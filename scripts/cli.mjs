@@ -44,7 +44,7 @@ const groups = {
     commands: {
       agent: '<dispatch-id|session-id>', url: '<url>', process: '<pid>', seconds: '<seconds>',
       command: '-- <executable> [<arg>...]', pr: '<target-pr> <open|closed|merged|draft|ready|mergeable>',
-      issue: '<open|closed> <target-issue>...', state: '<target-issue> <state>',
+      issue: '<open|closed> <target-issue>...', state: '<target-issue> <state>', checks: '<pr> [--timeout <seconds>] [--period <seconds>]',
     },
   },
   epic: {

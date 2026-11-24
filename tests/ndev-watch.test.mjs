@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 const ndev = fileURLToPath(new URL('../bin/ndev', import.meta.url))
 
-function fixture(t, { remoteChanges = false } = {}) {
+function fixture(t, { remoteChanges = false, rollup = [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }] } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ndev-watch-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const env = { HOME: root, PATH: `${root}${delimiter}${process.env.PATH}`, ORCA_TERMINAL_HANDLE: 'term_fixture', ORCA_CLI_COMMAND: join(root, 'orca'), NDEV_WORKFLOW_CHECK_MS: '1' }
@@ -28,7 +28,7 @@ function fixture(t, { remoteChanges = false } = {}) {
 case "$1 $2" in
   'pr view')
     case "$*" in
-      *statusCheckRollup*) printf '%s\n' '{"state":"OPEN","headRefOid":"${sha}","mergeable":"MERGEABLE","statusCheckRollup":[{"name":"test","status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+      *statusCheckRollup*) printf '%s\n' '{"state":"OPEN","headRefOid":"${sha}","mergeable":"MERGEABLE","statusCheckRollup":${JSON.stringify(rollup)}}' ;;
       *) printf '%s\n' '{"headRefOid":"${remoteChanges ? sha.split('').reverse().join('') : sha}"}' ;;
     esac ;;
   *) printf '%s\n' "unexpected gh $*" >&2; exit 1 ;;
@@ -64,4 +64,19 @@ test('watch drops a check result when the GitHub head changes before delivery', 
   const result = spawnSync(ndev, ['watch', '--session', 'fixture', '--once', '--json'], { cwd: root, env, encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr || result.stdout)
   assert.deepEqual(JSON.parse(result.stdout).result.notices, [])
+})
+
+test('watch counts only the newest run of each check, so a replaced cancelled run is no failure', t => {
+  const cancelled = { name: 'checks', workflowName: 'CI', status: 'COMPLETED', conclusion: 'CANCELLED', startedAt: '2026-11-24T10:00:00Z' }
+  const replaced = fixture(t, { rollup: [cancelled, { ...cancelled, conclusion: 'SUCCESS', startedAt: '2026-11-24T10:05:00Z' }] })
+  const once = ({ root, env }) => {
+    const result = spawnSync(ndev, ['watch', '--session', 'fixture', '--once', '--json'], { cwd: root, env, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    return JSON.parse(result.stdout).result.notices
+  }
+  const [green] = once(replaced)
+  assert.doesNotMatch(green.message, /failed/)
+  assert.match(green.message, /ndev flow finished-checks/)
+  const stranded = fixture(t, { rollup: [cancelled] })
+  assert.match(once(stranded)[0].message, /checks failed on .*: checks\./)
 })

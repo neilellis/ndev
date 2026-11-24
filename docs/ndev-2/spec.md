@@ -64,6 +64,7 @@ ndev wait process <pid>
 ndev wait seconds <seconds>
 ndev wait command -- <executable> [<arg>...]
 ndev wait pr <target-pr> <open|closed|merged|draft|ready|mergeable>
+ndev wait checks <pr>
 ndev wait issue <open|closed> <target-issue>...
 ndev wait state <target-issue> <state>
 ndev epic start [<issue>|--title <text>] [--short-name <slug>] [--parallel <n>] [--implementer <agent>] [--implementer-model <model>] [--reviewer <agent>] [--reviewer-model <model>] [--run <id>] [--repo-id <id>] [--remote [<server>]|--local] [--remote-repo <selector>] [--take-over]

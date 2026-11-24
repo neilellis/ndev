@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { STATES } from '../../hooks/workflow/machine.ts'
+import { settleChecks } from './checks.mjs'
 import { argsFor, checked, CliError, gitWorkspace, readObject, worktreeScript } from './common.mjs'
 import { readProject } from './project.mjs'
 
@@ -13,6 +14,7 @@ const string = { type: 'string' }
 const targets = { issue: string, pr: string }
 const options = { ...targets, period: string, attempts: string, timeout: string }
 const maxTime = 1_200_000
+const maxChecksTime = 21_600
 const mainLine = ['setup', 'interviewing', 'planning', 'developing', 'hardening', 'developed', 'reviewing', 'ci', 'smoke', 'finishing', 'done']
 const prStates = ['open', 'closed', 'merged', 'draft', 'ready', 'mergeable']
 const issueStates = ['open', 'closed']
@@ -169,6 +171,8 @@ async function remoteJson(executable, argv, settings) {
   }
 }
 
+const readPr = (number, repoArgs, fields, settings) => remoteJson('gh', ['pr', 'view', String(number), ...repoArgs, '--json', fields], settings)
+
 function reached(record, wanted, startedAt) {
   if (record.state === wanted || record.history?.some(entry => entry.at >= startedAt && entry.to === wanted)) return true
   const held = ['wait', 'blocked'].includes(record.state)
@@ -249,12 +253,16 @@ function makeCheck(kind, positional, shell, repair, context) {
     }
   }
   const repoArgs = context.repo ? ['-R', context.repo] : []
+  if (kind === 'checks') {
+    const number = identifier(name, 'target PR', repair)
+    return async settings => settleChecks(number, await readPr(number, repoArgs, 'headRefOid,statusCheckRollup', settings))
+  }
   if (kind === 'pr') {
     const number = identifier(name, 'target PR', repair)
     if (context.record?.pr === number || context.record?.prs?.includes(number)) throw new CliError(2, `Wait PR cannot target its own PR #${number}.`, { repair: 'Use ndev watch for the current PR checks.' })
     const wanted = choices(state, prStates, repair)
     return async settings => {
-      const pr = await remoteJson('gh', ['pr', 'view', String(number), ...repoArgs, '--json', 'state,isDraft,mergeable'], settings)
+      const pr = await readPr(number, repoArgs, 'state,isDraft,mergeable', settings)
       const states = [pr.state?.toLowerCase()]
       if (pr.state === 'OPEN') states.push(pr.isDraft ? 'draft' : 'ready')
       if (pr.state === 'OPEN' && pr.mergeable === 'MERGEABLE' && !pr.isDraft) states.push('mergeable')
@@ -295,14 +303,16 @@ export async function runWait([kind, ...args]) {
   const tail = split < 0 ? [] : args.slice(split + 1)
   const maxPositional = kind === 'issue' ? Infinity : ['state', 'pr'].includes(kind) ? 2 : 1
   const { values, positionals } = argsFor(front, options, repair, { positionals: maxPositional })
-  const gitHub = ['issue', 'pr'].includes(kind)
+  const ownsCheckWait = kind === 'checks'
+  if (ownsCheckWait && (values.issue !== undefined || values.pr !== undefined)) throw new CliError(2, 'Wait checks takes the PR as its argument and holds no workflow record, so it takes no --issue or --pr.', { repair })
+  const gitHub = ['issue', 'pr', 'checks'].includes(kind)
   const root = currentRoot(values.issue !== undefined || values.pr !== undefined || gitHub || kind === 'state')
-  const record = root ? callerRecord(root, values, { optional: true }) : null
+  const record = root && !ownsCheckWait ? callerRecord(root, values, { optional: true }) : null
   const startedAt = Date.now()
-  const timeout = decimal(values.timeout ?? 1200, 'timeout', repair, { max: 1200 }) * 1000
-  const period = decimal(values.period ?? (gitHub ? 300 : kind === 'command' ? 30 : 5), 'period', repair, { min: gitHub ? 60 : 0.001 }) * 1000
+  const timeout = decimal(values.timeout ?? (ownsCheckWait ? 3600 : 1200), 'timeout', repair, { max: ownsCheckWait ? maxChecksTime : 1200 }) * 1000
+  const period = decimal(values.period ?? (ownsCheckWait ? 60 : gitHub ? 300 : kind === 'command' ? 30 : 5), 'period', repair, { min: ownsCheckWait ? 1 : gitHub ? 60 : 0.001 }) * 1000
   const limit = values.attempts === undefined ? Infinity : identifier(values.attempts, 'attempts', repair)
-  const check = makeCheck(kind, positionals, tail, repair, { root, record, startedAt, repo: gitHub ? record?.repo ?? readProject(root).github?.repo : undefined })
+  const check = makeCheck(kind, positionals, tail, repair, { root, record, startedAt, repo: gitHub ? (ownsCheckWait ? findRecord(readWorkflowRecords(root), { pr: identifier(positionals[0], 'target PR', repair) })?.repo : record?.repo) ?? readProject(root).github?.repo : undefined })
   const wait = { id: randomUUID(), pid: process.pid, kind, startedAt, until: startedAt + timeout }
   markWait(root, record, wait)
   const controller = new AbortController()

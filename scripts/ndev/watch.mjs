@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run } from './common.mjs'
+import { newestRuns } from './checks.mjs'
 import { currentWorkflow, hookSessionFile, watcherState, workflowRootFor } from './hooks.mjs'
 import { readProject } from './project.mjs'
 import { recoverDeadWaits } from './waits.mjs'
@@ -122,10 +123,9 @@ function checkResult(pr, workflow, root) {
   if (head !== current.headRefOid) return { head, prHead: current.headRefOid, stale: true }
   const failed = []
   const running = []
-  for (const item of current.statusCheckRollup) {
+  for (const { item } of newestRuns(current.statusCheckRollup)) {
     const state = item.conclusion || item.state || item.status || ''
     const name = item.name || item.context
-    if (!name) throw new CliError(1, `PR #${pr} has an unnamed check on ${head}.`)
     if (pending.has(state)) running.push(name)
     else if (!green.has(state)) failed.push(name)
   }

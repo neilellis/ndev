@@ -50,6 +50,7 @@ Use the entrypoint's stage table for the normal sequence. These commands handle 
 | `ndev wait url <url>` | The URL satisfies the wait's availability check. It does not prove the page works. |
 | `ndev wait command -- <executable> <args>` | A predicate command exits successfully. Keep arguments after `--` as data. |
 | `ndev wait pr <target-pr> merged` | The target PR reaches the requested GitHub state. |
+| `ndev wait checks <pr>` | Every check on the PR's current head has finished. Only the newest run of each check counts. It exits 1 with each failed check and its log URL, and moves no workflow state. The default timeout is 3600 seconds, at most 21600. |
 | `ndev wait issue closed <target-issue>` | The target issue reaches the requested state. Multiple targets are supported. |
 | `ndev wait state <target-issue> <state>` | Another issue's workflow reaches the named state. |
 | `ndev wait seconds <seconds>` | An intentional bounded delay is needed. |
