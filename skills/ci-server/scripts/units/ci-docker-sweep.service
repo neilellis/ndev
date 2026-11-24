@@ -1,0 +1,8 @@
+[Unit]
+Description=Remove the Docker containers, volumes, networks and images that finished CI jobs left behind
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ci-server/docker-sweep --config /etc/ci-server/docker-sweep.conf

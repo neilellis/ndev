@@ -1,0 +1,11 @@
+[Unit]
+Description=Sweep the Docker leftovers of the CI jobs every hour
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+Unit=ci-docker-sweep.service
+
+[Install]
+WantedBy=timers.target

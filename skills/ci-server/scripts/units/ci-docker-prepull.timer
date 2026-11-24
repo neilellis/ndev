@@ -1,0 +1,11 @@
+[Unit]
+Description=Pull the pinned CI images after each boot and each day, after the weekly prune
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*-*-* 08:00
+Persistent=true
+Unit=ci-docker-prepull.service
+
+[Install]
+WantedBy=timers.target

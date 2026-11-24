@@ -67,6 +67,7 @@ The sections below cover every source skill once. Keep this index current when a
 - [adversarial-review](adversarial-review/SKILL.md)
 - [second-opinion](second-opinion/SKILL.md)
 - [fix-ci](fix-ci/SKILL.md)
+- [ci-server](ci-server/SKILL.md)
 - [finish](finish/SKILL.md)
 - [publish](publish/SKILL.md)
 - [merge](merge/SKILL.md)

@@ -1,0 +1,9 @@
+[Unit]
+Description=Pull the Docker images the CI jobs pin, so no job waits on a pull
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/ci-server/docker-prepull /etc/ci-server/images.txt

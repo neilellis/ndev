@@ -2,5 +2,9 @@
   {
     "path": "skills/responsive-check/scripts/tests/responsive-check.test.mjs",
     "reason": "It drives Chromium and WebKit through Playwright, and needs RESPONSIVE_CHECK_WEB_DIR. Run it with: RESPONSIVE_CHECK_WEB_DIR=<dir> node --test skills/responsive-check/scripts/tests/responsive-check.test.mjs"
+  },
+  {
+    "path": "skills/ci-server/scripts/tests/provision.container.test.mjs",
+    "reason": "It runs provision.sh as root inside an ubuntu:24.04 container, so it needs Docker. The ci-server job of .github/workflows/ndev.yml runs it. Run it with: node --test skills/ci-server/scripts/tests/provision.container.test.mjs"
   }
 ]
