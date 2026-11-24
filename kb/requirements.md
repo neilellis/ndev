@@ -191,6 +191,7 @@ The gates:
 - `gh.sh issue-new` and `gh.sh pr-new` run `cites` before the GitHub call, and refuse with exit 3. They check only when the target repository is the repository of the current folder.
 - The agent hook refuses a raw `gh issue create` and `gh pr create`, and names the `gh.sh` command.
 - After a tool call changes a record, the agent hook runs `links --base HEAD`, `explained --base HEAD` and `levels --base HEAD`, and reports the problems once. It refuses `git commit`, `ndev flow checkpoint` and `ndev flow finished-development` while a changed record has a link problem, no Explanation, or no valid level.
+- Before the first edit of a tracked file in a session, the agent hook lists the records in force that name the file in a `- File:` Trace line. Before a commit, it lists them for the files of the commit: the staged files, the paths of a `git add` in the same command, the tracked changes for `git commit -a`, and the `--file` values of `ndev flow checkpoint` and `ndev flow finished-development`. The list stops at 20 records and names the `for` command that prints the rest. The hook does not refuse the commit.
 
 A call through `gh api` is not gated.
 

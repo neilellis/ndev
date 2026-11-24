@@ -1,7 +1,7 @@
 import { blockedNativePrompt } from './chat-guard.mjs'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { checkText, isComponent } from '../../hooks/component-files.ts'
 import { gitCode, gitFolder, OWN_WAIT, pushNames, pushesOnly, RAW_GIT } from '../../hooks/workflow/git-guard.ts'
 import { envFor, SCRIPT, TIMEOUT_MS, validateQuality } from '../../hooks/quality-shared.ts'
@@ -9,7 +9,7 @@ import { ensureProjectFiles } from '../../orca-plugin/ndev/worker/files.mjs'
 import { binding } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
 import { readProject } from './project.mjs'
-import { hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, savesCommit } from './requirement-hooks.mjs'
+import { commitFiles, hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, requirementsList, savesCommit } from './requirement-hooks.mjs'
 import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
 
 const events = new Set(['session-start', 'prompt-submit', 'prompt-context', 'pre-tool-use', 'post-tool-use', 'turn-start', 'turn-complete', 'session-end', 'compact'])
@@ -86,6 +86,22 @@ function changedRecordCheck(root, id, { commit = false } = {}) {
   const check = recordCheck(root, commit && !saved?.ok ? undefined : saved)
   if (check?.fresh) changeSession(root, id, { recordChecks: { key: check.key, ok: check.ok, output: check.output, commands: check.commands } })
   return check
+}
+
+function firstEditRequirements(root, cwd, id, call) {
+  const path = call.input.file_path ?? call.input.filePath ?? call.input.path
+  if (typeof path !== 'string') return undefined
+  const absolute = resolve(realpathSync(cwd), path)
+  if (!existsSync(dirname(absolute))) return undefined
+  const file = relative(realpathSync(root), join(realpathSync(dirname(absolute)), basename(absolute)))
+  if (file.startsWith('../') || isAbsolute(file)) return undefined
+  if (id && (readObject(hookSessionFile(root, id), { missing: {} }).requirementFiles ?? []).includes(file)) return undefined
+  const list = requirementsList(root, [file])
+  changeSession(root, id, state => {
+    const seen = state.requirementFiles ?? []
+    return seen.includes(file) ? null : { requirementFiles: [...seen, file] }
+  })
+  return list
 }
 
 function successful(payload) {
@@ -375,7 +391,15 @@ export async function runHook([event, ...argv], supplied) {
     if (!reason && savesCommit(call.command)) {
       const check = changedRecordCheck(root, id, { commit: true })
       if (check && !check.ok) reason = recordCommitReason(check)
+      if (!reason && hasRecords(root)) {
+        const list = requirementsList(root, commitFiles(root, cwd, call.command), 'the files of this commit')
+        if (list) notes.push(list)
+      }
     }
+  }
+  if (event === 'pre-tool-use' && call.edit && hasRecords(root)) {
+    const note = firstEditRequirements(root, cwd, id, call)
+    if (note) notes.push(note)
   }
   if (event === 'post-tool-use' && (call.shell || call.edit) && successful(payload) && hasRecords(root)) {
     const check = changedRecordCheck(root, id)

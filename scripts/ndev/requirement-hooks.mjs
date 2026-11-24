@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gitCode, RAW_GIT } from '../../hooks/workflow/git-guard.ts'
 import { CliError, run } from './common.mjs'
@@ -64,4 +64,90 @@ export function recordProblemNote(result) {
 
 export function recordCommitReason(result) {
   return `The changed requirement records have problems, so this commit is refused:\n${result.output}\nCorrect the records, then check with: ${result.commands.join(' and ')}`
+}
+
+const LIST_LIMIT = 20
+const GIT_ADD = /(?:^|[;&|(\n`\s])git\s+add(?=\s)/g
+const ADD_ALL = new Set(['-A', '--all', '-u', '--update'])
+
+function wordsAfter(code, index) {
+  const words = []
+  let word = ''
+  let quote = ''
+  for (const char of code.slice(index)) {
+    if (quote) {
+      if (char === quote) quote = ''
+      else word += char
+    } else if (char === '"' || char === "'") quote = char
+    else if (/[;&|\n)`]/.test(char)) break
+    else if (/\s/.test(char)) {
+      if (word) words.push(word)
+      word = ''
+    } else word += char
+  }
+  if (word) words.push(word)
+  return words
+}
+
+function gitNames(root, args) {
+  const command = ['--literal-pathspecs', args[0], '-z', ...args.slice(1)]
+  const ran = run('git', command, { cwd: root })
+  if (ran.status !== 0) throw new CliError(1, `git ${command.join(' ')} in ${root} exited ${ran.status}: ${ran.stderr.trim() || ran.stdout.trim()}`, { repair: `Run git ${args.join(' ')} in ${root} and repair the repository.` })
+  return ran.stdout.split('\0').filter(Boolean)
+}
+
+export function commitFiles(root, cwd, command) {
+  const code = gitCode(command)
+  const paths = new Set()
+  const fromCwd = path => relative(realpathSync(root), resolve(realpathSync(cwd), path))
+  const unstaged = () => gitNames(root, ['diff', '--name-only']).forEach(file => paths.add(file))
+  let commits = false
+  for (const match of code.matchAll(RAW_GIT)) {
+    if (match[2] !== 'commit') continue
+    commits = true
+    if (wordsAfter(code, match.index + match[0].length).some(word => word === '--all' || /^-[a-zA-Z]*a[a-zA-Z]*$/.test(word))) unstaged()
+  }
+  for (const match of code.matchAll(new RegExp(SAVES.source, 'g'))) {
+    commits = true
+    const words = wordsAfter(code, match.index + match[0].length)
+    words.forEach((word, index) => {
+      if (word === '--file' && words[index + 1]) paths.add(fromCwd(words[index + 1]))
+      else if (word.startsWith('--file=')) paths.add(fromCwd(word.slice('--file='.length)))
+    })
+  }
+  if (!commits) return []
+  for (const match of code.matchAll(GIT_ADD)) {
+    const words = wordsAfter(code, match.index + match[0].length)
+    if (words.some(word => ADD_ALL.has(word))) unstaged()
+    words.filter(word => !word.startsWith('-')).forEach(word => paths.add(fromCwd(word)))
+  }
+  gitNames(root, ['diff', '--cached', '--name-only']).forEach(file => paths.add(file))
+  return [...paths].filter(path => path && !path.startsWith('../') && !isAbsolute(path))
+}
+
+export function requirementsList(root, files, label) {
+  if (!hasRecords(root) || !files.length) return undefined
+  const targets = [...new Set(gitNames(root, ['ls-files', '--', ...files]))].filter(file => !file.startsWith(`${RECORDS}/`)).sort()
+  if (!targets.length) return undefined
+  const command = `ndev requirements for --json ${targets.join(' ')}`
+  const ran = run(process.execPath, [CLI, 'requirements', 'for', '--json', '--root', root, '--', ...targets], { cwd: root, timeout: 120_000 })
+  const output = [ran.stdout.trim(), ran.stderr.trim()].filter(Boolean).join('\n') || 'no output'
+  const repair = `Run ${command} in ${root} and repair the cause.`
+  if (ran.status !== 0) throw new CliError(1, `${command} in ${root} exited ${ran.status}: ${output}`, { repair })
+  let answer
+  try {
+    answer = JSON.parse(ran.stdout).result.targets
+    if (!Array.isArray(answer)) throw new Error('result.targets is not a list')
+  } catch (error) {
+    throw new CliError(1, `${command} in ${root} gave output that is not its JSON answer (${error.message}): ${output.slice(0, 500)}`, { repair })
+  }
+  const found = new Map()
+  for (const target of answer) {
+    for (const record of target.records) if (record.lines.some(line => line.startsWith('- File:'))) found.set(record.id, record)
+  }
+  if (!found.size) return undefined
+  const records = [...found.values()].sort((a, b) => a.id.localeCompare(b.id))
+  const lines = records.slice(0, LIST_LIMIT).map(record => `- ${record.id} ${record.title}: ${record.statement.replace(/\s+/g, ' ').trim()}`)
+  if (records.length > LIST_LIMIT) lines.push(`${records.length - LIST_LIMIT} more. Run: ndev requirements for ${targets.join(' ')}`)
+  return `The requirements in force for ${label ?? targets.join(' ')}. The change must meet each:\n${lines.join('\n')}`
 }

@@ -581,8 +581,64 @@ function recordsFixture(t) {
     assert.equal(result.status, 0, result.stderr)
     return result.stdout.trim() ? JSON.parse(result.stdout) : null
   }
-  return { root, recordFile, record, call }
+  return { root, recordFile, record, call, git }
 }
+
+const contextOf = result => result?.hookSpecificOutput?.additionalContext ?? ''
+const LISTED = /The requirements in force for the files of this commit\. The change must meet each:\n- REQ-0001 The report names each source: The report names each source\./
+
+test('a commit lists the requirements in force of the files that it changes, and does not refuse it', t => {
+  const { root, call, git } = recordsFixture(t)
+  writeFileSync(join(root, 'src/other.js'), 'export {}\n')
+  git('add', 'src/other.js')
+  git('commit', '-q', '-m', 'other')
+  writeFileSync(join(root, 'src/report.js'), 'export const a = 1\n')
+  const unstaged = call('pre-tool-use', 'Bash', { command: 'git commit -m change' })
+  assert.doesNotMatch(contextOf(unstaged), /REQ-0001/)
+  for (const command of ['git commit -am change', 'git commit --all -m change', 'git commit -m "fix; x" -a', 'git add src/report.js && git commit -m change', 'git add -A && git commit -m change', 'ndev flow checkpoint --message m --file src/report.js', 'ndev flow finished-development --issue 1 --file=src/report.js']) {
+    const result = call('pre-tool-use', 'Bash', { command })
+    assert.equal(result?.hookSpecificOutput?.permissionDecision, undefined, command)
+    assert.match(contextOf(result), LISTED, command)
+  }
+  const inSrc = spawnSync(ndev, ['hook', 'pre-tool-use', '--harness', 'claude'], { cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH }, input: JSON.stringify({ session_id: 'fixture', cwd: join(root, 'src'), tool_name: 'Bash', tool_input: { command: 'ndev flow checkpoint --message m --file report.js' } }) })
+  assert.equal(inSrc.status, 0, inSrc.stderr)
+  assert.match(contextOf(JSON.parse(inSrc.stdout)), LISTED)
+  git('add', 'src/report.js')
+  assert.match(contextOf(call('pre-tool-use', 'Bash', { command: 'git commit -m change' })), LISTED)
+  git('commit', '-q', '-m', 'report')
+  writeFileSync(join(root, 'src/other.js'), 'export const b = 1\n')
+  git('add', 'src/other.js')
+  assert.doesNotMatch(contextOf(call('pre-tool-use', 'Bash', { command: 'git commit -m change' })), /requirements in force/)
+})
+
+test('the first edit of a file in a session lists the requirements of that file, and later edits do not', t => {
+  const { root, call } = recordsFixture(t)
+  const first = contextOf(call('pre-tool-use', 'Edit', { file_path: join(root, 'src/report.js') }))
+  assert.match(first, /The requirements in force for src\/report\.js\. The change must meet each:\n- REQ-0001 The report names each source: The report names each source\./)
+  assert.doesNotMatch(contextOf(call('pre-tool-use', 'Edit', { file_path: join(root, 'src/report.js') })), /REQ-0001/)
+  assert.doesNotMatch(contextOf(call('pre-tool-use', 'Write', { file_path: join(root, 'src/new.js') })), /requirements in force/)
+})
+
+test('the list of requirements stops at 20 records and names the command that prints the rest', t => {
+  const { root, recordFile, record, call, git } = recordsFixture(t)
+  for (let n = 2; n <= 22; n++) {
+    const id = String(n).padStart(4, '0')
+    writeFileSync(recordFile.replace('0001', id), record('- File: src/*.js').replace('REQ-0001', `REQ-${id}`))
+  }
+  git('add', '-A')
+  git('commit', '-q', '-m', 'records')
+  const listed = contextOf(call('pre-tool-use', 'Edit', { file_path: join(root, 'src/report.js') }))
+  assert.equal(listed.match(/^- REQ-\d{4} /gm).length, 20)
+  assert.match(listed, /- REQ-0020 [^\n]*\n2 more\. Run: ndev requirements for src\/report\.js/)
+})
+
+test('a project with no requirement records gets no list of requirements', t => {
+  const root = fixture(t)
+  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  const result = spawnSync(ndev, ['hook', 'pre-tool-use', '--harness', 'claude'], { cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH }, input: JSON.stringify({ session_id: 'fixture', cwd: root, tool_name: 'Edit', tool_input: { file_path: join(root, 'README.md') } }) })
+  assert.equal(result.status, 0, result.stderr)
+  assert.doesNotMatch(result.stdout, /requirements in force/)
+})
 
 test('a project with requirement records refuses a raw gh issue or pr create and names gh.sh', t => {
   const { call } = recordsFixture(t)
@@ -646,5 +702,7 @@ test('a commit is checked again after a link problem is repaired outside the rec
   assert.match(call('post-tool-use', 'Edit', { file_path: recordFile }).hookSpecificOutput.additionalContext, /src\/new\.js" matches no tracked file/)
   assert.match(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }).hookSpecificOutput.permissionDecisionReason, /src\/new\.js/)
   spawnSync('git', ['add', 'src/new.js'], { cwd: root })
-  assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
+  const repaired = call('pre-tool-use', 'Bash', { command: 'git commit -am change' })
+  assert.equal(repaired?.hookSpecificOutput?.permissionDecision, undefined)
+  assert.match(contextOf(repaired), /The requirements in force for the files of this commit\.[^]*REQ-0001/)
 })

@@ -14,7 +14,7 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 | Command | What it does |
 |---|---|
 | `ndev requirements search <term>...` | Lists the records that hold every term, with identifier, status, title and path. Says how many records it searched when none match. |
-| `ndev requirements for <path \| link \| #N --repo <owner>/<repo>>... [--status <status> \| --all]` | Lists the records in force that relate to each file, issue or pull request, with the matching Trace, Source text or `model` line. For an issue or a pull request, it also lists the records that its body cites. `--all` includes each status. Run it on the files that you plan to change. |
+| `ndev requirements for <path \| link \| #N --repo <owner>/<repo>>... [--status <status> \| --all]` | Lists the records in force that relate to each file, issue or pull request, with the matching Trace, Source text or `model` line. For an issue or a pull request, it also lists the records that its body cites. `--all` includes each status. Run it on the files that you plan to change. The agent hook lists these records before the first edit of a file and before a commit. |
 | `ndev requirements list [--status <status>] [--section <name>] [--level <level>] [--flagged]` | Lists each record. |
 | `ndev requirements level <REQ-NNNN> soft\|normal\|hard` | Sets the level of a record and adds a Log entry. |
 | `ndev requirements new "<short title>" --author "<name>, <name>" [--origin explicit\|implied\|PR] [--level soft\|normal\|hard] [--section <name>]` | Creates the next numbered record from the template, status `Proposed`, level `normal` unless `--level` gives another, and prints its path. The authors are the people who wrote the source text. |
