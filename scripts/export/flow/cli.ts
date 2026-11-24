@@ -30,7 +30,9 @@ const HOME: string = PROFILE.home
 const FLOW = standalone ? `${HOME}/bin/ndev-flow` : 'ndev flow'
 const CHECK_DIR = 'scripts/ndev/workflow'
 const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh']
-const CHECK_MAX_MS = 20 * 60_000
+const CHECK_MAX_MS = 60 * 60_000
+const CHECK_WAIT_SECONDS = 30
+const RUN_CHECK = `${HOME}/scripts/workflow/run-check.sh`
 const WAIT_PR = `${HOME}/scripts/github/wait-for-pr-change.sh`
 const waitChecks = (pr: number | string) => standalone ? `${WAIT_PR} ${pr} --skip-success --json` : `ndev wait checks ${pr}`
 const WAIT_PID = `${HOME}/scripts/work/wait_for_process_end.sh`
@@ -45,6 +47,34 @@ function run(cmd: string, args: string[], opts: { cwd?: string; env?: Record<str
   const r = spawnSync(cmd, args, { cwd: opts.cwd, env: { ...process.env, ...opts.env }, input: opts.input, encoding: 'utf8', timeout: opts.timeout, maxBuffer: 64 * 1024 * 1024 })
   if (r.error) return { status: r.error.code === 'ETIMEDOUT' ? 124 : 127, stdout: r.stdout || '', stderr: [r.stderr, r.error.message].filter(Boolean).join('\n') }
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+}
+function runBounded(script: string, args: string[], cwd: string, env: Record<string, string>, runDir: string, label: string, capMs: number): Run {
+  const started = run('bash', [RUN_CHECK, 'start', runDir, script, ...args], { cwd, env })
+  const pid = started.stdout.trim()
+  if (started.status !== 0 || !/^\d+$/.test(pid)) throw new Fail(1, `${label} did not start (run-check.sh start exited ${started.status}): ${said(started)}`)
+  const deadline = now() + capMs
+  let exit: number | undefined
+  let stoppedAfterCap = false
+  for (;;) {
+    const left = deadline - now()
+    if (left <= 0) {
+      const stop = run('bash', [RUN_CHECK, 'stop', pid])
+      if (stop.status !== 0) throw new Fail(1, `run-check.sh stop ${pid} exited ${stop.status} after ${label} ran ${capMs} ms: ${said(stop)}`)
+      stoppedAfterCap = true
+      break
+    }
+    const waited = run('bash', [RUN_CHECK, 'wait', runDir, pid, String(Math.max(1, Math.min(CHECK_WAIT_SECONDS, Math.ceil(left / 1000))))])
+    if (waited.status === 0) {
+      exit = Number(waited.stdout.trim())
+      break
+    }
+    if (waited.status !== 124) throw new Fail(1, `run-check.sh wait ${runDir} ${pid} exited ${waited.status} for ${label}: ${said(waited)}`)
+  }
+  const out = run('bash', [RUN_CHECK, 'out', runDir]).stdout
+  const err = run('bash', [RUN_CHECK, 'err', runDir]).stdout
+  if (stoppedAfterCap) return { status: 124, stdout: out, stderr: `${err}\n${label} was still running after ${capMs} ms, the most that a check may run, so it was stopped (exit 124).` }
+  if (exit === undefined || !Number.isInteger(exit)) throw new Fail(1, `${label} left no readable exit code in ${runDir}/exit.`)
+  return { status: exit, stdout: out, stderr: err }
 }
 const said = (r: Run) => (r.stderr.trim() || r.stdout.trim() || 'no output').split('\n').slice(-20).join('\n')
 
@@ -245,7 +275,7 @@ function runCheck(wf: Workflow, check: string, args: string[] = [], declared: re
   const types = changeTypesEnv(wf.root, baseSha, declared)
   const env = { ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types ? { NDEV_CHANGE_TYPES: types } : {}) }
   const before = git(wf.root, 'status', '--porcelain').stdout
-  const r = run('bash', [script, ...args], { cwd: wf.root, env, timeout: CHECK_MAX_MS })
+  const r = runBounded(script, args, wf.root, env, join(dir, `ndev-${check}.run`), path, envMs('NDEV_FLOW_CHECK_MAX_MS', CHECK_MAX_MS))
   const log = join(dir, `ndev-${check}.log`)
   writeFileSync(log, `$ ${path} ${args.join(' ')}\nexit ${r.status}\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`)
   if (r.status !== 0) {
