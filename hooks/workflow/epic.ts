@@ -154,8 +154,11 @@ export async function loadEpic($: EngineInterface, root: string, n: number): Pro
     throw new Refuse(`${path} is not valid JSON (${String(error).slice(0, 160)}). Repair: fix the file, then call the tool again.`)
   }
   const epic = raw as Partial<Epic> | null
-  if (!epic || epic.epic !== n || !EPIC_STATES.includes(epic.state as EpicState) || typeof epic.issues !== 'object' || !Array.isArray(epic.history)) {
+  if (!epic || epic.epic !== n || !EPIC_STATES.includes(epic.state as EpicState) || !Array.isArray(epic.history)) {
     throw new Refuse(`${path} is not an epic record for #${n}: it needs epic ${n}, a state from ${EPIC_STATES.join(', ')}, issues and history. Repair: fix the file, then call the tool again.`)
+  }
+  if (typeof epic.issues !== 'object' || epic.issues === null || Array.isArray(epic.issues)) {
+    throw new Refuse(`${path} is not an epic record for #${n}: its "issues" field is ${JSON.stringify(epic.issues) ?? 'missing'}, and it must be an object that maps each sub-issue number to its record, {} before slicing. Repair: set "issues" to {} or to the sub-issue records that slicing saved, then call the tool again.`)
   }
   try { configureClosing({}, { baseSha: epic.baseSha, coordinatorModel: epic.coordinatorModel, fullSuites: epic.fullSuites, posture: epic.posture }) } catch (error) { throw new Refuse(`${path}: ${error instanceof Error ? error.message : String(error)}. Repair the closing configuration.`) }
   if (epic.debts !== undefined && (!Array.isArray(epic.debts) || epic.debts.some(debt => debtProblem(debt)))) throw new Refuse(`${path} has invalid debt. Repair the record.`)

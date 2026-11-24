@@ -1168,11 +1168,32 @@ for (const name of ['epicStarted', 'epicPhase']) {
 }
 
 
+for (const [name, args, damage] of [
+  ['epicStatus', {}, { issues: { '41': null } }],
+  ['epicBrief', { issue: 40, sub: 41, role: 'reviewer', pr: 12 }, { roles: null }],
+] as const) {
+  test(`${name} failure records the owning epic rather than a missing or subordinate target`, async ($, on) => {
+    const w = engine(on)
+    await start($)
+    if (name === 'epicBrief') await planned($)
+    else await tool($, 'epicStarted', { issue: 40 })
+    const stored = JSON.parse(w.files.get(EPIC_FILE(40))!)
+    w.files.set(EPIC_FILE(40), JSON.stringify({ ...stored, ...damage }))
+    const result = await tool($, name, args)
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('issue #40')
+    expect(result.text).toContain('kind=throw')
+    expect(result.text).toContain('Repair: call epicStatus')
+    const entry = [...w.files.entries()].find(([path]) => path.endsWith('/ndev-live-issue-40.json'))
+    expect(JSON.parse(entry?.[1] ?? '{}').calls?.some((call: { tool: string; outcome: string }) => call.tool === name && call.outcome === 'failed')).toBe(true)
+  })
+}
+
 for (const [name, args] of [
   ['epicStatus', {}],
   ['epicBrief', { issue: 40, sub: 41, role: 'reviewer', pr: 12 }],
 ] as const) {
-  test(`${name} failure records the owning epic rather than a missing or subordinate target`, async ($, on) => {
+  test(`issue 151: ${name} refuses an epic record whose issues field is null at the load, naming the record, the field and the repair`, { timeoutMs: 30_000 }, async ($, on) => {
     const w = engine(on)
     await start($)
     if (name === 'epicBrief') await planned($)
@@ -1181,11 +1202,12 @@ for (const [name, args] of [
     w.files.set(EPIC_FILE(40), JSON.stringify({ ...stored, issues: null }))
     const result = await tool($, name, args)
     expect(result.isError).toBe(true)
-    expect(result.text).toContain('issue #40')
-    expect(result.text).toContain('kind=throw')
-    expect(result.text).toContain('Repair: call epicStatus')
-    const entry = [...w.files.entries()].find(([path]) => path.endsWith('/ndev-live-issue-40.json'))
-    expect(JSON.parse(entry?.[1] ?? '{}').calls?.some((call: { tool: string; outcome: string }) => call.tool === name && call.outcome === 'failed')).toBe(true)
+    expect(result.text).toContain(EPIC_FILE(40))
+    expect(result.text).toContain('"issues"')
+    expect(result.text).toContain('null')
+    expect(result.text).toContain('Repair:')
+    expect(result.text).not.toContain('TypeError')
+    expect(result.text).not.toContain('kind=throw')
   })
 }
 
