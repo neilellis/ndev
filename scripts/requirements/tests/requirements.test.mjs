@@ -2896,3 +2896,58 @@ describe("fixed fields", () => {
     assert.match(out.stdout, /2 records: no fixed field changed since base/);
   });
 });
+
+describe("a number that the base holds twice", () => {
+  const FIRST = "0001-the-report-names-each-source.md";
+  const SECOND = "0001-the-checks-run-the-affected-tests-first.md";
+  const RENUMBERED = "0003-the-checks-run-the-affected-tests-first.md";
+  const duplicated = () => committed({
+    [FIRST]: record("0001"),
+    [SECOND]: record("0001", { title: "The checks run the affected tests first", statement: "The checks run the affected tests first.", author: ["Ann Smith"] }),
+    "0002-a-third-record.md": record("0002", { title: "A third record", statement: "A third statement." }),
+  });
+  const renumber = (root, change = (t) => t) => {
+    git(root, "mv", `${DIR}/${SECOND}`, `${DIR}/${RENUMBERED}`);
+    const full = path.join(root, DIR, RENUMBERED);
+    writeFileSync(full, change(readFileSync(full, "utf8").replace("id: REQ-0001", "id: REQ-0003")));
+  };
+
+  it("guard and fixed accept the renumber of one of the two records, and report it as renumbered", () => {
+    const root = duplicated();
+    renumber(root);
+    for (const command of ["guard", "fixed"]) {
+      const out = run(root, command, "--base", "base");
+      assert.equal(out.status, 0, `${command}: ${out.stderr}`);
+    }
+    assert.equal(run(root, "check").status, 0, run(root, "check").stderr);
+  });
+
+  it("guard still refuses a change to the title, the author or the Statement of the renumbered record", () => {
+    const root = duplicated();
+    renumber(root, (t) => t.replace('title: "The checks run the affected tests first"', 'title: "The checks run the changed tests first"').replace('  - "Ann Smith"', '  - "Bob Jones"').replace("The checks run the affected tests first.\n\n## Explanation", "The checks run the changed tests first.\n\n## Explanation"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /the title changed since base/);
+    assert.match(out.stderr, /the author changed since base/);
+    assert.match(out.stderr, /Statement changed since base/);
+    assert.equal(run(root, "fixed", "--base", "base").status, 1);
+  });
+
+  it("guard refuses a record deleted from the pair, and names it by its path", () => {
+    const root = duplicated();
+    git(root, "rm", "-q", `${DIR}/${SECOND}`);
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, new RegExp(`REQ-0001 \\(${DIR}/${SECOND} at base\\) is deleted`));
+  });
+
+  it("guard refuses a renumber to a number that the base already used", () => {
+    const root = duplicated();
+    git(root, "mv", `${DIR}/${SECOND}`, `${DIR}/0002-the-checks-run-the-affected-tests-first.md`);
+    const full = path.join(root, DIR, "0002-the-checks-run-the-affected-tests-first.md");
+    writeFileSync(full, readFileSync(full, "utf8").replace("id: REQ-0001", "id: REQ-0002"));
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /duplicate number 0002/);
+  });
+});

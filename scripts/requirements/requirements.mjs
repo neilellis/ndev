@@ -1004,19 +1004,33 @@ export function parseRecord(rel, text) {
   return parse({ file, rel, id: `REQ-${file.slice(0, 4)}` }, text);
 }
 
-function fixedProblems(old, now, base) {
+function pairWithBase(base, currents) {
+  const counts = new Map();
+  for (const old of base) counts.set(old.id, (counts.get(old.id) ?? 0) + 1);
+  const slugOf = (file) => file.slice(5);
+  return base.map((old) => {
+    if (counts.get(old.id) === 1) return { old, now: currents.find((record) => record.id === old.id) };
+    const now = currents.find((record) => record.rel === old.rel) ?? currents.find((record) => slugOf(record.file) === slugOf(old.file));
+    return { old, now, renumbered: Boolean(now) && now.id !== old.id && !counts.has(now.id) };
+  });
+}
+
+const renumberedLines = (pairs, base) => pairs.filter((pair) => pair.renumbered).map(({ old, now }) => `${old.id} (${old.rel} at ${base}) renumbered to ${now.id}: ${now.rel}\n`).join("");
+
+function fixedProblems(old, now, base, { renumbered = false } = {}) {
   if (!old.front.data || !now.front.data) return [];
-  return fixedChanges(old, now).map((key) => `${now.rel}: the ${key} changed since ${base}. The id, title, author and origin of a record never change after it is created: restore it. To change the requirement, deprecate the record and create a new one: ${SCRIPT} deprecate ${now.id} --reason "<why>" --decided-by "<name>" --by <REQ-NNNN>`);
+  return fixedChanges(old, now).filter((key) => !(renumbered && key === "id")).map((key) => `${now.rel}: the ${key} changed since ${base}. The id, title, author and origin of a record never change after it is created: restore it. To change the requirement, deprecate the record and create a new one: ${SCRIPT} deprecate ${now.id} --reason "<why>" --decided-by "<name>" --by <REQ-NNNN>`);
 }
 
 function fixed(root, options) {
   const base = options.base;
   if (!base) throw new Usage("fixed needs --base <git ref>, for example: fixed --base HEAD");
   git(root, ["rev-parse", "--verify", `${base}^{commit}`]);
-  const current = new Map(entries(root).filter((e) => NAME.test(e.file)).map((e) => [e.id, read(e)]));
-  const problems = baseRecords(root, base).flatMap((old) => (current.has(old.id) ? fixedProblems(old, current.get(old.id), base) : []));
+  const current = entries(root).filter((e) => NAME.test(e.file)).map(read);
+  const pairs = pairWithBase(baseRecords(root, base), current).filter((pair) => pair.now);
+  const problems = pairs.flatMap(({ old, now, renumbered }) => fixedProblems(old, now, base, { renumbered }));
   if (problems.length) throw new Failure(problems.join("\n"));
-  return `${current.size} record${current.size === 1 ? "" : "s"}: no fixed field changed since ${base}\n`;
+  return `${current.length} record${current.length === 1 ? "" : "s"}: no fixed field changed since ${base}\n${renumberedLines(pairs, base)}`;
 }
 
 function deprecate(root, id, options) {
@@ -1075,13 +1089,13 @@ function guard(root, options) {
     if (traceLines(record).some((line) => TRACE_LINK.test(line)) || noLinkReason(record)) continue;
     problems.push(`${record.rel}: the Trace has no link to what implements the requirement or plans to implement it. Add the files with: ${SCRIPT} file ${record.id} <path or pattern>. Add the pull request with: ${SCRIPT} link ${record.id} <pull request link>. When nothing implements it yet, open an issue for it and add "- Issue: <issue link>". When nothing implements it and nothing will, it is not a requirement: reject or retire it. A non-functional requirement (nfr: true) with nothing to link gives the reason as "- None: <reason>".`);
   }
-  for (const old of baseRecords(root, base)) {
-    const now = current.get(old.id);
+  const pairs = pairWithBase(baseRecords(root, base), named.map(read));
+  for (const { old, now, renumbered } of pairs) {
     if (!now) {
       problems.push(`${old.id} (${old.rel} at ${base}) is deleted. A record is never deleted: restore it, and deprecate it with: ${SCRIPT} deprecate ${old.id} --reason "<why>" --decided-by "<name>"`);
       continue;
     }
-    problems.push(...fixedProblems(old, now, base));
+    problems.push(...fixedProblems(old, now, base, { renumbered }));
     const before = protectedParts(old);
     const after = protectedParts(now);
     const changed = PROTECTED.filter((name) => before[name] !== after[name]);
@@ -1100,7 +1114,7 @@ function guard(root, options) {
     problems.push(`${now.rel}: ${parts} changed since ${base}, and ${why}.\n${diff}\n  Show the human the old and the new text. When they agree, they run: ${SCRIPT} agree ${now.id} --by "<name>". Otherwise, restore the old text.`);
   }
   if (problems.length) throw new Failure(problems.join("\n"));
-  return `${current.size} record${current.size === 1 ? "" : "s"} guarded against ${base}: no protected text changed without agreement\n`;
+  return `${current.size} record${current.size === 1 ? "" : "s"} guarded against ${base}: no protected text changed without agreement\n${renumberedLines(pairs, base)}`;
 }
 
 function agree(root, id, options) {
