@@ -28,6 +28,7 @@ id: REQ-NNNN
 title: <short title>
 status: Proposed | Open | Accepted | Rejected | Retired | Superseded by NNNN
 origin: explicit | implied | PR
+level: soft | normal | hard
 section: <the section of the document that holds it>
 date: YYYY-MM-DD
 source: <the citation of the source text>    (a list when there is more than one)
@@ -88,6 +89,7 @@ These commands write the record:
 - `ndev requirements sync [<REQ-NNNN>...]` writes the `source`, `issues` and `prs` fields from the Source text and the Trace. With no id, it writes each record whose fields are different.
 - `ndev requirements link` and `ndev requirements file` add to the Trace, and write `issues` and `prs`.
 - `ndev requirements log <REQ-NNNN> "<what changed>"` adds an entry with the date of today to the Log.
+- `ndev requirements level <REQ-NNNN> soft|normal|hard` sets the level and adds a Log entry. `new` writes `normal`, and `new --level <level>` writes another level.
 - `ndev requirements flag <REQ-NNNN> "<why it looks wrong>"` sets or replaces the `flagged` field. `ndev requirements flag <REQ-NNNN> --clear` removes it.
 - `ndev requirements quote <path> <first line> <last line>` prints a citation and its quote for the Source text.
 
@@ -97,6 +99,7 @@ These commands write the record:
 |---|---|
 | status | `Proposed`: an agent wrote it and no human has accepted it. `Open`: like `Proposed`, but it needs feedback from a human before anyone can decide it. `Accepted`: in force. `Rejected`: a human turned the proposal down; keep it, so that nobody proposes it again. `Retired`: no longer a requirement. `Superseded by NNNN`: a newer record replaces it. |
 | origin | `explicit`: a document states it. `implied`: a test, a schema constraint or a check enforces it, and no document states it. `PR`: no record covered a pull request, so the record was written from that pull request. |
+| level | How strongly the record binds. `hard`: a cornerstone of the project, such as a rule of its north star. `normal`: a document, a decision record or an issue states it as a requirement. `soft`: it is derived from communications only, such as a message, a call or a post. `ndev requirements list --level <level>` lists the records of one level, and `render` and `publish` show it. |
 | section | The section of the generated document that holds the record. |
 | source | The citations of the Source text, in the same order: a path with lines, or an https link to a pull request, an issue or a web document. One value when there is one citation, and a list when there are more. `ndev requirements check` fails a `source` that is different from the Source text. |
 | author | The people who wrote the source text, one or more. When the source is a document, these are the people who wrote the document. When the source is only a pull request, this is the author of the pull request. An agent is never the author. |
@@ -114,9 +117,10 @@ These commands write the record:
 - **The Statement and the Source text are protected.** An agent never changes them without a human's agreement. The only exception is the first creation of the record. When a source changes, or a statement looks wrong, the agent shows the human the old and the new text and waits. When the human agrees, the agent changes the text and the human runs `ndev requirements agree`. The status, the explanation, the trace and the notes are not protected.
 - **Each record explains its Statement.** The `## Explanation` comes after the Statement. It tells what the requirement entails, in simple English, so that a reader who does not know the domain understands it. It defines each glossary, technical or jargon term that the Statement uses. It does not repeat the Statement. It is not binding: when the two disagree, the Statement wins, and the agent corrects the Explanation. A record written before this rule fails `check` until it has an Explanation.
 - **A human accepts.** An agent writes `Proposed`. When a record needs feedback from a human, an agent sets `Open`, says in the Notes what feedback it needs, and adds a Log entry with `ndev requirements log`. An accepted record names the human in `decided_by`. An agent never marks its own record `Accepted`.
+- **The level comes from the source.** Give `soft` when each source is a message, a call or a post. Give `normal` when a document, a decision record or an issue states the requirement. Give `hard` only to a cornerstone: a rule of the project's north star, or a rule that a human names a cornerstone. When the sources change, check the level again. An agent asks a human before it sets `hard` on a record whose source is not a cornerstone document.
 - **One requirement for each record.** If a statement has two requirements that can pass or fail apart, it is two records.
 - **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
-- **The Log records each change to the requirement.** `ndev requirements new` writes the first entry, `Created.`. When the title, the status, the Statement or the Source text changes, add an entry with `ndev requirements log`: what changed, and why. Never change or remove an entry.
+- **The Log records each change to the requirement.** `ndev requirements new` writes the first entry, `Created.`. When the title, the status, the level, the Statement or the Source text changes, add an entry with `ndev requirements log`: what changed, and why. Never change or remove an entry.
 - **Each requirement has an implementation or a plan.** The Trace of a record in force links the files that implement it, the pull request that implemented it, or an issue that plans to implement it. When nothing implements it yet, open an issue and link it. When nothing implements it and nothing will, it is not a requirement: reject or retire it. Only a non-functional requirement (`nfr: true`) with truly nothing to link can give the reason instead, as `- None: <reason>`.
 - **Numbers are never reused, and a record is never deleted.** A requirement that ends gets the status `Retired`. A proposal that fails gets `Rejected`.
 - **A change to an accepted Statement needs a PDR.** The PDR names the record in `Requirement changed`.
@@ -127,7 +131,8 @@ These commands write the record:
 `ndev requirements check` reads each record in `docs/formal/requirements/`. It ignores `README.md` and the folders. It fails:
 
 - a bad file name, a duplicate number, or an `ID` that does not match the file number;
-- a status, an origin or a verification value that is not in the lists above;
+- a record with no `level`;
+- a status, an origin, a level or a verification value that is not in the lists above;
 - a `Superseded by` that names no record, itself or an older record;
 - a record that is not `Proposed` or `Open` and has no statement, source text, section or approver;
 - a source that is not a path with lines or an https link, or that has no quote;
@@ -169,6 +174,10 @@ A record that is not in force can keep a closed link and a removed file, but not
 
 `ndev requirements explained <REQ-NNNN>...` checks the Explanation of the named records, as `check` does. `explained --base <git ref>` checks the records that changed or are new since the ref.
 
+### Each record has a level
+
+`ndev requirements levels <REQ-NNNN>...` checks the `level` of the named records, as `check` does. `levels --base <git ref>` checks the records that changed or are new since the ref. `guard` fails a changed level with no new Log entry.
+
 ### Each issue and pull request cites a record
 
 In a project with records, each issue and pull request traces to a record in force (`Proposed`, `Open` or `Accepted`). `ndev requirements cites <body file> --kind issue|pr` passes a body that cites a record ID in force. A pull request also passes when an issue that it closes (`Closes #N`) cites one. When no record fits, create a `Proposed` record with `ndev requirements new` and cite it.
@@ -177,7 +186,7 @@ The gates:
 
 - `gh.sh issue-new` and `gh.sh pr-new` run `cites` before the GitHub call, and refuse with exit 3. They check only when the target repository is the repository of the current folder.
 - The agent hook refuses a raw `gh issue create` and `gh pr create`, and names the `gh.sh` command.
-- After a tool call changes a record, the agent hook runs `links --base HEAD` and `explained --base HEAD`, and reports the problems once. It refuses `git commit`, `ndev flow checkpoint` and `ndev flow finished-development` while a changed record has a link problem or no Explanation.
+- After a tool call changes a record, the agent hook runs `links --base HEAD`, `explained --base HEAD` and `levels --base HEAD`, and reports the problems once. It refuses `git commit`, `ndev flow checkpoint` and `ndev flow finished-development` while a changed record has a link problem, no Explanation, or no valid level.
 
 A call through `gh api` is not gated.
 

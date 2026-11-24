@@ -13,6 +13,7 @@ const STATUS_ORDER = ["Accepted", "Proposed", "Open", "Rejected", "Retired", "Su
 const IN_FORCE = ["Proposed", "Open", "Accepted"];
 const UNDECIDED = ["Proposed", "Open"];
 const ORIGINS = ["explicit", "implied", "PR"];
+const LEVELS = ["soft", "normal", "hard"];
 const PULL = /^https:\/\/\S+\/pull\/\d+/;
 const METHODS = ["test", "check", "model", "eval", "review"];
 const SECTIONS = ["Statement", "Explanation", "Source text", "Trace", "Notes", "Log"];
@@ -20,7 +21,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check", "clear", "flagged"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, cites, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, cites, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -42,7 +43,7 @@ const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
 const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|may not|will not|refuses?|only)\b/i;
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"agreed: <name>, YYYY-MM-DD, text <hash>"`;
-const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Model: "model", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed", Flagged: "flagged" };
+const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Level: "level", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Model: "model", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed", Flagged: "flagged" };
 const KEYS = Object.values(FIELDS);
 const LISTS = ["source", "author", "verification", "model", "issues", "prs"];
 const MODEL_ENTRY = /^([^#\s]+\.qnt)(?:#([A-Za-z_][A-Za-z0-9_]*))?$/;
@@ -348,6 +349,7 @@ function inspect(root) {
     }
     const origin = record.field("Origin");
     if (!ORIGINS.includes(origin)) fail(`origin "${origin ?? ""}" is not explicit, implied or PR.`);
+    for (const problem of levelProblems(record)) fail(problem);
     const date = record.field("Date");
     if (date === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(`"date" needs YYYY-MM-DD (got "${date ?? "no value"}").`);
     const verification = record.field("Verification");
@@ -428,9 +430,10 @@ function row(records, { flags = false } = {}) {
 }
 
 function list(root, options) {
+  if (options.level !== undefined && !LEVELS.includes(options.level)) throw new Usage(`Unknown level "${options.level}": use soft, normal or hard`);
   const all = entries(root).map(read);
   if (!all.length) return `No records in ${DIR}\n`;
-  const records = all.filter((r) => (options.status === undefined || (r.status ?? "").startsWith(options.status)) && (options.section === undefined || r.section === options.section) && (!options.flagged || Boolean(r.field("Flagged"))));
+  const records = all.filter((r) => (options.status === undefined || (r.status ?? "").startsWith(options.status)) && (options.section === undefined || r.section === options.section) && (!options.flagged || Boolean(r.field("Flagged"))) && (options.level === undefined || r.field("Level") === options.level));
   if (!records.length) return `No record matches the filter (${all.length} record${all.length === 1 ? "" : "s"} in ${DIR})\n`;
   return row(records, { flags: Boolean(options.flagged) });
 }
@@ -448,6 +451,8 @@ function search(root, terms) {
 function create(root, sentence, options) {
   const origin = options.origin ?? "explicit";
   if (!ORIGINS.includes(origin)) throw new Usage(`Unknown origin "${origin}": use explicit, implied or PR`);
+  const level = options.level ?? "normal";
+  if (!LEVELS.includes(level)) throw new Usage(`Unknown level "${level}": use soft, normal or hard`);
   const title = (sentence ?? "").trim();
   if (!title || !slug(title)) throw new Usage(`new needs a short title, for example: new "The report names each source" --author "Ann Smith"`);
   const author = (options.author ?? "").split(",").map((name) => name.trim()).filter(Boolean);
@@ -457,7 +462,7 @@ function create(root, sentence, options) {
   if (bad) throw new Failure(`${bad.rel} does not match NNNN-<title>.md, so the next number is unknown. Rename it, or run check.`);
   const next = String(Math.max(0, ...existing.map((e) => Number(e.file.slice(0, 4)))) + 1).padStart(4, "0");
   const full = path.join(root, DIR, `${next}-${slug(title)}.md`);
-  const data = { id: `REQ-${next}`, title, status: "Proposed", origin, section: (options.section ?? "").trim(), date: new Date().toISOString().slice(0, 10), source: [], author, decided_by: "", verification: "unassigned", issues: [], prs: [] };
+  const data = { id: `REQ-${next}`, title, status: "Proposed", origin, level, section: (options.section ?? "").trim(), date: new Date().toISOString().slice(0, 10), source: [], author, decided_by: "", verification: "unassigned", issues: [], prs: [] };
   mkdirSync(path.dirname(full), { recursive: true });
   writeFileSync(full, frontMatterText(data) + SECTIONS.map((s) => (s === "Log" ? `\n## Log\n\n- ${data.date}: Created.\n` : `\n## ${s}\n`)).join(""), { flag: "wx" });
   return `${full}\n`;
@@ -525,7 +530,7 @@ function blocks(markdown) {
 function article(record, retired) {
   const sources = sourceText(record.sections["Source text"]).sources.map((s) => `<li><a href="${escape(s.url ?? `${UP}${encodeURI(retired.has(s.rel) ? frozenCopy(s.rel) : s.rel)}#L${s.first}-L${s.last}`)}">${escape(s.citation)}</a>\n<blockquote class="source">${escape(s.quote.join("\n"))}</blockquote></li>`);
   const decided = record.field("Decided by") ? `Decided by ${escape(record.field("Decided by"))}, ${escape(record.field("Date"))}` : `Dated ${escape(record.field("Date"))}`;
-  const meta = [escape(record.status), escape(record.field("Origin")), `Verification: ${escape(record.field("Verification"))}`, `Author: ${escape(record.author.join(", "))}`, decided, `<a href="../${encodeURI(record.file)}">record</a>`];
+  const meta = [escape(record.status), `Level: ${escape(record.field("Level") ?? "")}`, escape(record.field("Origin")), `Verification: ${escape(record.field("Verification"))}`, `Author: ${escape(record.author.join(", "))}`, decided, `<a href="../${encodeURI(record.file)}">record</a>`];
   const optional = ["Trace", "Notes", "Log"].filter((name) => record.sections[name]).map((name) => `<h4>${name}</h4>\n${blocks(record.sections[name])}`);
   return [
     `<article id="${record.id}" class="status-${record.status.split(" ")[0].toLowerCase()}">`,
@@ -858,7 +863,7 @@ function publication(root, config) {
   const sourceLink = (s) => s.url ?? `${fileLink(retired.has(s.rel) ? frozenCopy(s.rel) : s.rel)}#L${s.first}-L${s.last}`;
   const entry = (record, here) => {
     const decided = record.field("Decided by") ? `Decided by ${record.field("Decided by")}, ${record.field("Date")}` : `Dated ${record.field("Date")}`;
-    const meta = [record.status, record.field("Origin"), `Verification: ${record.field("Verification")}`, `Author: ${record.author.join(", ")}`, decided].map(text).join(" · ");
+    const meta = [record.status, `Level: ${record.field("Level") ?? ""}`, record.field("Origin"), `Verification: ${record.field("Verification")}`, `Author: ${record.author.join(", ")}`, decided].map(text).join(" · ");
     const parts = [`<a id="${record.id}"></a>`, `## ${record.id} ${text(record.title)}`, `${meta} · [record](${fileLink(record.rel)})`, ...(record.field("Flagged") ? [`> **Flagged:** ${text(record.field("Flagged"))}`] : []), markdown(record.sections.Statement ?? "", DIR, here)];
     if (record.sections.Explanation) parts.push("### Explanation", markdown(record.sections.Explanation, DIR, here));
     const sources = sourceText(record.sections["Source text"]).sources;
@@ -881,6 +886,7 @@ function publication(root, config) {
       title: r.title,
       status: r.status,
       origin: r.field("Origin"),
+      level: r.field("Level") ?? "",
       section: r.section,
       date: r.field("Date"),
       author: r.author,
@@ -978,7 +984,7 @@ function guard(root, options) {
     const nowLog = logEntries(now);
     const lost = oldLog.find((line, i) => nowLog[i] !== line);
     if (lost) problems.push(`${now.rel}: the Log entry "${lost}" of ${base} is changed or removed. The Log only grows: restore the entry, and add a new one with: ${SCRIPT} log ${now.id} "<what changed>"`);
-    const tracked = [...["title", "status"].filter((key) => old.data[key] !== now.data[key]), ...changed];
+    const tracked = [...["title", "status", "level"].filter((key) => old.data[key] !== now.data[key]), ...changed];
     if (tracked.length && nowLog.length <= oldLog.length) problems.push(`${now.rel}: the ${tracked.join(" and the ")} changed since ${base}, and the Log has no new entry. Run: ${SCRIPT} log ${now.id} "<what changed>"`);
     if (!changed.length) continue;
     const agreed = now.field("Agreed")?.match(AGREED);
@@ -1011,6 +1017,16 @@ function flag(root, [id, reason, ...extra], options) {
     return `${entry.rel}: flagged: ${what}\n`;
   }
   return setField(entry, "flagged", undefined) ? `${entry.rel}: flag cleared\n` : `${entry.rel}: no flag to clear\n`;
+}
+
+function level(root, [id, value, ...extra]) {
+  if (!/^REQ-\d{4}$/.test(id ?? "") || extra.length || !LEVELS.includes(value)) throw new Usage(`level needs <REQ-NNNN> soft|normal|hard, for example: level REQ-0001 hard`);
+  const entry = recordEntry(root, id);
+  const was = read(entry).field("Level");
+  if (was === value) return `${entry.rel}: the level is already ${value}\n`;
+  setField(entry, "level", value);
+  appendLines(entry, "Log", [`- ${new Date().toISOString().slice(0, 10)}: ${LEVELS.includes(was) ? `Level changed from ${was} to ${value}.` : `Level set to ${value}.`}`], { unique: false });
+  return `${entry.rel}: level: ${value}${was === undefined ? "" : ` (was ${was})`}\n`;
 }
 
 const logEntries = (record) => (record.sections.Log ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
@@ -1674,6 +1690,22 @@ function explanationProblems(record) {
   return [];
 }
 
+function levelProblems(record) {
+  const level = record.field("Level");
+  if (LEVELS.includes(level)) return [];
+  return [`${level === undefined ? `no "level"` : `level "${level}" is not soft, normal or hard`}. Set it with: ${SCRIPT} level ${record.id} soft|normal|hard`];
+}
+
+function levels(root, ids, options) {
+  if (!ids.length && !options.base) throw new Usage(`levels needs record IDs, or --base <ref> for the records that changed since that ref`);
+  const chosen = options.base ? changedRecords(root, options.base) : ids.map((id) => recordEntry(root, id));
+  if (!chosen.length) return `No record changed since ${options.base}\n`;
+  const records = chosen.map((entry) => read(entry));
+  const problems = records.flatMap((record) => levelProblems(record).map((problem) => `${record.id}: ${problem}`));
+  if (problems.length) throw new Failure(problems.join("\n"));
+  return records.map((record) => `${record.id}: level ${record.field("Level")}\n`).join("");
+}
+
 function explained(root, ids, options) {
   if (!ids.length && !options.base) throw new Usage(`explained needs record IDs, or --base <ref> for the records that changed since that ref`);
   const chosen = options.base ? changedRecords(root, options.base) : ids.map((id) => recordEntry(root, id));
@@ -1747,6 +1779,7 @@ export function runRequirements(argv, { json } = {}) {
       guard: () => guard(root(), options),
       agree: () => agree(root(), rest[0], options),
       flag: () => flag(root(), rest, options),
+      level: () => level(root(), rest),
       author: () => author(root(), rest[0], rest.slice(1)),
       model: () => model(root(), rest[0], rest.slice(1)),
       sync: () => sync(root(), rest),
@@ -1761,6 +1794,7 @@ export function runRequirements(argv, { json } = {}) {
       trace: () => traceAll(root(), options),
       links: () => recordLinks(root(), rest, options),
       explained: () => explained(root(), rest, options),
+      levels: () => levels(root(), rest, options),
       cites: () => bodyCites(root(), rest[0], options),
       narrate: () => narrate(root(), rest[0], options),
       narrative: () => narrative(root()),

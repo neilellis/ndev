@@ -23,8 +23,8 @@ const GUIDE_SOURCE = "- docs/guide.md#L3-L4\n\n> The report names each source.\n
 const EXPLANATION = "The report gives a list of each document that it uses. A source is a document that the report reads.";
 const numbers = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => Number(m[1])))].sort((a, b) => a - b);
 const yamlList = (key, items) => (items.length ? `${key}:\n${items.map((item) => `  - ${JSON.stringify(item)}`).join("\n")}` : `${key}: []`);
-const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", section = "Report", date = "2026-01-02", author = ["Neil Ellis"], decidedBy = "Neil Ellis", verification = "unassigned", model = [], statement = "The report names each source.", explanation = EXPLANATION, sourceText = GUIDE_SOURCE, source = [...sourceText.matchAll(/^- (.+)$/gm)].map((m) => m[1]), trace = "- File: docs/guide.md", issues = numbers(trace, /^- Issue: https:\/\/\S+\/issues\/(\d+)$/gm), prs = numbers(`${trace}\n${sourceText}`, /^- (?:PR: )?https:\/\/\S+\/pull\/(\d+)$/gm), notes = "", log = `- ${date}: Created.` } = {}) =>
-  `---\nid: ${id}\ntitle: ${JSON.stringify(title)}\nstatus: ${status}\norigin: ${origin}\nsection: ${JSON.stringify(section)}\ndate: ${date}\n${source.length === 1 ? `source: ${JSON.stringify(source[0])}` : yamlList("source", source)}\n${yamlList("author", author)}\ndecided_by: ${JSON.stringify(decidedBy)}\n${Array.isArray(verification) ? yamlList("verification", verification) : `verification: ${verification}`}\n${model.length ? `${yamlList("model", model)}\n` : ""}${yamlList("issues", issues)}\n${yamlList("prs", prs)}\n---\n\n## Statement\n\n${statement}\n\n## Explanation\n\n${explanation}\n\n## Source text\n\n${sourceText}\n\n## Trace\n\n${trace}\n\n## Notes\n\n${notes}\n\n## Log\n\n${log}\n`;
+const record = (number, { title = "The report names each source", id = `REQ-${number}`, status = "Accepted", origin = "explicit", level = "normal", section = "Report", date = "2026-01-02", author = ["Neil Ellis"], decidedBy = "Neil Ellis", verification = "unassigned", model = [], statement = "The report names each source.", explanation = EXPLANATION, sourceText = GUIDE_SOURCE, source = [...sourceText.matchAll(/^- (.+)$/gm)].map((m) => m[1]), trace = "- File: docs/guide.md", issues = numbers(trace, /^- Issue: https:\/\/\S+\/issues\/(\d+)$/gm), prs = numbers(`${trace}\n${sourceText}`, /^- (?:PR: )?https:\/\/\S+\/pull\/(\d+)$/gm), notes = "", log = `- ${date}: Created.` } = {}) =>
+  `---\nid: ${id}\ntitle: ${JSON.stringify(title)}\nstatus: ${status}\norigin: ${origin}\n${level === null ? "" : `level: ${level}\n`}section: ${JSON.stringify(section)}\ndate: ${date}\n${source.length === 1 ? `source: ${JSON.stringify(source[0])}` : yamlList("source", source)}\n${yamlList("author", author)}\ndecided_by: ${JSON.stringify(decidedBy)}\n${Array.isArray(verification) ? yamlList("verification", verification) : `verification: ${verification}`}\n${model.length ? `${yamlList("model", model)}\n` : ""}${yamlList("issues", issues)}\n${yamlList("prs", prs)}\n---\n\n## Statement\n\n${statement}\n\n## Explanation\n\n${explanation}\n\n## Source text\n\n${sourceText}\n\n## Trace\n\n${trace}\n\n## Notes\n\n${notes}\n\n## Log\n\n${log}\n`;
 const seeded = (records = { "0001-the-report-names-each-source.md": record("0001") }) => {
   const root = project();
   put(root, "docs/guide.md", GUIDE);
@@ -39,7 +39,7 @@ describe("new", () => {
     assert.equal(out.status, 0, out.stderr);
     assert.deepEqual(readdirSync(path.join(root, DIR)), ["0001-the-report-names-each-source.md"]);
     const text = readFileSync(path.join(root, DIR, "0001-the-report-names-each-source.md"), "utf8");
-    assert.match(text, /^---\nid: REQ-0001\ntitle: The report names each source\nstatus: Proposed\norigin: explicit\nsection: ""\ndate: \d{4}-\d{2}-\d{2}\nsource: \[\]\nauthor:\n  - Suriya Khan\n  - Carter Dillard\ndecided_by: ""\nverification: unassigned\nissues: \[\]\nprs: \[\]\n---\n\n## Statement\n/);
+    assert.match(text, /^---\nid: REQ-0001\ntitle: The report names each source\nstatus: Proposed\norigin: explicit\nlevel: normal\nsection: ""\ndate: \d{4}-\d{2}-\d{2}\nsource: \[\]\nauthor:\n  - Suriya Khan\n  - Carter Dillard\ndecided_by: ""\nverification: unassigned\nissues: \[\]\nprs: \[\]\n---\n\n## Statement\n/);
     assert.doesNotMatch(text, /^# /m);
     for (const section of ["Statement", "Explanation", "Source text", "Trace", "Notes", "Log"]) assert.match(text, new RegExp(`^## ${section}$`, "m"));
     assert.match(text, /\n## Statement\n\n## Explanation\n\n## Source text\n/);
@@ -352,7 +352,7 @@ describe("render", () => {
     const html = readFileSync(path.join(root, HTML), "utf8");
     assert.match(html, /^<!doctype html>/);
     assert.match(html, /<article id="REQ-0001"/);
-    assert.match(html, /<p class="meta">Accepted · explicit · Verification: unassigned · Author: Neil Ellis · Decided by Neil Ellis, 2026-01-02 · /);
+    assert.match(html, /<p class="meta">Accepted · Level: normal · explicit · Verification: unassigned · Author: Neil Ellis · Decided by Neil Ellis, 2026-01-02 · /);
     assert.match(html, /<strong>names<\/strong>/);
     assert.match(html, /<a href="\.\.\/extra\/glossary\.md#source">source<\/a>/);
     assert.match(html, /<blockquote>\s*<p>A quoted rule\.<\/p>\s*<\/blockquote>/);
@@ -677,7 +677,7 @@ describe("model", () => {
     writeFileSync(rel, readFileSync(rel, "utf8").replace(/^(verification: .*\n)(model:\n  - .*\n)/m, "$2$1"));
     const out = run(root, "check");
     assert.equal(out.status, 1);
-    assert.match(out.stderr, /the fields are not in the order id, title, status, origin, section, date, source, author, decided_by, verification, model, issues, prs, nfr, agreed/);
+    assert.match(out.stderr, /the fields are not in the order id, title, status, origin, level, section, date, source, author, decided_by, verification, model, issues, prs, nfr, agreed/);
   });
 
   it("sets the models of a record with the model command", () => {
@@ -1234,12 +1234,12 @@ describe("log", () => {
   });
 
   it("guard fails a change to the title, the status or the Statement with no new Log entry", () => {
-    for (const change of [(t) => t.replace("status: Accepted", "status: Retired"), (t) => t.replace('title: "The report names each source"', 'title: "The report names every source"')]) {
+    for (const change of [(t) => t.replace("status: Accepted", "status: Retired"), (t) => t.replace('title: "The report names each source"', 'title: "The report names every source"'), (t) => t.replace("level: normal", "level: hard")]) {
       const root = committed();
       edit(root, change);
       const out = run(root, "guard", "--base", "base");
       assert.equal(out.status, 1);
-      assert.match(out.stderr, new RegExp(`${DIR}/${FILE}: the (status|title) changed since base, and the Log has no new entry\\. Run: ndev requirements log REQ-0001 "<what changed>"`));
+      assert.match(out.stderr, new RegExp(`${DIR}/${FILE}: the (status|title|level) changed since base, and the Log has no new entry\\. Run: ndev requirements log REQ-0001 "<what changed>"`));
     }
     const root = committed();
     edit(root, (t) => t.replace("The report names each source.\n\n## Explanation", "The report names every source.\n\n## Explanation"));
@@ -1509,7 +1509,7 @@ describe("publish", () => {
     assert.deepEqual(page(root, ".published").split("\n").filter(Boolean), ["index.md", "report.md", "requirements.json", "sources.md"]);
     const report = page(root, "report.md");
     assert.match(report, /^---\ntitle: "Report"\ndescription: "1 requirement record in the Report section\."\n---\n\n# Report\n/);
-    assert.match(report, /\n<a id="REQ-0001"><\/a>\n\n## REQ-0001 The report names each source\n\nAccepted · explicit · Verification: unassigned · Author: Neil Ellis · Decided by Neil Ellis, 2026-01-02 · \[record\]\(\.\.\/\.\.\/\.\.\/docs\/formal\/requirements\/0001-the-report-names-each-source\.md\)\n\nThe report names each source\.\n\n### Explanation\n\nThe report gives a list of each document that it uses\. A source is a document that the report reads\.\n\n### Source text/);
+    assert.match(report, /\n<a id="REQ-0001"><\/a>\n\n## REQ-0001 The report names each source\n\nAccepted · Level: normal · explicit · Verification: unassigned · Author: Neil Ellis · Decided by Neil Ellis, 2026-01-02 · \[record\]\(\.\.\/\.\.\/\.\.\/docs\/formal\/requirements\/0001-the-report-names-each-source\.md\)\n\nThe report names each source\.\n\n### Explanation\n\nThe report gives a list of each document that it uses\. A source is a document that the report reads\.\n\n### Source text/);
     assert.match(report, /### Source text\n\n- \[docs\/guide\.md#L3-L4\]\(\.\.\/\.\.\/\.\.\/docs\/guide\.md#L3-L4\)\n\n```text\nThe report names each source\.\nThe report refuses an unread source\.\n```\n/);
     const index = page(root, "index.md");
     assert.match(index, /^---\ntitle: "Requirements"\ndescription: "2 requirement records in 2 sections\."\n---\n\n# Requirements\n\n2 records: 2 Accepted\.\n/);
@@ -2487,5 +2487,113 @@ describe("flag", () => {
     assert.equal(run(root, "publish").status, 0);
     assert.equal(JSON.parse(page(root, "requirements.json")).records[0].flagged, "");
     assert.doesNotMatch(page(root, "index.md"), /flagged/);
+  });
+});
+
+describe("level", () => {
+  const levelled = (level) => seeded({ [FILE]: record("0001", { level }) });
+
+  it("writes level normal in a new record, and the level that --level gives", () => {
+    const root = project();
+    assert.equal(run(root, "new", "The report names each source", "--author", "Neil Ellis").status, 0);
+    assert.match(readFileSync(path.join(root, DIR, "0001-the-report-names-each-source.md"), "utf8"), /^origin: explicit\nlevel: normal\nsection: /m);
+    const out = run(root, "new", "The report has a date", "--author", "Neil Ellis", "--level", "soft");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(readFileSync(path.join(root, DIR, "0002-the-report-has-a-date.md"), "utf8"), /^level: soft$/m);
+    const bad = run(root, "new", "A title", "--author", "Neil Ellis", "--level", "urgent");
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /Unknown level "urgent": use soft, normal or hard/);
+    assert.equal(readdirSync(path.join(root, DIR)).length, 2);
+  });
+
+  it("fails check on a record with no level, and on a level that is not in the list", () => {
+    const missing = run(levelled(null), "check");
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /0001-the-report-names-each-source\.md: no "level"\. Set it with: ndev requirements level REQ-0001 soft\|normal\|hard/);
+    const wrong = run(levelled("urgent"), "check");
+    assert.equal(wrong.status, 1);
+    assert.match(wrong.stderr, /level "urgent" is not soft, normal or hard\. Set it with: ndev requirements level REQ-0001 soft\|normal\|hard/);
+    for (const level of ["soft", "normal", "hard"]) assert.equal(run(levelled(level), "check").status, 0, level);
+  });
+
+  it("sets the level with the level command, logs the change, and passes check", () => {
+    const root = seeded();
+    const out = run(root, "level", "REQ-0001", "hard");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /0001-the-report-names-each-source\.md: level: hard \(was normal\)/);
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.match(text, /^origin: explicit\nlevel: hard\nsection: /m);
+    assert.equal(text.match(/^level:/gm).length, 1);
+    assert.match(text, new RegExp(`## Log\\n\\n- 2026-01-02: Created\\.\\n- ${new Date().toISOString().slice(0, 10)}: Level changed from normal to hard\\.\\n$`));
+    assert.equal(run(root, "check").status, 0, run(root, "check").stderr);
+    const same = run(root, "level", "REQ-0001", "hard");
+    assert.equal(same.status, 0);
+    assert.match(same.stdout, /level is already hard/);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), text);
+  });
+
+  it("sets a level on a record that has none", () => {
+    const root = levelled(null);
+    assert.equal(run(root, "level", "REQ-0001", "soft").status, 0);
+    const text = readFileSync(path.join(root, DIR, FILE), "utf8");
+    assert.match(text, /^origin: explicit\nlevel: soft\nsection: /m);
+    assert.match(text, /: Level set to soft\.\n$/);
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("refuses a level command with a wrong level or a wrong record", () => {
+    const root = seeded();
+    for (const args of [["REQ-0001"], ["REQ-0001", "urgent"], ["REQ-0001", "hard", "soft"], ["0001", "hard"]]) {
+      const out = run(root, "level", ...args);
+      assert.equal(out.status, 2, args.join(" "));
+      assert.match(out.stderr, /level needs <REQ-NNNN> soft\|normal\|hard/);
+    }
+    const missing = run(root, "level", "REQ-0042", "hard");
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /REQ-0042/);
+  });
+
+  it("levels passes the named records with a level, and fails one with none or a wrong one", () => {
+    const root = seeded({ [FILE]: record("0001"), "0002-a.md": record("0002", { level: null }), "0003-b.md": record("0003", { level: "urgent" }) });
+    const good = run(root, "levels", "REQ-0001");
+    assert.equal(good.status, 0, good.stderr);
+    assert.equal(good.stdout, "REQ-0001: level normal\n");
+    const bad = run(root, "levels", "REQ-0001", "REQ-0002", "REQ-0003");
+    assert.equal(bad.status, 1);
+    assert.match(bad.stderr, /REQ-0002: no "level"\. Set it with: ndev requirements level REQ-0002 soft\|normal\|hard/);
+    assert.match(bad.stderr, /REQ-0003: level "urgent" is not soft, normal or hard\. Set it with: ndev requirements level REQ-0003 soft\|normal\|hard/);
+    assert.doesNotMatch(bad.stderr, /REQ-0001/);
+  });
+
+  it("levels with --base checks only the records that changed since the base, including new ones", () => {
+    const root = tracked({ "docs/guide.md": GUIDE, [`${DIR}/${FILE}`]: record("0001", { level: null }), [`${DIR}/0002-a.md`]: record("0002") });
+    git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base");
+    assert.equal(run(root, "levels", "--base", "HEAD").stdout, "No record changed since HEAD\n");
+    put(root, `${DIR}/0002-a.md`, record("0002", { level: "urgent" }));
+    put(root, `${DIR}/0003-b.md`, record("0003", { level: null }));
+    const out = run(root, "levels", "--base", "HEAD");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0002: level "urgent" is not soft, normal or hard/);
+    assert.match(out.stderr, /REQ-0003: no "level"/);
+    assert.doesNotMatch(out.stderr, /REQ-0001/);
+    assert.equal(run(seeded(), "levels").status, 2);
+  });
+
+  it("lists the records of one level", () => {
+    const root = seeded({ "0001-a.md": record("0001", { level: "hard" }), "0002-b.md": record("0002", { title: "The report has a date" }) });
+    const out = run(root, "list", "--level", "hard");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /^REQ-0001 {2}Accepted {2}The report names each source {2}\S+\n$/);
+    assert.equal(run(root, "list", "--level", "urgent").status, 2);
+  });
+
+  it("shows the level in the rendered page, the published page and the JSON", () => {
+    const root = seeded({ [FILE]: record("0001", { level: "hard" }) });
+    assert.equal(run(root, "render").status, 0);
+    assert.match(readFileSync(path.join(root, HTML), "utf8"), /<p class="meta">Accepted · Level: hard · explicit · /);
+    configured(root);
+    assert.equal(run(root, "publish").status, 0);
+    assert.match(page(root, "report.md"), /Accepted · Level: hard · explicit · /);
+    assert.equal(JSON.parse(page(root, "requirements.json")).records[0].level, "hard");
   });
 });
