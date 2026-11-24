@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -286,3 +286,135 @@ test('copy review does not start another worker when no launch receipt is availa
   assert.equal(done.run.phase, 'finished')
   assert.ok(walk.effects.some(effect => effect.kind === 'terminal close' && effect.args[3] === 'term_copy'))
 })
+
+const PANE = 'tab-owner:leaf-owner'
+
+function attested({ terminal = 'term_owner', pane = PANE, session = 'session_owner', runtime = 'runtime-walk' } = {}) {
+  const [tabId, leafId] = pane.split(':')
+  return {
+    status: { ok: true, result: { runtime: { runtimeId: runtime } }, _meta: { runtimeId: runtime } },
+    'terminal show': {
+      ok: true, _meta: { runtimeId: runtime },
+      result: { terminal: { handle: terminal, worktreeId: 'repo::walk', tabId, leafId, connected: true, writable: true, orphaned: false } },
+    },
+    'worktree ps': {
+      ok: true, _meta: { runtimeId: runtime },
+      result: { truncated: false, worktrees: [{ worktreeId: 'repo::walk', agents: [{ paneKey: pane, address: terminal, orcaSessionId: session, hasLivePty: true }] }] },
+    },
+    'terminal send': { ok: true, _meta: { runtimeId: runtime }, result: { accepted: true } },
+  }
+}
+
+async function fakeOrca(walk) {
+  const folder = join(walk.options.env.HOME, 'fake-orca')
+  await mkdir(folder)
+  const binary = join(folder, 'orca')
+  const replies = join(folder, 'replies.json')
+  const calls = join(folder, 'calls.jsonl')
+  await writeFile(binary, [
+    `#!${process.execPath}`,
+    "const fs = require('node:fs')",
+    'const args = process.argv.slice(2)',
+    'fs.appendFileSync(process.env.FAKE_ORCA_CALLS, JSON.stringify(args) + "\\n")',
+    "const key = args.filter(arg => !arg.startsWith('--')).slice(0, 2).join(' ')",
+    'const reply = JSON.parse(fs.readFileSync(process.env.FAKE_ORCA_REPLIES, "utf8"))[key]',
+    "if (!reply) { process.stdout.write(JSON.stringify({ ok: false, error: { message: 'no fake reply for ' + key } })); process.exit(1) }",
+    'process.stdout.write(JSON.stringify(reply))',
+  ].join('\n'))
+  await chmod(binary, 0o755)
+  const env = { ...walk.options.env, ORCA_CLI_COMMAND: binary, FAKE_ORCA_REPLIES: replies, FAKE_ORCA_CALLS: calls, ORCA_TERMINAL_HANDLE: 'term_owner', ORCA_PANE_KEY: PANE }
+  delete env.ORCA_AGENT_SESSION_ID
+  delete env.ORCA_DEV_REPO_ROOT
+  const answer = async state => {
+    await writeFile(replies, JSON.stringify(state))
+    await writeFile(calls, '')
+  }
+  const called = async () => (await readFile(calls, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line))
+  const cli = new URL('../scripts/cli.mjs', import.meta.url).pathname
+  const ndev = (overrides, ...argv) => {
+    const result = spawnSync(process.execPath, [cli, '--json', 'walk-doc', ...argv], { cwd: walk.options.cwd, env: { ...env, ...overrides }, encoding: 'utf8' })
+    return { status: result.status, body: JSON.parse(result.stdout) }
+  }
+  return { env, answer, called, ndev }
+}
+
+test('an Orca terminal without an injected session is admitted by the session Orca attests for its pane', async t => {
+  const walk = await fixture(t)
+  await walk.run('start', 'docs/intro.md')
+  const orca = await fakeOrca(walk)
+  await orca.answer(attested())
+  const tip = orca.ndev({}, 'tip', 'Read the install page first')
+  assert.equal(tip.status, 0, JSON.stringify(tip.body))
+  const calls = await orca.called()
+  assert.deepEqual(calls.slice(0, 3).map(args => args.slice(0, 2).join(' ')), ['status --json', 'terminal show', 'worktree ps'])
+  assert.deepEqual(calls.at(-1).slice(0, 4), ['terminal', 'send', '--terminal', 'term_reader1'])
+})
+
+test('pane attestation refuses a missing pane, a mismatch, a stale terminal and an absent or ambiguous attestation', async t => {
+  const walk = await fixture(t)
+  await walk.run('start', 'docs/intro.md')
+  const orca = await fakeOrca(walk)
+  const edit = change => { const state = attested(); change(state); return state }
+  const cases = [
+    ['an unset pane key', attested(), { ORCA_PANE_KEY: '' }, /ORCA_AGENT_SESSION_ID.*ORCA_PANE_KEY/],
+    ['an injected session Orca cannot resolve', attested(), { ORCA_AGENT_SESSION_ID: 'session_owner' }, /injected session session_owner/],
+    ['another pane', attested({ pane: 'tab-owner:leaf-other' }), {}, /pane tab-owner:leaf-other.*ORCA_PANE_KEY tab-owner:leaf-owner/],
+    ['another terminal', edit(state => { state['terminal show'].result.terminal.handle = 'term_other' }), {}, /returned term_other/],
+    ['a disconnected terminal', edit(state => { state['terminal show'].result.terminal.connected = false }), {}, /not connected/],
+    ['an orphaned terminal', edit(state => { state['terminal show'].result.terminal.orphaned = true }), {}, /not connected/],
+    ['a terminal from another runtime', edit(state => { state['terminal show']._meta.runtimeId = 'runtime-next' }), {}, /runtime runtime-next.*runtime-walk/],
+    ['a list from another runtime', edit(state => { state['worktree ps']._meta.runtimeId = 'runtime-next' }), {}, /runtime runtime-next.*runtime-walk/],
+    ['a truncated list', edit(state => { state['worktree ps'].result.truncated = true }), {}, /truncated/],
+    ['no agent in the pane', edit(state => { state['worktree ps'].result.worktrees[0].agents = [] }), {}, /0 agents in pane/],
+    ['two agents in the pane', edit(state => { const [agent] = state['worktree ps'].result.worktrees[0].agents; state['worktree ps'].result.worktrees[0].agents.push({ ...agent, orcaSessionId: 'session_twin' }) }), {}, /2 agents in pane/],
+    ['a pane bound to another terminal', edit(state => { state['worktree ps'].result.worktrees[0].agents[0].address = 'term_other' }), {}, /belongs to term_other/],
+    ['a pane in another worktree', edit(state => { state['worktree ps'].result.worktrees[0].worktreeId = 'repo::elsewhere' }), {}, /repo::elsewhere/],
+    ['an agent without a live PTY', edit(state => { state['worktree ps'].result.worktrees[0].agents[0].hasLivePty = false }), {}, /no live session/],
+    ['another session in the owner pane', attested({ session: 'session_intruder' }), {}, /owning Orca session/],
+    ['a restarted runtime', attested({ runtime: 'runtime-next' }), {}, /owning Orca session/],
+    ['a caller Orca reports as not live', edit(state => { state.status.result.caller = { live: false, refusal: { message: 'session ended' } } }), {}, /not live: session ended/],
+  ]
+  for (const [name, state, overrides, message] of cases) {
+    await orca.answer(state)
+    const refused = orca.ndev(overrides, 'tip', 'Read the install page first')
+    assert.equal(refused.status, 2, `${name}: ${JSON.stringify(refused.body)}`)
+    assert.match(refused.body.error.message, message, name)
+    assert.ok(text(refused.body.error.repair), name)
+    assert.ok(!(await orca.called()).some(args => args[1] === 'send'), name)
+  }
+})
+
+test('the reader hook in a terminal without an injected session keeps the reader fence through pane attestation', async t => {
+  const walk = await fixture(t)
+  const { run } = await walk.run('start', 'docs/intro.md')
+  walk.role('reader1')
+  await walk.run('enhance', '--file', await note(walk))
+  const orca = await fakeOrca(walk)
+  const pane = 'tab-reader:leaf-reader'
+  const local = join(run.home, '.walk-doc', run.runId, 'attempt-1', 'media', 'example.jpg')
+  const cli = new URL('../scripts/cli.mjs', import.meta.url).pathname
+  const hook = overrides => {
+    const result = spawnSync(process.execPath, [cli, 'hook', 'pre-tool-use', '--harness', 'codex'], {
+      cwd: walk.options.cwd, encoding: 'utf8', env: { ...orca.env, ORCA_TERMINAL_HANDLE: 'term_reader1', ORCA_PANE_KEY: pane, ...overrides },
+      input: JSON.stringify({ session_id: 'native-reader', cwd: walk.options.cwd, tool_name: 'Read', tool_input: { file_path: local } }),
+    })
+    assert.equal(result.status, 0, result.stderr)
+    return JSON.parse(result.stdout || 'null')?.hookSpecificOutput?.permissionDecisionReason ?? null
+  }
+  await orca.answer(attested({ terminal: 'term_reader1', pane, session: 'session_reader1' }))
+  assert.equal(hook({}), null)
+  await orca.answer(attested({ terminal: 'term_reader1', pane, session: 'session_reader_new' }))
+  assert.match(hook({}), /not the current reader.*session_reader_new/)
+  await orca.answer(attested({ terminal: 'term_reader1', pane, session: 'session_reader1', runtime: 'runtime-next' }))
+  assert.match(hook({}), /runtime runtime-next.*runtime-walk/)
+  await orca.answer(attested({ terminal: 'term_reader1', pane, session: 'session_reader1' }))
+  assert.match(hook({ ORCA_PANE_KEY: '' }), /not the current reader/)
+})
+
+async function note(walk) {
+  const file = join(walk.options.cwd, 'note.json')
+  await writeFile(file, JSON.stringify({ step: 'Start', note: 'Show the working directory.' }))
+  return file
+}
+
+const text = value => typeof value === 'string' && value.trim().length > 0

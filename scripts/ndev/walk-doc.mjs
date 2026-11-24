@@ -66,8 +66,8 @@ async function contextFor(options) {
   return { root, cwd, home, env, worktreeId, file, readerLink, options }
 }
 
-async function orca(context, args) {
-  if (context.options.orca) return await context.options.orca(args, { cwd: context.root })
+async function orcaReply(context, args) {
+  if (context.options.orca) return { result: await context.options.orca(args, { cwd: context.root }) }
   const env = context.env
   const binary = env.ORCA_CLI_COMMAND || (env.ORCA_DEV_REPO_ROOT ? 'orca-dev' : process.platform === 'linux' && !env.ORCA_TERMINAL_HANDLE ? 'orca-ide' : 'orca')
   const effect = run(binary, [...args, '--json'], { cwd: context.root, env, timeout: 45_000 })
@@ -80,17 +80,54 @@ async function orca(context, args) {
       errorCode: response?.error?.code, details: { ...effect, receipt: response }, repair: 'orca status --json',
     })
   }
-  return response.result
+  return { result: response.result, runtime: response._meta?.runtimeId }
+}
+
+const orca = async (context, args) => (await orcaReply(context, args)).result
+
+async function paneSession(context, terminal, pane, runtime) {
+  const repair = `Compare ORCA_PANE_KEY with orca terminal show --terminal ${terminal} --json and orca worktree ps --json, or relaunch the agent with orca agent launch --surface terminal.`
+  const refuse = detail => new CliError(2, `Orca cannot attest the session in terminal ${terminal}: ${detail}`, { repair })
+  const shown = await orcaReply(context, ['terminal', 'show', '--terminal', terminal])
+  if (shown.runtime !== runtime) throw refuse(`terminal show answered from runtime ${shown.runtime}, not ${runtime}.`)
+  const view = shown.result?.terminal
+  if (view?.handle !== terminal) throw refuse(`terminal show returned ${view?.handle}.`)
+  if (view.connected !== true || view.orphaned !== false) throw refuse('the terminal is not connected.')
+  if (`${view.tabId}:${view.leafId}` !== pane) throw refuse(`its pane ${view.tabId}:${view.leafId} is not ORCA_PANE_KEY ${pane}.`)
+  const listed = await orcaReply(context, ['worktree', 'ps', '--limit', '10000'])
+  if (listed.runtime !== runtime) throw refuse(`worktree ps answered from runtime ${listed.runtime}, not ${runtime}.`)
+  if (listed.result?.truncated !== false || !Array.isArray(listed.result.worktrees)) throw refuse('worktree ps returned a truncated or invalid list.')
+  const agents = listed.result.worktrees.flatMap(row => (row.agents ?? []).filter(agent => agent.paneKey === pane).map(agent => ({ ...agent, worktreeId: row.worktreeId })))
+  if (agents.length !== 1) throw refuse(`worktree ps lists ${agents.length} agents in pane ${pane}, not one.`)
+  const [agent] = agents
+  if (agent.address !== terminal || agent.worktreeId !== view.worktreeId) throw refuse(`pane ${pane} belongs to ${agent.address} in ${agent.worktreeId}.`)
+  if (agent.hasLivePty !== true || !text(agent.orcaSessionId)) throw refuse(`the agent in pane ${pane} has no live session.`)
+  return agent.orcaSessionId
 }
 
 async function identity(context) {
   if (context.options.identity) return await context.options.identity()
   const status = await orca(context, ['status'])
-  const terminal = context.env.ORCA_TERMINAL_HANDLE
-  const session = status?.caller?.orcaSessionId
+  const { ORCA_TERMINAL_HANDLE: terminal, ORCA_PANE_KEY: pane, ORCA_AGENT_SESSION_ID: injected } = context.env
   const runtime = status?.runtime?.runtimeId
-  if (!TERMINAL.test(terminal) || status?.caller?.live !== true || !text(session) || !text(runtime)) {
+  if (!TERMINAL.test(terminal) || !text(runtime)) {
     throw new CliError(2, 'Walk-doc requires a live Orca agent terminal.', { repair: 'Run the command from the owner or reader terminal in Orca.' })
+  }
+  if (status.caller === undefined) {
+    if (text(injected)) {
+      throw new CliError(2, `Orca did not resolve the injected session ${injected} of terminal ${terminal}: orca status --json names no caller.`, { repair: 'orca status --json' })
+    }
+    if (!text(pane)) {
+      throw new CliError(2, `Orca injected no ORCA_AGENT_SESSION_ID and no ORCA_PANE_KEY into terminal ${terminal}, so it cannot attest the session that runs Walk-doc.`, {
+        repair: 'Run the command from an agent that Orca launched with orca agent launch --surface terminal, and check its pane with orca terminal show --json.',
+      })
+    }
+    return { terminal, session: await paneSession(context, terminal, pane, runtime), runtime }
+  }
+  const session = status.caller.orcaSessionId
+  if (status.caller.live !== true || !text(session)) {
+    const detail = status.caller.refusal?.message ? `: ${status.caller.refusal.message}` : '.'
+    throw new CliError(2, `Orca reports the caller session ${session ?? 'unknown'} of terminal ${terminal} as not live${detail}`, { repair: 'Run the command from the owner or reader terminal in Orca.' })
   }
   return { terminal, session, runtime }
 }
@@ -102,7 +139,9 @@ function admit(verb, walk, caller) {
     }
     if (walk.readerSession && walk.readerSession !== caller.session) throw new CliError(2, `The current Walk reader session changed for run ${walk.runId}.`)
   } else if (walk.owner.terminal !== caller.terminal || walk.owner.session !== caller.session || walk.owner.runtime !== caller.runtime) {
-    throw new CliError(2, `The ${verb} command belongs to the owning Orca session for walk ${walk.runId}.`)
+    throw new CliError(2, `The ${verb} command belongs to the owning Orca session for walk ${walk.runId}, not session ${caller.session} in terminal ${caller.terminal} on runtime ${caller.runtime}.`, {
+      repair: `Run it from terminal ${walk.owner.terminal}, or check ndev walk-doc status and run ndev walk-doc stop from the owner.`,
+    })
   }
 }
 
@@ -645,7 +684,15 @@ async function hookContext(root, call, options) {
   }
   if ((walk.agentId && walk.agentId === terminal) ||
     (!terminal && walk.readerSession && walk.readerSession === session)) {
-    if (walk.readerSession && session !== walk.readerSession) return { context, walk, cwd, role: 'retired' }
+    if (walk.readerSession && session !== walk.readerSession) {
+      if (!terminal || !text(call.pane)) return { context, walk, cwd, role: 'retired' }
+      try {
+        const attested = await paneSession(context, terminal, call.pane, walk.owner.runtime)
+        if (attested !== walk.readerSession) return { context, walk, cwd, role: 'retired', detail: `Orca attests session ${attested} in ${terminal}.` }
+      } catch (error) {
+        return { context, walk, cwd, role: 'retired', detail: error.message }
+      }
+    }
     return { context, walk, cwd, role: 'reader' }
   }
   if (context.readerLink) return { context, walk, cwd, role: 'retired' }
@@ -655,10 +702,10 @@ async function hookContext(root, call, options) {
 export async function walkPreTool(root, call, options = {}) {
   const active = await hookContext(root, call, options)
   if (!active) return null
-  const { context, walk, role, cwd } = active
+  const { context, walk, role, cwd, detail } = active
   let reason
   try {
-    reason = role === 'retired' ? 'walk-doc: this session belongs to an earlier attempt or is not the current reader.' : null
+    reason = role === 'retired' ? ['walk-doc: this session belongs to an earlier attempt or is not the current reader.', detail].filter(Boolean).join(' ') : null
     if (!reason) {
       const { config } = role === 'reader' ? await loadConfig(context) : {}
       reason = await checkWalkTool(walk, config, call, role, { workspace: workspaceOf(walk), cwd })

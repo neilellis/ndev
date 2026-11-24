@@ -360,7 +360,7 @@ export async function runHook([event, ...argv], supplied) {
   const call = toolCall(payload)
   if (event === 'pre-tool-use' || event === 'post-tool-use') {
     const { walkPreTool, walkPostTool } = await import('./walk-doc.mjs')
-    const walkCall = { ...call, session: id, terminal: process.env.ORCA_TERMINAL_HANDLE }
+    const walkCall = { ...call, session: id, terminal: process.env.ORCA_TERMINAL_HANDLE, pane: process.env.ORCA_PANE_KEY }
     if (event === 'pre-tool-use') {
       const reason = await walkPreTool(cwd, walkCall)
       if (reason) return { event, native: native(event, harness, { reason }), reason }
