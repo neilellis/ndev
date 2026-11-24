@@ -60,6 +60,12 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `md-to-pdf.sh` | Renders a markdown file to an A4 PDF. | docs |
 | `vale/test.sh` | Proves every vale rule fires on `testdata/bad.md` and none fires on `testdata/good.md`. | docs |
 
+## skills/
+
+| Script | What it does | Used by |
+|---|---|---|
+| `check.mjs` | Checks the front matter of every `skills/<name>/SKILL.md`: `name` matches the folder and is kebab-case, `description` is present and at most 1024 characters, and each field is a known one with the right type. It knows the harness fields `disable-model-invocation`, `user-invocable`, `argument-hint` and `model`, and it accepts angle brackets in a description. It also fails a folder with no `SKILL.md` and a second `SKILL.md` inside a skill. Run `npm run check:skills`. Tests: `skills/tests/check.test.mjs`, and `skills/tests/prose.test.mjs`, which runs `docs/readability.sh` on every `SKILL.md` and is skipped, not passed, when vale is not installed. | `npm test` |
+
 ## requirements/
 
 | Script | What it does | Used by |

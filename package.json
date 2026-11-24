@@ -10,6 +10,7 @@
     "ndev": "bin/ndev"
   },
   "scripts": {
-    "test": "node scripts/test/run.mjs"
+    "test": "node scripts/test/run.mjs",
+    "check:skills": "node scripts/skills/check.mjs"
   }
 }
