@@ -9,7 +9,7 @@ import { ensureProjectFiles } from '../../orca-plugin/ndev/worker/files.mjs'
 import { binding } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
 import { readProject } from './project.mjs'
-import { commitFiles, hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, requirementsList, savesCommit } from './requirement-hooks.mjs'
+import { commitFiles, fixedEditReason, hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, requirementsList, savesCommit } from './requirement-hooks.mjs'
 import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
 
 const events = new Set(['session-start', 'prompt-submit', 'prompt-context', 'pre-tool-use', 'post-tool-use', 'turn-start', 'turn-complete', 'session-end', 'compact'])
@@ -88,13 +88,17 @@ function changedRecordCheck(root, id, { commit = false } = {}) {
   return check
 }
 
-function firstEditRequirements(root, cwd, id, call) {
+function editedFile(root, cwd, call) {
   const path = call.input.file_path ?? call.input.filePath ?? call.input.path
   if (typeof path !== 'string') return undefined
   const absolute = resolve(realpathSync(cwd), path)
   if (!existsSync(dirname(absolute))) return undefined
   const file = relative(realpathSync(root), join(realpathSync(dirname(absolute)), basename(absolute)))
   if (file.startsWith('../') || isAbsolute(file)) return undefined
+  return file
+}
+
+function firstEditRequirements(root, id, file) {
   if (id && (readObject(hookSessionFile(root, id), { missing: {} }).requirementFiles ?? []).includes(file)) return undefined
   const list = requirementsList(root, [file])
   changeSession(root, id, state => {
@@ -398,7 +402,9 @@ export async function runHook([event, ...argv], supplied) {
     }
   }
   if (event === 'pre-tool-use' && call.edit && hasRecords(root)) {
-    const note = firstEditRequirements(root, cwd, id, call)
+    const file = editedFile(root, cwd, call)
+    if (file) reason ??= fixedEditReason(root, file, call.tool, call.input)
+    const note = file && !reason ? firstEditRequirements(root, id, file) : undefined
     if (note) notes.push(note)
   }
   if (event === 'post-tool-use' && (call.shell || call.edit) && successful(payload) && hasRecords(root)) {

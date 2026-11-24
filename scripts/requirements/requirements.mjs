@@ -5,6 +5,8 @@ import path from "node:path";
 import { CliError } from "../ndev/common.mjs";
 
 const DIR = "docs/formal/requirements";
+const DEPRECATED = "docs/formal/deprecated";
+const FIXED = ["id", "title", "author", "origin"];
 const HTML = `${DIR}/generated/requirements.html`;
 const UP = "../".repeat(HTML.split("/").length - 1);
 const NAME = /^(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
@@ -21,7 +23,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check", "clear", "flagged", "all"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, cites, for, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, cites, for, narrate, narrative, publish, references, retire, deprecate, fixed";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -43,9 +45,9 @@ const TIERS = [[1, "requirements"], [2, "wiki"], [3, "readme"], [4, "other"]];
 const NORMATIVE = /\b(must|shall|should|never|always|required|requires?|cannot|may not|will not|refuses?|only)\b/i;
 const AGREED = /^(.+), (\d{4}-\d{2}-\d{2}), text ([0-9a-f]{12})$/;
 const AGREED_FORM = `"agreed: <name>, YYYY-MM-DD, text <hash>"`;
-const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Level: "level", Section: "section", Date: "date", Source: "source", Author: "author", "Decided by": "decided_by", Verification: "verification", Model: "model", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed", Flagged: "flagged" };
+const FIELDS = { ID: "id", Title: "title", Status: "status", Origin: "origin", Level: "level", Section: "section", Date: "date", Source: "source", Author: "author", Supersedes: "supersedes", "Superseded by": "superseded_by", "Decided by": "decided_by", Verification: "verification", Model: "model", Issues: "issues", PRs: "prs", NFR: "nfr", Agreed: "agreed", Flagged: "flagged" };
 const KEYS = Object.values(FIELDS);
-const LISTS = ["source", "author", "verification", "model", "issues", "prs"];
+const LISTS = ["source", "author", "supersedes", "verification", "model", "issues", "prs"];
 const MODEL_ENTRY = /^([^#\s]+\.qnt)(?:#([A-Za-z_][A-Za-z0-9_]*))?$/;
 const MODEL_FORM = "Give a .qnt path from the project root, with #<name> after it for one part of the model.";
 const PLAIN = /^[A-Za-z0-9][A-Za-z0-9 ._/#:-]*$/;
@@ -88,10 +90,15 @@ function findRoot(options) {
 }
 
 function entries(root) {
-  const dir = path.join(root, DIR);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith(".md") && d.name !== "README.md").map((d) => d.name).sort().map((file) => ({ file, rel: `${DIR}/${file}`, full: path.join(dir, file), id: `REQ-${file.slice(0, 4)}` }));
+  return [DIR, DEPRECATED].flatMap((folder) => {
+    const dir = path.join(root, folder);
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith(".md") && d.name !== "README.md").map((d) => d.name).sort().map((file) => ({ file, rel: `${folder}/${file}`, full: path.join(dir, file), id: `REQ-${file.slice(0, 4)}`, deprecated: folder === DEPRECATED }));
+  }).sort((a, b) => a.file.slice(0, 4).localeCompare(b.file.slice(0, 4)));
 }
+
+const recordPath = (rel) => rel.startsWith(`${DIR}/`) || rel.startsWith(`${DEPRECATED}/`);
+const GONE = /^(Retired|Superseded by \d{4})$/;
 
 function sectionBody(text, name) {
   const lines = text.split("\n");
@@ -344,8 +351,10 @@ function inspect(root) {
     else {
       const by = record.status.match(/^Superseded by (\d{4})$/)?.[1];
       if (by && by === number) fail(`${record.status} names itself. Name the record that replaces it.`);
-      else if (by && !numbers.has(by)) fail(`${record.status}, which does not exist in ${DIR}.`);
+      else if (by && !numbers.has(by)) fail(`${record.status}, which does not exist in ${DIR} or ${DEPRECATED}.`);
       else if (by && by < number) fail(`${record.status}, which is older. A replacement is a new record with a higher number.`);
+      if (GONE.test(record.status) && !entry.deprecated) fail(`the status is ${record.status}, and the record is not in ${DEPRECATED}. Run: ${SCRIPT} deprecate ${entry.id} --reason "<why>" --decided-by "<name>"`);
+      if (!GONE.test(record.status) && entry.deprecated) fail(`the status is ${record.status}, and only a Retired or Superseded record is in ${DEPRECATED}. Move it back to ${DIR} with git mv.`);
     }
     const origin = record.field("Origin");
     if (!ORIGINS.includes(origin)) fail(`origin "${origin ?? ""}" is not explicit, implied or PR.`);
@@ -409,8 +418,30 @@ function inspect(root) {
       }
     }
   }
+  problems.push(...supersessionProblems(records));
   problems.push(...retiredProblems(root));
   return { problems, records };
+}
+
+function supersessionProblems(records) {
+  const byRel = new Map(records.map((record) => [record.rel, record]));
+  const problems = [];
+  for (const record of records) {
+    if (!record.data) continue;
+    const number = record.file.slice(0, 4);
+    const replaced = record.data.superseded_by;
+    if (replaced !== undefined) {
+      const target = byRel.get(String(replaced));
+      if (!target) problems.push(`${record.rel}: "superseded_by: ${replaced}" names no record. Give the path of the record that replaces it, from the project root.`);
+      else if (record.status !== `Superseded by ${target.file.slice(0, 4)}`) problems.push(`${record.rel}: "superseded_by" names ${target.id}, and the status is ${record.status}. The status of a replaced record is "Superseded by ${target.file.slice(0, 4)}".`);
+    }
+    for (const rel of [record.data.supersedes ?? []].flat().map(String)) {
+      const target = byRel.get(rel);
+      if (!target) problems.push(`${record.rel}: "supersedes: ${rel}" names no record. Give the path of the record that it replaces, from the project root.`);
+      else if (target.status !== `Superseded by ${number}`) problems.push(`${record.rel}: "supersedes" names ${target.id}, whose status is ${target.status}. The status of a replaced record is "Superseded by ${number}".`);
+    }
+  }
+  return problems;
 }
 
 function valid(root) {
@@ -952,6 +983,82 @@ function git(root, args) {
   return out.stdout;
 }
 
+function baseRecords(root, base) {
+  return git(root, ["ls-tree", "--name-only", base, "--", `${DIR}/`, `${DEPRECATED}/`]).split("\n").filter((rel) => rel && NAME.test(path.posix.basename(rel))).map((rel) => {
+    const file = path.posix.basename(rel);
+    return parse({ file, rel, id: `REQ-${file.slice(0, 4)}` }, git(root, ["show", `${base}:./${rel}`]));
+  });
+}
+
+const fixedValue = (record, key) => {
+  const value = key === "author" ? record.author.filter(Boolean) : record.data[key] === undefined ? "" : String(record.data[key]).trim();
+  return value.length ? JSON.stringify(value) : undefined;
+};
+
+export function fixedChanges(before, after) {
+  return FIXED.filter((key) => fixedValue(before, key) !== undefined && fixedValue(before, key) !== fixedValue(after, key));
+}
+
+export function parseRecord(rel, text) {
+  const file = path.posix.basename(rel);
+  return parse({ file, rel, id: `REQ-${file.slice(0, 4)}` }, text);
+}
+
+function fixedProblems(old, now, base) {
+  if (!old.front.data || !now.front.data) return [];
+  return fixedChanges(old, now).map((key) => `${now.rel}: the ${key} changed since ${base}. The id, title, author and origin of a record never change after it is created: restore it. To change the requirement, deprecate the record and create a new one: ${SCRIPT} deprecate ${now.id} --reason "<why>" --decided-by "<name>" --by <REQ-NNNN>`);
+}
+
+function fixed(root, options) {
+  const base = options.base;
+  if (!base) throw new Usage("fixed needs --base <git ref>, for example: fixed --base HEAD");
+  git(root, ["rev-parse", "--verify", `${base}^{commit}`]);
+  const current = new Map(entries(root).filter((e) => NAME.test(e.file)).map((e) => [e.id, read(e)]));
+  const problems = baseRecords(root, base).flatMap((old) => (current.has(old.id) ? fixedProblems(old, current.get(old.id), base) : []));
+  if (problems.length) throw new Failure(problems.join("\n"));
+  return `${current.size} record${current.size === 1 ? "" : "s"}: no fixed field changed since ${base}\n`;
+}
+
+function deprecate(root, id, options) {
+  if (!/^REQ-\d{4}$/.test(id ?? "")) throw new Usage(`deprecate needs <REQ-NNNN> --reason "<why>" --decided-by "<name>", and --by <REQ-NNNN> when a newer record replaces it`);
+  const reason = (options.reason ?? "").trim();
+  if (!reason || /[\r\n]/.test(reason)) throw new Usage(`deprecate needs --reason "<why>" on one line`);
+  const decider = (options["decided-by"] ?? "").trim();
+  if (!decider) throw new Usage(`deprecate needs --decided-by "<name>": the human who decided to deprecate ${id}. An agent never decides it.`);
+  const all = entries(root).filter((e) => NAME.test(e.file));
+  const entry = all.find((e) => e.id === id);
+  if (!entry) throw new Failure(`${id} is not a record in ${DIR}.`);
+  if (entry.deprecated) throw new Failure(`${id} is already in ${DEPRECATED}: ${entry.rel}.`);
+  let by;
+  if (options.by !== undefined) {
+    if (!/^REQ-\d{4}$/.test(options.by)) throw new Usage(`--by needs a record ID, such as REQ-0002 (got "${options.by}")`);
+    by = all.find((e) => e.id === options.by && !e.deprecated);
+    if (!by) throw new Failure(`${options.by} is not a record in ${DIR}. Create the replacement first with: ${SCRIPT} new "<title>" --author "<name>"`);
+    if (by.id === id) throw new Failure(`${id} cannot replace itself. Give the newer record that replaces it.`);
+    if (by.file < entry.file) throw new Failure(`${by.id} is older than ${id}. A replacement is a newer record: create it with: ${SCRIPT} new "<title>" --author "<name>"`);
+  }
+  const status = by ? `Superseded by ${by.file.slice(0, 4)}` : "Retired";
+  const moved = { ...entry, rel: `${DEPRECATED}/${entry.file}`, full: path.join(root, DEPRECATED, entry.file), deprecated: true };
+  const links = [];
+  for (const other of all.filter((e) => e.rel !== entry.rel)) {
+    const record = read(other);
+    if (!record.data) continue;
+    if (String(record.data.superseded_by ?? "") === entry.rel) links.push([other, "superseded_by", moved.rel]);
+    const replaces = [record.data.supersedes ?? []].flat().map(String);
+    const wanted = [...replaces.map((rel) => (rel === entry.rel ? moved.rel : rel)), ...(by && other.rel === by.rel && !replaces.includes(entry.rel) ? [moved.rel] : [])];
+    if (wanted.join("\n") !== replaces.join("\n")) links.push([other, "supersedes", wanted]);
+  }
+  mkdirSync(path.join(root, DEPRECATED), { recursive: true });
+  git(root, ["mv", "--", entry.rel, moved.rel]);
+  setField(moved, "status", status);
+  setField(moved, "decided_by", decider);
+  if (by) setField(moved, "superseded_by", by.rel);
+  appendLines(moved, "Log", [`- ${new Date().toISOString().slice(0, 10)}: Deprecated${by ? `, superseded by ${by.id}` : ""}: ${reason}`], { unique: false });
+  for (const [other, key, value] of links) setField(other, key, value);
+  git(root, ["add", "--", moved.rel]);
+  return `${entry.rel} -> ${moved.rel}: ${status}\n${by ? `${by.rel}: supersedes ${moved.rel}\n` : ""}`;
+}
+
 function guard(root, options) {
   const base = options.base;
   if (!base) throw new Usage("guard needs --base <git ref>, for example: guard --base origin/main");
@@ -968,15 +1075,13 @@ function guard(root, options) {
     if (traceLines(record).some((line) => TRACE_LINK.test(line)) || noLinkReason(record)) continue;
     problems.push(`${record.rel}: the Trace has no link to what implements the requirement or plans to implement it. Add the files with: ${SCRIPT} file ${record.id} <path or pattern>. Add the pull request with: ${SCRIPT} link ${record.id} <pull request link>. When nothing implements it yet, open an issue for it and add "- Issue: <issue link>". When nothing implements it and nothing will, it is not a requirement: reject or retire it. A non-functional requirement (nfr: true) with nothing to link gives the reason as "- None: <reason>".`);
   }
-  for (const rel of git(root, ["ls-tree", "--name-only", base, "--", `${DIR}/`]).split("\n").filter(Boolean)) {
-    const file = path.posix.basename(rel);
-    if (!NAME.test(file)) continue;
-    const old = parse({ file, rel, id: `REQ-${file.slice(0, 4)}` }, git(root, ["show", `${base}:./${rel}`]));
+  for (const old of baseRecords(root, base)) {
     const now = current.get(old.id);
     if (!now) {
-      problems.push(`${old.id} (${rel} at ${base}) is deleted. A record is never deleted: restore it, and give it the status Retired or Rejected.`);
+      problems.push(`${old.id} (${old.rel} at ${base}) is deleted. A record is never deleted: restore it, and deprecate it with: ${SCRIPT} deprecate ${old.id} --reason "<why>" --decided-by "<name>"`);
       continue;
     }
+    problems.push(...fixedProblems(old, now, base));
     const before = protectedParts(old);
     const after = protectedParts(now);
     const changed = PROTECTED.filter((name) => before[name] !== after[name]);
@@ -1086,6 +1191,9 @@ function author(root, id, names) {
   const comma = people.find((name) => name.includes(","));
   if (comma) throw new Usage(`"${comma}" has a comma. Give each name as its own argument, for example: author ${id} "Suriya Khan" "Carter Dillard"`);
   const entry = recordEntry(root, id);
+  const tracked = spawnSync("git", ["-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"], { encoding: "utf8" }).status === 0;
+  const base = tracked ? baseRecords(root, "HEAD").find((old) => old.id === id && old.front.data) : undefined;
+  if (base && fixedValue(base, "author") !== undefined) throw new Failure(`${id} is committed with the author ${base.author.filter(Boolean).join(", ")}. The author of a record never changes after it is created. To change the requirement, deprecate the record and create a new one: ${SCRIPT} deprecate ${id} --reason "<why>" --decided-by "<name>" --by <REQ-NNNN>`);
   setField(entry, "author", people);
   return `${entry.rel}: author: ${people.join(", ")}\n`;
 }
@@ -1157,7 +1265,7 @@ function tier(rel) {
 
 function documents(root) {
   const generated = publishedFolder(root);
-  return git(root, ["ls-files", "-z", "--", "*.md", "*.mdx"]).split("\0").filter((rel) => rel && !rel.startsWith(`${DIR}/`) && !(generated && rel.startsWith(`${generated}/`)) && existsSync(path.join(root, rel))).map((rel) => ({ rel, tier: tier(rel) })).sort((a, b) => a.tier - b.tier || (a.rel < b.rel ? -1 : 1));
+  return git(root, ["ls-files", "-z", "--", "*.md", "*.mdx"]).split("\0").filter((rel) => rel && !recordPath(rel) && !(generated && rel.startsWith(`${generated}/`)) && existsSync(path.join(root, rel))).map((rel) => ({ rel, tier: tier(rel) })).sort((a, b) => a.tier - b.tier || (a.rel < b.rel ? -1 : 1));
 }
 
 function sources(root, options) {
@@ -1296,7 +1404,7 @@ const DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?([^\s>]+)>?/;
 function referenceLines(root, rels, skip = []) {
   const named = rels.map(namePattern);
   const generated = publishedFolder(root);
-  const left = (file) => rels.includes(file) || file.startsWith(`${DIR}/`) || skip.includes(file) || (generated && file.startsWith(`${generated}/`));
+  const left = (file) => rels.includes(file) || recordPath(file) || skip.includes(file) || (generated && file.startsWith(`${generated}/`));
   const found = [];
   for (const file of git(root, ["ls-files", "-z"]).split("\0").filter((f) => f && !left(f)).sort()) {
     const full = path.join(root, file);
@@ -1549,7 +1657,7 @@ function citations(root, files, inputs) {
   const skipped = inputs.map((input) => path.relative(root, path.resolve(root, input)).split(path.sep).join("/"));
   const found = [];
   for (const file of files) {
-    if (file.startsWith(`${DIR}/`) || (generated && file.startsWith(`${generated}/`)) || skipped.includes(file)) continue;
+    if (recordPath(file) || (generated && file.startsWith(`${generated}/`)) || skipped.includes(file)) continue;
     const text = readFileSync(path.join(root, file), "utf8");
     if (text.includes("\0")) continue;
     text.split("\n").forEach((line, i) => {
@@ -1881,6 +1989,8 @@ export function runRequirements(argv, { json } = {}) {
       publish: () => publish(root(), options),
       references: () => references(root(), rest[0]),
       retire: () => retire(root(), rest, options),
+      deprecate: () => deprecate(root(), rest[0], options),
+      fixed: () => fixed(root(), options),
     };
     if (!commands[command]) throw new Usage(`Unknown requirements command "${command ?? ""}": use ${COMMANDS}`);
     const result = commands[command]();

@@ -11,6 +11,7 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 | Path | Holds | Written by |
 |---|---|---|
 | `docs/formal/requirements/NNNN-<title>.md` | One requirement record | An agent proposes; a human accepts |
+| `docs/formal/deprecated/NNNN-<title>.md` | A record that is `Retired` or `Superseded by NNNN`. It keeps its number and its file name. | `ndev requirements deprecate`, after a human decides |
 | `docs/formal/requirements/extra/` | Material that is not a requirement: glossary, copies of sources, samples, open questions | Humans |
 | `docs/formal/requirements/extra/outline.md` | The title of the document and the order of its sections | Humans |
 | `docs/formal/requirements/extra/ledger.md` | The lines of the documents that hold no requirement, each with its reason and a hash of the lines | An agent proposes with `ndev requirements ledger`; a human reviews |
@@ -34,6 +35,9 @@ date: YYYY-MM-DD
 source: <the citation of the source text>    (a list when there is more than one)
 author:
   - <name of a person who wrote the source text>
+supersedes:    (only in a record that replaces older records)
+  - docs/formal/deprecated/<NNNN-title>.md
+superseded_by: docs/formal/requirements/<NNNN-title>.md    (only in a replaced record)
 decided_by: <name>
 verification: unassigned    (or a list: "  - test", "  - model")
 model:    (only when a Quint model specifies the requirement)
@@ -85,7 +89,8 @@ The fields are YAML front matter, in this order. A value with a colon, a quote o
 These commands write the record:
 
 - `ndev requirements new "<short title>" --author "<name>, <name>"` creates the next numbered file from this template with the status `Proposed`.
-- `ndev requirements author <REQ-NNNN> "<name>"...` replaces the list of authors.
+- `ndev requirements author <REQ-NNNN> "<name>"...` replaces the list of authors. It refuses a record that is committed with an author: after that, the authors are fixed.
+- `ndev requirements deprecate <REQ-NNNN> --reason "<why>" --decided-by "<name>" [--by <REQ-NNNN>]` deprecates a record (see "Deprecation").
 - `ndev requirements sync [<REQ-NNNN>...]` writes the `source`, `issues` and `prs` fields from the Source text and the Trace. With no id, it writes each record whose fields are different.
 - `ndev requirements link` and `ndev requirements file` add to the Trace, and write `issues` and `prs`.
 - `ndev requirements log <REQ-NNNN> "<what changed>"` adds an entry with the date of today to the Log.
@@ -122,15 +127,18 @@ These commands write the record:
 - **The Source text is word for word.** Quote the lines; do not summarise them. A record of origin `PR` quotes the pull request and gives its link.
 - **The Log records each change to the requirement.** `ndev requirements new` writes the first entry, `Created.`. When the title, the status, the level, the Statement or the Source text changes, add an entry with `ndev requirements log`: what changed, and why. Never change or remove an entry.
 - **Each requirement has an implementation or a plan.** The Trace of a record in force links the files that implement it, the pull request that implemented it, or an issue that plans to implement it. When nothing implements it yet, open an issue and link it. When nothing implements it and nothing will, it is not a requirement: reject or retire it. Only a non-functional requirement (`nfr: true`) with truly nothing to link can give the reason instead, as `- None: <reason>`.
-- **Numbers are never reused, and a record is never deleted.** A requirement that ends gets the status `Retired`. A proposal that fails gets `Rejected`.
+- **Numbers are never reused, and a record is never deleted.** A requirement that ends is deprecated: it moves to `docs/formal/deprecated/` with the status `Retired`, or `Superseded by NNNN` when a newer record replaces it. A proposal that fails gets `Rejected`.
+- **The id, the title, the author and the origin are fixed.** After the first creation of a record, they never change. To change what a requirement says, a human deprecates the record and a new record replaces it.
 - **A change to an accepted Statement needs a PDR.** The PDR names the record in `Requirement changed`.
 - **Name every file by its full path** from the repository root, and every issue and pull request by its link.
 
 ## Enforcement
 
-`ndev requirements check` reads each record in `docs/formal/requirements/`. It ignores `README.md` and the folders. It fails:
+`ndev requirements check` reads each record in `docs/formal/requirements/` and `docs/formal/deprecated/`. It ignores `README.md` and the folders. It fails:
 
-- a bad file name, a duplicate number, or an `ID` that does not match the file number;
+- a bad file name, a duplicate number in the two folders, or an `ID` that does not match the file number;
+- a `Retired` or `Superseded by NNNN` record outside `docs/formal/deprecated/`, and a record in that folder with another status;
+- a `supersedes` or `superseded_by` path that names no record, a `superseded_by` record whose number is not in the status, and a `supersedes` record whose status is not `Superseded by` this record;
 - a record with no `level`;
 - a status, an origin, a level or a verification value that is not in the lists above;
 - a `Superseded by` that names no record, itself or an older record;
@@ -154,7 +162,12 @@ When the quoted text only moved in its file, the check names the new lines, and 
 - a Statement or a Source text that changed, with no `agreed` field, or with an `agreed` field for other text;
 - a title, a status, a Statement or a Source text that changed, with no new entry in the Log;
 - a Log entry of the base that is changed or removed;
+- an id, a title, an author or an origin that changed;
 - a record that is at the base and is not in the working tree.
+
+The guard finds a record by its number in both folders, so a move to `docs/formal/deprecated/` is not a deletion.
+
+`ndev requirements fixed --base <git ref>` does only the comparison of the fixed fields. The agent hook runs it with `--base HEAD` after a record changes, and refuses a commit until it passes. The hook also examines each Edit, MultiEdit or Write before it runs. It refuses an edit that changes a fixed field of a record that exists. It does not examine a Codex `apply_patch` or `patch` edit before it runs: for these, the note after the edit and the commit refusal are the guard.
 
 A record that is new since the base passes the comparison: the first creation is the exception. A citation whose line numbers changed, with the same path and quote, passes: the text only moved. The check also fails an `agreed` field that does not have the form above.
 
@@ -414,3 +427,17 @@ After that, the citations of the records and the ledger entries read the cited l
 - the retired document exists again.
 
 The `requirements-retire` skill does the retirement with the human.
+
+## Deprecation
+
+A record that is obsolete, or that a newer record replaces, is deprecated. A human decides each deprecation. Deprecation is for records. The retirement above is for prose documents.
+
+`ndev requirements deprecate <REQ-NNNN> --reason "<why>" --decided-by "<name>" [--by <REQ-NNNN>]`:
+
+- moves the record to `docs/formal/deprecated/` with `git mv`, with the same file name;
+- sets `status: Retired`, or `Superseded by NNNN` with `--by`, and writes the human's name in `decided_by`;
+- adds a Log entry with the reason;
+- with `--by`, writes `superseded_by` in the old record and adds the old record to `supersedes` in the new record. The new record must be newer and not deprecated;
+- corrects the `supersedes` and `superseded_by` paths of the other records that name the moved record.
+
+The `requirements-deprecate` skill gives the procedure.

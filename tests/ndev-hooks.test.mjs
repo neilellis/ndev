@@ -706,3 +706,27 @@ test('a commit is checked again after a link problem is repaired outside the rec
   assert.equal(repaired?.hookSpecificOutput?.permissionDecision, undefined)
   assert.match(contextOf(repaired), /The requirements in force for the files of this commit\.[^]*REQ-0001/)
 })
+
+test('an edit that changes the id, title, author or origin of a record is refused, and other edits are not', t => {
+  const { root, recordFile, record, call } = recordsFixture(t)
+  const text = record('- File: src/report.js')
+  const refused = /REQ-0001 keeps its id, title, author and origin after it is created, and this edit changes the (title|author|origin)\. Leave them as they are\. To change the requirement, ask the human to deprecate the record and create a new one: ndev requirements deprecate REQ-0001/
+  const denied = result => result?.hookSpecificOutput?.permissionDecision === 'deny' ? result.hookSpecificOutput.permissionDecisionReason : ''
+  assert.match(denied(call('pre-tool-use', 'Edit', { file_path: recordFile, old_string: 'title: "The report names each source"', new_string: 'title: "The report names every source"' })), refused)
+  assert.match(denied(call('pre-tool-use', 'Edit', { file_path: recordFile, old_string: 'origin: explicit', new_string: 'origin: implied', replace_all: true })), refused)
+  assert.match(denied(call('pre-tool-use', 'Write', { file_path: recordFile, content: text.replace('"Neil Ellis"\ndecided_by', '"Ann Smith"\ndecided_by') })), refused)
+  assert.match(denied(call('pre-tool-use', 'MultiEdit', { file_path: recordFile, edits: [{ old_string: 'level: normal', new_string: 'level: hard' }, { old_string: 'origin: explicit', new_string: 'origin: PR' }] })), refused)
+  assert.equal(denied(call('pre-tool-use', 'Edit', { file_path: recordFile, old_string: 'level: normal', new_string: 'level: hard' })), '')
+  assert.equal(denied(call('pre-tool-use', 'Write', { file_path: recordFile.replace('0001-the-report-names-each-source', '0002-a-new-rule'), content: text.replace('REQ-0001', 'REQ-0002') })), '')
+  mkdirSync(join(root, 'docs/formal/deprecated'))
+  const moved = join(root, 'docs/formal/deprecated/0001-the-report-names-each-source.md')
+  writeFileSync(moved, text)
+  assert.match(denied(call('pre-tool-use', 'Edit', { file_path: moved, old_string: 'origin: explicit', new_string: 'origin: implied' })), refused)
+})
+
+test('a record whose fixed field changed outside an edit tool blocks the commit', t => {
+  const { root, recordFile, record, call } = recordsFixture(t)
+  writeFileSync(recordFile, record('- File: src/report.js').replace('origin: explicit', 'origin: implied'))
+  assert.match(contextOf(call('post-tool-use', 'Bash', { command: 'sed -i x' })), /the origin changed since HEAD/)
+  assert.match(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }).hookSpecificOutput.permissionDecisionReason, /the origin changed since HEAD[^]*ndev requirements fixed --base HEAD/)
+})

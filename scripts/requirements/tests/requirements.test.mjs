@@ -195,7 +195,7 @@ describe("check", () => {
   });
 
   it("does not test the source text of a record that is no longer in force", () => {
-    const root = seeded({ "0001-a.md": record("0001", { status: "Retired" }) });
+    const root = seeded({ "../deprecated/0001-a.md": record("0001", { status: "Retired" }) });
     put(root, "docs/guide.md", "rewritten\n");
     assert.equal(run(root, "check").status, 0);
   });
@@ -286,7 +286,7 @@ describe("check", () => {
     const older = run(seeded({ "0001-a.md": record("0001"), "0002-b.md": record("0002", { status: "Superseded by 0001" }) }), "check");
     assert.equal(older.status, 1);
     assert.match(older.stderr, /older/);
-    const valid = run(seeded({ "0001-a.md": record("0001", { status: "Superseded by 0002" }), "0002-b.md": record("0002") }), "check");
+    const valid = run(seeded({ "../deprecated/0001-a.md": record("0001", { status: "Superseded by 0002" }), "0002-b.md": record("0002") }), "check");
     assert.equal(valid.status, 0, valid.stderr);
   });
 
@@ -677,7 +677,7 @@ describe("model", () => {
     writeFileSync(rel, readFileSync(rel, "utf8").replace(/^(verification: .*\n)(model:\n  - .*\n)/m, "$2$1"));
     const out = run(root, "check");
     assert.equal(out.status, 1);
-    assert.match(out.stderr, /the fields are not in the order id, title, status, origin, level, section, date, source, author, decided_by, verification, model, issues, prs, nfr, agreed/);
+    assert.match(out.stderr, /the fields are not in the order id, title, status, origin, level, section, date, source, author, supersedes, superseded_by, decided_by, verification, model, issues, prs, nfr, agreed/);
   });
 
   it("sets the models of a record with the model command", () => {
@@ -733,6 +733,18 @@ describe("author", () => {
     assert.equal(unknown.status, 1);
     assert.match(unknown.stderr, /REQ-0009 is not a record/);
     assert.equal(run(root, "author", "REQ-0001", " ").status, 2);
+  });
+
+  it("refuses to change the authors of a committed record, and sets them when the committed record has none", () => {
+    const root = committed();
+    const out = run(root, "author", "REQ-0001", "Ann Smith");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /REQ-0001 is committed with the author Neil Ellis\. The author of a record never changes after it is created\. To change the requirement, deprecate the record and create a new one: ndev requirements deprecate REQ-0001/);
+    assert.match(readFileSync(path.join(root, DIR, FILE), "utf8"), /  - "Neil Ellis"/);
+    const empty = committed({ [FILE]: record("0001", { author: [] }) });
+    const set = run(empty, "author", "REQ-0001", "Ann Smith");
+    assert.equal(set.status, 0, set.stderr);
+    assert.equal(run(empty, "fixed", "--base", "base").status, 0, run(empty, "fixed", "--base", "base").stderr);
   });
 });
 
@@ -1622,7 +1634,7 @@ describe("publish", () => {
   });
 
   it("puts records that are not in force on their own page", () => {
-    const root = seeded({ [FILE]: record("0001"), [SOURCES_FILE]: record("0002", { status: "Retired", title: "The sources list names each file", statement: "The sources list names each file." }) });
+    const root = seeded({ [FILE]: record("0001"), [`../deprecated/${SOURCES_FILE}`]: record("0002", { status: "Retired", title: "The sources list names each file", statement: "The sources list names each file." }) });
     configured(root);
     assert.equal(run(root, "publish").status, 0);
     assert.match(page(root, "not-in-force.md"), /## REQ-0002 The sources list names each file\n\nRetired · /);
@@ -2714,5 +2726,135 @@ describe("for", () => {
     const out = run(root, "for", "docs/guide.md");
     assert.equal(out.status, 0, out.stderr);
     assert.equal(out.stdout, "docs/guide.md\n  REQ-0001  Accepted  The report names each source\n    - File: docs/guide.md\n    - docs/guide.md#L3-L4\n    - docs/guide.md#L3-L3\n");
+  });
+});
+
+describe("deprecated records", () => {
+  const DEPRECATED = "docs/formal/deprecated";
+  const OLD = "0001-the-report-names-each-source.md";
+  const NEW = "0002-the-report-lists-each-source.md";
+  const today = new Date().toISOString().slice(0, 10);
+  const pair = () => committed({ [OLD]: record("0001"), [NEW]: record("0002", { title: "The report lists each source" }) });
+  const text = (root, rel) => readFileSync(path.join(root, rel), "utf8");
+
+  it("reads the deprecated folder: the numbers stay unique across both folders, and new takes the next number", () => {
+    const root = seeded({ [OLD]: record("0001"), [`../deprecated/0003-an-old-rule.md`]: record("0003", { status: "Retired" }) });
+    assert.equal(run(root, "check").status, 0, run(root, "check").stderr);
+    assert.match(run(root, "check").stdout, /2 records checked/);
+    assert.equal(run(root, "new", "A new rule", "--author", "Neil Ellis").status, 0);
+    assert.ok(existsSync(path.join(root, DIR, "0004-a-new-rule.md")));
+    put(root, `${DEPRECATED}/0001-a-copy.md`, record("0001", { status: "Retired" }));
+    const out = run(root, "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, new RegExp(`duplicate number 0001: ${DIR}/${OLD}, ${DEPRECATED}/0001-a-copy\\.md`));
+  });
+
+  it("fails a Retired or Superseded record outside the deprecated folder, and a record in the folder that is neither", () => {
+    for (const status of ["Retired", "Superseded by 0002"]) {
+      const out = run(seeded({ [OLD]: record("0001", { status }), [NEW]: record("0002") }), "check");
+      assert.equal(out.status, 1, status);
+      assert.match(out.stderr, new RegExp(`${DIR}/${OLD}: the status is ${status}, and the record is not in ${DEPRECATED}\\. Run: ndev requirements deprecate REQ-0001`));
+    }
+    const out = run(seeded({ [`../deprecated/${OLD}`]: record("0001", { status: "Accepted" }) }), "check");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, new RegExp(`${DEPRECATED}/${OLD}: the status is Accepted, and only a Retired or Superseded record is in ${DEPRECATED}\\.`));
+  });
+
+  it("fails a supersedes or superseded_by link that names no record, or that does not match the status", () => {
+    const linked = (field, value, status = "Retired") => record("0001", { status }).replace("decided_by:", `${field}: ${value}\ndecided_by:`);
+    const missing = run(seeded({ [`../deprecated/${OLD}`]: linked("superseded_by", `${DIR}/0009-gone.md`, "Superseded by 0002"), [NEW]: record("0002") }), "check");
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, new RegExp(`"superseded_by: ${DIR}/0009-gone\\.md" names no record\\.`));
+    const other = run(seeded({ [`../deprecated/${OLD}`]: linked("superseded_by", `${DIR}/${NEW}`), [NEW]: record("0002") }), "check");
+    assert.equal(other.status, 1);
+    assert.match(other.stderr, /"superseded_by" names REQ-0002, and the status is Retired\. The status of a replaced record is "Superseded by 0002"\./);
+    const back = run(seeded({ [OLD]: record("0001"), [NEW]: record("0002").replace("decided_by:", `supersedes:\n  - ${DIR}/${OLD}\ndecided_by:`) }), "check");
+    assert.equal(back.status, 1);
+    assert.match(back.stderr, new RegExp(`"supersedes" names REQ-0001, whose status is Accepted\\. The status of a replaced record is "Superseded by 0002"\\.`));
+  });
+
+  it("deprecate moves the record, sets the status, the decision and the links, and logs the reason", () => {
+    const root = pair();
+    const out = run(root, "deprecate", "REQ-0001", "--reason", "The new record replaces it.", "--decided-by", "Ann Smith", "--by", "REQ-0002");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(existsSync(path.join(root, DIR, OLD)), false);
+    const old = text(root, `${DEPRECATED}/${OLD}`);
+    assert.match(old, /^status: Superseded by 0002$/m);
+    assert.match(old, /^decided_by: Ann Smith$/m);
+    assert.match(old, new RegExp(`^superseded_by: ${DIR}/${NEW}$`, "m"));
+    assert.match(old, new RegExp(`- ${today}: Deprecated, superseded by REQ-0002: The new record replaces it\\.\n$`));
+    assert.match(text(root, `${DIR}/${NEW}`), new RegExp(`^supersedes:\n  - ${DEPRECATED}/${OLD}$`, "m"));
+    assert.match(git(root, "status", "--porcelain"), new RegExp(`R  ${DIR}/${OLD} -> ${DEPRECATED}/${OLD}`));
+    assert.match(out.stdout, new RegExp(`${DIR}/${OLD} -> ${DEPRECATED}/${OLD}: Superseded by 0002`));
+    assert.equal(run(root, "check").status, 0, run(root, "check").stderr);
+    assert.equal(run(root, "guard", "--base", "base").status, 0, run(root, "guard", "--base", "base").stderr);
+  });
+
+  it("deprecate with no replacement sets the status Retired", () => {
+    const root = pair();
+    const out = run(root, "deprecate", "REQ-0001", "--reason", "The report was removed.", "--decided-by", "Ann Smith");
+    assert.equal(out.status, 0, out.stderr);
+    const old = text(root, `${DEPRECATED}/${OLD}`);
+    assert.match(old, /^status: Retired$/m);
+    assert.doesNotMatch(old, /superseded_by/);
+    assert.match(old, new RegExp(`- ${today}: Deprecated: The report was removed\\.\n$`));
+    assert.equal(run(root, "check").status, 0);
+  });
+
+  it("deprecate keeps the links when the replacement is deprecated later", () => {
+    const root = committed({ [OLD]: record("0001"), [NEW]: record("0002", { title: "The report lists each source" }), "0003-the-report-shows-each-source.md": record("0003", { title: "The report shows each source" }) });
+    assert.equal(run(root, "deprecate", "REQ-0001", "--reason", "Replaced.", "--decided-by", "Ann Smith", "--by", "REQ-0002").status, 0);
+    const out = run(root, "deprecate", "REQ-0002", "--reason", "Replaced.", "--decided-by", "Ann Smith", "--by", "REQ-0003");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(text(root, `${DEPRECATED}/${OLD}`), new RegExp(`^superseded_by: ${DEPRECATED}/${NEW}$`, "m"));
+    assert.equal(run(root, "check").status, 0, run(root, "check").stderr);
+  });
+
+  it("deprecate refuses a call with no reason or no human decision, an unknown or deprecated record, and an unknown, older or deprecated replacement", () => {
+    const root = pair();
+    assert.match(run(root, "deprecate", "REQ-0001", "--decided-by", "Ann Smith").stderr, /deprecate needs --reason "<why>"/);
+    assert.equal(run(root, "deprecate", "REQ-0001", "--reason", "Old.").status, 2);
+    assert.match(run(root, "deprecate", "REQ-0001", "--reason", "Old.").stderr, /--decided-by "<name>": the human who decided/);
+    const unknown = run(root, "deprecate", "REQ-0009", "--reason", "Old.", "--decided-by", "Ann Smith");
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /REQ-0009 is not a record in docs\/formal\/requirements/);
+    const older = run(root, "deprecate", "REQ-0002", "--reason", "Old.", "--decided-by", "Ann Smith", "--by", "REQ-0001");
+    assert.equal(older.status, 1);
+    assert.match(older.stderr, /REQ-0001 is older than REQ-0002\. A replacement is a newer record: create it with: ndev requirements new/);
+    assert.match(run(root, "deprecate", "REQ-0001", "--reason", "Old.", "--decided-by", "Ann Smith", "--by", "REQ-0009").stderr, /REQ-0009 is not a record in docs\/formal\/requirements/);
+    assert.equal(run(root, "deprecate", "REQ-0001", "--reason", "Old.", "--decided-by", "Ann Smith").status, 0);
+    const again = run(root, "deprecate", "REQ-0001", "--reason", "Old.", "--decided-by", "Ann Smith");
+    assert.equal(again.status, 1);
+    assert.match(again.stderr, new RegExp(`REQ-0001 is already in ${DEPRECATED}`));
+    assert.equal(existsSync(path.join(root, DIR, NEW)), true);
+    assert.doesNotMatch(text(root, `${DIR}/${NEW}`), /supersedes/);
+  });
+});
+
+describe("fixed fields", () => {
+  const changes = {
+    title: (t) => t.replace('title: "The report names each source"', 'title: "The report names every source"'),
+    origin: (t) => t.replace("origin: explicit", "origin: implied"),
+    author: (t) => t.replace('  - "Neil Ellis"', '  - "Ann Smith"'),
+  };
+
+  it("guard and fixed fail a change to the title, the origin or the author, and pass the other fields", () => {
+    for (const [name, change] of Object.entries(changes)) {
+      const root = committed();
+      edit(root, (t) => change(t).replace(/Created\.\n$/, "Created.\n- 2026-02-03: Changed.\n"));
+      for (const command of ["guard", "fixed"]) {
+        const out = run(root, command, "--base", "base");
+        assert.equal(out.status, 1, `${command} ${name}`);
+        assert.match(out.stderr, new RegExp(`${DIR}/${FILE}: the ${name} changed since base\\. The id, title, author and origin of a record never change after it is created: restore it\\. To change the requirement, deprecate the record and create a new one: ndev requirements deprecate REQ-0001`), `${command} ${name}`);
+      }
+    }
+    const root = committed();
+    edit(root, (t) => t.replace("level: normal", "level: hard").replace(/Created\.\n$/, "Created.\n- 2026-02-03: Changed.\n"));
+    assert.equal(run(root, "fixed", "--base", "base").status, 0);
+    assert.equal(run(root, "guard", "--base", "base").status, 0);
+    put(root, `${DIR}/0002-a-new-record.md`, record("0002"));
+    const out = run(root, "fixed", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /2 records: no fixed field changed since base/);
   });
 });

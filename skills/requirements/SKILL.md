@@ -18,14 +18,16 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 | `ndev requirements list [--status <status>] [--section <name>] [--level <level>] [--flagged]` | Lists each record. |
 | `ndev requirements level <REQ-NNNN> soft\|normal\|hard` | Sets the level of a record and adds a Log entry. |
 | `ndev requirements new "<short title>" --author "<name>, <name>" [--origin explicit\|implied\|PR] [--level soft\|normal\|hard] [--section <name>]` | Creates the next numbered record from the template, status `Proposed`, level `normal` unless `--level` gives another, and prints its path. The authors are the people who wrote the source text. |
-| `ndev requirements author <REQ-NNNN> "<name>"...` | Replaces the list of authors of a record. |
+| `ndev requirements author <REQ-NNNN> "<name>"...` | Replaces the list of authors of a record. It refuses a record that is committed with an author: after that, the authors are fixed. |
+| `ndev requirements deprecate <REQ-NNNN> --reason "<why>" --decided-by "<name>" [--by <REQ-NNNN>]` | Moves a record to `docs/formal/deprecated/` as `Retired`, or `Superseded by NNNN` with `--by`, and writes the links between the old and the new record. Only after a human decides: the `requirements-deprecate` skill. |
+| `ndev requirements fixed --base <git ref>` | Fails a record whose id, title, author or origin changed since the base. The agent hook runs it with `--base HEAD` after a record changes, and refuses a commit until it passes. |
 | `ndev requirements model <REQ-NNNN> <path.qnt[#name]>...` | Sets the Quint models that specify a record. Refuses a model that does not exist, does not cite the record, or does not declare the name. |
 | `ndev requirements sync [<REQ-NNNN>...]` | Writes the `source`, `issues` and `prs` fields from the Source text and the Trace. Run it after you change a citation, or a PR or Issue line of the Trace by hand. |
 | `ndev requirements log <REQ-NNNN> "<what changed>"` | Adds an entry with the date of today to the `## Log`. Run it each time the title, the status, the level, the Statement or the Source text changes. |
 | `ndev requirements quote <path> <first line> <last line>` | Prints a citation and the lines as a quote, ready for the Source text. |
 | `ndev requirements check` | Fails a record that breaks the format, and a record whose cited lines do not hold its quoted source text. |
 | `ndev requirements render [--check]` | Writes `docs/formal/requirements/generated/requirements.html`. With `--check`, fails when that file is not current. |
-| `ndev requirements guard --base <git ref>` | Fails a record in force whose Trace has no File, Issue or PR link. Fails a record whose Statement or Source text changed since the base with no human agreement, a change to the title, the status, the level, the Statement or the Source text with no new Log entry, a changed Log entry, and a deleted record. Shows the old and the new text. |
+| `ndev requirements guard --base <git ref>` | Fails a record in force whose Trace has no File, Issue or PR link. Fails a record whose Statement or Source text changed since the base with no human agreement, a change to the title, the status, the level, the Statement or the Source text with no new Log entry, a change to the id, the title, the author or the origin, a changed Log entry, and a deleted record. Shows the old and the new text. |
 | `ndev requirements explained <REQ-NNNN>... \| --base <git ref>` | Fails a record with no `## Explanation`, an empty Explanation under a Statement, and an Explanation that repeats the Statement. The agent hook runs it with `--base HEAD` after a record changes, and refuses a commit until it passes. |
 | `ndev requirements levels <REQ-NNNN>... \| --base <git ref>` | Fails a record with no `level`, or a level that is not `soft`, `normal` or `hard`. The agent hook runs it with `--base HEAD` after a record changes, and refuses a commit until it passes. |
 | `ndev requirements links <REQ-NNNN>... \| --base <git ref>` | Fails a Trace link that does not exist: a File line that matches no tracked file, and an issue or pull request that GitHub cannot read. In a record in force, it also fails an issue closed as not planned or as a duplicate, and a pull request closed without a merge. |
@@ -42,6 +44,7 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 - When `guard` fails, show the human its old and new text. Do not restore or change the text without an answer.
 - When `check` says that the text is now at other lines, the text did not change. Correct the line numbers in the citation.
 - When a statement looks wrong, incomplete or in conflict with another record, say so with the evidence, and record it with `ndev requirements flag`. Clear the flag when the human decides. A change to an accepted statement needs a PDR (the `adr-pdr` skill).
+- Never change the `id`, the `title`, the `author` or the `origin` of a record that exists. The agent hook refuses that edit. To change a requirement, ask the human to deprecate the record, and write a new one (the `requirements-deprecate` skill).
 - You can change the status links, `## Explanation`, `## Trace` and `## Notes`.
 - Each record in force needs a link in the Trace: the files that implement it, the pull request that implemented it, or an issue that plans it. When nothing implements it yet, open an issue and link it. When nothing implements it and nothing will, ask the human whether it is a requirement. A non-functional requirement has `nfr: true` and still needs a link; only when it has truly nothing to link, give the reason as `- None: <reason>`.
 - Add a `## Log` entry for each change to the title, the status, the level, the Statement or the Source text. Never change or remove an entry.
@@ -54,7 +57,7 @@ Search before you plan, design or change behaviour. Use the words of the area, t
 - A `Proposed` record is a question for a human, not a rule.
 - An `Open` record is like a `Proposed` record, but it waits for feedback from a human. Ask for that feedback. Do not decide it.
 - A `Rejected` record is a proposal that a human turned down. Do not propose it again without new evidence.
-- A `Retired` or `Superseded by NNNN` record is history.
+- A `Retired` or `Superseded by NNNN` record is history. It is in `docs/formal/deprecated/`. Its `superseded_by` field names the record that replaces it.
 - The level gives the weight of a record. A `hard` record is a cornerstone: stop and ask the human before a change that conflicts with it. A `normal` record is a stated requirement. A `soft` record comes only from communications: when it conflicts with a `normal` or `hard` record, report the conflict and do not choose.
 - No match is a result. Say that you searched, and what for.
 
