@@ -289,7 +289,7 @@ function stage(wf: Workflow, files: string[]): boolean {
   if (toAdd.length) gitOk(wf.root, '--literal-pathspecs', 'add', '-A', '--', ...toAdd.map(name => name || '.'))
   const changed = git(wf.root, 'diff', '--cached', '--quiet')
   if (changed.status > 1) throw new Fail(1, `git diff --cached exited ${changed.status}: ${said(changed)}`)
-  return changed.status === 1
+  return changed.status === 1 || git(wf.root, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').status === 0
 }
 function commit(wf: Workflow, message: string, op: string, empty = false) {
   const r = git(wf.root, 'commit', ...(empty ? ['--allow-empty'] : []), '-m', message, '--trailer', `Ndev-Op: ${op}`)
