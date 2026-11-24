@@ -113,7 +113,7 @@ async function identity(context) {
   if (!TERMINAL.test(terminal) || !text(runtime)) {
     throw new CliError(2, 'Walk-doc requires a live Orca agent terminal.', { repair: 'Run the command from the owner or reader terminal in Orca.' })
   }
-  if (status.caller === undefined) {
+  if (status.caller == null) {
     if (text(injected)) {
       throw new CliError(2, `Orca did not resolve the injected session ${injected} of terminal ${terminal}: orca status --json names no caller.`, { repair: 'orca status --json' })
     }

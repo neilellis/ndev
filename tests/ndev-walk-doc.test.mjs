@@ -348,6 +348,16 @@ test('an Orca terminal without an injected session is admitted by the session Or
   const calls = await orca.called()
   assert.deepEqual(calls.slice(0, 3).map(args => args.slice(0, 2).join(' ')), ['status --json', 'terminal show', 'worktree ps'])
   assert.deepEqual(calls.at(-1).slice(0, 4), ['terminal', 'send', '--terminal', 'term_reader1'])
+  const unnamed = attested()
+  unnamed.status.result.caller = null
+  await orca.answer(unnamed)
+  const again = orca.ndev({}, 'tip', 'Then open the settings page')
+  assert.equal(again.status, 0, JSON.stringify(again.body))
+  const pane = 'tab-reader:leaf-reader'
+  await orca.answer(attested({ terminal: 'term_reader1', pane, session: 'session_reader1' }))
+  const enhanced = orca.ndev({ ORCA_TERMINAL_HANDLE: 'term_reader1', ORCA_PANE_KEY: pane }, 'enhance', '--file', await note(walk))
+  assert.equal(enhanced.status, 0, JSON.stringify(enhanced.body))
+  assert.equal((await walk.run('status')).run.readerSession, 'session_reader1')
 })
 
 test('pane attestation refuses a missing pane, a mismatch, a stale terminal and an absent or ambiguous attestation', async t => {
