@@ -1,7 +1,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -260,6 +260,52 @@ test('add-migration with a new version on one issue replaces only its own path i
   assert.notEqual(moved, b)
   assert.deepEqual(s.listed(s.body()).sort(), [a, moved].sort())
   assert.deepEqual(s.record(7), [a])
+})
+function adoptable() {
+  const s = sharedMigrationPr()
+  const path = 'supabase/migrations/20261209132202_legacy_sources.sql'
+  mkdirSync(join(s.p.work, 'supabase/migrations'), { recursive: true })
+  writeFileSync(join(s.p.work, path), 'create table legacy(id int);\n')
+  return { ...s, path, adopt: (extra = [], name = 'legacy_sources') => flow(s.p, ['add-migration', name, '--issue', '7', ...extra], s.fake) }
+}
+test('add-migration --adopt lists an existing migration file without renaming or rewriting it', () => {
+  const s = adoptable()
+  const result = JSON.parse(output(s.adopt(['--adopt', s.path])))
+  assert.deepEqual(result.workflow.migrations, [{ name: 'legacy_sources', path: s.path }])
+  assert.equal(readFileSync(join(s.p.work, s.path), 'utf8'), 'create table legacy(id int);\n')
+  assert.deepEqual(readdirSync(join(s.p.work, 'supabase/migrations')), ['20261209132202_legacy_sources.sql'])
+  assert.deepEqual(s.listed(s.body()), [s.path])
+  assert.deepEqual(s.record(7), [s.path])
+})
+test('add-migration --adopt keeps the other issue migrations in the PR section', () => {
+  const s = adoptable()
+  const b = JSON.parse(output(flow(s.p, ['add-migration', 'second_table', '--issue', '8'], s.fake))).workflow.migrations[0].path
+  output(s.adopt(['--adopt', s.path]))
+  assert.deepEqual(s.listed(s.body()).sort(), [b, s.path].sort())
+})
+test('add-migration --adopt refuses a missing file, a path outside the migrations folder, a name that does not match and a registered file', () => {
+  const s = adoptable()
+  const refused = (extra, pattern, name) => {
+    const result = s.adopt(extra, name)
+    assert.equal(result.status, 2, result.stdout)
+    assert.match(result.stderr, pattern)
+    assert.deepEqual(s.record(7), [])
+  }
+  refused(['--adopt', 'supabase/migrations/20261209132203_legacy_sources.sql'], /does not exist/)
+  writeFileSync(join(s.p.work, 'supabase/other.sql'), 'select 1;')
+  refused(['--adopt', 'supabase/other.sql'], /supabase\/migrations/)
+  refused(['--adopt', '../outside/20261209132202_legacy_sources.sql'], /supabase\/migrations/)
+  mkdirSync(join(s.p.work, 'supabase/migrations/20261209132204_dir.sql'))
+  refused(['--adopt', 'supabase/migrations/20261209132204_dir.sql'], /not a file/, 'dir')
+  refused(['--adopt', s.path], /does not match/, 'other_name')
+  refused(['--adopt', s.path, '--new-version'], /--adopt/)
+  output(s.adopt(['--adopt', s.path]))
+  const again = flow(s.p, ['add-migration', 'another', '--issue', '8', '--adopt', s.path], s.fake)
+  assert.equal(again.status, 2)
+  assert.match(again.stderr, /already listed/)
+  const same = s.adopt(['--adopt', s.path])
+  assert.equal(same.status, 2)
+  assert.match(same.stderr, /already listed/)
 })
 test('a pending interview survives a bad answer and accepts an answer by question ID', () => {
   const p = project()

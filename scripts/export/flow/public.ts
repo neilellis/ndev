@@ -69,7 +69,7 @@ const commands: Record<string, [string, string]> = {
   blocked: ['', 'issue pr message'],
   unblock: ['answer?', 'issue pr'],
   'follow-up': ['', 'issue pr mode message-file existing-issue'],
-  'add-migration': ['name', 'issue pr workdir new-version'],
+  'add-migration': ['name', 'issue pr workdir new-version adopt'],
   'request-secret': ['name', ''],
   mode: ['mode?', 'issue pr'],
   steering: ['steering?', 'issue pr reason'],

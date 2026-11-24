@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, constants, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const bundled = existsSync(join(HERE, 'profile.json'))
@@ -1830,9 +1830,24 @@ function publicMigration(wf: Workflow, config: Config, args: Args) {
   const dir = join(parent, 'migrations')
   mkdirSync(dir, { recursive: true })
   if (!under(realpathSync(dir))) throw new Fail(2, `Migration directory escapes ${root}: ${dir}`)
+  if (args.adopt && args['new-version']) throw new Fail(2, `--adopt lists an existing file and --new-version moves a listed one. Repair: pass only one of them for ${name}.`)
   const sharing = (publicCli!.readWorkflowRecords(wf.root) as Workflow[]).filter(record => record.prs?.[0] === wf.prs[0])
   let entry = (wf.migrations || []).find((item: {name: string}) => item.name === name)
-  if (!entry || args['new-version']) {
+  if (args.adopt) {
+    if (entry) throw new Fail(2, `Migration ${name} is already listed as ${entry.path} on #${wf.issue}. Repair: drop --adopt, or use --new-version to move it.`)
+    const target = resolve(root, args.adopt)
+    if (dirname(target) !== dir) throw new Fail(2, `Cannot adopt ${args.adopt}: it is not directly inside ${dir}. Repair: pass a path of the form ${relative(root, dir)}/<version>_${name}.sql.`)
+    if (!existsSync(target)) throw new Fail(2, `Cannot adopt ${args.adopt}: ${target} does not exist. Repair: pass the path of the existing migration file, or leave out --adopt to create a new empty one.`)
+    const stat = lstatSync(target)
+    if (!stat.isFile()) throw new Fail(2, `Cannot adopt ${args.adopt}: ${target} is not a file.`)
+    const adopted = relative(root, target)
+    const holder = sharing.find(record => (record.migrations || []).some((item: {path: string}) => item.path === adopted))
+    if (holder || wf.migrations?.some((item: {path: string}) => item.path === adopted)) throw new Fail(2, `Cannot adopt ${adopted}: it is already listed on #${holder?.issue ?? wf.issue}.`)
+    if (!new RegExp(`^\\d{14}_${name}\\.sql$`).test(basename(target))) throw new Fail(2, `Cannot adopt ${adopted}: the file name does not match the migration name ${name}. Repair: pass --adopt with a file named <14-digit version>_${name}.sql, or use the name that the file already has.`)
+    entry = { name, path: adopted }
+    wf.migrations = [...(wf.migrations || []), entry]
+    save(wf)
+  } else if (!entry || args['new-version']) {
     const newest = readdirSync(dir).map(f => /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)_/.exec(f)).filter(Boolean).map(m => Date.UTC(+m![1]!, +m![2]! - 1, +m![3]!, +m![4]!, +m![5]!, +m![6]!) + 1000)
     const version = new Date(Math.max(Date.now(), ...newest)).toISOString().replace(/\D/g, '').slice(0, 14)
     const path = join(dir, `${version}_${name}.sql`)
@@ -1851,8 +1866,8 @@ function publicMigration(wf: Workflow, config: Config, args: Args) {
     save(wf)
   }
   if (!existsSync(join(root, entry.path))) throw new Fail(1, `Migration ${name} is missing. Restore ${entry.path} before retrying.`)
-  const pattern = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->/
   const body = readPr(wf, prOf(wf)).body || ''
+  const pattern = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->/
   const inBody = [...(pattern.exec(body)?.[0] ?? '').matchAll(/^- `([^`]+)`$/gm)].map(m => m[1]!)
   const moved = entry.previous ? new Map([[entry.previous, entry.path]]) : new Map<string, string>()
   const paths = [...new Set([...inBody.map(path => moved.get(path) ?? path), ...sharing.flatMap(record => (record.migrations || []).map((m: {path: string}) => m.path)).filter(path => !moved.has(path)), ...wf.migrations.map((m: {path: string}) => m.path)])]

@@ -50,7 +50,7 @@ ndev flow done --message <text> [--remembered <text>]
 ndev flow blocked --message <text>
 ndev flow unblock [<answer>]
 ndev flow follow-up --mode <this_agent|subagent|worktree|issue_only> --message-file <file> [--existing-issue <n>]...
-ndev flow add-migration <name> [--workdir <path>] [--new-version]
+ndev flow add-migration <name> [--workdir <path>] [--new-version | --adopt <path>]
 ndev flow request-secret <name>
 ndev flow mode [light|heavy|hack]
 ndev flow steering [interactive|auto] [--reason <text>]

@@ -33,7 +33,7 @@ const groups = {
       'finished-revision': '', done: '--message <text> [--remembered <text>]',
       blocked: '--message <text>', unblock: '[<answer>]',
       'follow-up': '--mode <this_agent|subagent|worktree|issue_only> --message-file <file> [--existing-issue <n>]...',
-      'add-migration': '<name> [--workdir <path>] [--new-version]', 'request-secret': '<name>',
+      'add-migration': '<name> [--workdir <path>] [--new-version | --adopt <path>]', 'request-secret': '<name>',
       mode: '[light|heavy|hack]', steering: '[interactive|auto] [--reason <text>]', skip: '[<reason>]',
       goto: '<state> [<reason>]', off: '[<reason>] [--project]', on: '[--project]',
     },
