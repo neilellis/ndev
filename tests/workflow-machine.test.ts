@@ -17,6 +17,8 @@ const MOVES: [State, Tool, State, Partial<Facts>?][] = [
   ['ci', 'finishedChecks', 'finishing'],
   ['ci', 'finishedChecks', 'smoke', { smoke: true }],
   ['smoke', 'finishedSmoke', 'finishing'],
+  ['finishing', 'finishedChecks', 'finishing'],
+  ['finishing', 'finishedChecks', 'smoke', { smoke: true }],
   ['finishing', 'done', 'done'],
   ['finishing', 'done', 'revising', { feedback: true }],
   ['revising', 'finishedRevision', 'ci'],
