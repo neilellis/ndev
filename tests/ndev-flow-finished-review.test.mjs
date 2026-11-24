@@ -68,9 +68,10 @@ esac
   const record = join(work, '.neil-dev.issue-12.json')
   writeFileSync(record, JSON.stringify({ version: 1, issue: 12, rounds: [], workflow: { issue: 12, root: work, repo: 'o/r', base: 'main', branch: 'feat', prs: [5], mode: 'light', steering: 'auto', state: 'reviewing', evidence: {}, history: [], followUps: [], migrations: [], attempts: 0, nudges: { count: 0 }, rev: 1, baseCheck: { note: 'fixture' }, hooks: { remember: { firedAt: 1 } }, ...extra } }))
   const runs = join(state, 'runs')
-  const run = (...flags) => spawnSync(ndev, ['flow', 'finished-review', '--issue', '12', '--review', 'no findings', '--deadcode', 'nothing', '--remembered', 'nothing: fixture', ...flags], { cwd: work, encoding: 'utf8', env: { ...process.env, ...identity, NDEV_FLOW_GH: gh, NDEV_TEST_RUNS: runs, NDEV_FLOW_PR_HEAD_WAIT_MS: '2000', NDEV_FLOW_PR_HEAD_POLL_MS: '20' } })
+  const env = {}
+  const run = (...flags) => spawnSync(ndev, ['flow', 'finished-review', '--issue', '12', '--review', 'no findings', '--deadcode', 'nothing', '--remembered', 'nothing: fixture', ...flags], { cwd: work, encoding: 'utf8', env: { ...process.env, ...identity, NDEV_FLOW_GH: gh, NDEV_TEST_RUNS: runs, NDEV_FLOW_PR_HEAD_WAIT_MS: '2000', NDEV_FLOW_PR_HEAD_POLL_MS: '20', ...env } })
   const count = file => (existsSync(join(state, file)) ? readFileSync(join(state, file), 'utf8').split('\n').filter(Boolean).length : 0)
-  return { state, work, origin, reviewed, fix, run, preReadyRuns: () => count('runs'), ready: () => count('ready'), record: () => JSON.parse(readFileSync(record, 'utf8')).workflow, remote: () => git(origin, 'rev-parse', 'refs/heads/feat') }
+  return { env, state, work, origin, reviewed, fix, run, preReadyRuns: () => count('runs'), ready: () => count('ready'), record: () => JSON.parse(readFileSync(record, 'utf8')).workflow, remote: () => git(origin, 'rev-parse', 'refs/heads/feat') }
 }
 
 test('finished-review pushes held review-fix commits on top of the reviewed PR head and marks the PR ready', t => {
@@ -139,10 +140,11 @@ test('finished-review reruns the pre-ready check when HEAD changed after the rec
 test('finished-review rejects a PR on another branch at once instead of waiting', t => {
   const held = reviewing(t)
   writeFileSync(join(held.state, 'ref'), 'other')
+  held.env.NDEV_FLOW_PR_HEAD_WAIT_MS = '60000'
   const started = Date.now()
   const result = held.run()
   assert.equal(result.status, 1, result.stdout)
   assert.match(result.stderr, /points to other@/)
-  assert.ok(Date.now() - started < 1900)
+  assert.ok(Date.now() - started < 30000)
   assert.equal(held.ready(), 0)
 })
