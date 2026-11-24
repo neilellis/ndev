@@ -133,7 +133,7 @@ const groups = {
     description: 'Keep requirement records, their sources and their trace',
     module: './requirements/requirements.mjs', run: 'runRequirements',
     commands: {
-      new: '"<short title>" --author "<name>, <name>" [--origin explicit|implied|PR] [--level soft|normal|hard] [--section <name>]',
+      new: '"<short title>" --author "<name>, <name>" [--origin explicit|implied|PR] [--level soft|normal|hard] [--section <name>] [--base <git ref>]',
       list: '[--status <status>] [--section <name>] [--level soft|normal|hard] [--flagged]', search: '<term>...',
       quote: '<path> <first line> <last line>', check: '', render: '[--check]',
       guard: '--base <git ref>', agree: '<REQ-NNNN> --by "<name>"', flag: '<REQ-NNNN> "<why it looks wrong>" | <REQ-NNNN> --clear', level: '<REQ-NNNN> soft|normal|hard', author: '<REQ-NNNN> "<name>"...', model: '<REQ-NNNN> <path.qnt[#name]>...', sync: '[<REQ-NNNN>...]', log: '<REQ-NNNN> "<what changed>"',

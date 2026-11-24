@@ -88,7 +88,7 @@ The fields are YAML front matter, in this order. A value with a colon, a quote o
 
 These commands write the record:
 
-- `ndev requirements new "<short title>" --author "<name>, <name>"` creates the next numbered file from this template with the status `Proposed`.
+- `ndev requirements new "<short title>" --author "<name>, <name>"` creates the next numbered file from this template with the status `Proposed`. `new --base <git ref>` also counts the numbers at that ref, so a pull request that starts before the base moves on does not take a number the base already holds.
 - `ndev requirements author <REQ-NNNN> "<name>"...` replaces the list of authors. It refuses a record that is committed with an author: after that, the authors are fixed.
 - `ndev requirements deprecate <REQ-NNNN> --reason "<why>" --decided-by "<name>" [--by <REQ-NNNN>]` deprecates a record (see "Deprecation").
 - `ndev requirements sync [<REQ-NNNN>...]` writes the `source`, `issues` and `prs` fields from the Source text and the Trace. With no id, it writes each record whose fields are different.
@@ -163,7 +163,8 @@ When the quoted text only moved in its file, the check names the new lines, and 
 - a title, a status, a Statement or a Source text that changed, with no new entry in the Log;
 - a Log entry of the base that is changed or removed;
 - an id, a title, an author or an origin that changed;
-- a record that is at the base and is not in the working tree.
+- a record that is at the base and is not in the working tree;
+- a record whose number the base holds for another record (another pull request took the number first): the message names both files and the `git mv` and `id` change that give the record the next free number.
 
 The guard finds a record by its number in both folders, so a move to `docs/formal/deprecated/` is not a deletion.
 

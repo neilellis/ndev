@@ -2951,3 +2951,58 @@ describe("a number that the base holds twice", () => {
     assert.match(out.stderr, /duplicate number 0002/);
   });
 });
+
+describe("a number that the base took after the branch did", () => {
+  const OTHER = "0002-the-other-pull-request.md";
+  const MINE = "0002-this-pull-request.md";
+  const other = () => record("0002", { title: "The other pull request", statement: "The other pull request statement.", author: ["Ann Smith"] });
+  const mine = () => record("0002", { title: "This pull request", statement: "This pull request statement." });
+  const raced = () => {
+    const root = committed({ [FILE]: record("0001"), [OTHER]: other() });
+    git(root, "rm", "-q", `${DIR}/${OTHER}`);
+    put(root, `${DIR}/${MINE}`, mine());
+    return root;
+  };
+
+  it("guard fails the record that takes a number the base holds for another record, and names both files and the repair", () => {
+    const root = raced();
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, new RegExp(`${DIR}/${MINE}: REQ-0002 is already held at base by ${DIR}/${OTHER}`));
+    assert.match(out.stderr, new RegExp(`Give this record the next free number: git mv ${DIR}/${MINE} ${DIR}/0003-this-pull-request\\.md, set "id: REQ-0003" in it, then run: ndev requirements check`));
+  });
+
+  it("guard fails the same record after a rebase, when both files hold the number", () => {
+    const root = raced();
+    put(root, `${DIR}/${OTHER}`, other());
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, new RegExp(`${DIR}/${MINE}: REQ-0002 is already held at base by ${DIR}/${OTHER}`));
+  });
+
+  it("new takes the number after the highest one at the base when it is given --base", () => {
+    const root = committed({ [FILE]: record("0001"), [OTHER]: other() });
+    git(root, "rm", "-q", `${DIR}/${OTHER}`);
+    const without = run(root, "new", "A fresh requirement", "--author", "Ann Smith");
+    assert.match(without.stdout.trim(), /0002-a-fresh-requirement\.md$/);
+    rmSync(without.stdout.trim());
+    const out = run(root, "new", "A fresh requirement", "--author", "Ann Smith", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout.trim(), /0003-a-fresh-requirement\.md$/);
+    assert.equal(run(root, "new", "Another", "--author", "Ann Smith", "--base", "no-such-ref").status, 1);
+  });
+
+  it("guard passes the record when the base holds that number for the same record", () => {
+    const root = committed({ [FILE]: record("0001"), [OTHER]: other() });
+    assert.equal(run(root, "guard", "--base", "base").status, 0);
+  });
+
+  it("guard passes the same record at the next free number", () => {
+    const root = raced();
+    rmSync(path.join(root, DIR, MINE));
+    put(root, `${DIR}/0003-this-pull-request.md`, record("0003", { title: "This pull request", statement: "This pull request statement." }));
+    put(root, `${DIR}/${OTHER}`, other());
+    const out = run(root, "guard", "--base", "base");
+    assert.equal(out.status, 0, out.stderr);
+  });
+});

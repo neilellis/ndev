@@ -491,7 +491,8 @@ function create(root, sentence, options) {
   const existing = entries(root);
   const bad = existing.find((e) => !NAME.test(e.file));
   if (bad) throw new Failure(`${bad.rel} does not match NNNN-<title>.md, so the next number is unknown. Rename it, or run check.`);
-  const next = String(Math.max(0, ...existing.map((e) => Number(e.file.slice(0, 4)))) + 1).padStart(4, "0");
+  if (options.base) git(root, ["rev-parse", "--verify", `${options.base}^{commit}`]);
+  const next = nextFree(root, options.base ? baseRecords(root, options.base) : []);
   const full = path.join(root, DIR, `${next}-${slug(title)}.md`);
   const data = { id: `REQ-${next}`, title, status: "Proposed", origin, level, section: (options.section ?? "").trim(), date: new Date().toISOString().slice(0, 10), source: [], author, decided_by: "", verification: "unassigned", issues: [], prs: [] };
   mkdirSync(path.dirname(full), { recursive: true });
@@ -1015,6 +1016,17 @@ function pairWithBase(base, currents) {
   });
 }
 
+function takenNumber(baseRecs, now) {
+  const held = baseRecs.filter((old) => old.id === now.id);
+  const same = (old) => old.rel === now.rel || old.file.slice(5) === now.file.slice(5) || (old.data?.title !== undefined && old.data.title === now.data?.title);
+  return held.length && !held.some(same) ? held : undefined;
+}
+
+function nextFree(root, baseRecs) {
+  const numbers = [...entries(root), ...baseRecs].map((e) => Number(e.file.slice(0, 4)));
+  return String(Math.max(0, ...numbers) + 1).padStart(4, "0");
+}
+
 const renumberedLines = (pairs, base) => pairs.filter((pair) => pair.renumbered).map(({ old, now }) => `${old.id} (${old.rel} at ${base}) renumbered to ${now.id}: ${now.rel}\n`).join("");
 
 function fixedProblems(old, now, base, { renumbered = false } = {}) {
@@ -1089,8 +1101,20 @@ function guard(root, options) {
     if (traceLines(record).some((line) => TRACE_LINK.test(line)) || noLinkReason(record)) continue;
     problems.push(`${record.rel}: the Trace has no link to what implements the requirement or plans to implement it. Add the files with: ${SCRIPT} file ${record.id} <path or pattern>. Add the pull request with: ${SCRIPT} link ${record.id} <pull request link>. When nothing implements it yet, open an issue for it and add "- Issue: <issue link>". When nothing implements it and nothing will, it is not a requirement: reject or retire it. A non-functional requirement (nfr: true) with nothing to link gives the reason as "- None: <reason>".`);
   }
-  const pairs = pairWithBase(baseRecords(root, base), named.map(read));
+  const baseRecs = baseRecords(root, base);
+  const taken = new Set();
+  const records = named.map(read);
+  for (const record of records) {
+    const held = takenNumber(baseRecs, record);
+    if (!held) continue;
+    taken.add(record.rel);
+    const free = nextFree(root, baseRecs);
+    const target = `${path.posix.dirname(record.rel)}/${free}-${record.file.slice(5)}`;
+    problems.push(`${record.rel}: ${record.id} is already held at ${base} by ${held.map((old) => old.rel).join(", ")}: another pull request took the number first. Numbers are never reused. Give this record the next free number: git mv ${record.rel} ${target}, set "id: REQ-${free}" in it, then run: ${SCRIPT} check`);
+  }
+  const pairs = pairWithBase(baseRecs, records);
   for (const { old, now, renumbered } of pairs) {
+    if (now && taken.has(now.rel)) continue;
     if (!now) {
       problems.push(`${old.id} (${old.rel} at ${base}) is deleted. A record is never deleted: restore it, and deprecate it with: ${SCRIPT} deprecate ${old.id} --reason "<why>" --decided-by "<name>"`);
       continue;
