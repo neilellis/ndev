@@ -85,6 +85,6 @@ nobody wrote down is one that nobody can disagree with.
 Search the requirement records with the words of the issue (`requirements` skill). Run `ndev requirements for <path>...` on the files that the plan changes, and on the issue link. List the records
 that the change touches in a `Requirements:` line, and add each new record that you propose. When the
 change touches state, order, concurrency or a protocol, write or change the Quint model before the
-code. Run `quint typecheck`, and name the model in a `Model:` line. Else write `Model: none, <reason>`.
+code. Do the same for a heavy change, or a change to money or permissions. Run `quint typecheck`, name the model in a `Model:` line, and link it with `ndev requirements model`. Else write `Model: none, <reason>`. Add one `REQ-NNNN: <test, check or model>` line for each record on the `Requirements:` line.
 `${CLAUDE_PLUGIN_ROOT}/kb/requirements.md`, section "In the workflow", has the rule and the form.
-`finishedPlan` refuses a plan without these lines, or with a record or a model that does not exist.
+`finishedPlan` refuses a plan without these lines, with a record or a model that does not exist, or with a record that has no verification line.

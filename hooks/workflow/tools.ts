@@ -27,6 +27,7 @@ import type { InterviewFile, InterviewRound } from './interview-model'
 import { clearInterview, closeInterviewPane, interviewCall, openInterviewPane, showInterview } from './interview'
 import type { EarlierQuestion } from './interview'
 import { SECRET_NAME, findInText, secretFiles } from './secrets'
+import { RECORDS_DIR, citedIds, issueRecordNotes, planLine, recordFileOf, summarise, traceProblems, verificationProblems, type RecordSummary } from './records'
 
 async function checked($: EngineInterface, wf: Workflow, check: Check, args: string[] = [], declared: readonly ChangeType[] = []): Promise<string | undefined> {
   if (wf.noChecks && !(await $.fs.exists(`${wf.root}/${CHECK_DIR}/${check}`))) return `${CHECK_DIR}/${check} did not run: the human skipped the set-up.`
@@ -609,6 +610,7 @@ async function doneProblems($: EngineInterface, wf: Workflow, sha: string, pr: P
     for (const f of wf.followUps.filter(x => x.mode === 'this_agent')) {
       if (!hasIssueRef(body, f.issue)) problems.push(`The PR body has lost "Closes #${f.issue}". Put it back: that sub-issue is carried by this PR.`)
     }
+    problems.push(...(await planTraceProblems($, wf, body)).map(p => `${p}.`))
     feedback = await newFeedback($, root, repo, wf.issue, pr, wf.feedbackAt ?? 0)
   }
   return { problems, feedback }
@@ -907,7 +909,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
   const active = await loadWorkflow($, root)
   if (active?.off) throw new Refuse(OFF_HERE(active))
   let wf = await loadWorkflow($, root, issue)
-  const issueInfo = await ghOne<{ state: string; title: string }>($, root, repo, ['issue-read', String(issue)])
+  const issueInfo = await ghOne<{ state: string; title: string; body?: string }>($, root, repo, ['issue-read', String(issue)])
   // Before any claim, so that a refusal leaves no worktree behind.
   const mayOpen = () => {
     if (issueInfo.state !== 'open') throw new Refuse(`Refused: issue #${issue} is ${issueInfo.state}, so there is nothing to start.`)
@@ -1065,6 +1067,7 @@ async function started($: EngineInterface, c: Ctx): Promise<string> {
       notes.push(await backToDevelopers($, project, carrier, issue, 'started'))
     }
   }
+  if (isNew) notes.push(...(await issueRecords($, root, issue, issueInfo.body ?? '')))
   if (root !== home) notes.push(`The work is in ${root}, not this session's folder. Change to it before you edit.`)
   if (record.direct) notes.push('This straw_man project commits directly to the base branch, with no PR.')
   if (feedback.length) notes.push(`New feedback:\n${feedback.join('\n')}`)
@@ -1108,10 +1111,27 @@ function planBody(old: string, issue: number, plan: string): string {
   return `${plans}\n\n${kept ? `${kept}\n` : ''}${refs.map(n => `Closes #${n}\n`).join('')}${SECTION.exec(old)?.[0] ?? ''}`
 }
 
-const RECORDS_DIR = 'docs/formal/requirements'
+async function citedRecords($: EngineInterface, root: string, ids: string[]): Promise<RecordSummary[]> {
+  const dir = `${root}/${RECORDS_DIR}`
+  if (!ids.length || !(await $.fs.exists(dir))) return []
+  const files = (await $.fs.list(dir)).map(e => e.name)
+  const found: RecordSummary[] = []
+  for (const id of ids) {
+    const file = recordFileOf(id, files)
+    if (file) found.push(summarise(file, await $.fs.read(`${dir}/${file}`)))
+  }
+  return found
+}
 
-function planLine(text: string, name: string): string | undefined {
-  return new RegExp(`^[\\s>*+-]*(?:\\*\\*|__)?${name}(?:\\*\\*|__)?:(?:\\*\\*|__)?[ \\t]*(.*)$`, 'im').exec(text)?.[1].trim()
+async function issueRecords($: EngineInterface, root: string, issue: number, body: string): Promise<string[]> {
+  if (!(await $.fs.exists(`${root}/${RECORDS_DIR}`))) return []
+  const ids = citedIds(body)
+  return issueRecordNotes(issue, ids, await citedRecords($, root, ids))
+}
+
+async function planTraceProblems($: EngineInterface, wf: Workflow, body: string): Promise<string[]> {
+  const line = planLine(body, 'Requirements')
+  return line ? traceProblems(await citedRecords($, wf.root, citedIds(line)), `https://github.com/${wf.repo}/pull/${wf.prs[0]}`) : []
 }
 
 async function planRecordProblems($: EngineInterface, root: string, text: string): Promise<string[]> {
@@ -1123,9 +1143,10 @@ async function planRecordProblems($: EngineInterface, root: string, text: string
   else if (!requirements) problems.push('its "Requirements:" line is empty; write the value on the same line')
   else {
     const files = (await $.fs.list(records)).map(e => e.name)
-    for (const id of new Set(requirements.match(/\bREQ-\d{4}\b/g) ?? [])) {
-      if (!files.some(f => f.startsWith(`${id.slice(4)}-`) && f.endsWith('.md'))) problems.push(`${id} has no record in ${RECORDS_DIR}`)
+    for (const id of citedIds(requirements)) {
+      if (!recordFileOf(id, files)) problems.push(`${id} has no record in ${RECORDS_DIR}`)
     }
+    problems.push(...verificationProblems(text, citedIds(requirements)))
   }
   const model = planLine(text, 'Model')
   if (model === undefined) problems.push('it has no "Model:" line')
@@ -1539,6 +1560,11 @@ async function finishedDevelopmentOnce($: EngineInterface, c: Ctx, review: { sta
     notes.push(`The hardening evidence is on PR #${n}.`)
   }
   if (prBody !== undefined) await editBody($, wf, old => withBodySection(old, wf.issue, prBody))
+  const traced = await planTraceProblems($, wf, (await readPr($, wf.root, wf.repo, n)).body ?? '')
+  if (traced.length) {
+    await saveWorkflow($, wf)
+    throw new Refuse(`Refused: a record that PR #${n} fulfils does not link it:\n- ${traced.join('\n- ')}\nThe commit is held here and not pushed. Call finishedDevelopment again with the record in files.`)
+  }
   addTypes(wf, declared)
   for (const o of finishing.filter(x => x.state !== 'developed')) {
     if (MACHINES[(await factsFor($, wf.root, project, o)).mode].gates) {

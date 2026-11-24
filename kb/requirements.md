@@ -314,18 +314,20 @@ The records and the models enter the work at each stage. The agent:
 
 | Stage | Records | Models |
 |---|---|---|
-| Start | Run `ndev requirements for` on the issue and on the files that you plan to change, and `ndev requirements search` with the words of the issue, and read each record that the change touches. A `Proposed` record is a question for the human. An `Open` record waits for their feedback. | Read the models in the `model` list of those records. |
+| Start | The records come first: the work exists to fulfil them. `started` shows the Statement of each record that the issue cites. When the issue cites no record in force, find one, or propose a new record with the status `Proposed`, and cite it in the issue. Run `ndev requirements for` on the issue and on the files that you plan to change, and `ndev requirements search` with the words of the issue, and read each record that the change touches. A `Proposed` record is a question for the human. An `Open` record waits for their feedback. | Read the models in the `model` list of those records. |
 | Interview | Ask about a conflict between the issue and a record. Show the Statement of each new record that you propose. | Ask the questions that the model shows to be open. |
-| Plan (heavy) | Write a `Requirements:` line. | Write a `Model:` line. Write or change the model, and run `quint typecheck`, before `finished-plan`. |
+| Plan (heavy) | Write a `Requirements:` line, and one `REQ-NNNN: <test, check or model>` line for each record on it. | Write a `Model:` line. Model a heavy change, or a change to state, concurrency, money, permissions or a protocol, in Quint first, and run `quint typecheck`, before `finished-plan`. Link the model with `ndev requirements model`. |
 | Development | Add the `- File:` lines and the citations in the source. Propose a record for new behaviour. | Keep the model in step with the code. Prove the model (above). Cite the model in the source. |
 | Review (heavy) | The specification reviewer compares the diff with the records in the plan. | The specification reviewer reads the mutants and the witnesses in the PR body. |
-| Pull request | Add the `- PR:` and `- Issue:` lines with `ndev requirements link`, then run `check` and `guard`. | Set the `model` list with `ndev requirements model`. |
+| Pull request | Add the `- PR:` and `- Issue:` lines with `ndev requirements link`, then run `check` and `guard`. `finished-development` and `done` refuse a record in force on the `Requirements:` line whose Trace does not link the PR. They do not run `ndev requirements links`: the agent hook runs it on the changed records. | Set the `model` list with `ndev requirements model`. |
 
 The plan lines have this form:
 
 ```
 Requirements: REQ-0007, REQ-0012, and a new record for the lock
 Model: docs/formal/models/migrations.qnt#neverTwoVersions
+REQ-0007: the test tests/migrate.test.ts
+REQ-0012: the model docs/formal/models/migrations.qnt#neverTwoVersions
 ```
 
 When nothing applies, give the reason: `Requirements: none, <reason>` or `Model: none, <reason>`.

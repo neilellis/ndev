@@ -28,7 +28,7 @@ echo "$*" >> "$FAKE_GH_LOG"
 case "$1" in
   repo) echo '{"repo":"o/r"}' ;;
   default-branch) echo '{"default_branch":"main"}' ;;
-  issue-read) echo '{"number":12,"title":"Add a thing","state":"open","body":"Make the thing.","url":"https://github.com/o/r/issues/12"}' ;;
+  issue-read) if [ -n "$FAKE_ISSUE" ]; then cat "$FAKE_ISSUE"; else echo '{"number":12,"title":"Add a thing","state":"open","body":"Make the thing.","url":"https://github.com/o/r/issues/12"}'; fi ;;
   pr-list) ;;
   pr-new) [ -z "$FAIL_PR_NEW" ] || { echo 'PR creation unavailable' >&2; exit 19; }; cp "$5" "$FAKE_PR_BODY"; echo '{"url":"https://github.com/o/r/pull/7"}' ;;
   pr-edit) echo '{"number":7,"url":"https://github.com/o/r/pull/7"}' ;;
@@ -495,9 +495,71 @@ test('in a project with requirement records, a heavy plan names the records it t
   assert.match(refused('Requirements: REQ-0007\nModel: docs/formal/models/missing.qnt#neverTwo\n'), /docs\/formal\/models\/missing\.qnt does not exist/)
   assert.match(refused('Requirements: REQ-0007\nModel: none\n'), /"Model: none" needs a reason/)
   assert.match(refused('Requirements:\nModel: none, the change is a label\n'), /"Requirements:" line is empty/)
-  writeFileSync(plan, 'Implement the thing.\n\nTest entry point: the public command.\nRequirements: REQ-0007, and a new record for the lock\nModel: docs/formal/models/migrations.qnt#neverTwo\n')
+  assert.match(refused('Requirements: REQ-0007\nModel: none, no state changes\nREQ-0007: one version at a time.\n'), /REQ-0007 has no line that says how it is verified/)
+  writeFileSync(plan, 'Implement the thing.\n\nTest entry point: the public command.\nRequirements: REQ-0007, and a new record for the lock\nModel: docs/formal/models/migrations.qnt#neverTwo\n- REQ-0007: the test tests/lock.test.mjs and the model migrations.qnt#neverTwo\n')
   ok(p.flow(['finishedPlan', '--file', plan]), 'finishedPlan')
   assert.equal(p.record().state, 'developing')
+})
+
+const RECORD = (id, status, prs = []) => `---\nid: ${id}\ntitle: "One version"\nstatus: ${status}\n---\n\n## Statement\n\nRun one version at a time.\n\n## Trace\n\n${prs.map(u => `- PR: ${u}\n`).join('')}`
+
+test('started shows the records that the issue cites, and guides an issue that cites none in force', () => {
+  const p = project()
+  mkdirSync(join(p.work, 'docs/formal/requirements'), { recursive: true })
+  writeFileSync(join(p.work, 'docs/formal/requirements/0007-one-version.md'), RECORD('REQ-0007', 'Accepted'))
+  writeFileSync(join(p.work, 'docs/formal/requirements/0009-old.md'), RECORD('REQ-0009', 'Retired'))
+  const issue = join(dirname(p.work), 'issue.json')
+  const cites = body => writeFileSync(issue, JSON.stringify({ number: 12, title: 'Add a thing', state: 'open', body, url: 'https://github.com/o/r/issues/12' }))
+  cites('Fulfils REQ-0007 and REQ-0008.')
+  const started = p.flow(['started', '--issue', '12', '--short-name', 'add-thing'], { FAKE_ISSUE: issue })
+  ok(started, 'started')
+  assert.match(started.stdout, /REQ-0007 \(Accepted\): Run one version at a time\./)
+  assert.match(started.stdout, /REQ-0008 has no record in docs\/formal\/requirements/)
+  assert.doesNotMatch(started.stdout, /cites no record in force/)
+  const q = project()
+  mkdirSync(join(q.work, 'docs/formal/requirements'), { recursive: true })
+  writeFileSync(join(q.work, 'docs/formal/requirements/0009-old.md'), RECORD('REQ-0009', 'Retired'))
+  cites('Was REQ-0009.')
+  const guided = q.flow(['started', '--issue', '12', '--short-name', 'add-thing'], { FAKE_ISSUE: issue })
+  ok(guided, 'started')
+  assert.match(guided.stdout, /Issue #12 cites no record in force:\n- REQ-0009 \(Retired\)/)
+  assert.match(guided.stdout, /ndev requirements for <file> or ndev requirements search <words>[\s\S]*status Proposed/)
+  const r = project()
+  assert.doesNotMatch(r.flow(['started', '--issue', '12', '--short-name', 'add-thing']).stdout, /cites no/)
+})
+
+test('finishedDevelopment and done refuse a record on the Requirements line whose Trace does not link the PR', () => {
+  const p = project()
+  mkdirSync(join(p.work, 'docs/formal/requirements'), { recursive: true })
+  const file = join(p.work, 'docs/formal/requirements/0007-one-version.md')
+  writeFileSync(file, RECORD('REQ-0007', 'Accepted'))
+  git(p.work, 'add', '-A')
+  git(p.work, 'commit', '-q', '-m', 'record', '--no-verify')
+  const body = 'Plan.\n\nRequirements: REQ-0007\n- REQ-0007: the test a.test.py\n\nCloses #12\n'
+  p.setPr({ body })
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  ok(p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py']), 'checkpoint')
+  writeFileSync(join(p.work, 'b.py'), 'b = 1\n')
+  const refused = p.flow(['finishedDevelopment', '--message', 'Add b', '--files', 'b.py'])
+  assert.equal(refused.status, 1, refused.all)
+  assert.match(refused.all, /REQ-0007 does not link this PR in its Trace[\s\S]*ndev requirements link REQ-0007 https:\/\/github\.com\/o\/r\/pull\/7/)
+  assert.equal(p.record().state, 'developing')
+  writeFileSync(file, RECORD('REQ-0007', 'Accepted', ['https://github.com/o/r/pull/7']))
+  ok(p.flow(['finishedDevelopment', '--message', 'Link the PR', '--files', 'docs/formal/requirements/0007-one-version.md']), 'finishedDevelopment')
+  ok(p.flow(['finishedReview', '--review', 'No findings.', '--deadcode', 'none', '--remembered', 'nothing: a test']), 'finishedReview')
+  green(p)
+  p.setPr({ body })
+  ok(p.flow(['finishedChecks']), 'finishedChecks')
+  writeFileSync(file, RECORD('REQ-0007', 'Accepted'))
+  git(p.work, 'commit', '-q', '-am', 'drop the link', '--no-verify')
+  git(p.work, 'push', '-q', 'origin', 'HEAD:12-add-thing')
+  green(p)
+  p.setPr({ body })
+  p.writeRecord(wf => ({ ...wf, state: 'finishing', evidence: { ...wf.evidence, checks: { ...wf.evidence.checks, sha: git(p.work, 'rev-parse', 'HEAD') } } }))
+  const notDone = p.flow(['done', '--message', 'finished'])
+  assert.equal(notDone.status, 1, notDone.all)
+  assert.match(notDone.all, /REQ-0007 does not link this PR in its Trace/)
 })
 
 test('the plan lines may be bold, and a model path may sit in brackets or end a sentence', () => {
@@ -525,9 +587,9 @@ test('the plan lines may be bold, and a model path may sit in brackets or end a 
     assert.equal(r.status, 0, r.all)
     assert.equal(state, 'developing')
   }
-  accepted('**Requirements:** REQ-0007\n**Model:** none, no state changes\n')
-  accepted('- Requirements: REQ-0007\n- Model: none, the lock is in docs/formal/models/later.qnt\n')
-  accepted('Requirements: REQ-0007\nModel: the lock (docs/formal/models/migrations.qnt).\n')
+  accepted('**Requirements:** REQ-0007\n**Model:** none, no state changes\nREQ-0007: the test tests/lock.test.mjs\n')
+  accepted('- Requirements: REQ-0007\n- Model: none, the lock is in docs/formal/models/later.qnt\nREQ-0007: the test tests/lock.test.mjs\n')
+  accepted('Requirements: REQ-0007\nModel: the lock (docs/formal/models/migrations.qnt).\nREQ-0007: the test tests/lock.test.mjs\n')
   assert.match(refused('**Requirements:**\n**Model:** none, no state changes\n'), /"Requirements:" line is empty; write the value on the same line/)
   assert.match(refused('Requirements: REQ-0007\nModel: ../outside.qnt\n'), /the model \.\.\/outside\.qnt is outside the worktree/)
 })

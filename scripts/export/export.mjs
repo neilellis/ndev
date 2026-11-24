@@ -11,7 +11,7 @@ const USAGE = 'usage: export.mjs <harness> [--out <dir>] [--skills-dir <dir>] [-
 const HOME_DIRS = ['scripts', 'kb', 'templates']
 const SKIPPED = new Set(['node_modules', '.DS_Store', '__pycache__', '.pytest_cache'])
 const TEXT = new Set(['.md', '.sh', '.mjs', '.js', '.cjs', '.ts', '.tsx', '.json', '.toml', '.yaml', '.yml', '.py', '.txt', '.html', '.css', '.svg', '.bash', '.zsh', ''])
-const FLOW_FILES = { 'flow/workflow/machine.ts': 'hooks/workflow/machine.ts', 'flow/workflow/change-types.ts': 'hooks/workflow/change-types.ts' }
+const FLOW_FILES = { 'flow/workflow/machine.ts': 'hooks/workflow/machine.ts', 'flow/workflow/change-types.ts': 'hooks/workflow/change-types.ts', 'flow/workflow/records.ts': 'hooks/workflow/records.ts' }
 const LEFTOVERS = [
   [/\bAgent tool\b|\bsubagent_type\b|\bTask tool\b|\bisolation: ?"?worktree/, 'Claude subagent call'],
   [/\bAskUserQuestion\b/, 'Claude question dialog'],

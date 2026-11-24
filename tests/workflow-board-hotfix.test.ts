@@ -204,7 +204,7 @@ test('in a project with requirement records, finishedPlan refuses a plan that do
   expect(w.state()?.state).toBe('planning')
   w.files.set(plan, 'Test entry point: the CLI\n**Requirements:** REQ-0007\n**Model:** ../outside.qnt\n')
   expect((await tool($, 'finishedPlan', { issue: 7, markdown_file: plan })).text).toContain('the model ../outside.qnt is outside the worktree')
-  w.files.set(plan, 'Test entry point: the CLI\n**Requirements:** REQ-0007\n**Model:** the lock (docs/formal/models/migrations.qnt).\n')
+  w.files.set(plan, 'Test entry point: the CLI\n**Requirements:** REQ-0007\n**Model:** the lock (docs/formal/models/migrations.qnt).\n- REQ-0007: the test tests/lock.test.ts\n')
   const r = await tool($, 'finishedPlan', { issue: 7, markdown_file: plan })
   expect(r.isError).toBe(false)
   expect(w.state()?.state).toBe('developing')

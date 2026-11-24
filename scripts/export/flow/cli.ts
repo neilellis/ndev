@@ -9,6 +9,7 @@ const bundled = existsSync(join(HERE, 'profile.json'))
 const workflowModules = bundled ? join(HERE, 'workflow') : resolve(HERE, '../../../hooks/workflow')
 const { BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterSkip, afterStarted, afterTool, baseCheckScript, hooksFiredBy, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView } = await import(join(workflowModules, 'machine.ts'))
 const { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isWebPath, requiredSmokeTypes, reviewerBrief } = await import(join(workflowModules, 'change-types.ts'))
+const { RECORDS_DIR, citedIds, issueRecordNotes, planLine, recordFileOf, summarise, traceProblems, verificationProblems } = await import(join(workflowModules, 'records.ts'))
 
 class Fail extends Error {
   code: number
@@ -617,8 +618,9 @@ function started(root: string, config: Config, args: Args) {
     if (branch === base && (standalone || config.projectLevel !== 'straw_man')) throw new Fail(2, `ndev-flow: ${root} is on the base branch ${base}, and each issue needs its own branch. Repair: git switch -c ${issue}-${shortName}`)
     wf = { issue, root, repo, base, branch, ...(branch === base ? { direct: true } : {}), prs: [], shortName, state: 'setup', owner: { session: session(), at: now() }, evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], mode, steering }
   }
-  const info = ghJson<{ title: string; state: string }>(root, wf.repo, ['issue-read', String(issue)])
+  const info = ghJson<{ title: string; state: string; body?: string }>(root, wf.repo, ['issue-read', String(issue)])
   if (info.state !== 'open') throw new Fail(1, `Issue #${issue} is ${info.state}. Reopen it before starting.`)
+  notes.push(...issueRecords(root, issue, info.body ?? ''))
   const fetched = git(root, 'fetch', '-q', 'origin', wf.base)
   if (!standalone && fetched.status !== 0) throw new Fail(1, `git fetch origin ${wf.base} exited ${fetched.status}: ${said(fetched)}. Repair the remote and retry.`)
   if (fetched.status !== 0) notes.push(`git fetch origin ${wf.base} exited ${fetched.status}: ${said(fetched)}. The checks compare with an old base.`)
@@ -724,6 +726,10 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = 
     const body = new RegExp(`(close[sd]?|fix(e[sd])?|resolve[sd]?) #${wf.issue}\\b`, 'i').test(text) ? text : `${text.trimEnd()}\n\nCloses #${wf.issue}\n`
     gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', body)])
     notes.push('The PR body is updated.')
+  }
+  if (!wf.direct && wf.prs.length) {
+    const traced = planTraceProblems(wf, readPr(wf, prOf(wf)).body ?? '')
+    if (traced.length) throw new Fail(1, `ndev-flow: a record that this PR fulfils does not link it:\n- ${traced.join('\n- ')}\nThe commit is held here and not pushed. Run ndev-flow finishedDevelopment again with the record in --files.`)
   }
   if (args.hardening && !wf.direct) comment(wf, prOf(wf), `Hardening evidence:\n\n${args.hardening}`)
   apply(wf, member ? { state: 'developed' } : to, 'finishedDevelopment', notes)
@@ -926,6 +932,7 @@ function doneProblems(wf: Workflow, sha: string, pr: Pr): { problems: string[]; 
   for (const f of (wf.followUps ?? []).filter((x: { mode: string }) => x.mode === 'this_agent')) {
     if (!hasIssueRef(pr.body ?? '', f.issue)) problems.push(`The PR body has lost "Closes #${f.issue}". Put it back: this PR carries that issue.`)
   }
+  problems.push(...planTraceProblems(wf, pr.body ?? '').map(p => `${p}.`))
   return { problems, feedback: newFeedback(wf, pr, wf.feedbackAt ?? 0) }
 }
 
@@ -1019,10 +1026,24 @@ function finishedInterview(wf: Workflow, config: Config) {
   return report(wf, config, notes)
 }
 
-const RECORDS_DIR = 'docs/formal/requirements'
+function citedRecords(root: string, ids: string[]) {
+  const dir = join(root, RECORDS_DIR)
+  const files = existsSync(dir) ? readdirSync(dir) : []
+  return ids.flatMap(id => {
+    const file = recordFileOf(id, files)
+    return file ? [summarise(file, readFileSync(join(dir, file), 'utf8'))] : []
+  })
+}
 
-function planLine(text: string, name: string): string | undefined {
-  return new RegExp(`^[\\s>*+-]*(?:\\*\\*|__)?${name}(?:\\*\\*|__)?:(?:\\*\\*|__)?[ \\t]*(.*)$`, 'im').exec(text)?.[1].trim()
+function issueRecords(root: string, issue: number, body: string): string[] {
+  if (!existsSync(join(root, RECORDS_DIR))) return []
+  const ids = citedIds(body)
+  return issueRecordNotes(issue, ids, citedRecords(root, ids))
+}
+
+function planTraceProblems(wf: Workflow, body: string): string[] {
+  const line = planLine(body, 'Requirements')
+  return line ? traceProblems(citedRecords(wf.root, citedIds(line)), prUrl(wf)) : []
 }
 
 function planRecordProblems(root: string, text: string): string[] {
@@ -1034,9 +1055,10 @@ function planRecordProblems(root: string, text: string): string[] {
   else if (!requirements) problems.push('its "Requirements:" line is empty; write the value on the same line')
   else {
     const files = readdirSync(records)
-    for (const id of new Set(requirements.match(/\bREQ-\d{4}\b/g) ?? [])) {
-      if (!files.some(f => f.startsWith(`${id.slice(4)}-`) && f.endsWith('.md'))) problems.push(`${id} has no record in ${RECORDS_DIR}`)
+    for (const id of citedIds(requirements)) {
+      if (!recordFileOf(id, files)) problems.push(`${id} has no record in ${RECORDS_DIR}`)
     }
+    problems.push(...verificationProblems(text, citedIds(requirements)))
   }
   const model = planLine(text, 'Model')
   if (model === undefined) problems.push('it has no "Model:" line')
