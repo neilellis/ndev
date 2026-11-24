@@ -2,7 +2,7 @@
 // by rule and records each call, so a test can see which route answered and what it cost.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -23,6 +23,7 @@ const line = process.argv.slice(2).join(' ').replace(/\\n/g, ' ')
 fs.appendFileSync(${JSON.stringify(log)}, line + '\\n')
 const rule = ${JSON.stringify(rules)}.find(r => line.includes(r.match))
 if (!rule) { console.error('stub: no rule for: ' + line); process.exit(99) }
+if (rule.run) require('child_process').execSync(rule.run)
 if (rule.out) process.stdout.write(rule.out)
 if (rule.err) process.stderr.write(rule.err)
 process.exit(rule.exit ?? 0)
@@ -624,4 +625,70 @@ test('issue-read gives the state reason in REST words through both routes', () =
   const rest = ghsh(['issue-read', '3'], [{ match: 'issue view', err: 'GraphQL: rate limit', exit: 1 }, { match: 'api repos/o/r/issues/3', out: '{"number":3,"title":"T","state":"closed","state_reason":"not_planned","body":"b","html_url":"u"}' }])
   assert.deepEqual(json(viaGh), json(rest))
   assert.equal(json(rest).state_reason, 'not_planned')
+})
+
+test('issue-states lists every issue and pull request in one paginated REST read, and through gh when REST fails', () => {
+  const page = '{"number":1,"kind":"issue","state":"closed","state_reason":"not_planned","merged":null}\n{"number":2,"kind":"pull","state":"closed","state_reason":null,"merged":true}\n'
+  const rest = ghsh(['issue-states'], [{ match: 'api --paginate repos/o/r/issues?state=all&per_page=100', out: page }])
+  assert.equal(rest.code, 0, rest.err)
+  assert.equal(rest.calls.length, 1)
+  assert.deepEqual(rest.lines.map(l => JSON.parse(l)), [
+    { number: 1, kind: 'issue', state: 'closed', state_reason: 'not_planned', merged: null },
+    { number: 2, kind: 'pull', state: 'closed', state_reason: null, merged: true },
+  ])
+  const viaGh = ghsh(['issue-states'], [
+    { match: 'api --paginate', err: LIMITED, exit: 1 },
+    { match: 'issue list', out: '[{"number":1,"state":"CLOSED","stateReason":"NOT_PLANNED"}]' },
+    { match: 'pr list', out: '[{"number":2,"state":"MERGED"}]' },
+  ])
+  assert.equal(viaGh.code, 0, viaGh.err)
+  assert.deepEqual(viaGh.lines.map(l => JSON.parse(l)), rest.lines.map(l => JSON.parse(l)))
+})
+
+test('the read cache is off by default, answers a repeated read when GH_CACHE_TTL is set, and a write clears it', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'gh-cache-'))
+  const issue = [{ match: 'issue view 3', out: '{"number":3,"title":"T","state":"OPEN","stateReason":null,"body":"b","url":"u"}' }]
+  const off = { env: { NDEV_GH_CACHE_DIR: cache } }
+  assert.equal(ghsh(['issue-read', '3'], issue, off).calls.length, 1)
+  assert.equal(ghsh(['issue-read', '3'], issue, off).calls.length, 1)
+  const on = { env: { NDEV_GH_CACHE_DIR: cache, GH_CACHE_TTL: '600' } }
+  const first = ghsh(['issue-read', '3'], issue, on)
+  assert.equal(first.calls.length, 1)
+  const again = ghsh(['issue-read', '3'], issue, on)
+  assert.equal(again.code, 0, again.err)
+  assert.equal(again.calls.length, 0)
+  assert.deepEqual(json(again), json(first))
+  assert.match(again.err, /issue-read 3 of o\/r answered from a cache made \d+s ago/)
+  assert.equal(ghsh(['label', '3', 'bug'], [{ match: 'issue edit 3', out: '' }, { match: 'labels', out: '[]' }], on).code, 0)
+  assert.equal(ghsh(['issue-read', '3'], issue, on).calls.length, 1)
+  const stale = { env: { NDEV_GH_CACHE_DIR: cache, GH_CACHE_TTL: '0' } }
+  assert.equal(ghsh(['issue-read', '3'], issue, stale).calls.length, 1)
+})
+
+test('the cache files are private, and a write clears the cache again after it lands', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'gh-cache-'))
+  const on = { env: { NDEV_GH_CACHE_DIR: cache, GH_CACHE_TTL: '600' } }
+  const issue = [{ match: 'issue view 3', out: '{"number":3,"title":"T","state":"OPEN","stateReason":null,"body":"b","url":"u"}' }]
+  assert.equal(ghsh(['issue-read', '3'], issue, on).code, 0)
+  const file = join(cache, 'o__r', 'issue-read 3.json')
+  assert.equal(statSync(file).mode & 0o077, 0)
+  assert.equal(statSync(join(cache, 'o__r')).mode & 0o077, 0)
+  const write = ghsh(['label', '3', 'bug'], [{ match: 'pr edit 3', out: '', run: `mkdir -p '${join(cache, 'o__r')}' && touch '${file}'` }, { match: 'labels', out: '[]' }], on)
+  assert.equal(write.code, 0, write.err)
+  assert.equal(existsSync(file), false)
+})
+
+test('the cache key does not depend on the case of the repository name', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'gh-cache-'))
+  const issue = [{ match: 'issue view 3', out: '{"number":3,"title":"T","state":"OPEN","stateReason":null,"body":"b","url":"u"}' }]
+  assert.equal(ghsh(['issue-read', '3'], issue, { env: { NDEV_GH_CACHE_DIR: cache, GH_CACHE_TTL: '600', GH_REPO: 'O/R' } }).code, 0)
+  assert.deepEqual(readdirSync(cache), ['o__r'])
+})
+
+test('a failed read leaves nothing in the cache', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'gh-cache-'))
+  const on = { env: { NDEV_GH_CACHE_DIR: cache, GH_CACHE_TTL: '600' } }
+  const failed = ghsh(['issue-read', '9'], [{ match: 'issue view 9', err: 'not found', exit: 1 }, { match: 'api repos/o/r/issues/9', err: 'HTTP 404', exit: 1 }], on)
+  assert.notEqual(failed.code, 0)
+  assert.equal(ghsh(['issue-read', '9'], [{ match: 'issue view 9', out: '{"number":9,"title":"T","state":"OPEN","stateReason":null,"body":"b","url":"u"}' }], on).calls.length, 1)
 })

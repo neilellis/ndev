@@ -14,6 +14,7 @@
 #   gh.sh default-branch                               # {default_branch}
 #   gh.sh issue-read <n>                               # {number,title,state,body,url}
 #   gh.sh pr-read <n>                                  # {number,state,merged,draft,mergeable,mergeable_state,...}
+#   gh.sh issue-states                                 # every issue and PR in one read: {number,kind,state,state_reason,merged} per line
 #   gh.sh pr-list [--head <branch>] [--state open|closed|all] [--limit <n>]     # one line per PR
 #   gh.sh pr-rows [--limit <n>]     # your open PRs with merge state and checks, in one call; gh's shape; no REST route
 #   gh.sh commit-checks <sha> [--pr <n>]               # {check_runs,statuses}. --pr: one gh call, only the runs of the PR's branch
@@ -57,6 +58,9 @@
 #   gh.sh help
 #
 # Environment: GH_REPO, GH_USE_KEYRING, GH_PROJECT_OWNER, GH_PROJECT_NUMBER (see lib.sh).
+# GH_CACHE_TTL=<seconds> answers issue-read, pr-read and issue-states from a cache on disk
+# (NDEV_GH_CACHE_DIR, default ~/.cache/ndev/gh) while it is younger. Off by default. Any other
+# command clears the cache of its repository.
 # GH_PROSE_CHECK, if set, is a command run as `$GH_PROSE_CHECK <body-file>` before a post;
 # a failure refuses the post.
 set -euo pipefail
@@ -347,7 +351,41 @@ graph_deps() {
 }
 rest_deps() { GH api "repos/$REPO/issues/$n/dependencies/$path?per_page=100" | jq -c '.[] | {number, title, state, url: .html_url}'; }
 
+cache_dir() { local key="${REPO,,}"; printf '%s/%s' "${NDEV_GH_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ndev/gh}" "${key//\//__}"; }
+
+cached() {
+  local key="$1" ttl="${GH_CACHE_TTL:-0}" file age out
+  shift
+  [[ "$ttl" =~ ^[0-9]+$ ]] || die "GH_CACHE_TTL must be a number of seconds, not '$ttl'."
+  if [ "$ttl" -eq 0 ]; then "$@"; return; fi
+  file="$(cache_dir)/$key.json"
+  if [ -f "$file" ]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$file" 2>/dev/null || stat -f %m "$file") ))
+    if [ "$age" -lt "$ttl" ]; then
+      echo "gh.sh: $key of $REPO answered from a cache made ${age}s ago. GH_CACHE_TTL=0 reads it fresh." >&2
+      cat "$file"
+      return 0
+    fi
+  fi
+  out="$("$@")" || exit $?
+  (umask 077 && mkdir -p "$(dirname "$file")" && printf '%s\n' "$out" >"$file.$$") && mv "$file.$$" "$file"
+  printf '%s\n' "$out"
+}
+
+graph_states() {
+  local issues pulls
+  issues="$(GH issue list --repo "$REPO" --state all --limit 100000 --json number,state,stateReason)" || return 1
+  pulls="$(GH pr list --repo "$REPO" --state all --limit 100000 --json number,state)" || return 1
+  jq -c '.[] | {number, kind: "issue", state: (.state | ascii_downcase), state_reason: (.stateReason // "" | ascii_downcase | if . == "" then null else . end), merged: null}' <<<"$issues"
+  jq -c '.[] | {number, kind: "pull", state: (if .state == "MERGED" then "closed" else (.state | ascii_downcase) end), state_reason: null, merged: (.state == "MERGED")}' <<<"$pulls"
+}
+rest_states() { GH api --paginate "repos/$REPO/issues?state=all&per_page=100" --jq '.[] | {number, kind: (if .pull_request then "pull" else "issue" end), state, state_reason, merged: (if .pull_request then (.pull_request.merged_at != null) else null end)}'; }
+
 cmd="${1:-help}"; shift || true
+case "$cmd" in
+  repo|default-branch|issue-read|pr-read|issue-states|pr-list|pr-rows|commit-checks|feedback|me|repo-read|pr-commit-messages|issue-search|view-json|run-status|pr-diff|pr-commit-dates|pr-search|project-list|milestones|issues-by-milestone|labelled|unpushed|help|-h|--help|wait-for-pr) ;;
+  *) if gh_resolve_repo 2>/dev/null; then rm -rf "$(cache_dir)"; trap 'rm -rf "$(cache_dir)"' EXIT; fi ;;
+esac
 case "$cmd" in
   repo)
     need_repo
@@ -363,14 +401,19 @@ case "$cmd" in
     need_repo
     n="${1:?issue number required}"
     rest_issue() { GH api "repos/$REPO/issues/$n" | jq -c '{number, title, state, state_reason, body, url: .html_url}'; }
-    gh_first "read issue #$n of $REPO" '{number, title, state: (.state | ascii_downcase), state_reason: (.stateReason // "" | ascii_downcase | if . == "" then null else . end), body, url}' rest_issue issue view "$n" --repo "$REPO" --json number,title,state,stateReason,body,url
+    cached "issue-read $n" gh_first "read issue #$n of $REPO" '{number, title, state: (.state | ascii_downcase), state_reason: (.stateReason // "" | ascii_downcase | if . == "" then null else . end), body, url}' rest_issue issue view "$n" --repo "$REPO" --json number,title,state,stateReason,body,url
     ;;
 
   pr-read)
     need_repo
     n="${1:?PR number required}"
     rest_pr() { GH api "repos/$REPO/pulls/$n" | jq -c "$PR_FROM_REST"; }
-    gh_first "read PR #$n of $REPO" "$PR_FROM_GH" rest_pr pr view "$n" --repo "$REPO" --json "$PR_FIELDS"
+    cached "pr-read $n" gh_first "read PR #$n of $REPO" "$PR_FROM_GH" rest_pr pr view "$n" --repo "$REPO" --json "$PR_FIELDS"
+    ;;
+
+  issue-states)
+    need_repo
+    cached "issue-states" rest_first "list the issues and PRs of $REPO" rest_states graph_states
     ;;
 
   pr-list)

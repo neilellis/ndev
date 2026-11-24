@@ -183,6 +183,8 @@ The guard proves that the `agreed` field matches the text. It does not prove tha
 
 A record that is not in force can keep a closed link and a removed file, but not a link that does not exist.
 
+`links` reads each GitHub link once in a run. For a repository with 10 or more different links, it lists all issues and pull requests in one read (`gh.sh issue-states`). Then it reads on its own each link that is not in the list. It does the same for a link whose kind (issue or pull request) is different in the list. It keeps GitHub answers in a cache for 10 minutes, and its output says when an answer came from the cache. To read each answer fresh, set `GH_CACHE_TTL=0`.
+
 ### Find the records of a file, an issue or a pull request
 
 `ndev requirements for <target>...` lists the records that relate to each target. For a tracked file, these are the records that name it in a `- File:` pattern, the Source text, the `model` list, or an `- ADR:` or `- PDR:` line. An issue or a pull request is a GitHub link, or `#N` with `--repo <owner>/<repo>`. For it, these are the records that link it in the Trace or the Source text, and the records that its body cites. The default is the records in force. `--status <status>` gives one status, and `--all` gives each status. A target with no record is a result, and the command exits 0. A target that is not a tracked file or a GitHub link fails.

@@ -1720,17 +1720,58 @@ const GITHUB_LINK = /^https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/(issues|pull)\/
 const CLOSING = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/issues\/(\d+)|([\w.-]+\/[\w.-]+)?#(\d+))/gi;
 const UNIMPLEMENTED = { not_planned: "closed as not planned", duplicate: "closed as a duplicate" };
 
-function ghRead(root, repo, kind, number) {
+const READS = new Map();
+const STATES = new Map();
+const BULK = 10;
+let cachedAge;
+
+function gh(root, repo, args) {
   const script = process.env.NDEV_REQUIREMENTS_GH || path.join(import.meta.dirname, "../github/gh.sh");
-  const command = kind === "pull" ? "pr-read" : "issue-read";
-  const out = spawnSync("bash", [script, command, number], { cwd: root, encoding: "utf8", env: { ...process.env, GH_REPO: repo } });
-  if (out.status !== 0) return { error: `gh.sh ${command} ${number} in ${repo} exited ${out.status}: ${(out.stderr.trim() || out.stdout.trim() || "no output").slice(0, 300)}` };
-  try {
-    return { item: JSON.parse(out.stdout) };
-  } catch (error) {
-    return { error: `gh.sh ${command} ${number} in ${repo} printed no JSON (${error.message}): ${out.stdout.slice(0, 200)}` };
-  }
+  const out = spawnSync("bash", [script, ...args], { cwd: root, encoding: "utf8", env: { ...process.env, GH_REPO: repo, GH_CACHE_TTL: process.env.GH_CACHE_TTL ?? "600" } });
+  const age = out.stderr?.match(/answered from a cache made (\d+)s ago/);
+  if (age) cachedAge = Math.max(cachedAge ?? 0, Number(age[1]));
+  if (out.status !== 0) return { error: `gh.sh ${args.join(" ")} in ${repo} exited ${out.status}: ${(out.stderr.trim() || out.stdout.trim() || "no output").slice(0, 300)}` };
+  return { stdout: out.stdout };
 }
+
+function ghRead(root, repo, kind, number) {
+  const command = kind === "pull" ? "pr-read" : "issue-read";
+  const key = `${repo.toLowerCase()} ${command} ${number}`;
+  if (READS.has(key)) return READS.get(key);
+  const { stdout, error } = gh(root, repo, [command, number]);
+  let result;
+  if (error) result = { error };
+  else {
+    try {
+      result = { item: JSON.parse(stdout) };
+    } catch (parse) {
+      result = { error: `gh.sh ${command} ${number} in ${repo} printed no JSON (${parse.message}): ${stdout.slice(0, 200)}` };
+    }
+  }
+  READS.set(key, result);
+  return result;
+}
+
+function ghStates(root, repo) {
+  const key = repo.toLowerCase();
+  if (STATES.has(key)) return STATES.get(key);
+  const { stdout, error } = gh(root, repo, ["issue-states"]);
+  if (error) throw new Failure(`The issues and pull requests of ${repo} could not be listed: ${error}. Repair GitHub access and run the command again.`);
+  const states = new Map();
+  for (const line of stdout.split("\n").filter(Boolean)) {
+    let item;
+    try {
+      item = JSON.parse(line);
+    } catch (parse) {
+      throw new Failure(`gh.sh issue-states in ${repo} printed a line that is not JSON (${parse.message}): ${line.slice(0, 200)}`);
+    }
+    states.set(String(item.number), item);
+  }
+  STATES.set(key, states);
+  return states;
+}
+
+const cacheNote = () => (cachedAge === undefined ? "" : `Some GitHub answers came from a cache up to ${cachedAge}s old. Run with GH_CACHE_TTL=0 to read them fresh.\n`);
 
 function changedRecords(root, base) {
   const changed = git(root, ["diff", "--name-only", base, "--", DIR]).split("\n");
@@ -1760,7 +1801,8 @@ function linkProblems(root, record, files) {
       problems.push(`${where} is not a link of the form https://github.com/<owner>/<repo>/issues/<n> or https://github.com/<owner>/<repo>/pull/<n>, so links cannot read it. Correct the link.`);
       continue;
     }
-    const { item, error } = ghRead(root, parts[1], parts[2], parts[3]);
+    const listed = STATES.get(parts[1].toLowerCase())?.get(parts[3]);
+    const { item, error } = listed?.kind === (parts[2] === "pull" ? "pull" : "issue") ? { item: listed } : ghRead(root, parts[1], parts[2], parts[3]);
     if (error) problems.push(`${where} could not be read: ${error}. If it does not exist, remove the line. Otherwise repair GitHub access and run: ${repair}`);
     else if (!inForce) continue;
     else if (link[1] === "Issue" && item.state === "closed" && UNIMPLEMENTED[item.state_reason]) problems.push(`${where} was ${UNIMPLEMENTED[item.state_reason]}, so it does not implement or plan the requirement. Remove the line, or link the issue or pull request that does.`);
@@ -1775,17 +1817,24 @@ function recordLinks(root, ids, options) {
   if (!chosen.length) return `No record changed since ${options.base}\n`;
   let tracked;
   const files = () => (tracked ??= trackedFiles(root));
+  const records = chosen.map(read);
+  const links = new Map();
+  for (const record of records)
+    for (const line of traceLines(record)) {
+      const parts = line.match(TRACE_LINK)?.[2].trim().match(GITHUB_LINK);
+      if (parts) links.set(parts[1], (links.get(parts[1]) ?? new Set()).add(parts[3]));
+    }
+  for (const [repo, numbers] of links) if (numbers.size >= BULK) ghStates(root, repo);
   const problems = [];
   const lines = [];
-  for (const entry of chosen) {
-    const record = read(entry);
+  for (const record of records) {
     const result = linkProblems(root, record, files);
     problems.push(...result.problems);
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     lines.push(`${record.id}: ${plural(result.counts.Issue, "issue", "issues")}, ${plural(result.counts.PR, "pull request", "pull requests")} and ${plural(result.counts.File, "file line", "file lines")} link what exists`);
   }
-  if (problems.length) throw new Failure(problems.join("\n"));
-  return lines.join("\n") + "\n";
+  if (problems.length) throw new Failure(problems.join("\n") + (cacheNote() ? `\n${cacheNote()}` : ""));
+  return lines.join("\n") + "\n" + cacheNote();
 }
 
 const words = (text) => (text ?? "").replace(/\s+/g, " ").trim();

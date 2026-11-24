@@ -12,7 +12,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 
 | Script | What it does | Used by |
 |---|---|---|
-| `gh.sh` | Compact GitHub reads and writes (issues, PRs, project board), one JSON object per line. The gh command runs first and REST is the fallback; every other script reaches GitHub only through it. Guard: `github/tests/no_raw_gh.test.mjs`. | github, issue, goal-work, work-heavy, work-heavy-auto, work-light-auto, diagram-design, agents board-survey and issue-implementer, `board/board.sh` |
+| `gh.sh` | Compact GitHub reads and writes (issues, PRs, project board), one JSON object per line. The gh command runs first and REST is the fallback; every other script reaches GitHub only through it. `GH_CACHE_TTL=<seconds>` keeps the answers of `issue-read`, `pr-read` and `issue-states` in a cache (off by default), and every other command clears the cache of its repository. Guard: `github/tests/no_raw_gh.test.mjs`. | github, issue, goal-work, work-heavy, work-heavy-auto, work-light-auto, diagram-design, agents board-survey and issue-implementer, `board/board.sh` |
 | `lib.sh` | Shared GitHub settings (repository, retries). Source it; do not run it. | the scripts in `github/`, `work/work_status.py`, command-reuse |
 | `project-config.sh` | Sets `GH_REPO`, `GH_PROJECT_OWNER` and `GH_PROJECT_NUMBER` from `.neil-dev.json`. Source it. | `github/` scripts, `board/board.sh` |
 | `dump.py` | Dumps an issue or PR to one markdown file and downloads its images. | github, command-reuse |

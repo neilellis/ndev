@@ -2206,14 +2206,17 @@ const fakeGh = (answers) => {
   writeFileSync(path.join(dir, "answers.json"), JSON.stringify(answers));
   writeFileSync(path.join(dir, "gh.cjs"), `const fs = require("fs");
 const [command, number] = process.argv.slice(2);
-const key = process.env.GH_REPO + " " + command + " " + number;
+const key = process.env.GH_REPO + " " + command + (number === undefined ? "" : " " + number);
 fs.appendFileSync(${JSON.stringify(log)}, key + "\\n");
+fs.appendFileSync(${JSON.stringify(path.join(dir, "ttl.log"))}, String(process.env.GH_CACHE_TTL) + "\\n");
 const answer = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(dir, "answers.json"))}, "utf8"))[key];
 if (!answer) { process.stderr.write("gh.sh: read " + key + ": HTTP 404: Not Found"); process.exit(1); }
-process.stdout.write(JSON.stringify(answer));
+if (answer.note) process.stderr.write(answer.note);
+process.stdout.write(Array.isArray(answer.lines) ? answer.lines.map((l) => JSON.stringify(l) + "\\n").join("") : JSON.stringify(answer));
 `);
   writeFileSync(path.join(dir, "gh.sh"), `#!/usr/bin/env bash\nexec node ${JSON.stringify(path.join(dir, "gh.cjs"))} "$@"\n`);
-  return { script: path.join(dir, "gh.sh"), calls: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : []) };
+  const ttl = path.join(dir, "ttl.log");
+  return { script: path.join(dir, "gh.sh"), calls: () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : []), ttls: () => (existsSync(ttl) ? readFileSync(ttl, "utf8").trim().split("\n").filter(Boolean) : []) };
 };
 const runWith = (gh, root, ...args) => {
   const out = spawnSync(NDEV, ["requirements", ...args, "--root", root], { encoding: "utf8", env: { ...process.env, NDEV_REQUIREMENTS_GH: gh.script } });
@@ -2281,6 +2284,41 @@ describe("links", () => {
     assert.match(out.stderr, /REQ-0002: "- PR: https:\/\/github\.com\/o\/r\/pull\/12" was closed without a merge/);
     assert.doesNotMatch(out.stderr, /REQ-0001|REQ-0003/);
     assert.deepEqual(gh.calls().sort(), ["o/r issue-read 1", "o/r issue-read 2", "o/r pr-read 12"]);
+  });
+
+  it("reads a link once when several records cite it", () => {
+    const gh = fakeGh(ANSWERS);
+    const root = linked({ [FILE]: record("0001", { trace: `- Issue: ${ISSUE(1)}\n- PR: ${PULL(10)}` }), "0002-a-retry-keeps-the-first-result.md": record("0002", { trace: `- Issue: ${ISSUE(1)}\n- PR: ${PULL(10)}` }) });
+    const out = runWith(gh, root, "links", "REQ-0001", "REQ-0002");
+    assert.equal(out.status, 0, out.stderr);
+    assert.deepEqual(gh.calls().sort(), ["o/r issue-read 1", "o/r pr-read 10"]);
+  });
+
+  it("reads many links of one repository in one issue-states call, and a link missing from the list on its own", () => {
+    const state = (number, kind, state, state_reason = null, merged = null) => ({ number, kind, state, state_reason, merged });
+    const lines = [...Array.from({ length: 10 }, (_, i) => state(20 + i, "issue", "open")), state(3, "issue", "closed", "not_planned"), state(12, "pull", "closed", null, false)];
+    const gh = fakeGh({ "o/r issue-states": { lines }, "o/r issue-read 40": issueAnswer(40, "open") });
+    const trace = [...Array.from({ length: 10 }, (_, i) => `- Issue: ${ISSUE(20 + i)}`), `- Issue: ${ISSUE(3)}`, `- PR: ${PULL(12)}`, `- Issue: ${ISSUE(40)}`, `- PR: ${PULL(21)}`].join("\n");
+    const root = linked({ [FILE]: record("0001", { trace }) });
+    const out = runWith(gh, root, "links", "REQ-0001");
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /issues\/3" was closed as not planned/);
+    assert.match(out.stderr, /pull\/12" was closed without a merge/);
+    assert.match(out.stderr, /pull\/21" could not be read: .*HTTP 404/);
+    assert.doesNotMatch(out.stderr, /issues\/(2\d|40)"/);
+    assert.deepEqual(gh.calls().sort(), ["o/r issue-read 40", "o/r issue-states", "o/r pr-read 21"]);
+  });
+
+  it("runs gh.sh with a 10-minute read cache unless GH_CACHE_TTL is set, and says when an answer came from the cache", () => {
+    const gh = fakeGh({ ...ANSWERS, "o/r issue-read 1": { ...issueAnswer(1, "open"), note: "gh.sh: issue-read 1 of o/r answered from a cache made 42s ago. GH_CACHE_TTL=0 reads it fresh.\n" } });
+    const root = linked({ [FILE]: record("0001", { trace: `- Issue: ${ISSUE(1)}\n- Issue: ${ISSUE(2)}` }) });
+    const out = runWith(gh, root, "links", "REQ-0001");
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /Some GitHub answers came from a cache up to 42s old\. Run with GH_CACHE_TTL=0 to read them fresh\./);
+    assert.deepEqual(gh.ttls(), ["600", "600"]);
+    const fresh = spawnSync(NDEV, ["requirements", "links", "REQ-0001", "--root", root], { encoding: "utf8", env: { ...process.env, NDEV_REQUIREMENTS_GH: gh.script, GH_CACHE_TTL: "0" } });
+    assert.equal(fresh.status, 0, fresh.stderr);
+    assert.deepEqual(gh.ttls().slice(2), ["0", "0"]);
   });
 
   it("refuses a call with no record and no base, and an unknown record", () => {
