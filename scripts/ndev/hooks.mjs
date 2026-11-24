@@ -9,7 +9,7 @@ import { ensureProjectFiles } from '../../orca-plugin/ndev/worker/files.mjs'
 import { binding } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
 import { readProject } from './project.mjs'
-import { hasRecords, linkCommitReason, linkProblemNote, rawCreateReason, recordLinkCheck, savesCommit } from './requirement-hooks.mjs'
+import { hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, savesCommit } from './requirement-hooks.mjs'
 import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
 
 const events = new Set(['session-start', 'prompt-submit', 'prompt-context', 'pre-tool-use', 'post-tool-use', 'turn-start', 'turn-complete', 'session-end', 'compact'])
@@ -81,10 +81,10 @@ function toolCall(payload) {
   return { tool, command, input, shell: shellTools.has(tool), edit: editTools.has(tool) }
 }
 
-function linkCheck(root, id, { commit = false } = {}) {
-  const saved = id ? readObject(hookSessionFile(root, id), { missing: {} }).recordLinks : undefined
-  const check = recordLinkCheck(root, commit && !saved?.ok ? undefined : saved)
-  if (check?.fresh) changeSession(root, id, { recordLinks: { key: check.key, ok: check.ok, output: check.output } })
+function changedRecordCheck(root, id, { commit = false } = {}) {
+  const saved = id ? readObject(hookSessionFile(root, id), { missing: {} }).recordChecks : undefined
+  const check = recordCheck(root, commit && !saved?.ok ? undefined : saved)
+  if (check?.fresh) changeSession(root, id, { recordChecks: { key: check.key, ok: check.ok, output: check.output, commands: check.commands } })
   return check
 }
 
@@ -373,13 +373,13 @@ export async function runHook([event, ...argv], supplied) {
     reason = rawGitReason(call.command, workspace, workflow, helperCwd, watcherRunning(root, id))
     reason ??= rawCreateReason(root, call.command)
     if (!reason && savesCommit(call.command)) {
-      const check = linkCheck(root, id, { commit: true })
-      if (check && !check.ok) reason = linkCommitReason(check)
+      const check = changedRecordCheck(root, id, { commit: true })
+      if (check && !check.ok) reason = recordCommitReason(check)
     }
   }
   if (event === 'post-tool-use' && (call.shell || call.edit) && successful(payload) && hasRecords(root)) {
-    const check = linkCheck(root, id)
-    if (check?.fresh && !check.ok) notes.push(linkProblemNote(check))
+    const check = changedRecordCheck(root, id)
+    if (check?.fresh && !check.ok) notes.push(recordProblemNote(check))
   }
   if (event === 'session-start') {
     const note = sessionStart(root, id)

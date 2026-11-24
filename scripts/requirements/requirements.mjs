@@ -14,12 +14,12 @@ const IN_FORCE = ["Proposed", "Accepted"];
 const ORIGINS = ["explicit", "implied", "PR"];
 const PULL = /^https:\/\/\S+\/pull\/\d+/;
 const METHODS = ["test", "check", "model", "eval", "review"];
-const SECTIONS = ["Statement", "Source text", "Trace", "Notes", "Log"];
+const SECTIONS = ["Statement", "Explanation", "Source text", "Trace", "Notes", "Log"];
 const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, cites, narrate, narrative, publish, references, retire";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, cites, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -362,6 +362,7 @@ function inspect(root) {
       if (body === undefined) fail(`missing the section "## ${name}".`);
       else if (!body && !proposed) fail(`the section "## ${name}" is empty, and the status is ${record.status}. Fill it, or keep the status Proposed.`);
     }
+    for (const problem of explanationProblems(record)) fail(problem);
     if (record.sections.Log === undefined) fail(`missing the section "## Log".`);
     else {
       const logged = logEntries(record);
@@ -525,6 +526,7 @@ function article(record, retired) {
     `<h3><a href="#${record.id}">${record.id}</a> ${escape(record.title)}</h3>`,
     `<p class="meta">${meta.join(" · ")}</p>`,
     `<div class="statement">\n${blocks(record.sections.Statement ?? "")}\n</div>`,
+    ...(record.sections.Explanation ? [`<h4>Explanation</h4>\n<div class="explanation">\n${blocks(record.sections.Explanation)}\n</div>`] : []),
     ...(sources.length ? [`<h4>Source text</h4>\n<ul>\n${sources.join("\n")}\n</ul>`] : []),
     ...optional,
     `</article>`,
@@ -848,6 +850,7 @@ function publication(root, config) {
     const decided = record.field("Decided by") ? `Decided by ${record.field("Decided by")}, ${record.field("Date")}` : `Dated ${record.field("Date")}`;
     const meta = [record.status, record.field("Origin"), `Verification: ${record.field("Verification")}`, `Author: ${record.author.join(", ")}`, decided].map(text).join(" · ");
     const parts = [`<a id="${record.id}"></a>`, `## ${record.id} ${text(record.title)}`, `${meta} · [record](${fileLink(record.rel)})`, markdown(record.sections.Statement ?? "", DIR, here)];
+    if (record.sections.Explanation) parts.push("### Explanation", markdown(record.sections.Explanation, DIR, here));
     const sources = sourceText(record.sections["Source text"]).sources;
     if (sources.length) parts.push("### Source text", ...sources.map((s) => [`- [${text(s.citation)}](${sourceLink(s)})`, ...(s.quote.length ? [`${fence(s.quote)}text\n${s.quote.join("\n")}\n${fence(s.quote)}`] : [])].join("\n\n")));
     for (const name of ["Trace", "Notes", "Log"]) if (record.sections[name]) parts.push(`### ${name}`, markdown(record.sections[name], DIR, here));
@@ -874,6 +877,7 @@ function publication(root, config) {
       decidedBy: r.field("Decided by") ?? "",
       verification: r.field("Verification"),
       statement: r.sections.Statement ?? "",
+      explanation: r.sections.Explanation ?? "",
       sources: sourceText(r.sections["Source text"]).sources.map((s) => ({ citation: s.citation, link: sourceLink(s) })),
       trace: r.sections.Trace ?? "",
       log: r.sections.Log ?? "",
@@ -1638,6 +1642,26 @@ function recordLinks(root, ids, options) {
   return lines.join("\n") + "\n";
 }
 
+const words = (text) => (text ?? "").replace(/\s+/g, " ").trim();
+
+function explanationProblems(record) {
+  const explanation = record.sections.Explanation;
+  if (explanation === undefined) return [`missing the section "## Explanation". Add it after the Statement: what the requirement entails, in simple English, with each glossary, technical or jargon term defined.`];
+  if (!explanation && record.sections.Statement) return [`the section "## Explanation" is empty, and the Statement has text. Explain what the requirement entails, in simple English, and define each glossary, technical or jargon term.`];
+  if (explanation && words(explanation) === words(record.sections.Statement)) return [`the Explanation repeats the Statement. Explain what the requirement entails, in simple English, and define each glossary, technical or jargon term.`];
+  return [];
+}
+
+function explained(root, ids, options) {
+  if (!ids.length && !options.base) throw new Usage(`explained needs record IDs, or --base <ref> for the records that changed since that ref`);
+  const chosen = options.base ? changedRecords(root, options.base) : ids.map((id) => recordEntry(root, id));
+  if (!chosen.length) return `No record changed since ${options.base}\n`;
+  const records = chosen.map((entry) => read(entry));
+  const problems = records.flatMap((record) => explanationProblems(record).map((problem) => `${record.id}: ${problem}`));
+  if (problems.length) throw new Failure(problems.join("\n"));
+  return records.map((record) => `${record.id}: the Explanation is present\n`).join("");
+}
+
 function inForceCitations(root, text) {
   const records = new Map(entries(root).filter((e) => NAME.test(e.file)).map((e) => [e.id, e]));
   const good = [];
@@ -1713,6 +1737,7 @@ export function runRequirements(argv, { json } = {}) {
       decision: () => decisionLinks(root(), rest[0], rest.slice(1)),
       trace: () => traceAll(root(), options),
       links: () => recordLinks(root(), rest, options),
+      explained: () => explained(root(), rest, options),
       cites: () => bodyCites(root(), rest[0], options),
       narrate: () => narrate(root(), rest[0], options),
       narrative: () => narrative(root()),

@@ -24,6 +24,7 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 | `ndev requirements check` | Fails a record that breaks the format, and a record whose cited lines do not hold its quoted source text. |
 | `ndev requirements render [--check]` | Writes `docs/formal/requirements/generated/requirements.html`. With `--check`, fails when that file is not current. |
 | `ndev requirements guard --base <git ref>` | Fails a record in force whose Trace has no File, Issue or PR link. Fails a record whose Statement or Source text changed since the base with no human agreement, a change to the title, the status, the Statement or the Source text with no new Log entry, a changed Log entry, and a deleted record. Shows the old and the new text. |
+| `ndev requirements explained <REQ-NNNN>... \| --base <git ref>` | Fails a record with no `## Explanation`, an empty Explanation under a Statement, and an Explanation that repeats the Statement. The agent hook runs it with `--base HEAD` after a record changes, and refuses a commit until it passes. |
 | `ndev requirements links <REQ-NNNN>... \| --base <git ref>` | Fails a Trace link that does not exist: a File line that matches no tracked file, and an issue or pull request that GitHub cannot read. In a record in force, it also fails an issue closed as not planned or as a duplicate, and a pull request closed without a merge. |
 | `ndev requirements cites <body file> --kind issue\|pr` | Passes a body that cites a record in force, or a pull request that closes an issue that cites one. Otherwise it fails and says how to find or create the record. `gh.sh issue-new` and `pr-new` run it first. |
 | `ndev requirements agree <REQ-NNNN> --by "<name>"` | Records a human's agreement to the current Statement and Source text. **Only a human runs it.** It refuses to run without a terminal. |
@@ -37,7 +38,7 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 - When `guard` fails, show the human its old and new text. Do not restore or change the text without an answer.
 - When `check` says that the text is now at other lines, the text did not change. Correct the line numbers in the citation.
 - When a statement looks wrong, incomplete or in conflict with another record, say so with the evidence. A change to an accepted statement needs a PDR (the `adr-pdr` skill).
-- You can change the status links, `## Trace` and `## Notes`.
+- You can change the status links, `## Explanation`, `## Trace` and `## Notes`.
 - Each record in force needs a link in the Trace: the files that implement it, the pull request that implemented it, or an issue that plans it. When nothing implements it yet, open an issue and link it. When nothing implements it and nothing will, ask the human whether it is a requirement. A non-functional requirement has `nfr: true` and still needs a link; only when it has truly nothing to link, give the reason as `- None: <reason>`.
 - Add a `## Log` entry for each change to the title, the status, the Statement or the Source text. Never change or remove an entry.
 
@@ -56,10 +57,11 @@ Search before you plan, design or change behaviour. Use the words of the area, t
 1. Search first. If a record covers the requirement, link to it. Do not write a second record.
 2. Create the record with `ndev requirements new`. Give one requirement only.
 3. Write the Statement. When a document states the requirement, use its words.
-4. Add the Source text with `ndev requirements quote`. For a link (an issue, a pull request, a message), write `- <https link>` and then the quoted text. A record of origin `PR` names its pull request.
-5. When the requirement is about state, order or concurrency, write a Quint model with the `quint-modeling` skill and set it with `ndev requirements model`. The section "In the workflow" of the format page tells when a model is needed, and "Prove the model" tells how to prove it with mutants and witnesses. Each source file that cites the record also cites the model path.
-6. Leave the status `Proposed`. A human accepts: then set `status: Accepted`, `decided_by` and the `date`, and add a Log entry. Never accept your own record.
-7. Run `ndev requirements check`, then `ndev requirements render`, and commit the record with the generated file.
+4. Write the Explanation: what the requirement entails, in simple English. Define each glossary, technical or jargon term that the Statement uses (the project glossary has the definitions). Do not repeat the Statement.
+5. Add the Source text with `ndev requirements quote`. For a link (an issue, a pull request, a message), write `- <https link>` and then the quoted text. A record of origin `PR` names its pull request.
+6. When the requirement is about state, order or concurrency, write a Quint model with the `quint-modeling` skill and set it with `ndev requirements model`. The section "In the workflow" of the format page tells when a model is needed, and "Prove the model" tells how to prove it with mutants and witnesses. Each source file that cites the record also cites the model path.
+7. Leave the status `Proposed`. A human accepts: then set `status: Accepted`, `decided_by` and the `date`, and add a Log entry. Never accept your own record.
+8. Run `ndev requirements check`, then `ndev requirements render`, and commit the record with the generated file.
 
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.
 

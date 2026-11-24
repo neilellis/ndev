@@ -566,7 +566,7 @@ function recordsFixture(t) {
     assert.equal(result.status, 0, result.stderr)
   }
   const recordFile = join(root, 'docs/formal/requirements/0001-the-report-names-each-source.md')
-  const record = trace => `---\nid: REQ-0001\ntitle: "The report names each source"\nstatus: Accepted\norigin: explicit\nsection: "Report"\ndate: 2026-01-02\nsource: []\nauthor:\n  - "Neil Ellis"\ndecided_by: "Neil Ellis"\nverification: unassigned\nissues: []\nprs: []\n---\n\n## Statement\n\nThe report names each source.\n\n## Source text\n\n## Trace\n\n${trace}\n\n## Notes\n\n## Log\n\n- 2026-01-02: Created.\n`
+  const record = (trace, explanation = 'The report gives a list of each document that it uses.') => `---\nid: REQ-0001\ntitle: "The report names each source"\nstatus: Accepted\norigin: explicit\nsection: "Report"\ndate: 2026-01-02\nsource: []\nauthor:\n  - "Neil Ellis"\ndecided_by: "Neil Ellis"\nverification: unassigned\nissues: []\nprs: []\n---\n\n## Statement\n\nThe report names each source.\n\n## Explanation\n\n${explanation}\n\n## Source text\n\n## Trace\n\n${trace}\n\n## Notes\n\n## Log\n\n- 2026-01-02: Created.\n`
   mkdirSync(join(root, 'docs/formal/requirements'), { recursive: true })
   mkdirSync(join(root, 'src'))
   writeFileSync(join(root, 'src/report.js'), 'export {}\n')
@@ -609,9 +609,20 @@ test('a changed record that links a missing file is reported once after the edit
   assert.equal(call('post-tool-use', 'Bash', { command: 'ls' }, { exitCode: 0 }), null)
   for (const command of ['git commit -am change', 'ndev flow checkpoint --issue 3']) {
     const reason = call('pre-tool-use', 'Bash', { command }).hookSpecificOutput.permissionDecisionReason
-    assert.match(reason, /link problems, so this commit is refused:[\s\S]*src\/gone\.js[\s\S]*ndev requirements links --base HEAD/, command)
+    assert.match(reason, /have problems, so this commit is refused:[\s\S]*src\/gone\.js[\s\S]*ndev requirements links --base HEAD/, command)
   }
   writeFileSync(recordFile, record('- File: src/report.js'))
+  assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
+})
+
+test('a changed record with no Explanation is reported after the edit, and refuses a commit until it has one', t => {
+  const { recordFile, record, call } = recordsFixture(t)
+  writeFileSync(recordFile, record('- File: src/report.js', ''))
+  const note = call('post-tool-use', 'Write', { file_path: recordFile }).hookSpecificOutput.additionalContext
+  assert.match(note, /REQ-0001: the section "## Explanation" is empty, and the Statement has text/)
+  const reason = call('pre-tool-use', 'Bash', { command: 'git commit -am change' }).hookSpecificOutput.permissionDecisionReason
+  assert.match(reason, /this commit is refused:[\s\S]*## Explanation" is empty[\s\S]*ndev requirements explained --base HEAD/)
+  writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
   assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
 })
 

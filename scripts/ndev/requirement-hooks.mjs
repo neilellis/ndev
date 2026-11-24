@@ -41,21 +41,27 @@ function changedRecordKey(root) {
   return hash.digest('hex')
 }
 
-export function recordLinkCheck(root, cached) {
+const CHECKS = ['links', 'explained']
+
+export function recordCheck(root, cached) {
   if (!hasRecords(root)) return null
   const key = changedRecordKey(root)
   if (!key) return null
   if (cached?.key === key) return { ...cached, fresh: false }
-  const ran = run(process.execPath, [CLI, 'requirements', 'links', '--base', 'HEAD', '--root', root], { cwd: root, timeout: 120_000 })
-  const output = [ran.stdout.trim(), ran.stderr.trim()].filter(Boolean).join('\n')
-  if (ran.status !== 0 && ran.status !== 1) throw new CliError(1, `ndev requirements links --base HEAD in ${root} exited ${ran.status}: ${output || 'no output'}`, { repair: `Run ndev requirements links --base HEAD in ${root} and repair the cause.` })
-  return { key, ok: ran.status === 0, output, fresh: true }
+  const failed = []
+  for (const name of CHECKS) {
+    const ran = run(process.execPath, [CLI, 'requirements', name, '--base', 'HEAD', '--root', root], { cwd: root, timeout: 120_000 })
+    const output = [ran.stdout.trim(), ran.stderr.trim()].filter(Boolean).join('\n')
+    if (ran.status !== 0 && ran.status !== 1) throw new CliError(1, `ndev requirements ${name} --base HEAD in ${root} exited ${ran.status}: ${output || 'no output'}`, { repair: `Run ndev requirements ${name} --base HEAD in ${root} and repair the cause.` })
+    if (ran.status === 1) failed.push({ output, command: `ndev requirements ${name} --base HEAD` })
+  }
+  return { key, ok: !failed.length, output: failed.map(f => f.output).join('\n'), commands: failed.map(f => f.command), fresh: true }
 }
 
-export function linkProblemNote(result) {
-  return `The changed requirement records link what does not exist or what did not implement them:\n${result.output}\nCorrect the Trace lines. A commit is refused until ndev requirements links --base HEAD passes.`
+export function recordProblemNote(result) {
+  return `The changed requirement records have problems:\n${result.output}\nCorrect the records. A commit is refused until ${result.commands.join(' and ')} pass${result.commands.length === 1 ? 'es' : ''}.`
 }
 
-export function linkCommitReason(result) {
-  return `The changed requirement records have link problems, so this commit is refused:\n${result.output}\nCorrect the Trace lines, then check with: ndev requirements links --base HEAD`
+export function recordCommitReason(result) {
+  return `The changed requirement records have problems, so this commit is refused:\n${result.output}\nCorrect the records, then check with: ${result.commands.join(' and ')}`
 }
