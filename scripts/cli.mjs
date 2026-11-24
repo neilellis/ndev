@@ -141,6 +141,7 @@ const groups = {
       uncovered: '[<path>...]', untraced: '--prs <file>',
       link: '<REQ-NNNN> <pull request link> [--prs <file>] [--issue <issue link>]',
       file: '<REQ-NNNN> <path or pattern>...', decision: '<REQ-NNNN> <path>...', trace: '--prs <file> --issues <file>', links: '<REQ-NNNN>... | --base <git ref>', explained: '<REQ-NNNN>... | --base <git ref>', levels: '<REQ-NNNN>... | --base <git ref>', cites: '<body file> --kind issue|pr',
+      for: '<path | issue or pull request link | #N --repo <owner>/<repo>>... [--status <status> | --all]',
       narrate: '"<section>" [--from <file>]', narrative: '', publish: '[--check]',
       references: '<path>', retire: '<path>... --pdr <file> [--keep <file>,<file>]',
     },

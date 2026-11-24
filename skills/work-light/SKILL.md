@@ -60,7 +60,7 @@ While a workflow runs, it watches the PR for you. Otherwise run the wait helper 
 
 Search the decision records for the area before you design or change behaviour: `adr-pdr` skill, `records.mjs search <terms>`. An accepted ADR or PDR is settled; do not reopen it without new evidence.
 
-When the project has `docs/formal/requirements/`, also find the requirement records that the change touches: `ndev requirements search <terms>` (the `requirements` skill). The change must meet each `Accepted` record. Read the Quint models in their `model` lists. `${CLAUDE_PLUGIN_ROOT}/kb/requirements.md`, section "In the workflow", says what to do with them at each stage, and when a model is necessary.
+When the project has `docs/formal/requirements/`, also find the requirement records that the change touches: `ndev requirements for <path>...` on the files that you plan to change, and `ndev requirements search <terms>` (the `requirements` skill). The change must meet each `Accepted` record. Read the Quint models in their `model` lists. `${CLAUDE_PLUGIN_ROOT}/kb/requirements.md`, section "In the workflow", says what to do with them at each stage, and when a model is necessary.
 
 Keep a short path list in the task note and reuse it. If a known path is absent, make one scoped search and correct the stale map. Absence is not proof that the feature is gone.
 

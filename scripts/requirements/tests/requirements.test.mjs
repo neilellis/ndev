@@ -2597,3 +2597,122 @@ describe("level", () => {
     assert.equal(JSON.parse(page(root, "requirements.json")).records[0].level, "hard");
   });
 });
+
+describe("for", () => {
+  const MODEL = "specs/report.qnt";
+  const DECISION = "docs/pdr/0001-keep-sources.md";
+  const files = { "docs/guide.md": GUIDE, "src/report.js": "export {}\n", "src/other.js": "export {}\n", [MODEL]: "module report {}\n", [DECISION]: "# Keep sources\n" };
+  const project4 = () => tracked({
+    ...files,
+    [`${DIR}/0001-the-report-names-each-source.md`]: record("0001", { trace: `- File: src/*.js\n- Issue: ${ISSUE(1)}` }),
+    [`${DIR}/0002-the-report-is-modelled.md`]: record("0002", { title: "The report is modelled", model: [`${MODEL}#report`], trace: `- PDR: ${DECISION}\n- PR: ${PULL(10)}` }),
+    [`${DIR}/0003-an-old-rule.md`]: record("0003", { title: "An old rule", status: "Retired", trace: "- File: src/report.js" }),
+  });
+  const ANSWERS = {
+    "o/r issue-read 1": issueAnswer(1, "open", null, "Plan for REQ-0002."),
+    "o/r issue-read 10": { ...issueAnswer(10, "closed", null, "Implements REQ-0003 and REQ-0009."), url: PULL(10) },
+    "o/r pr-read 5": { ...pullAnswer(5, "open", false), body: "No citation." },
+  };
+
+  it("lists the records in force that relate to a file, by File pattern, Source text citation, model and decision line", () => {
+    const root = project4();
+    const out = run(root, "for", "src/report.js", "docs/guide.md", MODEL, DECISION);
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, [
+      "src/report.js",
+      "  REQ-0001  Accepted  The report names each source",
+      "    - File: src/*.js",
+      "docs/guide.md",
+      "  REQ-0001  Accepted  The report names each source",
+      "    - docs/guide.md#L3-L4",
+      "  REQ-0002  Accepted  The report is modelled",
+      "    - docs/guide.md#L3-L4",
+      `${MODEL}`,
+      "  REQ-0002  Accepted  The report is modelled",
+      `    model: ${MODEL}#report`,
+      `${DECISION}`,
+      "  REQ-0002  Accepted  The report is modelled",
+      `    - PDR: ${DECISION}`,
+      "",
+    ].join("\n"));
+  });
+
+  it("includes other statuses with --all or --status, and says when no record relates to a target", () => {
+    const root = project4();
+    const all = run(root, "for", "--all", "src/report.js");
+    assert.equal(all.status, 0, all.stderr);
+    assert.match(all.stdout, /REQ-0001  Accepted  The report names each source\n    - File: src\/\*\.js\n  REQ-0003  Retired   An old rule\n    - File: src\/report\.js\n/);
+    const retired = run(root, "for", "--status", "Retired", "src/report.js");
+    assert.equal(retired.stdout, "src/report.js\n  REQ-0003  Retired  An old rule\n    - File: src/report.js\n");
+    const none = run(root, "for", "src/other.js", "--status", "Rejected");
+    assert.equal(none.status, 0, none.stderr);
+    assert.equal(none.stdout, "src/other.js: no Rejected record relates to it (3 records searched)\n");
+    const inForce = run(root, "for", MODEL.replace("report", "none"));
+    assert.equal(inForce.status, 1);
+  });
+
+  it("lists the records that link an issue or a pull request, and the records that its body cites", () => {
+    const gh = fakeGh(ANSWERS);
+    const root = project4();
+    const out = runWith(gh, root, "for", "--repo", "o/r", ISSUE(1), "#10", PULL(5));
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, [
+      ISSUE(1),
+      "  REQ-0001  Accepted  The report names each source",
+      `    - Issue: ${ISSUE(1)}`,
+      "  REQ-0002  Accepted  The report is modelled",
+      `    cited in the body of ${ISSUE(1)}`,
+      "#10",
+      "  REQ-0002  Accepted  The report is modelled",
+      `    - PR: ${PULL(10)}`,
+      `  the body of #10 cites REQ-0009, which is not a record in ${DIR}`,
+      `${PULL(5)}: no record in force relates to it (3 records searched)`,
+      "",
+    ].join("\n"));
+  });
+
+  it("gives the result as JSON", () => {
+    const root = project4();
+    const out = spawnSync(NDEV, ["requirements", "for", "src/report.js", "--root", root, "--json"], { encoding: "utf8" });
+    assert.equal(out.status, 0, out.stderr);
+    const result = JSON.parse(out.stdout).result;
+    assert.deepEqual(result.targets, [{ target: "src/report.js", records: [{ id: "REQ-0001", status: "Accepted", level: "normal", title: "The report names each source", statement: "The report names each source.", path: `${DIR}/0001-the-report-names-each-source.md`, lines: ["- File: src/*.js"] }], notes: [] }]);
+    assert.match(result.text, /^src\/report\.js\n  REQ-0001/);
+  });
+
+  it("fails a target that is not a tracked file, an issue link or a pull request link, and an issue it cannot read", () => {
+    const gh = fakeGh(ANSWERS);
+    const root = project4();
+    put(root, "src/new.js", "export {}\n");
+    const untracked = run(root, "for", "src/new.js", "src/missing.js");
+    assert.equal(untracked.status, 1);
+    assert.match(untracked.stderr, /"src\/new\.js" is not a tracked file, an issue link or a pull request link\. Give a path from the project root \(git add a new file first\), a GitHub issue or pull request link, or #N with --repo <owner>\/<repo>\./);
+    assert.match(untracked.stderr, /"src\/missing\.js" is not a tracked file/);
+    const noRepo = run(root, "for", "#10");
+    assert.equal(noRepo.status, 2);
+    assert.match(noRepo.stderr, /"#10" needs --repo <owner>\/<repo>/);
+    const unread = runWith(gh, root, "for", ISSUE(9));
+    assert.equal(unread.status, 1);
+    assert.match(unread.stderr, /https:\/\/github\.com\/o\/r\/issues\/9 could not be read: gh\.sh issue-read 9 in o\/r exited 1/);
+    assert.equal(run(root, "for").status, 2);
+  });
+
+  it("refuses an unknown status, and --status with --all", () => {
+    const root = project4();
+    const typo = run(root, "for", "--status", "Acepted", "src/report.js");
+    assert.equal(typo.status, 2);
+    assert.match(typo.stderr, /Unknown status "Acepted": use Accepted, Proposed, Open, Rejected, Retired or Superseded/);
+    assert.equal(run(root, "for", "--status", "", "src/report.js").status, 2);
+    const both = run(root, "for", "--all", "--status", "Retired", "src/report.js");
+    assert.equal(both.status, 2);
+    assert.match(both.stderr, /--all and --status cannot go together/);
+  });
+
+  it("gives a matching line once, when a record cites the same file twice", () => {
+    const twice = `${GUIDE_SOURCE}\n- docs/guide.md#L3-L3\n\n> The report names each source.`;
+    const root = tracked({ ...files, [`${DIR}/0001-the-report-names-each-source.md`]: record("0001", { sourceText: `${twice}\n- docs/guide.md#L3-L4\n\n> The report names each source.\n> The report refuses an unread source.` }) });
+    const out = run(root, "for", "docs/guide.md");
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(out.stdout, "docs/guide.md\n  REQ-0001  Accepted  The report names each source\n    - File: docs/guide.md\n    - docs/guide.md#L3-L4\n    - docs/guide.md#L3-L3\n");
+  });
+});

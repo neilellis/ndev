@@ -82,7 +82,7 @@ nobody wrote down is one that nobody can disagree with.
 
 ### F2d — Name the records and the model
 
-Search the requirement records with the words of the issue (`requirements` skill). List the records
+Search the requirement records with the words of the issue (`requirements` skill). Run `ndev requirements for <path>...` on the files that the plan changes, and on the issue link. List the records
 that the change touches in a `Requirements:` line, and add each new record that you propose. When the
 change touches state, order, concurrency or a protocol, write or change the Quint model before the
 code. Run `quint typecheck`, and name the model in a `Model:` line. Else write `Model: none, <reason>`.

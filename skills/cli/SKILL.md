@@ -25,6 +25,7 @@ Use `ndev` on PATH. If it is missing, use `"${CLAUDE_PLUGIN_ROOT}/bin/ndev"`. Ru
 | Inspect UI, capture screenshots, or manage worktree resources | `ndev pane`. |
 | Select a saved remote server | `ndev remote status`, `list`, then `set <server>`. |
 | Test instructions with a fresh reader | `ndev walk-doc start <path-or-url>`. |
+| Find the requirements of a file, an issue or a pull request | `ndev requirements for <path or link>...`. The `requirements` skill lists the other requirement commands. |
 | Install or verify skills and hooks | `ndev install <harness>` or `ndev install verify <harness>`. |
 
 Read [the command reference](references/commands.md) for the commands and their use within each group. It covers settings, repair, queues, screenshots, remote lifecycle, reader runs, installation, chat guards, watchers, and native hooks.

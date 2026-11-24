@@ -20,8 +20,8 @@ const SECTIONS = ["Statement", "Explanation", "Source text", "Trace", "Notes", "
 const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
-const FLAGS = new Set(["check", "clear", "flagged"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, cites, narrate, narrative, publish, references, retire";
+const FLAGS = new Set(["check", "clear", "flagged", "all"]);
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, cites, for, narrate, narrative, publish, references, retire";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta"];
 const MANIFEST = ".published";
@@ -1764,6 +1764,85 @@ function bodyCites(root, file, options) {
   throw new Failure([`The body of this ${name} cites no requirement record in force (Proposed, Open or Accepted) in ${DIR}. Each issue and pull request traces to a requirement. Find the record with: ${SCRIPT} search <words>. If none fits, create a Proposed record with: ${SCRIPT} new "<title>" --author "<who asked for it>". Then cite its ID, such as REQ-0001, in the body.${kind === "pr" ? " A pull request also passes when it closes an issue whose body cites a record in force." : ""}`, ...notes].join("\n"));
 }
 
+const githubKey = (url) => {
+  const parts = url.match(GITHUB_LINK);
+  return parts ? `${parts[1].toLowerCase()}#${parts[3]}` : undefined;
+};
+
+function fileMatches(record, rel) {
+  const lines = [];
+  for (const line of (record.sections.Trace ?? "").split("\n").map((l) => l.trim())) {
+    const link = line.match(TRACE_LINK);
+    if (link?.[1] === "File" && filePattern(link[2].trim())?.test(rel)) lines.push(line);
+    if (line.match(TRACE_DECISION)?.[2].trim() === rel) lines.push(line);
+  }
+  for (const source of sourceText(record.sections["Source text"]).sources) if (source.rel === rel) lines.push(`- ${source.citation}`);
+  for (const model of modelEntries(record)) if (model.split("#")[0] === rel) lines.push(`model: ${model}`);
+  return lines;
+}
+
+function linkMatches(record, key) {
+  const lines = [];
+  for (const line of (record.sections.Trace ?? "").split("\n").map((l) => l.trim())) {
+    const link = line.match(TRACE_LINK);
+    if (link && link[1] !== "File" && githubKey(link[2].trim()) === key) lines.push(line);
+  }
+  for (const source of sourceText(record.sections["Source text"]).sources) if (source.url && githubKey(source.url) === key) lines.push(`- ${source.citation}`);
+  return lines;
+}
+
+function forTargets(root, targets, options) {
+  if (options.all && options.status !== undefined) throw new Usage(`--all and --status cannot go together: --all gives each status`);
+  if (options.status !== undefined && !STATUS_ORDER.includes(options.status)) throw new Usage(`Unknown status "${options.status}": use ${STATUS_ORDER.slice(0, -1).join(", ")} or ${STATUS_ORDER.at(-1)}`);
+  if (!targets.length) throw new Usage(`for needs a file path, an issue or pull request link, or #N with --repo <owner>/<repo>, for example: for src/report.ts https://github.com/o/r/issues/1`);
+  const kinds = targets.map((target) => {
+    if (/^#\d+$/.test(target)) {
+      if (!options.repo) throw new Usage(`"${target}" needs --repo <owner>/<repo>, or give the full GitHub link`);
+      return { target, repo: options.repo, kind: "issues", number: target.slice(1) };
+    }
+    const parts = target.match(GITHUB_LINK);
+    if (parts) return { target, repo: parts[1], kind: parts[2], number: parts[3] };
+    return { target, rel: target.replace(/^\.\//, "") };
+  });
+  if (kinds.some((kind) => kind.rel)) {
+    const files = new Set(trackedFiles(root));
+    const unknown = kinds.filter((kind) => kind.rel && !files.has(kind.rel));
+    if (unknown.length) throw new Failure(unknown.map((kind) => `"${kind.target}" is not a tracked file, an issue link or a pull request link. Give a path from the project root (git add a new file first), a GitHub issue or pull request link, or #N with --repo <owner>/<repo>.`).join("\n"));
+  }
+  const all = entries(root).filter((e) => NAME.test(e.file)).map(read);
+  const wanted = (record) => options.all || (options.status === undefined ? IN_FORCE.includes(record.status) : (record.status ?? "").startsWith(options.status));
+  const label = options.all ? "record" : options.status === undefined ? "record in force" : `${options.status} record`;
+  const results = kinds.map((kind) => {
+    const found = new Map();
+    const notes = [];
+    const add = (record, lines) => {
+      if (!lines.length || !wanted(record)) return;
+      found.set(record.id, [...new Set([...(found.get(record.id) ?? []), ...lines])]);
+    };
+    if (kind.rel) for (const record of all) add(record, fileMatches(record, kind.rel));
+    else {
+      const key = `${kind.repo.toLowerCase()}#${kind.number}`;
+      for (const record of all) add(record, linkMatches(record, key));
+      const { item, error } = ghRead(root, kind.repo, kind.kind, kind.number);
+      if (error) throw new Failure(`${kind.target} could not be read: ${error}. Check the link, or repair GitHub access and run the command again.`);
+      for (const id of new Set((item.body ?? "").match(REQ_ID) ?? [])) {
+        const record = all.find((r) => r.id === id);
+        if (record) add(record, [`cited in the body of ${kind.target}`]);
+        else notes.push(`the body of ${kind.target} cites ${id}, which is not a record in ${DIR}`);
+      }
+    }
+    const records = all.filter((record) => found.has(record.id)).map((record) => ({ id: record.id, status: record.status, level: record.field("Level"), title: record.title, statement: words(record.sections.Statement), path: record.rel, lines: found.get(record.id) }));
+    return { target: kind.target, records, notes };
+  });
+  const text = results.map(({ target, records, notes }) => {
+    const head = records.length ? `${target}\n` : `${target}: no ${label} relates to it (${all.length} record${all.length === 1 ? "" : "s"} searched)\n`;
+    const width = Math.max(0, ...records.map((r) => (r.status ?? "NO STATUS").length));
+    const body = records.map((r) => `  ${r.id}  ${(r.status ?? "NO STATUS").padEnd(width)}  ${r.title}\n${r.lines.map((line) => `    ${line}\n`).join("")}`).join("");
+    return head + body + notes.map((note) => `  ${note}\n`).join("");
+  }).join("");
+  return { text, targets: results };
+}
+
 export function runRequirements(argv, { json } = {}) {
   try {
     const { positional, options } = parseArguments(argv);
@@ -1796,6 +1875,7 @@ export function runRequirements(argv, { json } = {}) {
       explained: () => explained(root(), rest, options),
       levels: () => levels(root(), rest, options),
       cites: () => bodyCites(root(), rest[0], options),
+      for: () => forTargets(root(), rest, options),
       narrate: () => narrate(root(), rest[0], options),
       narrative: () => narrative(root()),
       publish: () => publish(root(), options),
@@ -1803,9 +1883,9 @@ export function runRequirements(argv, { json } = {}) {
       retire: () => retire(root(), rest, options),
     };
     if (!commands[command]) throw new Usage(`Unknown requirements command "${command ?? ""}": use ${COMMANDS}`);
-    const text = commands[command]();
-    if (json) return { text };
-    process.stdout.write(text);
+    const result = commands[command]();
+    if (json) return typeof result === "string" ? { text: result } : result;
+    process.stdout.write(typeof result === "string" ? result : result.text);
   } catch (error) {
     if (error instanceof Usage) throw new CliError(2, error.message);
     if (error instanceof Failure) throw new CliError(1, error.message);

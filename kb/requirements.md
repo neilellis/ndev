@@ -170,6 +170,10 @@ The guard proves that the `agreed` field matches the text. It does not prove tha
 
 A record that is not in force can keep a closed link and a removed file, but not a link that does not exist.
 
+### Find the records of a file, an issue or a pull request
+
+`ndev requirements for <target>...` lists the records that relate to each target. For a tracked file, these are the records that name it in a `- File:` pattern, the Source text, the `model` list, or an `- ADR:` or `- PDR:` line. An issue or a pull request is a GitHub link, or `#N` with `--repo <owner>/<repo>`. For it, these are the records that link it in the Trace or the Source text, and the records that its body cites. The default is the records in force. `--status <status>` gives one status, and `--all` gives each status. A target with no record is a result, and the command exits 0. A target that is not a tracked file or a GitHub link fails.
+
 ### Each record explains its Statement
 
 `ndev requirements explained <REQ-NNNN>...` checks the Explanation of the named records, as `check` does. `explained --base <git ref>` checks the records that changed or are new since the ref.
@@ -296,7 +300,7 @@ The records and the models enter the work at each stage. The agent:
 
 | Stage | Records | Models |
 |---|---|---|
-| Start | Run `ndev requirements search` with the words of the issue, and read each record that the change touches. A `Proposed` record is a question for the human. An `Open` record waits for their feedback. | Read the models in the `model` list of those records. |
+| Start | Run `ndev requirements for` on the issue and on the files that you plan to change, and `ndev requirements search` with the words of the issue, and read each record that the change touches. A `Proposed` record is a question for the human. An `Open` record waits for their feedback. | Read the models in the `model` list of those records. |
 | Interview | Ask about a conflict between the issue and a record. Show the Statement of each new record that you propose. | Ask the questions that the model shows to be open. |
 | Plan (heavy) | Write a `Requirements:` line. | Write a `Model:` line. Write or change the model, and run `quint typecheck`, before `finished-plan`. |
 | Development | Add the `- File:` lines and the citations in the source. Propose a record for new behaviour. | Keep the model in step with the code. Prove the model (above). Cite the model in the source. |
