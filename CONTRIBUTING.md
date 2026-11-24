@@ -13,7 +13,7 @@ This repository holds the ndev CLI and installer, plus retained Claude Code plug
 
 ## Tests
 
-Run `npm test` for the native CLI and installer tests. Run `claude plugin test .` for the retained SDK suite.
+Run `npm test` for the native CLI and installer tests. It runs every `*.test.mjs` file that git tracks, except the files in `scripts/test/exceptions.json`. Each exception gives the reason and the command that runs it. A new test file runs when you `git add` it. Run `claude plugin test .` for the retained SDK suite.
 
 SDK integration tests import `expect` and `test` from `./sdk-testing`. Async callbacks have a default execution allowance of 30 seconds, including fixture setup and calls to the SDK. A test can set `timeoutMs` explicitly. The adapter preserves that value. Synchronous callbacks keep the SDK's default, including in files that also have integration tests.
 

@@ -85,4 +85,4 @@ $ndev-triage launch
 - [The knowledge base](kb/README.md) holds workflow and development guides.
 - [The scripts guide](scripts/README.md) lists shared tools.
 
-Run `npm test` for the CLI, installer, and panel regression suites. Set `NDEV_TEST_NATIVE_HARNESSES=1` to include native install trials when all three harnesses are available. The install tests use temporary homes.
+Run `npm test` for the CLI, installer, and panel regression suites, and every other tracked `*.test.mjs` file except those in `scripts/test/exceptions.json`. Set `NDEV_TEST_NATIVE_HARNESSES=1` to include native install trials when all three harnesses are available. The install tests use temporary homes.
