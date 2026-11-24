@@ -231,6 +231,36 @@ test('migration retries keep the file and a new version retains its SQL in the P
   assert.equal(readFileSync(join(p.work, path), 'utf8'), 'create table example(id int);')
   assert.ok(readFileSync(fake.PR_BODY, 'utf8').includes(path))
 })
+function sharedMigrationPr() {
+  const p = project()
+  const fake = services(p)
+  mkdirSync(join(p.work, 'supabase'))
+  writeFileSync(join(p.work, 'supabase/config.toml'), '')
+  const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+  writeFileSync(join(p.work, '.neil-dev.issue-8.json'), JSON.stringify({ ...raw, issue: 8, workflow: { ...raw.workflow, issue: 8 } }))
+  const listed = body => [...body.matchAll(/^- `([^`]+)`$/gm)].map(m => m[1])
+  const record = issue => JSON.parse(readFileSync(join(p.work, `.neil-dev.issue-${issue}.json`), 'utf8')).workflow.migrations.map(m => m.path)
+  return { p, fake, listed, record, body: () => readFileSync(fake.PR_BODY, 'utf8') }
+}
+test('add-migration on a second issue sharing the PR keeps the first issue migration in the PR section', () => {
+  const s = sharedMigrationPr()
+  const a = JSON.parse(output(flow(s.p, ['add-migration', 'first_table', '--issue', '7'], s.fake))).workflow.migrations[0].path
+  const b = JSON.parse(output(flow(s.p, ['add-migration', 'second_table', '--issue', '8'], s.fake))).workflow.migrations[0].path
+  assert.deepEqual(s.listed(s.body()).sort(), [a, b].sort())
+  assert.deepEqual(s.record(7), [a])
+  assert.deepEqual(s.record(8), [b])
+  assert.equal(s.body().match(/<!-- ndev:migrations -->/g).length, 1)
+})
+test('add-migration with a new version on one issue replaces only its own path in the shared PR section', () => {
+  const s = sharedMigrationPr()
+  const a = JSON.parse(output(flow(s.p, ['add-migration', 'first_table', '--issue', '7'], s.fake))).workflow.migrations[0].path
+  const b = JSON.parse(output(flow(s.p, ['add-migration', 'second_table', '--issue', '8'], s.fake))).workflow.migrations[0].path
+  writeFileSync(join(s.p.work, b), 'create table second(id int);')
+  const moved = JSON.parse(output(flow(s.p, ['add-migration', 'second_table', '--issue', '8', '--new-version'], s.fake))).workflow.migrations[0].path
+  assert.notEqual(moved, b)
+  assert.deepEqual(s.listed(s.body()).sort(), [a, moved].sort())
+  assert.deepEqual(s.record(7), [a])
+})
 test('a pending interview survives a bad answer and accepts an answer by question ID', () => {
   const p = project()
   const raw = JSON.parse(readFileSync(p.file, 'utf8'))

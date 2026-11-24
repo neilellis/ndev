@@ -1830,6 +1830,7 @@ function publicMigration(wf: Workflow, config: Config, args: Args) {
   const dir = join(parent, 'migrations')
   mkdirSync(dir, { recursive: true })
   if (!under(realpathSync(dir))) throw new Fail(2, `Migration directory escapes ${root}: ${dir}`)
+  const sharing = (publicCli!.readWorkflowRecords(wf.root) as Workflow[]).filter(record => record.prs?.[0] === wf.prs[0])
   let entry = (wf.migrations || []).find((item: {name: string}) => item.name === name)
   if (!entry || args['new-version']) {
     const newest = readdirSync(dir).map(f => /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)_/.exec(f)).filter(Boolean).map(m => Date.UTC(+m![1]!, +m![2]! - 1, +m![3]!, +m![4]!, +m![5]!, +m![6]!) + 1000)
@@ -1850,9 +1851,12 @@ function publicMigration(wf: Workflow, config: Config, args: Args) {
     save(wf)
   }
   if (!existsSync(join(root, entry.path))) throw new Fail(1, `Migration ${name} is missing. Restore ${entry.path} before retrying.`)
-  const section = `<!-- ndev:migrations -->\n## Migrations to run after merge\n\n${wf.migrations.map((m: {path: string}) => '- `' + m.path + '`').join('\n')}\n<!-- /ndev:migrations -->`
-  const body = readPr(wf, prOf(wf)).body || ''
   const pattern = /<!-- ndev:migrations -->[\s\S]*?<!-- \/ndev:migrations -->/
+  const body = readPr(wf, prOf(wf)).body || ''
+  const inBody = [...(pattern.exec(body)?.[0] ?? '').matchAll(/^- `([^`]+)`$/gm)].map(m => m[1]!)
+  const moved = entry.previous ? new Map([[entry.previous, entry.path]]) : new Map<string, string>()
+  const paths = [...new Set([...inBody.map(path => moved.get(path) ?? path), ...sharing.flatMap(record => (record.migrations || []).map((m: {path: string}) => m.path)).filter(path => !moved.has(path)), ...wf.migrations.map((m: {path: string}) => m.path)])]
+  const section = `<!-- ndev:migrations -->\n## Migrations to run after merge\n\n${paths.map(path => '- `' + path + '`').join('\n')}\n<!-- /ndev:migrations -->`
   const updated = pattern.test(body) ? body.replace(pattern, () => section) : body.trimEnd() + '\n\n' + section + '\n'
   if (body !== updated) gh(wf, ['pr-edit', String(prOf(wf)), '--body-file', writeTemp(wf, 'pr-body.md', updated)])
   return report(wf, config, [`Migration: ${entry.path}.${entry.previous ? ` The SQL was copied from ${entry.previous}. Remove the old version and checkpoint both paths.` : ''}`])
