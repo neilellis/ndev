@@ -16,7 +16,7 @@ A human decides each deprecation. An agent never deprecates a record on its own 
 ## Procedure
 
 1. Show the human the record: its ID, its title, its Statement and its Trace. Ask whether to deprecate it, and why. Stop if the human does not agree.
-2. When a newer requirement replaces it, search for that record with `ndev requirements search <words>`. If none exists, create it as `Proposed` with `ndev requirements new "<title>" --author "<name>"`. Its Statement and its Source text are a first creation, so you can write them.
+2. When a newer requirement replaces it, search for that record with `ndev requirements search <words>`. If none exists, create it as `Proposed` with `ndev requirements new "<title>" --author "<name>" --type <type>`. Its Statement and its Source text are a first creation, so you can write them.
 3. Run the command with the human's name and reason. Give `--by <REQ-NNNN>` only for a replacement.
 4. In each issue and pull request whose body cites the old record, cite the new record. `ndev requirements for <REQ link or path>` lists them. Move the `- File:` lines that still apply to the new record with `ndev requirements file`.
 5. Run `ndev requirements check`, `ndev requirements guard --base <the target branch>` and `ndev requirements links --base <the target branch>`. Correct each failure.

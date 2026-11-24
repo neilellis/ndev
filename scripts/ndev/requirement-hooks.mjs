@@ -44,7 +44,7 @@ function changedRecordKey(root) {
   return hash.digest('hex')
 }
 
-const CHECKS = ['links', 'explained', 'levels', 'fixed']
+const CHECKS = ['links', 'explained', 'levels', 'types', 'fixed']
 
 export function recordCheck(root, cached) {
   if (!hasRecords(root)) return null

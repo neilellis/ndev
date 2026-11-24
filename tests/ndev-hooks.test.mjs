@@ -607,7 +607,7 @@ function recordsFixture(t) {
     assert.equal(result.status, 0, result.stderr)
   }
   const recordFile = join(root, 'docs/formal/requirements/0001-the-report-names-each-source.md')
-  const record = (trace, explanation = 'The report gives a list of each document that it uses.') => `---\nid: REQ-0001\ntitle: "The report names each source"\nstatus: Accepted\norigin: explicit\nlevel: normal\nsection: "Report"\ndate: 2026-01-02\nsource: []\nauthor:\n  - "Neil Ellis"\ndecided_by: "Neil Ellis"\nverification: unassigned\nissues: []\nprs: []\n---\n\n## Statement\n\nThe report names each source.\n\n## Explanation\n\n${explanation}\n\n## Source text\n\n## Trace\n\n${trace}\n\n## Notes\n\n## Log\n\n- 2026-01-02: Created.\n`
+  const record = (trace, explanation = 'The report gives a list of each document that it uses.') => `---\nid: REQ-0001\ntitle: "The report names each source"\nstatus: Accepted\norigin: explicit\nlevel: normal\ntype: product\nsection: "Report"\ndate: 2026-01-02\nsource: []\nauthor:\n  - "Neil Ellis"\ndecided_by: "Neil Ellis"\nverification: unassigned\nissues: []\nprs: []\n---\n\n## Statement\n\nThe report names each source.\n\n## Explanation\n\n${explanation}\n\n## Source text\n\n## Trace\n\n${trace}\n\n## Notes\n\n## Log\n\n- 2026-01-02: Created.\n`
   mkdirSync(join(root, 'docs/formal/requirements'), { recursive: true })
   mkdirSync(join(root, 'src'))
   writeFileSync(join(root, 'src/report.js'), 'export {}\n')
@@ -733,6 +733,19 @@ test('a changed record with no level or a wrong level is reported after the edit
     assert.match(reason, new RegExp(`this commit is refused:[\\s\\S]*${problem.source}[\\s\\S]*ndev requirements levels --base HEAD`))
   }
   writeFileSync(recordFile, record('- File: src/report.js').replace('level: normal', 'level: hard'))
+  assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
+})
+
+test('a changed record with no type or a wrong type is reported after the edit, and refuses a commit until it has a valid one', t => {
+  const { recordFile, record, call } = recordsFixture(t)
+  for (const [text, problem] of [[record('- File: src/report.js').replace('type: product\n', ''), /REQ-0001: no "type"/], [record('- File: src/report.js').replace('type: product', 'type: feature'), /REQ-0001: type "feature" is not principle/]]) {
+    writeFileSync(recordFile, text)
+    const note = call('post-tool-use', 'Edit', { file_path: recordFile }).hookSpecificOutput.additionalContext
+    assert.match(note, problem)
+    const reason = call('pre-tool-use', 'Bash', { command: 'git commit -am change' }).hookSpecificOutput.permissionDecisionReason
+    assert.match(reason, new RegExp(`this commit is refused:[\\s\\S]*${problem.source}[\\s\\S]*ndev requirements types --base HEAD`))
+  }
+  writeFileSync(recordFile, record('- File: src/report.js').replace('type: product', 'type: ux'))
   assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
 })
 
