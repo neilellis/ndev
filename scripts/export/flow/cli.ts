@@ -587,6 +587,8 @@ function started(root: string, config: Config, args: Args) {
   const notes: string[] = []
   let wf = readRecord(root, issue)
   if (wf) {
+    wf.mode ??= config.mode ?? 'light'
+    wf.steering ??= config.steering ?? 'interactive'
     const elsewhere = ownedElsewhere(wf)
     if (elsewhere && args['take-over'] !== 'true') throw new Fail(1, elsewhere)
     if (elsewhere) notes.push(`Took over from ${wf.owner.session}.`)
