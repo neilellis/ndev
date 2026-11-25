@@ -364,7 +364,7 @@ graph_deps() {
 }
 rest_deps() { GH api "repos/$REPO/issues/$n/dependencies/$path?per_page=100" | jq -c '.[] | {number, title, state, url: .html_url}'; }
 
-cache_dir() { local key="${REPO,,}"; printf '%s/%s' "${NDEV_GH_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ndev/gh}" "${key//\//__}"; }
+cache_dir() { local key; key="$(tr '[:upper:]' '[:lower:]' <<<"$REPO")"; printf '%s/%s' "${NDEV_GH_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ndev/gh}" "${key//\//__}"; }
 
 cached() {
   local key="$1" ttl="${GH_CACHE_TTL:-0}" file age out

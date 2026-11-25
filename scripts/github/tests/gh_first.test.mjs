@@ -30,7 +30,7 @@ process.exit(rule.exit ?? 0)
 `)
   chmodSync(stub, 0o755)
   const env = { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, GH_REPO: opts.noRepo ? '' : 'o/r', ...opts.env }
-  const r = spawnSync('bash', [GHSH, ...args], { cwd: opts.cwd ?? dir, env, encoding: 'utf8' })
+  const r = spawnSync(opts.bash ?? 'bash', [GHSH, ...args], { cwd: opts.cwd ?? dir, env, encoding: 'utf8' })
   const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []
   return { code: r.status, out: r.stdout, err: r.stderr, calls, lines: r.stdout.trim().split('\n').filter(Boolean) }
 }
@@ -683,6 +683,23 @@ test('the cache key does not depend on the case of the repository name', () => {
   const issue = [{ match: 'issue view 3', out: '{"number":3,"title":"T","state":"OPEN","stateReason":null,"body":"b","url":"u"}' }]
   assert.equal(ghsh(['issue-read', '3'], issue, { env: { NDEV_GH_CACHE_DIR: cache, GH_CACHE_TTL: '600', GH_REPO: 'O/R' } }).code, 0)
   assert.deepEqual(readdirSync(cache), ['o__r'])
+})
+
+test('the read cache and its clearing by a write work under the bash 3.2 of macOS at /bin/bash', () => {
+  const cache = mkdtempSync(join(tmpdir(), 'gh-cache-'))
+  const on = { bash: '/bin/bash', env: { NDEV_GH_CACHE_DIR: cache, GH_CACHE_TTL: '600', GH_REPO: 'O/R' } }
+  const issue = [{ match: 'issue view 3', out: '{"number":3,"title":"T","state":"OPEN","stateReason":null,"body":"b","url":"u"}' }]
+  const first = ghsh(['issue-read', '3'], issue, on)
+  assert.equal(first.code, 0, first.err)
+  assert.doesNotMatch(first.err, /bad substitution/)
+  assert.deepEqual(readdirSync(cache), ['o__r'])
+  const again = ghsh(['issue-read', '3'], issue, on)
+  assert.equal(again.code, 0, again.err)
+  assert.equal(again.calls.length, 0)
+  const write = ghsh(['label', '3', 'bug'], [{ match: 'issue edit 3', out: '' }, { match: 'labels', out: '[]' }], on)
+  assert.equal(write.code, 0, write.err)
+  assert.doesNotMatch(write.err, /bad substitution/)
+  assert.equal(existsSync(join(cache, 'o__r')), false)
 })
 
 test('a failed read leaves nothing in the cache', () => {
