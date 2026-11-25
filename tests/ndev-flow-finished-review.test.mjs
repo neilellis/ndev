@@ -150,3 +150,16 @@ test('finished-review rejects a PR on another branch at once instead of waiting'
   assert.ok(Date.now() - started < 30000)
   assert.equal(held.ready(), 0)
 })
+
+test('finished-review whose push a pre-push hook refuses stops before marking the PR ready and names the branch, the git output and the repair', t => {
+  const held = reviewing(t)
+  writeFileSync(join(held.work, '.git/hooks/pre-push'), '#!/bin/sh\necho "pre-push: refusing to push HEAD: docs map" >&2\nexit 1\n', { mode: 0o755 })
+  const result = held.run()
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /git push to origin feat exited 1:/)
+  assert.match(result.stderr, /pre-push: refusing to push HEAD: docs map/)
+  assert.match(result.stderr, /The commit is local, and PR #5 is not marked ready\. Repair: fix what refused the push, then run ndev flow finished-review again\./)
+  assert.equal(held.ready(), 0)
+  assert.equal(held.remote(), held.reviewed)
+  assert.equal(held.record().state, 'reviewing')
+})

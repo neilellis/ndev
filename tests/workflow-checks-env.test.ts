@@ -284,6 +284,20 @@ test('a failed pre-ready check stops the push', async ($, on) => {
   expect(w.pushes.length).toBe(0)
 })
 
+test('a push that a pre-push hook refuses stops finishedReview before it marks the PR ready, and names the branch, the git output and the repair', async ($, on) => {
+  const w = engine(on, { wf: { state: 'reviewing' }, pr: { draft: true } })
+  await start($, w)
+  w.s.sha = 'cccc'
+  w.s.pushFails = 'pre-push: refusing to push HEAD: docs map\nerror: failed to push some refs'
+  const r = await tool($, 'finishedReview', { remembered: 'nothing: small', review: 'clean', deadcode: 'clean' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('git push of issue-7 exited 1: pre-push: refusing to push HEAD: docs map')
+  expect(r.text).toContain('The commit is local. Fix the cause and call the tool again.')
+  expect(w.pushes.length).toBe(0)
+  expect(w.ready.length).toBe(0)
+  expect(w.state()?.state).toBe('reviewing')
+})
+
 test('a pre-ready check that runs for 19 minutes runs to the end, and the push goes on', async ($, on) => {
   const w = engine(on, { wf: { state: 'reviewing' } })
   await start($, w)

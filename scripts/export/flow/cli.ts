@@ -337,7 +337,7 @@ function commit(wf: Workflow, message: string, op: string, empty = false) {
   const r = git(wf.root, 'commit', ...(empty ? ['--allow-empty'] : []), '-m', message, '--trailer', `Ndev-Op: ${op}`)
   if (r.status !== 0) throw new Fail(1, `git commit exited ${r.status}: ${said(r)}. Nothing was pushed.`)
 }
-function push(wf: Workflow, retryRebase = false, source = 'HEAD', options: string[] = []): string | undefined {
+function push(wf: Workflow, retryRebase = false, source = 'HEAD', options: string[] = [], refused = 'Repair: resolve the push error and retry. The commit is local.'): string | undefined {
   const ref = `refs/heads/${wf.branch}`
   const pushArgs = ['origin', `${source}:${ref}`]
   const push = (options: string[]) => run('git', ['push', '-u', ...options, ...pushArgs], { cwd: wf.root, timeout: 300_000 })
@@ -345,7 +345,7 @@ function push(wf: Workflow, retryRebase = false, source = 'HEAD', options: strin
   if (result.status === 0) return
   const problem = `git push to origin ${wf.branch} exited ${result.status}: ${said(result)}`
   if (!retryRebase || wf.branch === wf.base || !/\[rejected\].*\((non-fast-forward|fetch first)\)/.test(result.stderr)) {
-    throw new Fail(1, `${problem}. Repair: resolve the push error and retry. The commit is local.`)
+    throw new Fail(1, `${problem}. ${refused}`)
   }
   gitOk(wf.root, 'fetch', '--no-tags', 'origin', '+refs/heads/*:refs/remotes/origin/*')
   const advertised = gitOk(wf.root, 'ls-remote', '--heads', 'origin').split('\n').filter(Boolean).map(line => line.split('\t'))
@@ -892,7 +892,7 @@ function finishedReview(wf: Workflow, config: Config, args: Args) {
     save(wf)
   }
   if (note) notes.push(note)
-  push(wf)
+  push(wf, false, 'HEAD', [], `The commit is local${wf.direct ? '' : `, and PR #${prOf(wf)} is not marked ready`}. Repair: fix what refused the push, then run ${FLOW} finishedReview again.`)
   const sha = headSha(wf.root)
   if (!wf.direct) {
     if (!standalone) awaitPrHead(wf, sha)
