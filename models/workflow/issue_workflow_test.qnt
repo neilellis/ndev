@@ -110,6 +110,23 @@ module light_test {
       .then(startedAfterDone)
       .expect(wf.state == "revising" and wRevisedAfterDone)
 
+  action lightDoneOpen =
+    lightConflict
+      .then(baseMovesTo("clean"))
+      .then(doneReady)
+      .expect(wf.state == "done" and pr.life == "open")
+
+  run lightWatchdogReopensDoneOnConflictTest =
+    lightDoneOpen
+      .then(baseMovesTo("conflict"))
+      .then(watchdogReopensDone)
+      .expect(wf.state == "revising" and wWatchdogReopenedDone and safety)
+
+  run lightWatchdogLeavesDoneOnFeedbackTest =
+    lightDoneOpen
+      .then(reviewerComments)
+      .then(watchdogReopensDone.fail())
+
   run lightUnansweredFeedbackRefusesRevisionTest = lightDoneAwaitingHuman.then(finishedRevision.fail())
 
   run lightRevisesAfterDoneTest =

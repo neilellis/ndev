@@ -635,6 +635,14 @@ module issue_workflow {
     iv' = iv, pr' = pr, branch' = branch, issue' = issue, humanMoved' = humanMoved,
   }
 
+  action watchdogReopensDone = all {
+    wf.state == "done",
+    pr.life == "open",
+    pr.mergeable == "conflict",
+    moved(wf, goTo("revising"), "watchdogReopensDone"),
+    iv' = iv, pr' = pr, branch' = branch, issue' = issue, humanMoved' = humanMoved,
+  }
+
   action watchdogBlocksStall = all {
     not(HELD.contains(wf.state)),
     wf.state != "done",
@@ -731,7 +739,7 @@ module issue_workflow {
     humanUnblock, humanEndsWait, humanSkip, humanGoto, humanSetsMode, humanSetsInteractive, humanSetsAuto,
   }
 
-  action watchdogStep = any { watchdogBlocksClosedPr, watchdogSeesMerge, watchdogBlocksStall }
+  action watchdogStep = any { watchdogBlocksClosedPr, watchdogSeesMerge, watchdogReopensDone, watchdogBlocksStall }
 
   action githubStep = any {
     ciEnds, baseMoves, reviewerComments, humanMergesPr, humanClosesPr, humanReopensPr,
@@ -810,6 +818,7 @@ module issue_workflow {
   val wPrReplaced: bool = last == "startedReplacesMergedPr"
   val wChecksBlocked: bool = last == "finishedChecksRedBlocked"
   val wRevisedAfterDone: bool = last == "startedAfterDone"
+  val wWatchdogReopenedDone: bool = last == "watchdogReopensDone"
   val wReopenedAfterReview: bool = last == "followUpThisAgent" and wf.state == reopen(wf.mode, wf.planned) and visited.contains("ci")
   val wPrReady: bool = pr.life == "open" and not(pr.draft)
 }

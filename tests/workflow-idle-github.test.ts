@@ -121,6 +121,16 @@ test('a conflict under a finished PR reopens the work', async ($, on) => {
   expect(w.prompts[0]).toContain('merge conflicts')
 })
 
+test('a failed check under a finished PR is named, and the work stays done', async ($, on) => {
+  const w = engine(on, { wf: { state: 'done' }, pr: { mergeable_state: 'unstable' }, checks: CHECKS({ name: 'unit tests', conclusion: 'failure' }) })
+  await start($, w)
+  await idle(w)
+  expect(w.prompts[0]).toContain('failed checks')
+  expect(w.prompts[0]).toContain('unit tests')
+  expect(w.state()?.state).toBe('done')
+  expect(w.state()?.history.some(h => h.from === 'done')).toBe(false)
+})
+
 test('status in done reads the PR: a conflict is named with its repair, and the PR is not called ready', async ($, on) => {
   const w = engine(on, { wf: { state: 'done' }, pr: { mergeable: false, mergeable_state: 'dirty' } })
   await start($, w)

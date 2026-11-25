@@ -245,7 +245,8 @@ async function check($: EngineInterface, project: () => LoadedConfig | undefined
   // The read can end the work: a closed PR blocks, and a blocked session gets no reminder.
   if (wf.state === 'blocked' || wf.state === 'wait') return
   if (wf.state === 'done' && !health.problems.length) return
-  if (wf.state === 'done') {
+  // Model: models/workflow/issue_workflow.qnt#watchdogReopensDone
+  if (wf.state === 'done' && health.conflict) {
     moved(wf, 'heartbeat', { state: 'revising' }, now)
     await saveWorkflow($, wf)
   }
@@ -286,7 +287,7 @@ async function watchChecks($: EngineInterface, wf: Workflow, project: LoadedConf
   await nudge($, wf, project, 'idle', [`These checks on ${sha.slice(0, 8)} are still pending after ${STUCK_MS / 60_000} minutes: ${checks.pending.join(', ')}. Find out why, such as a stopped runner or a long queue.`])
 }
 
-async function prHealth($: EngineInterface, wf: Workflow): Promise<{ problems: string[]; checks?: { sha: string; checks: Checks }; seen?: Record<string, string> }> {
+async function prHealth($: EngineInterface, wf: Workflow): Promise<{ problems: string[]; conflict?: boolean; checks?: { sha: string; checks: Checks }; seen?: Record<string, string> }> {
   if (wf.direct || !wf.prs.length) return { problems: [] }
   const all: PrHealth[] = []
   for (const n of wf.prs) {
@@ -317,7 +318,7 @@ async function prHealth($: EngineInterface, wf: Workflow): Promise<{ problems: s
     return { problems: [] }
   }
   const read0 = all[0]?.checks
-  return { problems: all.flatMap(h => h.problems), checks: read0 && { sha: all[0]!.sha, checks: read0 }, seen: all[0]?.seen }
+  return { problems: all.flatMap(h => h.problems), conflict: all.some(h => h.conflict), checks: read0 && { sha: all[0]!.sha, checks: read0 }, seen: all[0]?.seen }
 }
 
 // A turn runs, or ran, since this time: a prompt reached the session.

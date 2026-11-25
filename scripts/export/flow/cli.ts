@@ -1101,6 +1101,7 @@ function revisit(wf: Workflow, config: Config) {
     ...(red.length ? [`Red checks on ${pr.head.sha.slice(0, 8)}: ${red.join(', ')}. Fix the cause and run ${FLOW} checkpoint.`] : []),
   ]
   const notes = [...(feedback.length ? [`New feedback:\n${feedback.join('\n')}`] : []), ...problems]
+  // Model: models/workflow/issue_workflow.qnt#startedAfterDone
   const to = afterStarted({ state: wf.state as any, previous: wf.previous as any }, { mode: wf.mode as any, steering: wf.steering as any, feedback: feedback.length > 0, prConflict })
   if (to.state !== wf.state) {
     apply(wf, to, 'revisit', notes)
