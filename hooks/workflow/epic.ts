@@ -1057,9 +1057,9 @@ export async function epicCommand($: EngineInterface, words: string[], project: 
   if (verb === 'skip' || verb === 'goto') {
     if (!epic) return none
     // Model: models/workflow/epic_workflow.qnt#humanSkip
+    if (epic.state === 'done') return `/flow epic ${verb}: Refused: Epic #${epic.epic} is done, and ${verb} cannot reopen it. Nothing changed. Repair: file what remains as new issues, or start a new epic with /flow epic <title>.`
     if (verb === 'skip') {
-      const to = nextEpicState(epic.state)
-      if (!to) return `Epic #${epic.epic} is done. Nothing to skip.`
+      const to = nextEpicState(epic.state)!
       return humanMove($, epic, to, 'skip', reason)
     }
     // Model: models/workflow/epic_workflow.qnt#humanGoto

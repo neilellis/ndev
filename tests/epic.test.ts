@@ -885,6 +885,20 @@ test('/flow epic skip and goto move the epic as the human decided, and tell the 
   expect(w.epic()?.history.at(-1)).toMatchObject({ tool: 'human:goto', from: 'researching', to: 'slicing' })
 })
 
+test('/flow epic goto and skip refuse a done epic, name the new-epic path, and change nothing', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40 })
+  w.files.set(EPIC_FILE(40), JSON.stringify({ ...w.epic(), state: 'done' }))
+  const before = w.files.get(EPIC_FILE(40))
+  for (const words of ['epic goto coordinating reopen it', 'epic skip']) {
+    const out = await command($, w, words)
+    expect(out).toContain('Epic #40 is done')
+    expect(out).toContain('/flow epic <title>')
+    expect(w.files.get(EPIC_FILE(40))).toBe(before)
+  }
+})
+
 test('/flow epic off unbinds the session and turns the usual workflow back on, and the record stays', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)

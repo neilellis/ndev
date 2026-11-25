@@ -1341,3 +1341,21 @@ test('off keeps the record and restores the issue workflow of the coordinating s
   assert.match(flow(), /issue #7 has no workflow/)
   assert.match(readFileSync(join(f.home, 'orca.log'), 'utf8'), /Human ended coordination of epic #40/)
 })
+
+test('goto and skip refuse a done epic, name the new-epic path, and write nothing', t => {
+  const f = fixture(t)
+  f.ok('start', '40')
+  const file = join(f.root, '.neil-dev.epic-40.json')
+  const e = JSON.parse(readFileSync(file, 'utf8'))
+  e.state = 'done'
+  writeFileSync(file, JSON.stringify(e))
+  const before = readFileSync(file, 'utf8')
+  for (const [verb, ...args] of [['goto', 'coordinating'], ['skip']]) {
+    const refused = f.call(verb, ...args, '--issue', '40')
+    assert.equal(refused.status, 1, JSON.stringify(refused))
+    assert.match(refused.error.message, /Epic #40 is done/)
+    assert.match(refused.error.repair, /ndev epic start --title/)
+    assert.equal(readFileSync(file, 'utf8'), before)
+  }
+  assert.throws(() => readFileSync(join(f.home, 'orca.log')), { code: 'ENOENT' })
+})

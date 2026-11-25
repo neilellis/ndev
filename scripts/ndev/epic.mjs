@@ -741,6 +741,7 @@ export async function runEpic([verb, ...args], { json = process.argv.includes('-
     // Model: models/workflow/epic_workflow.qnt#humanMove
     if (override) {
       const from = e.state
+      if (verb !== 'off' && from === 'done') refuse(`Epic #${e.epic} is done; ${verb} cannot reopen it.`, `File what remains as new issues, or start a new epic with ndev epic start --title <title>.`)
       // Model: models/workflow/epic_workflow.qnt#humanSkip
       // Model: models/workflow/epic_workflow.qnt#humanGoto
       const to = verb === 'goto' ? pos[0] : nextEpicState(from)
