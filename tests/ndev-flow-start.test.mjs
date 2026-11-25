@@ -71,8 +71,12 @@ test('skip out of the interview drops the open chat round and says so', t => {
   writeFileSync(record, JSON.stringify({ ...JSON.parse(readFileSync(record, 'utf8')), chatRound: { title: 'The login page', questions: [{ id: 'name', header: 'Name', question: 'What name?' }] } }))
   const commit = spawnSync('git', ['-C', held.root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base'], { encoding: 'utf8' })
   assert.equal(commit.status, 0, commit.stderr)
-  const typed = '(printf "%s\\n" "$PHRASE"; sleep 2) | script -q /dev/null "$@"'
-  const result = spawnSync('sh', ['-c', typed, 'sh', ndev, 'flow', 'skip', 'the human decides', '--issue', '12'], { cwd: held.root, encoding: 'utf8', env: { ...process.env, NDEV_FLOW_GH: held.gh, PHRASE: 'confirm skip #12 1' } })
+  const skipArgs = [ndev, 'flow', 'skip', 'the human decides', '--issue', '12']
+  const shellQuote = s => `'${String(s).replace(/'/g, "'\\''")}'`
+  const typed = process.platform === 'linux'
+    ? `(printf "%s\\n" "$PHRASE"; sleep 2) | script -q -e -c ${shellQuote(skipArgs.map(shellQuote).join(' '))} /dev/null`
+    : '(printf "%s\\n" "$PHRASE"; sleep 2) | script -q /dev/null "$@"'
+  const result = spawnSync('sh', process.platform === 'linux' ? ['-c', typed] : ['-c', typed, 'sh', ...skipArgs], { cwd: held.root, encoding: 'utf8', env: { ...process.env, NDEV_FLOW_GH: held.gh, PHRASE: 'confirm skip #12 1' } })
   assert.ifError(result.error)
   assert.equal(result.status, 0, result.stdout)
   assert.equal(held.state().state, 'developing')
@@ -95,7 +99,9 @@ for (const [name, history, want] of [
     run('git', 'init', '-q', '--bare', origin)
     run('git', 'remote', 'add', 'origin', origin)
     run('git', 'switch', '-q', '-c', 'b')
-    run('git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base')
+    run('git', 'config', 'user.name', 't')
+    run('git', 'config', 'user.email', 't@t')
+    run('git', 'commit', '-q', '--allow-empty', '-m', 'base')
     run('mkdir', '-p', 'scripts/ndev/workflow')
     for (const check of ['fast-checks', 'pre-commit-check', 'pre-push-check']) {
       writeFileSync(join(held.root, 'scripts/ndev/workflow', `${check}.sh`), '#!/bin/sh\nexit 0\n')

@@ -50,5 +50,8 @@ MD
 
 git -C "$target" init -q -b main
 git -C "$target" add -A
-git -C "$target" commit -q -m "init: from ndev $version"
+git_author=()
+git -C "$target" config user.name >/dev/null 2>&1 || git_author+=(-c user.name=ndev)
+git -C "$target" config user.email >/dev/null 2>&1 || git_author+=(-c user.email=ndev@local)
+git -C "$target" "${git_author[@]}" commit -q -m "init: from ndev $version"
 echo "dev-wiki: created $target from ndev $version"

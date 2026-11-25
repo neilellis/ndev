@@ -14,7 +14,7 @@ function project(t) {
   const localBin = join(root, 'bin')
   mkdirSync(localBin)
   const log = join(root, 'commands')
-  const env = { HOME: root, PATH: localBin + ':' + process.env.PATH, XDG_STATE_HOME: join(root, 'state'), GH_CONFIG_DIR: join(root, 'gh-config'), CODEX_HOME: join(root, '.codex'), ORCA_ENVIRONMENT: 'local', SSH_CONNECTION: 'integration test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', FAKE_LOG: log, NDEV_FLOW_GH: join(localBin, 'gh.sh'), GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.test', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.test' }
+  const env = { HOME: root, PATH: localBin + ':' + process.env.PATH, XDG_STATE_HOME: join(root, 'state'), GH_CONFIG_DIR: join(root, 'gh-config'), CODEX_HOME: join(root, '.codex'), ORCA_CLI_COMMAND: join(localBin, 'orca'), ORCA_ENVIRONMENT: 'local', SSH_CONNECTION: 'integration test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', FAKE_LOG: log, NDEV_FLOW_GH: join(localBin, 'gh.sh'), GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.test', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.test' }
   function run(exe, args, extra = {}) {
     return spawnSync(exe, args, { cwd: root, env: { ...env, ...extra }, encoding: 'utf8' })
   }

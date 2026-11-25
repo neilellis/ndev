@@ -51,15 +51,31 @@ describe("Docs content loaders", () => {
   });
 
   it("rewrites repository-relative markdown links into internal docs routes", () => {
-    expect(rewriteMarkdownHref("core-beliefs.md#11-forget-history", "kb/writing.md")).toBe(
-      "/kb/core-beliefs/#11-forget-history",
-    );
-    expect(rewriteMarkdownHref("../skills/adversarial-review/SKILL.md", "kb/writing.md")).toBe(
-      "/skills/adversarial-review/",
-    );
-    expect(rewriteMarkdownHref("parity.md", "docs/ndev-2/spec.md")).toBe("/architecture/parity/");
-    expect(rewriteMarkdownHref("work-light/SKILL.md", "skills/README.md")).toBe("/skills/work-light/");
-    expect(rewriteMarkdownHref("../kb/workflow.md", "agents/README.md")).toBe("/kb/workflow/");
+    const prevBasePath = process.env.NEXT_PUBLIC_BASE_PATH;
+    try {
+      process.env.NEXT_PUBLIC_BASE_PATH = "";
+      expect(rewriteMarkdownHref("core-beliefs.md#11-forget-history", "kb/writing.md")).toBe(
+        "/kb/core-beliefs/#11-forget-history",
+      );
+      expect(rewriteMarkdownHref("../skills/adversarial-review/SKILL.md", "kb/writing.md")).toBe(
+        "/skills/adversarial-review/",
+      );
+      expect(rewriteMarkdownHref("parity.md", "docs/ndev-2/spec.md")).toBe("/architecture/parity/");
+      expect(rewriteMarkdownHref("work-light/SKILL.md", "skills/README.md")).toBe("/skills/work-light/");
+      expect(rewriteMarkdownHref("../kb/workflow.md", "agents/README.md")).toBe("/kb/workflow/");
+
+      process.env.NEXT_PUBLIC_BASE_PATH = "/ndev";
+      expect(rewriteMarkdownHref("core-beliefs.md#11-forget-history", "kb/writing.md")).toBe(
+        "/ndev/kb/core-beliefs/#11-forget-history",
+      );
+      expect(rewriteMarkdownHref("parity.md", "docs/ndev-2/spec.md")).toBe("/ndev/architecture/parity/");
+    } finally {
+      if (prevBasePath === undefined) {
+        delete process.env.NEXT_PUBLIC_BASE_PATH;
+      } else {
+        process.env.NEXT_PUBLIC_BASE_PATH = prevBasePath;
+      }
+    }
   });
 
   it("extracts headings and renders markdown tables cleanly", () => {
