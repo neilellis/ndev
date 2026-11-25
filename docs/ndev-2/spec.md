@@ -16,9 +16,9 @@ The following tree omits the common flags. A flag in brackets is optional. Repea
 
 ```text
 ndev --version
-ndev install <claude|codex|opencode|all> [--prefix <dir>] [--dry-run] [--panels] [--approve <fingerprint>]
+ndev install <claude|codex|opencode|antigravity|all> [--prefix <dir>] [--dry-run] [--panels] [--approve <fingerprint>]
 ndev install <profile> --profile <file> [--prefix <dir>] [--dry-run]
-ndev install verify <claude|codex|opencode|all> [--prefix <dir>]
+ndev install verify <claude|codex|opencode|antigravity|all> [--prefix <dir>]
 ndev project status
 ndev project setup [--repo <owner/name>|--no-repo] [--board <owner/number>|--no-board]
 ndev project mode [light|heavy|hack]
@@ -210,17 +210,17 @@ The hook process reads the event on stdin. Each event runs through shared CLI ha
 
 At session start in a linked worktree, copy missing project settings and credentials from the main checkout that Git reports. If no source file exists, write the default settings and an empty credentials file. Set the new credentials file to mode 600. Create a record with no resources for this worktree. Keep existing files. Add local Git excludes for the credentials and worktree record if Git does not already ignore them.
 
-| Event | Work | Claude Code | Codex | opencode |
-| --- | --- | --- | --- | --- |
-| `session-start` | Bind the session, give setup and issue guidance, and start or reuse the watcher. | `SessionStart` | `SessionStart` | `session.created` and first context hook on resume |
-| `prompt-submit` | Reload setup when needed and detect a correction. | `UserPromptSubmit` | `UserPromptSubmit` | Session prompt hook |
-| `prompt-context` | Supply mode, steering, branding, repo, wiki, report, workflow, and epic context. | `UserPromptSubmit`, with `SessionStart` context on startup, resume, or compact | `UserPromptSubmit` and `SessionStart` with source `compact` | Session context hook |
-| `pre-tool-use` | Apply the walk limits and shell Git guard before quality checks. | `PreToolUse` | `PreToolUse` | Tool execute before |
-| `post-tool-use` | Report check hints, review component changes, flag a push for learning, and refresh panel data. | `PostToolUse` | `PostToolUse` | Tool execute after |
-| `turn-start` | Record activity and distinguish a human answer from a watcher message. | `UserPromptSubmit` and tool activity | `UserPromptSubmit` and model activity | Session execution start |
-| `turn-complete` | Record idle state, clear dead waits, and service the walk and PR queue. | `Stop`, `SubagentStop` | `Stop`, `SubagentStop` | Session execution end events |
-| `session-end` | Stop walk resources, apply the worktree stop policy, and release ownership. | `SessionEnd` | `SessionEnd` | Session close or delete when available, with watcher exit handling for a closed terminal |
-| `compact` | Mark skill context for reload. | `PostCompact` or `SessionStart` with source `compact` | `PostCompact` | Session compaction events |
+| Event | Work | Claude Code | Codex | opencode | Antigravity |
+| --- | --- | --- | --- | --- | --- |
+| `session-start` | Bind the session, give setup and issue guidance, and start or reuse the watcher. | `SessionStart` | `SessionStart` | `session.created` and first context hook on resume | `SessionStart` |
+| `prompt-submit` | Reload setup when needed and detect a correction. | `UserPromptSubmit` | `UserPromptSubmit` | Session prompt hook | `PreInvocation` with `invocationNum` 0 |
+| `prompt-context` | Supply mode, steering, branding, repo, wiki, report, workflow, and epic context. | `UserPromptSubmit`, with `SessionStart` context on startup, resume, or compact | `UserPromptSubmit` and `SessionStart` with source `compact` | Session context hook | Not separate: `prompt-submit` gives the context |
+| `pre-tool-use` | Apply the walk limits and shell Git guard before quality checks. | `PreToolUse` | `PreToolUse` | Tool execute before | `PreToolUse` |
+| `post-tool-use` | Report check hints, review component changes, flag a push for learning, and refresh panel data. | `PostToolUse` | `PostToolUse` | Tool execute after | `PostToolUse`; its notes go out at the next `PreInvocation` |
+| `turn-start` | Record activity and distinguish a human answer from a watcher message. | `UserPromptSubmit` and tool activity | `UserPromptSubmit` and model activity | Session execution start | Not used |
+| `turn-complete` | Record idle state, clear dead waits, and service the walk and PR queue. | `Stop`, `SubagentStop` | `Stop`, `SubagentStop` | Session execution end events | `Stop` |
+| `session-end` | Stop walk resources, apply the worktree stop policy, and release ownership. | `SessionEnd` | `SessionEnd` | Session close or delete when available, with watcher exit handling for a closed terminal | None: Antigravity has no session-end hook |
+| `compact` | Mark skill context for reload. | `PostCompact` or `SessionStart` with source `compact` | `PostCompact` | Session compaction events | None |
 
 On a new session, instruct the agent to start the saved workflow before development. When the worktree has no workflow record, use a selected GitHub issue or the only issue Orca links from the configured repository. Ask which issue to use when the choice is ambiguous. A project that disables the workflow receives a startup notice with the command to enable it.
 
@@ -230,13 +230,14 @@ The guard is off by default. A project turns it on with `"chatGuard": true` in i
 
 The guard saves the latest blocked message text locally for each chat. Reply `continue` to pass that saved request to the current chat through the prompt hook's additional context, without compaction. This consumes the saved request once and keeps the guard enabled for later messages. Reply `hand-off` to start a new Orca chat in the same workspace with up to three recent assistant excerpts and the saved message. Reply `new-session` to send just the saved message to a new chat. Attachments need to be added again. To compact the current chat first, run `/compact`, wait for it to finish, then resend the message. When a new-chat launch has an uncertain delivery result, recover that launch before continuing here to avoid duplicate delivery. Run `ndev chat-guard off` to disable it for the project or `ndev chat-guard status` to check whether it is enabled there.
 
-Install one entry per native event for ndev so its checks run in order. Claude Code uses `~/.claude/settings.json`. Codex uses `~/.codex/hooks.json`, or the active Codex config directory, with hook trust set by the user. opencode uses a server plugin that calls the binary with an argument vector and sends JSON on stdin. Test the v2 event names and denial path with the installed v2 host. For Claude Code and Codex, the pre-tool adapter uses each host's denial JSON. Both hosts use a single native prompt hook to run both prompt handlers in order. Preserve other hook entries.
+Install one entry per native event for ndev so its checks run in order. Claude Code uses `~/.claude/settings.json`. Codex uses `~/.codex/hooks.json`, or the active Codex config directory, with hook trust set by the user. opencode uses a server plugin that calls the binary with an argument vector and sends JSON on stdin. For Antigravity, the installer writes one hook group named ndev into the global hooks file of Antigravity. The adapter reads the fields `conversationId`, `lastUserInput` and `toolCall` into the shared fields. The tool `run_command` becomes shell, and its own `Cwd` is the working folder. The tools `write_file` and `write_to_file` become write. The tools `edit_file`, `replace_file_content` and `multi_replace_file_content` become edit. It denies a tool with `decision` `deny`, and gives context as `injectSteps` system messages. Antigravity does not show the model a reason on an allowed tool call. So the notes of both tool hooks reach the model at the next `PreInvocation`, after the call has run. A `PreInvocation` after the first in a turn only delivers those held notes. The installer keeps a user's `enabled` value on the group. Test the v2 event names and denial path with the installed v2 host. For Claude Code and Codex, the pre-tool adapter uses each host's denial JSON. Both hosts use a single native prompt hook to run both prompt handlers in order. Preserve other hook entries.
 
 Native interfaces
 
 - [Claude Code hooks](https://code.claude.com/docs/en/hooks)
 - [Codex hooks](https://learn.chatgpt.com/docs/hooks)
 - [opencode server plugin API](https://opencode.ai/docs/build/plugins/server/)
+- [Antigravity hooks](https://antigravity.google/docs/hooks.md)
 
 A profile with no hooks installs a session skill with the event duties that an agent can perform. It states that these are instructions for the agent. It reports which tool guards and session cleanup operations require host support.
 
@@ -267,6 +268,7 @@ A panel uses `orca.plugin.request` for a named action with the worktree ID, expe
 | Claude Code | `~/.claude/skills/ndev-*`, `~/.claude/agents/ndev-*.md`, and the hook entries above. Respect the active Claude config directory. |
 | Codex | `~/.agents/skills/ndev-*`, `~/.codex/agents/ndev-*.toml`, and the hook entries above. Respect `CODEX_HOME` for agents and hooks. |
 | opencode | `~/.config/opencode/skills/ndev-*`, `~/.config/opencode/agents/ndev-*.md`, and a server adapter under `~/.config/opencode/plugins/ndev/`. Respect `XDG_CONFIG_HOME`. |
+| Antigravity | `~/.gemini/config/skills/ndev-*`, `~/.gemini/config/agents/ndev-*.md` with Antigravity tool names, and the `ndev` group in `~/.gemini/config/hooks.json`. |
 | Profiles with no hooks | Paths and agent format from the profile file. Add the ndev session skill. |
 
 Build a release with the CLI bootstrapping entry available before installation. The install plan lists paths, hook changes, and file conflicts before it writes. It refuses to replace a file it does not own. It writes staged files and the manifest so a retry can finish a partial install. Install shared files once for `all`. Use the existing rewriter for skill references and agent format. Apply each harness's supported role limits, and refuse to claim checks or limits that it does not support. A dry run reports the plan and has no side effects. Verification reads back the install paths and tests native discovery and hook execution.
@@ -293,7 +295,7 @@ Write a public regression test first. Confirm it fails for the intended reason, 
 
 ## Support and verification
 
-- The install targets are Claude Code, Codex, and opencode v2. The installer trials used Claude Code 2.1.326, Codex 0.166.0, and opencode 2.3.0.
+- The install targets are Claude Code, Codex, opencode v2, and Google Antigravity. The installer trials used Claude Code 2.1.326, Codex 0.166.0, and opencode 2.3.0. The Antigravity hook payloads and answers were checked with the `agy` CLI in November 2026.
 - Use a named action and a confirmation for workflow overrides and triage close. A harness hook's caller role gives no authority to override.
 - Test the desktop panel with a connected remote worktree. A headless server uses text. Keep desktop remote panel parity open until the panel can read and change remote worktree state.
 - The PR queue merges only when the project permits agent merge. Use `--no-merge` to leave green PRs for a person.

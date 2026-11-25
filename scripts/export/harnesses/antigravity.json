@@ -1,0 +1,13 @@
+{
+  "name": "antigravity",
+  "aliases": ["agy"],
+  "skillsDir": "~/.gemini/config/skills",
+  "agentsDir": "~/.gemini/config/agents",
+  "agentFormat": "antigravity-md",
+  "instructionsFile": "~/.gemini/config/AGENTS.md",
+  "reviewCommand": "agy --agent ndev-diff-reviewer --print-timeout 0s -p \"$(cat {brief})\" > {out}",
+  "verify": null,
+  "verifyExpect": null,
+  "askHuman": "Ask the human in the chat and end your turn.",
+  "notes": "Google Antigravity (the agy CLI and the Antigravity app) reads global skills from ~/.gemini/config/skills, subagents from ~/.gemini/config/agents/<name>.md (frontmatter name, description, tools) and global instructions from ~/.gemini/config/AGENTS.md. A subagent with no tools list gets only read_file and chat tools, so each ndev agent lists its tools: read_file, write_file, edit_file, run_command, search_web. Hooks are named groups in ~/.gemini/config/hooks.json with the events SessionStart, PreInvocation (before each model call; invocationNum 0 is the first of a turn), PreToolUse, PostToolUse (matcher plus hooks) and Stop. The payload has conversationId, cwd, lastUserInput and toolCall {name, args}. Context goes back as injectSteps of systemMessage, a tool is blocked with decision deny, and PostToolUse cannot return context. A reason on an allow decision does not reach the model (checked with agy 1.5.17), so ndev holds tool notes for the next PreInvocation. The CLI edits with write_file and edit_file; the documented App and IDE tools are write_to_file, replace_file_content and multi_replace_file_content. run_command carries its own Cwd. There is no session-end or compaction event and no non-interactive skill listing."
+}

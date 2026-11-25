@@ -173,6 +173,10 @@ function agentFile(ctx, source, text, name) {
     const model = ctx.profile.agentModels?.[name]
     return { path: `ndev-${name}.toml`, text: [`# ${stampText(ctx, how)}`, `name = "ndev-${name}"`, `description = ${JSON.stringify(fm.fields.description)}`, ...(model ? [`model = ${JSON.stringify(model)}`] : []), ...(ctx.binary && fm.fields.tools ? ['sandbox_mode = "read-only"'] : []), `developer_instructions = '''`, `${body}'''`, ''].join('\n') }
   }
+  if (ctx.profile.agentFormat === 'antigravity-md') {
+    const tools = antigravityTools(source, fm.fields)
+    return { path: `ndev-${name}.md`, text: ['---', `name: ndev-${name}`, `description: ${JSON.stringify(fm.fields.description)}`, `tools: [${tools.map(tool => JSON.stringify(tool)).join(', ')}]`, '---', `<!-- ${stampText(ctx, how)} -->`, '', body].join('\n') }
+  }
   const permissions = []
   if (ctx.binary && ctx.profile.agentFormat === 'opencode-md') {
     const actions = { Read: 'read', Glob: 'glob', Grep: 'grep', Bash: 'shell', WebFetch: 'webfetch', Agent: 'subagent' }
@@ -189,6 +193,18 @@ function agentFile(ctx, source, text, name) {
     }
   }
   return { path: `ndev-${name}.md`, text: ['---', `description: ${JSON.stringify(fm.fields.description)}`, 'mode: subagent', ...permissions, '---', `<!-- ${stampText(ctx, how)} -->`, '', body].join('\n') }
+}
+
+const ANTIGRAVITY_TOOLS = { Read: ['read_file'], Write: ['write_file'], Edit: ['edit_file'], Bash: ['run_command'], WebSearch: ['search_web'], Grep: ['run_command'], Glob: ['run_command'], WebFetch: ['run_command'], Agent: [] }
+
+function antigravityTools(source, fields) {
+  const names = list => list?.split(/,\s*/).filter(Boolean) ?? []
+  const allowed = fields.tools ? names(fields.tools) : ['Read', 'Write', 'Edit', 'Bash', 'WebSearch']
+  const denied = names(fields.disallowedTools)
+  const unknown = [...allowed, ...denied].filter(tool => !ANTIGRAVITY_TOOLS[tool])
+  if (unknown.length) throw new Fail(1, `export: the agent ${source} names ${unknown.join(', ')}, which has no Antigravity tool. Repair: add it to ANTIGRAVITY_TOOLS in scripts/export/export.mjs.`)
+  const removed = new Set(denied.flatMap(tool => ANTIGRAVITY_TOOLS[tool]))
+  return [...new Set(allowed.flatMap(tool => ANTIGRAVITY_TOOLS[tool]))].filter(tool => !removed.has(tool))
 }
 
 const leftoversOf = (file, text) =>

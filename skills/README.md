@@ -1,6 +1,6 @@
 # Skill index
 
-Choose a skill by the task below. The installer exposes each source folder as `ndev-<name>` in Claude, Codex and opencode. Claude uses `/ndev-<name>`; Codex uses `$ndev-<name>`. Start a new session after reinstalling to refresh discovery.
+Choose a skill by the task below. The installer exposes each source folder as `ndev-<name>` in Claude, Codex, opencode and Antigravity. Claude uses `/ndev-<name>`; Codex uses `$ndev-<name>`. Start a new session after reinstalling to refresh discovery.
 
 Work skills carry the brief project-guidance reminder. Specialist skills do not repeat it.
 

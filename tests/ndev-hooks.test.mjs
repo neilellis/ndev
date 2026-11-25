@@ -1097,3 +1097,58 @@ test('a live ndev watch refuses a wait on the watched PR and allows the wait on 
     assert.equal(denied(hook(root, 'claude', 'Bash', command, env)), false, command)
   }
 })
+
+function antigravity(root, event, payload, env = {}) {
+  const result = spawnSync(ndev, ['hook', event, '--harness', 'antigravity'], {
+    cwd: root, encoding: 'utf8', env: { ...process.env, ...env },
+    input: JSON.stringify({ conversationId: 'fixture', cwd: root, workspacePaths: [root], lastUserInput: 'go', ...payload }),
+  })
+  assert.equal(result.status, 0, result.stderr)
+  return JSON.parse(result.stdout)
+}
+
+test('Antigravity hooks deny a guarded commit and allow other commands in its own format', t => {
+  const root = fixture(t)
+  const shell = CommandLine => ({ toolCall: { id: 'call_1', name: 'run_command', args: { CommandLine } } })
+  const denied = antigravity(root, 'pre-tool-use', shell("bash -c 'git commit -m test'"))
+  assert.equal(denied.decision, 'deny')
+  assert.match(denied.reason, /issue #17.*ndev flow checkpoint/i)
+  assert.deepEqual(antigravity(root, 'pre-tool-use', shell('echo hi')), { decision: 'allow' })
+})
+
+test('Antigravity gets context at its first model call of a turn and a plain stop answer', t => {
+  const root = fixture(t)
+  const steps = answer => answer.injectSteps?.map(step => step.systemMessage?.systemMessage).join('\n') ?? ''
+  assert.match(steps(antigravity(root, 'session-start', {})), /Mode light/)
+  assert.match(steps(antigravity(root, 'prompt-submit', { invocationNum: 0, initialNumSteps: 1 })), /Mode light/)
+  assert.doesNotMatch(steps(antigravity(root, 'prompt-submit', { invocationNum: 1, initialNumSteps: 3 })), /Mode light/)
+  assert.deepEqual(antigravity(root, 'turn-complete', { executionNum: 0, terminationReason: 'NO_TOOL_CALL', fullyIdle: true }), { decision: '' })
+})
+
+test('Antigravity edits reach the requirement hooks, and their notes arrive at the next model call', t => {
+  const { root } = recordsFixture(t)
+  const env = { HOME: root, PATH: process.env.PATH, ORCA_AGENT_SESSION_ID: '' }
+  const file = join(root, 'src/report.js')
+  const edits = [
+    ['edit_file', { Path: file, Target: 'export {}', Replacement: 'export const a = 1' }],
+    ['replace_file_content', { TargetFile: file, TargetContent: 'export {}', ReplacementContent: 'export const a = 1' }],
+    ['multi_replace_file_content', { TargetFile: file, ReplacementChunks: [{ TargetContent: 'export {}', ReplacementContent: 'export const a = 1' }] }],
+    ['write_to_file', { TargetFile: file, CodeContent: 'export const a = 1\n' }],
+  ]
+  for (const [index, [name, args]] of edits.entries()) {
+    const conversation = { conversationId: `edit-${index}` }
+    assert.deepEqual(antigravity(root, 'pre-tool-use', { ...conversation, toolCall: { id: 'call_2', name, args } }, env), { decision: 'allow' }, name)
+    const steps = antigravity(root, 'prompt-submit', { ...conversation, invocationNum: 1, initialNumSteps: 3 }, env).injectSteps?.map(step => step.systemMessage.systemMessage).join('\n') ?? ''
+    assert.match(steps, /The requirements in force for src\/report\.js\. The change must meet each:\n- REQ-0001 The report names each source/, name)
+    assert.equal(antigravity(root, 'prompt-submit', { ...conversation, invocationNum: 2, initialNumSteps: 5 }, env).injectSteps, undefined, name)
+  }
+})
+
+test('the Antigravity Git guard checks the worktree that run_command names in Cwd', t => {
+  const root = fixture(t)
+  const elsewhere = mkdtempSync(join(tmpdir(), 'ndev-hook-outside-'))
+  t.after(() => rmSync(elsewhere, { recursive: true, force: true }))
+  const answer = antigravity(elsewhere, 'pre-tool-use', { cwd: elsewhere, workspacePaths: [elsewhere], toolCall: { id: 'call_3', name: 'run_command', args: { CommandLine: 'git commit -m test', Cwd: root } } })
+  assert.equal(answer.decision, 'deny')
+  assert.match(answer.reason, /issue #17/i)
+})

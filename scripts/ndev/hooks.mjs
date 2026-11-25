@@ -14,7 +14,7 @@ import { commitFiles, fixedEditReason, hasRecords, rawCreateReason, recordCheck,
 import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
 
 const events = new Set(['session-start', 'prompt-submit', 'prompt-context', 'pre-tool-use', 'post-tool-use', 'turn-start', 'turn-complete', 'session-end', 'compact'])
-const harnesses = new Set(['claude', 'codex', 'opencode'])
+const harnesses = new Set(['claude', 'codex', 'opencode', 'antigravity'])
 const correction = /^\s*(?:no\b|nope\b|stop\b|wrong\b|don'?t\b|do not\b|not like that|that'?s not|instead\b|actually\b|i said\b|why did you\b)|\b(?:you should(?:n't)?|never do|always do|from now on)\b/i
 const shellTools = new Set(['bash', 'shell', 'exec_command'])
 const editTools = new Set(['edit', 'write', 'apply_patch', 'multiedit', 'patch'])
@@ -270,8 +270,31 @@ function rawGitReason(command, workspace, workflow, helperCwd, watched) {
   }
 }
 
+function fromAntigravity(payload) {
+  const { name, id, args = {} } = payload.toolCall ?? {}
+  const tool = { run_command: 'bash', write_file: 'write', write_to_file: 'write', edit_file: 'edit', replace_file_content: 'edit', multi_replace_file_content: 'multiedit' }[name] ?? name
+  const edits = args.ReplacementChunks?.map(chunk => ({ old_string: chunk.TargetContent, new_string: chunk.ReplacementContent, replace_all: chunk.AllowMultiple === true }))
+  const input = {
+    ...args, command: args.CommandLine, file_path: args.Path ?? args.TargetFile, content: args.Content ?? args.CodeContent,
+    old_string: args.Target ?? args.TargetContent, new_string: args.Replacement ?? args.ReplacementContent, ...(edits ? { edits } : {}),
+  }
+  return {
+    ...payload, session_id: payload.conversationId, cwd: args.Cwd ?? payload.cwd ?? payload.workspacePaths?.[0], prompt: payload.lastUserInput,
+    ...(name ? { tool_name: tool, tool_input: input, tool_use_id: id, tool_response: { isError: Boolean(payload.error), error: payload.error } } : {}),
+  }
+}
+
+function antigravityAnswer(event, { reason, context, systemMessage }) {
+  if (reason) return { decision: 'deny', reason }
+  if (event === 'pre-tool-use') return { decision: 'allow' }
+  if (event === 'turn-complete') return { decision: '' }
+  const steps = [systemMessage, context].filter(Boolean).map(text => ({ systemMessage: { systemMessage: text } }))
+  return steps.length ? { injectSteps: steps } : {}
+}
+
 function native(event, harness, result = {}) {
   const { reason, context, systemMessage } = result
+  if (harness === 'antigravity') return antigravityAnswer(event, result)
   if (reason) {
     if (harness === 'opencode') return { decision: 'deny', reason }
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }
@@ -475,7 +498,9 @@ export async function runHook([event, ...argv], supplied) {
       throw new CliError(2, `Hook ${event} could not read its JSON payload: ${error.message}.`, { repair: 'Pass the native event as JSON on stdin.' })
     }
   }
-  if (event === 'prompt-submit') {
+  if (harness === 'antigravity') payload = fromAntigravity(payload)
+  const followingCall = harness === 'antigravity' && event === 'prompt-submit' && payload.invocationNum > 0
+  if (event === 'prompt-submit' && !followingCall) {
     const native = blockedNativePrompt(harness, payload)
     if (native) return { event, native }
   }
@@ -494,8 +519,12 @@ export async function runHook([event, ...argv], supplied) {
     }
   }
   const workspace = findWorkspace(cwd)
-  if (!workspace) return { native: null, event, outsideWorktree: true }
+  if (!workspace) return { native: native(event, harness), event, outsideWorktree: true }
   const { root } = workspace
+  if (followingCall) {
+    const context = takeHeldNotes(root, id)
+    return { event, native: native(event, harness, { context }), context }
+  }
   if (event === 'session-start' && workspace.linked) {
     checked('bash', [worktreeScript, 'init', '--worktree', root, '--session-start'], { cwd: root })
     try {
@@ -609,6 +638,26 @@ export async function runHook([event, ...argv], supplied) {
     const note = pushMarker(root, id, payload.tool_use_id ?? payload.call_id, event, call, payload)
     if (note) notes.push(note)
   }
+  if (harness === 'antigravity' && ['pre-tool-use', 'post-tool-use'].includes(event)) {
+    holdNotes(root, id, notes)
+    return { event, native: native(event, harness, { reason }), reason }
+  }
+  if (harness === 'antigravity' && ['session-start', 'prompt-submit'].includes(event)) notes.unshift(...[takeHeldNotes(root, id)].filter(Boolean))
   const context = notes.join('\n') || undefined
   return { event, native: native(event, harness, { reason, context, systemMessage }), reason, context }
+}
+
+function holdNotes(root, id, notes) {
+  if (!notes.length) return
+  if (!id) throw new CliError(1, `An Antigravity tool hook in ${root} has notes but no conversationId to hold them for the next model call: ${notes.join(' ')}`, { repair: 'Check that Antigravity sends conversationId in its hook payload.' })
+  changeSession(root, id, state => ({ heldNotes: [...(state.heldNotes ?? []), ...notes] }))
+}
+
+function takeHeldNotes(root, id) {
+  let held = []
+  changeSession(root, id, state => {
+    held = state.heldNotes ?? []
+    return held.length ? { heldNotes: [] } : null
+  })
+  return held.join('\n') || undefined
 }

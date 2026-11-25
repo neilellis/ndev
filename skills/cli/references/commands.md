@@ -145,7 +145,7 @@ Reader-side `report`, `enhance`, `record`, `reply`, and `escalate` take JSON fil
 | Command | When to use it |
 | --- | --- |
 | `ndev install <harness> --dry-run` | Preview the files and conflicts before an authorized install. |
-| `ndev install <harness>` | Install or update ndev for `claude`, `codex`, or `opencode`. `all` selects all built-in harnesses. |
+| `ndev install <harness>` | Install or update ndev for `claude`, `codex`, `opencode`, or `antigravity`. `all` selects all built-in harnesses. |
 | `ndev install verify <harness>` | Verify the installed release, skills, agents, and hook configuration. |
 | `ndev chat-guard status` / `on` / `off` | Inspect or change native Orca idle-send protection for this project (`chatGuard` in `.neil-dev.json`; off by default). |
 | `ndev watch --once` | Perform one watcher tick for an Orca terminal session. Omit `--once` only when a watcher is intended and none already owns the session. |

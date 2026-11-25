@@ -1,9 +1,9 @@
 import type { EngineInterface } from 'claude-code'
 
-export const EXPORT_HARNESSES = ['codex', 'opencode', 'opencode2']
-export const EXPORT_ARGUMENT_HINT = 'export <codex|opencode|opencode2> [--out <dir>] [--dry-run]'
+export const EXPORT_HARNESSES = ['codex', 'opencode', 'opencode2', 'antigravity']
+export const EXPORT_ARGUMENT_HINT = 'export <codex|opencode|opencode2|antigravity> [--out <dir>] [--dry-run]'
 export const EXPORT_HELP = [
-  '  /dev export <harness> [--out <dir>] [--dry-run]   generate skills, agents and the ndev-flow CLI for another agent harness (codex, opencode), then adapt and verify them',
+  '  /dev export <harness> [--out <dir>] [--dry-run]   generate skills, agents and the ndev-flow CLI for another agent harness (codex, opencode, antigravity), then adapt and verify them',
 ]
 
 type Summary = {
