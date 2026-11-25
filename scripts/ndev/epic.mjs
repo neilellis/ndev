@@ -9,7 +9,7 @@ import { DEFAULT_PARALLEL, EPIC_STATES, IN_FLIGHT, ISSUE_STATES, KEY, OWNER_LIVE
 import { readProject } from './project.mjs'
 import { resolveRemote } from './remote.mjs'
 import { readWorkflowRecords } from './waits.mjs'
-import { closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, requirementIds, rulingProblem } from './epic-closing.ts'
+import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, requirementIds, rulingProblem } from './epic-closing.ts'
 
 const string = { type: 'string' }
 const boolean = { type: 'boolean' }
@@ -354,7 +354,7 @@ function addDebt(workspace, e, before, v) {
   if (!v.file) bad('Debt requires --file <json>.')
   const debt = readObject(resolve(workspace.root, v.file))
   if (debt.sub !== undefined && !e.issues[debt.sub]) bad(`Debt sub-issue #${debt.sub} is outside epic #${e.epic}.`)
-  try { recordDebt(e, debt, Date.now()) } catch (error) { bad(error.message) }
+  try { recordDebt(e, debt, Date.now()) } catch (error) { if (error instanceof DebtRefused) throw error; bad(error.message) }
   if (isDeepStrictEqual(e, before)) return epicResult(e)
   return save(workspace, e, before, 'epicDebt', e.state, e.state)
 }

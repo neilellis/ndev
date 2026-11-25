@@ -1631,3 +1631,17 @@ test('an unreviewed SDK merge needs an override and records all omitted gates', 
   expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged', pr: 12, override: 'Owner requested emergency merge' })).isError).toBe(false)
   expect(w.epic()?.debts?.map(debt => debt.kind)).toEqual(['merge-without-review', 'skipped-check', 'gate-override'])
 })
+
+test('issue 256: epicDebt refuses a done epic, names the epic and changes nothing', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40 })
+  w.files.set(EPIC_FILE(40), JSON.stringify({ ...w.epic(), state: 'done' }))
+  const before = w.files.get(EPIC_FILE(40))
+  const r = await tool($, 'epicDebt', { issue: 40, key: 'late', kind: 'gate-override', note: 'Recorded after done' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toMatch(/late.*#40 is done/)
+  expect(r.text).toContain('Repair:')
+  expect(r.text).not.toContain('kind=throw')
+  expect(w.files.get(EPIC_FILE(40))).toBe(before)
+})

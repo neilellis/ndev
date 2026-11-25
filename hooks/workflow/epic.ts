@@ -12,7 +12,7 @@ import { SECTION, boundRoot, inFreeTurn, loadWorkflow, registerWorkflowFailure, 
 
 import { EPIC_STATES, nextEpicState, mergedSubIssue, resliced, sliceProblems, SLICE_CAP, capNote, sourcePaths, sourceProblem, SOURCE_FORM, coreIdeaProblem, specPrLinkProblem, specPrLinkRepair, specPrProblem, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
 export * from '../../scripts/ndev/epic-model'
-import { closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, requirementIds, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
+import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, requirementIds, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
 
 // What the human can do next in each epic state, as options. kb/workflow.md "What the human can do next" lists them.
 export function epicHumanStep(epic: Epic): string {
@@ -384,7 +384,7 @@ async function epicDebt($: EngineInterface, c: Ctx): Promise<string> {
   if (debt.sub !== undefined && !epic.issues[String(debt.sub)]) throw new Refuse(`Refused: #${debt.sub} is outside epic #${epic.epic}.`)
   const count = epic.debts?.length ?? 0
   try { recordDebt(epic, debt as Parameters<typeof recordDebt>[1], await $.clock.now()) }
-  catch (error) { throw new Refuse(`Refused: ${error instanceof Error ? error.message : String(error)}.`) }
+  catch (error) { throw error instanceof DebtRefused ? error : new Refuse(`Refused: ${error instanceof Error ? error.message : String(error)}.`) }
   if (epic.debts?.length !== count) { moved(epic, 'epicDebt', epic.state, await $.clock.now()); await saveEpic($, epic) }
   return answer(epic, `Debt ${debt.key} is recorded.`)
 }
@@ -989,6 +989,7 @@ export const epicTools = (on: Parameters<Register>[0], project: () => Project) =
         return { result: await inFreeTurn($, () => dispatch($, s.name, { args, project: project() })) }
       } catch (error) {
         if (error instanceof Refuse) return { result: error.message, isError: true as const }
+        if (error instanceof DebtRefused) return { result: `Refused: ${error.message} Nothing changed. Repair: ${error.repair}`, isError: true as const }
         return (await workflowToolFailed($, e.tool, { kind: 'throw', message: error instanceof Error ? error.message : String(error) }, args, s.name === 'epicStarted' ? undefined : await epicFailureScope($)))!
       }
     }).catch(async ($, e, next) => workflowToolFailed($, e.tool, next.error, e as unknown as Args, s.name === 'epicStarted' ? undefined : await epicFailureScope($)))

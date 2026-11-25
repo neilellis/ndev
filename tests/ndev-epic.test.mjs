@@ -1455,3 +1455,29 @@ test('a merged blocker gives a blocked stacked sub-issue the unblock repair, and
   f.ok('issue', '40', '41', 'merged')
   assert.throws(() => readFileSync(join(f.home, 'orca.log')), { code: 'ENOENT' })
 })
+
+test('issue 256: a done epic refuses new debt, names the epic and changes nothing', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'done'
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  const before = readFileSync(record, 'utf8')
+  const debt = join(f.home, 'debt.json')
+  writeFileSync(debt, JSON.stringify({ key: 'late', kind: 'gate-override', note: 'Recorded after done' }))
+  const result = f.call('debt', '40', '--file', debt)
+  assert.equal(result.status, 1, JSON.stringify(result))
+  assert.match(result.error.message, /late.*#40 is done/)
+  assert.match(result.error.repair, /new issue/)
+  assert.equal(readFileSync(record, 'utf8'), before)
+})
+
+test('issue 256: closing still takes new debt', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'closing'
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  const debt = join(f.home, 'debt.json')
+  writeFileSync(debt, JSON.stringify({ key: 'closing-skip', kind: 'skipped-check', check: 'integration', note: 'Deferred' }))
+  assert.deepEqual(f.ok('debt', '40', '--file', debt).debt.map(d => d.key), ['closing-skip'])
+})
