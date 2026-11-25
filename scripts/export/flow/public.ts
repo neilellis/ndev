@@ -1,5 +1,6 @@
+import { spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { CliError, atomicJson, checked, gitWorkspace, locked, readObject, stateRoot, worktreeScript } from '../../ndev/common.mjs'
@@ -136,14 +137,23 @@ export function parse(argv: string[]) {
   if (args.answer) args.message = args.answer
   return { command, args, numbers }
 }
+function terminalLine() {
+  const name = spawnSync('tty', [], { stdio: [0, 'pipe', 'pipe'], encoding: 'utf8' })
+  if (name.status !== 0) throw new CliError(1, `Cannot name the terminal on stdin: tty exited ${name.status ?? name.signal}: ${`${name.stdout}${name.stderr}`.trim() || name.error?.message}`)
+  const fd = openSync(name.stdout.trim(), 'r')
+  try {
+    const buf = Buffer.alloc(1024)
+    return buf.toString('utf8', 0, readSync(fd, buf, 0, buf.length, null))
+  } finally {
+    closeSync(fd)
+  }
+}
 export function confirm(action: string, target: string, revision: string | number, root: string, json: boolean) {
   const phrase = `confirm ${action} ${target} ${revision}`
-  const text = `In ${root}, confirm ${action} for ${target} at revision ${revision}. Run the command in a terminal and type "${phrase}".`
+  const text = `In ${root}, confirm ${action} for ${target} at revision ${revision}. A human runs the same command in a terminal in that folder, from any session, and types "${phrase}".`
   if (json || !process.stdin.isTTY || !process.stderr.isTTY) return { nextAction: { action, target, revision, root, confirmation: 'terminal' }, text }
   process.stderr.write(text + '\n> ')
-  const buf = Buffer.alloc(1024)
-  const size = readSync(0, buf, 0, buf.length, null)
-  if (buf.toString('utf8', 0, size).trim() !== phrase) throw new CliError(1, `Confirmation did not match ${action} for ${target} at revision ${revision}.`)
+  if (terminalLine().trim() !== phrase) throw new CliError(1, `Confirmation did not match ${action} for ${target} at revision ${revision}.`)
 }
 export function projectSwitch(root: string, enabled: boolean, json: boolean) {
   const file = join(root, '.neil-dev.json')

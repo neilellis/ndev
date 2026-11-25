@@ -1302,7 +1302,9 @@ function humanMove(wf: Workflow, config: Config, verb: string, to: Position, rea
   delete wf.blocked
   wf.attempts = 0
   wf.nudges = { count: 0 }
+  const owner = wf.owner
   apply(wf, to, verb, notes)
+  if (owner) wf.owner = owner
   save(wf)
   if (wf.prs[0] && !wf.direct) {
     const what = verb === 'skip' ? `skip "${from}", at ${sha.slice(0, 8)}: ${reason}` : `goto "${to.state}" from "${from}", at ${sha.slice(0, 8)}: ${reason}`
@@ -1830,13 +1832,15 @@ function dispatchFlow(argv: string[], options: { json?: boolean }) {
   if (config.workflow === false && command !== 'on') throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
   if (wf.off && command !== 'on' && command !== 'off') throw new Fail(1, `Workflow of #${wf.issue} is off: ${wf.off.reason}. Run ndev flow on.`)
   const elsewhere = ownedElsewhere(wf)
-  if (elsewhere && command !== 'unblock') throw new Fail(1, elsewhere)
+  const human = command === 'skip' || command === 'goto' || command === 'on' || command === 'mode' || command === 'steering' && !args.reason
+  if (elsewhere && command !== 'unblock' && !human) throw new Fail(1, elsewhere)
   if ((args.mode || wf.mode) === 'hack' && (args.steering || wf.steering) === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
   if (command === 'goto') refuseUnchanged(wf, 'state', gotoState(args))
   if (command === 'mode') refuseUnchanged(wf, 'mode', args.mode)
   if (command === 'steering' && !args.reason) refuseUnchanged(wf, 'steering', args.steering)
-  if (command === 'skip' || command === 'goto' || command === 'on' || command === 'mode' || command === 'steering' && !args.reason) {
+  if (human) {
     const request = publicCli!.confirm(command, `#${wf.issue}`, wf.rev ?? 0, root, !!options.json)
+    if (request && elsewhere) throw new Fail(1, elsewhere)
     if (request) return request
   }
   if (command === 'on' || command === 'off') {

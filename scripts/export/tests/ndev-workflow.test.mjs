@@ -1312,6 +1312,30 @@ test('a human skip records the reason on the PR and moves only to the next phase
   assert.match(posted, /skip "planning".*Plan agreed on the call/)
 })
 
+test('a human confirms a structured worker skip from their own terminal, and the worker keeps the workflow', () => {
+  const p = project()
+  const fake = services(p)
+  const worker = { ...fake, ORCA_AGENT_SESSION_ID: 'orca-worker' }
+  setRecord(p, { mode: 'heavy', steering: 'interactive', state: 'planning', owner: { session: 'orca-worker', at: Date.now() } })
+  const before = readFileSync(p.file, 'utf8')
+  const request = answer(cli(p, ['skip', 'Plan agreed on the call'], worker)).nextAction
+  assert.equal(request.confirmation, 'terminal')
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  assert.match(refusal(cli(p, ['skip', 'Plan agreed on the call'], fake), 1).message, /orca-worker owns the workflow of #7/)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  const terminal = { cwd: p.work, env: { ...env, ...fake, ORCA_AGENT_SESSION_ID: '' } }
+  const mistyped = confirmInTerminal({ ...request, revision: request.revision + 1 }, [ndevBin, 'flow', 'skip', 'Plan agreed on the call'], terminal)
+  assert.equal(mistyped.status, 1, mistyped.stdout)
+  assert.match(mistyped.stdout, /Confirmation did not match skip for #7/)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  const human = confirmInTerminal(request, [ndevBin, 'flow', 'skip', 'Plan agreed on the call'], terminal)
+  assert.equal(human.status, 0, human.stdout)
+  const wf = recordOf(p)
+  assert.equal(wf.state, 'developing')
+  assert.equal(wf.owner.session, 'orca-worker')
+  assert.equal(answer(cli(p, ['status'], worker)).workflow.state, 'developing')
+})
+
 test('goto refuses an unknown target before asking, and logs a human override on the PR', () => {
   const p = project()
   const fake = services(p)
