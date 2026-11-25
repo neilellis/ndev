@@ -659,8 +659,9 @@ function move(workspace, e, before, sub, to, v) {
   // Model: models/workflow/epic_workflow.qnt#recordMerged
   } else if (to === 'merged' && ['waiting','implementing','blocked','reviewing','fixing','verified'].includes(from)) {
     const reviewed = Boolean(sub.reviewer && sub.verdict)
-    const reachedReview = Boolean(sub.reviewer) || ['reviewing','fixing','verified'].includes(from)
-    if (!reachedReview && !v.override?.trim()) refuse(`Sub-issue #${sub.issue} never reached reviewing.`, 'Repeat the merged move with --pr and --override <reason> to record review debt.')
+    const override = !['reviewing','fixing','verified'].includes(from)
+    if (override && !v.override?.trim()) refuse(`Sub-issue #${sub.issue} is ${from}, not reviewing, fixing or verified, so its merge needs --override <reason>, recorded as override debt.`, 'Repeat the merged move with --pr and --override <reason> to record review debt.')
+    if (!override && v.override?.trim()) refuse(`Sub-issue #${sub.issue} is ${from}: a merge from reviewing, fixing or verified owes no override debt.`, 'Repeat the merged move without --override.')
     if (v.pr && sub.pr && number(v.pr, 'PR') !== sub.pr && !(from === 'blocked' && sub.lost && v.override?.trim())) refuse(`Review of PR #${sub.pr} cannot transfer to PR #${v.pr}.`, 'Keep the recorded PR, or reconcile the sub-issue before merging.')
     if (v.pr) sub.pr = number(v.pr, 'PR')
     if (!sub.pr) bad('Merged requires the PR number.')

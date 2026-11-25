@@ -1117,7 +1117,7 @@ test('merging before reviewing requires an explicit override and records each om
   writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
   Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merge_commit_sha: 'b'.repeat(40) })
   f.save()
-  assert.match(f.call('issue', '40', '41', 'merged', '--pr', '61').error.message, /never reached reviewing/)
+  assert.match(f.call('issue', '40', '41', 'merged', '--pr', '61').error.message, /#41 is implementing.*--override/)
   const merged = f.ok('issue', '40', '41', 'merged', '--pr', '61', '--override', 'Owner requested the emergency merge').epic
   assert.deepEqual(merged.debts.map(debt => debt.kind), ['merge-without-review', 'skipped-check', 'gate-override'])
   assert.equal(merged.posture, 'deadline')
@@ -1583,4 +1583,29 @@ test('issue 257: the same issue-filed ruling again changes nothing after its fol
   f.answers['repos/example/repo/issues/90'] = { number: 90, state: 'closed' }
   f.save()
   f.ok('ruling', '40', 'docs', '--file', ruling)
+})
+
+test('issue 250: a merge owes override debt exactly when the sub-issue is not in reviewing, fixing or verified', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = {
+    41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'blocked', previous: 'reviewing', pr: 61, reviewer: 'review-1', verdict: 'changes' },
+    42: { issue: 42, key: 'child', title: 'Child', blockedBy: [], rounds: 0, state: 'reviewing', pr: 62, reviewer: 'review-2', verdict: 'changes' },
+  }
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merge_commit_sha: 'b'.repeat(40) })
+  Object.assign(f.answers['repos/example/repo/pulls/62'], { state: 'closed', merged: true, merge_commit_sha: 'c'.repeat(40), base: { ref: 'main' } })
+  f.save()
+  const before = readFileSync(record, 'utf8')
+  const unforced = f.call('issue', '40', '41', 'merged')
+  assert.equal(unforced.status, 1, JSON.stringify(unforced))
+  assert.match(unforced.error.message, /#41 is blocked.*--override/)
+  const superfluous = f.call('issue', '40', '42', 'merged', '--override', 'not needed')
+  assert.equal(superfluous.status, 1, JSON.stringify(superfluous))
+  assert.match(superfluous.error.message, /#42 is reviewing.*no override/)
+  assert.equal(readFileSync(record, 'utf8'), before)
+  const merged = f.ok('issue', '40', '41', 'merged', '--override', 'Owner merged the blocked PR').epic
+  assert.deepEqual(merged.debts.map(debt => debt.key), ['merge:41:pr:61:verification', 'merge:41:override'])
 })

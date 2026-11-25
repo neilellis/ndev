@@ -635,6 +635,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
     await saveEpic($, epic)
     return answer(epic, `#${sub.issue} keeps the state "${from}"; its workspace is ${workspace}.`)
   }
+  if (to === 'merged' && ['reviewing', 'fixing', 'verified'].includes(from) && str(args, 'override')) throw new Refuse(`Refused: #${sub.issue} is ${from}: a merge from reviewing, fixing or verified owes no override debt. Nothing changed. Repair: call epicIssue again without override.`)
   if (to === 'merged' && from !== 'merged' && !['reviewing', 'fixing', 'verified'].includes(from)) {
     if (!str(args, 'override')) throw new Refuse(`Refused: #${sub.issue} never reached reviewing. Supply override with the reason to record debt.`)
     if (isCount(args.pr) && sub.pr && Number(args.pr) !== sub.pr && !(from === 'blocked' && sub.lost)) throw new Refuse(`Refused: the record of #${sub.issue} has PR #${sub.pr}, and its review does not transfer to PR #${args.pr}. Nothing changed. Repair: record the merge of PR #${sub.pr}; only a sub-issue that is blocked because its PR was lost takes a new PR.`)

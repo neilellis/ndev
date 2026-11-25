@@ -1734,3 +1734,16 @@ test('issue 257: the same issue-filed ruling again changes nothing after its fol
   w.s.issues[90] = { state: 'closed', title: 'Follow-up' }
   expect((await tool($, 'epicDebtRuling', filed)).isError).toBe(false)
 })
+
+test('issue 250: an SDK merge refuses an override from reviewing, fixing or verified, which owes no override debt', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  w.files.set(EPIC_FILE(40), JSON.stringify({ ...w.epic(), issues: withIssues(sub(41, { state: 'reviewing', pr: 12, reviewer: 'r1', verdict: 'changes' })) }))
+  w.s.prs[12] = { state: 'closed', merged: true }
+  const before = w.files.get(EPIC_FILE(40))
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged', override: 'not needed' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toMatch(/#41 is reviewing.*no override/)
+  expect(w.files.get(EPIC_FILE(40))).toBe(before)
+})
