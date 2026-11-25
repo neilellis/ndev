@@ -521,7 +521,7 @@ module issue_workflow {
     not(doneProblems(wf, pr, branch)),
     val merges = mayMerge(wf.level) and not(mergeHeld)
     all {
-      moved({ ...wf, merged: merges }, afterTool(wf.state, wf.previous, "done", factsOf(wf)), "done"),
+      moved({ ...wf, merged: merges }, afterTool(wf.state, wf.previous, "done", factsOf(wf)), "doneReady"),
       pr' = if (merges) { ...pr, life: "merged" } else pr,
       issue' = if (merges) "closed" else issue,
       iv' = iv, branch' = branch, humanMoved' = humanMoved,
@@ -776,8 +776,10 @@ module issue_workflow {
 
   val redPastLimitBlocks: bool = last == "finishedChecksRed" implies wf.attempts < ATTEMPT_LIMIT
 
+  val doneCalled: bool = Set("done", "doneReady").contains(last)
+
   val agentDoneDelivers: bool =
-    (last == "done" and wf.state == "done") implies delivered(wf, pr, branch, issue)
+    (doneCalled and wf.state == "done") implies delivered(wf, pr, branch, issue)
 
   val prOpensOnlyAfterStart: bool = pr.life != "none" implies wf.recorded
 
@@ -785,13 +787,15 @@ module issue_workflow {
 
   val noChatRoundOutsideInterview: bool = iv.chat implies inInterview(wf)
 
-  val noWorkLeftBehind: bool = (last == "done" and wf.state == "done") implies (not(branch.unpushed) and not(pr.orphaned))
+  val doneAnswersFeedback: bool = (last == "doneReady" and wf.state == "done") implies not(pr.feedback)
+
+  val noWorkLeftBehind: bool = (doneCalled and wf.state == "done") implies (not(branch.unpushed) and not(pr.orphaned))
 
   val safety: bool = and {
     heldHasPrevious, noRoundAfterTrust, atMostOneRoundWithoutAnswers, agentAsksBeforeHeavyPlan,
     lightNeverPlans, heavyPlansBeforeCode, hackHardensBeforeReview, hackNeverInterviews,
     checksBeforeFinishing, redPastLimitBlocks, agentDoneDelivers, prOpensOnlyAfterStart,
-    noChatRoundOutsideInterview, answersReachGitHub, noWorkLeftBehind, heavyPlansAfterReopen,
+    noChatRoundOutsideInterview, answersReachGitHub, noWorkLeftBehind, heavyPlansAfterReopen, doneAnswersFeedback,
   }
 
   val wInterviewing: bool = wf.state == "interviewing"
@@ -806,10 +810,10 @@ module issue_workflow {
   val wBlocked: bool = wf.state == "blocked"
   val wWait: bool = wf.state == "wait"
   val wDone: bool = wf.state == "done"
-  val wDoneMergedByAgent: bool = last == "done" and wf.state == "done" and wf.merged and visited.contains("finishing") and not(humanMoved)
-  val wDoneAwaitingHuman: bool = last == "done" and wf.state == "done" and pr.life == "open"
-  val wDoneNoChange: bool = last == "done" and wf.state == "done" and not(visited.contains("reviewing"))
-  val wDoneAfterHumanMerge: bool = last == "done" and wf.merged and not(visited.contains("finishing"))
+  val wDoneMergedByAgent: bool = doneCalled and wf.state == "done" and wf.merged and visited.contains("finishing") and not(humanMoved)
+  val wDoneAwaitingHuman: bool = doneCalled and wf.state == "done" and pr.life == "open"
+  val wDoneNoChange: bool = doneCalled and wf.state == "done" and not(visited.contains("reviewing"))
+  val wDoneAfterHumanMerge: bool = doneCalled and wf.merged and not(visited.contains("finishing"))
   val wPlanSignOff: bool = wf.state == "blocked" and wf.previous == "developing" and last == "finishedPlan"
   val wTrust: bool = iv.trust
   val wChatAnswered: bool = last == "chatAnswers"

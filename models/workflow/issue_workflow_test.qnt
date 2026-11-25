@@ -135,6 +135,20 @@ module light_test {
       .then(finishedRevision)
       .expect(wf.state == "ci")
 
+  action lightFeedbackAtFinish =
+    lightConflict
+      .then(baseMovesTo("clean"))
+      .then(reviewerComments)
+      .expect(wf.state == "finishing" and pr.feedback)
+
+  run lightFeedbackRefusesDoneTest = lightFeedbackAtFinish.then(doneReady.fail())
+
+  run lightAnsweredFeedbackLetsDoneFinishTest =
+    lightFeedbackAtFinish
+      .then(answerFeedback)
+      .then(doneReady)
+      .expect(last == "doneReady" and wf.state == "done" and doneAnswersFeedback and safety)
+
   run lightCommentAnswersFeedbackInDoneTest =
     lightDoneOpen
       .then(reviewerComments)
