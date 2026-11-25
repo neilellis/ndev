@@ -1481,3 +1481,73 @@ test('issue 256: closing still takes new debt', t => {
   writeFileSync(debt, JSON.stringify({ key: 'closing-skip', kind: 'skipped-check', check: 'integration', note: 'Deferred' }))
   assert.deepEqual(f.ok('debt', '40', '--file', debt).debt.map(d => d.key), ['closing-skip'])
 })
+
+test('issue 248: open review debt is capped at 4, the refusal names the debts to rule on, and a ruling frees a place', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  const debt = join(f.home, 'debt.json'), ruling = join(f.home, 'ruling.json')
+  const owe = key => { writeFileSync(debt, JSON.stringify({ key, kind: 'gate-override', note: `Override ${key}` })); return f.call('debt', '40', '--file', debt) }
+  for (const key of ['d1', 'd2', 'd3', 'd4']) assert.equal(owe(key).status, 0)
+  const before = readFileSync(record, 'utf8')
+  const refused = owe('d5')
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /d5.*4 open debts.*cap is 4/)
+  assert.match(refused.error.repair, /d1, d2, d3, d4.*ndev epic ruling 40/)
+  assert.equal(readFileSync(record, 'utf8'), before)
+  assert.equal(owe('d4').status, 0)
+  writeFileSync(ruling, JSON.stringify({ verdict: 'accepted', reason: 'The owner accepts it' }))
+  f.ok('ruling', '40', 'd1', '--file', ruling)
+  assert.equal(owe('d5').status, 0)
+})
+
+test('issue 248: a merge that would pass the debt cap records nothing', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'implementing' } }
+  e.debts = ['d1', 'd2'].map(key => ({ key, kind: 'gate-override', note: `Override ${key}`, at: 1 }))
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merge_commit_sha: 'b'.repeat(40) })
+  f.save()
+  const before = readFileSync(record, 'utf8')
+  const refused = f.call('issue', '40', '41', 'merged', '--pr', '61', '--override', 'Owner merged it')
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /merge:41:pr:61:review, merge:41:pr:61:verification, merge:41:override.*2 open debts.*cap is 4/)
+  assert.equal(readFileSync(record, 'utf8'), before)
+})
+
+test('issue 248: skip at the debt cap is refused and the epic stays in its phase', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.debts = ['d1', 'd2', 'd3', 'd4'].map(key => ({ key, kind: 'gate-override', note: `Override ${key}`, at: 1 }))
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  const skipped = confirmed(f, 'skip', 'framing settled by the owner')
+  assert.equal(skipped.status, 1, skipped.stdout + skipped.stderr)
+  assert.match(skipped.stdout + skipped.stderr, /cap is 4/)
+  assert.equal(f.ok('status', '40').epic.state, 'framing')
+})
+
+test('issue 248: verify with skipped checks needs one place under the debt cap, as the model counts it', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'reviewing', pr: 61, reviewer: 'review-1' } }
+  e.debts = ['d1', 'd2', 'd3'].map(key => ({ key, kind: 'gate-override', note: `Override ${key}`, at: 1 }))
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  f.answers['repos/example/repo/pulls/61'] = { number: 61, state: 'open', merged: false, draft: false, mergeable: true, head: { ref: 'parent', sha: 'def' }, base: { ref: 'main' } }
+  f.answers['repos/example/repo/pulls/61/files'] = [[]]
+  f.answers['checks:61'] = { headRefOid: 'def', statusCheckRollup: [...['a', 'b', 'c', 'd', 'e'].map(name => ({ name, status: 'COMPLETED', conclusion: 'SKIPPED' })), { name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }] }
+  f.save()
+  const verified = f.ok('issue', '40', '41', 'verified', '--verdict', 'approve').epic
+  assert.equal(verified.debts.filter(debt => debt.key.startsWith('verify:41:def:')).length, 5)
+  e.debts.push({ key: 'd4', kind: 'gate-override', note: 'Override d4', at: 1 })
+  writeFileSync(record, JSON.stringify(e))
+  const refused = f.call('issue', '40', '41', 'verified', '--verdict', 'approve')
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /4 open debts.*cap is 4/)
+})

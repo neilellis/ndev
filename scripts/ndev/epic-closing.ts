@@ -78,8 +78,23 @@ export function debtProblem(debt: unknown): string | undefined {
   if (debt.kind === 'merge-without-review' && !issue(debt.sub)) return 'merge-without-review debt needs the sub-issue'
 }
 
+export const DEBT_CAP = 4
+
+function debtRoom(epic: DebtLedger, keys: string[], cap: number, places = keys.length): void {
+  const named = keys.join(', ')
+  if (epic.state === 'done') throw new DebtRefused(`Debt ${named} is not recorded: epic #${epic.epic} is done and takes no new debt.`, `File what remains as a new issue that names epic #${epic.epic}.`)
+  const open = (epic.debts ?? []).filter(item => !item.ruling).map(item => item.key)
+  if (open.length + places > cap) throw new DebtRefused(`Debt ${named} is not recorded: epic #${epic.epic} has ${open.length} open debts, and the cap is ${cap}.`, `Rule on ${open.join(', ')} with ndev epic ruling ${epic.epic} <key> --file <ruling.json> or the epicDebtRuling tool, then retry.`)
+}
+
+export function recordDebts(epic: DebtLedger, debts: Omit<EpicDebt, 'at' | 'ruling'>[], at: number, { cap = DEBT_CAP, places }: { cap?: number; places?: number } = {}): void {
+  const fresh = debts.filter(debt => !epic.debts?.some(item => item.key === debt.key)).map(debt => debt.key)
+  if (fresh.length) debtRoom(epic, fresh, cap, places ?? fresh.length)
+  for (const debt of debts) recordDebt(epic, debt, at, Infinity)
+}
+
 // Model: models/workflow/epic_workflow.qnt#recordDebt
-export function recordDebt(epic: DebtLedger, debt: Omit<EpicDebt, 'at' | 'ruling'>, at: number): EpicDebt {
+export function recordDebt(epic: DebtLedger, debt: Omit<EpicDebt, 'at' | 'ruling'>, at: number, cap = DEBT_CAP): EpicDebt {
   if (!object(debt) || 'at' in debt || 'ruling' in debt) throw new Error('New debt cannot supply its timestamp or ruling; record a separate ruling')
   if (epic.debts !== undefined && !Array.isArray(epic.debts)) throw new Error('Epic debt must be a list')
   const problem = debtProblem(debt)
@@ -89,16 +104,19 @@ export function recordDebt(epic: DebtLedger, debt: Omit<EpicDebt, 'at' | 'ruling
     if (found.kind !== debt.kind || found.note !== debt.note || found.sub !== debt.sub || found.check !== debt.check) throw new Error(`Debt ${debt.key} already records a different event; use a new key`)
     return found
   }
-  if (epic.state === 'done') throw new DebtRefused(`Debt ${debt.key} is not recorded: epic #${epic.epic} is done and takes no new debt.`, `File what remains as a new issue that names epic #${epic.epic}.`)
+  debtRoom(epic, [debt.key], cap)
   const entry = { ...debt, at }
   epic.debts = [...(epic.debts ?? []), entry]
   return entry
 }
 
 // Model: models/workflow/epic_workflow.qnt#recordMerged
-export function mergeDebts(epic: DebtLedger, sub: { issue: number; pr?: number }, reviewed: boolean, verified: boolean, at: number): void {
-  if (!reviewed) recordDebt(epic, { key: `merge:${sub.issue}:pr:${sub.pr}:review`, kind: 'merge-without-review', sub: sub.issue, note: `PR #${sub.pr} merged without a recorded review` }, at)
-  if (!verified) recordDebt(epic, { key: `merge:${sub.issue}:pr:${sub.pr}:verification`, kind: 'skipped-check', sub: sub.issue, check: 'verification', note: `PR #${sub.pr} merged without current verification` }, at)
+export function mergeDebts(epic: DebtLedger, sub: { issue: number; pr?: number }, reviewed: boolean, verified: boolean, at: number, override?: string, cap = DEBT_CAP): void {
+  recordDebts(epic, [
+    ...(reviewed ? [] : [{ key: `merge:${sub.issue}:pr:${sub.pr}:review`, kind: 'merge-without-review' as const, sub: sub.issue, note: `PR #${sub.pr} merged without a recorded review` }]),
+    ...(verified ? [] : [{ key: `merge:${sub.issue}:pr:${sub.pr}:verification`, kind: 'skipped-check' as const, sub: sub.issue, check: 'verification', note: `PR #${sub.pr} merged without current verification` }]),
+    ...(override ? [{ key: `merge:${sub.issue}:override`, kind: 'gate-override' as const, sub: sub.issue, note: override }] : []),
+  ], at, { cap })
 }
 
 // Model: models/workflow/epic_workflow.qnt#finishPhase

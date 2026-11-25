@@ -12,7 +12,7 @@ import { SECTION, boundRoot, inFreeTurn, loadWorkflow, registerWorkflowFailure, 
 
 import { EPIC_STATES, nextEpicState, mergedSubIssue, resliced, sliceProblems, SLICE_CAP, capNote, sourcePaths, sourceProblem, SOURCE_FORM, coreIdeaProblem, specPrLinkProblem, specPrLinkRepair, specPrProblem, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
 export * from '../../scripts/ndev/epic-model'
-import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, requirementIds, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
+import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, recordDebts, requirementIds, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
 
 // What the human can do next in each epic state, as options. kb/workflow.md "What the human can do next" lists them.
 export function epicHumanStep(epic: Epic): string {
@@ -730,8 +730,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
           sub.mergedUnverified = true
           extra = `\nA human merged PR #${sub.pr}${sub.mergeSha ? ` (merge commit ${sub.mergeSha})` : ''} ${moved ? `after a push: ${pushed}, so the merged head is unverified` : `while #${sub.issue} was in "${from}", so the verify checks did not run`} and the record says so. If the PR added migrations, ndev:merge did not run them: check them with the human.`
         }
-        mergeDebts(epic, sub, reviewed, !early, now)
-        if (str(args, 'override')) recordDebt(epic, { key: `merge:${sub.issue}:override`, kind: 'gate-override', sub: sub.issue, note: str(args, 'override') }, now)
+        mergeDebts(epic, sub, reviewed, !early, now, str(args, 'override'))
         const above = Object.values(epic.issues).filter(i => i.stackedOn === sub.issue && i.state !== 'merged').sort((a, b) => a.issue - b.issue)
         if (above.length) {
           let base = '<the default branch>'
@@ -856,7 +855,7 @@ async function verify($: EngineInterface, epic: Epic, sub: SubIssue): Promise<st
     // The PR is on the default branch and what it was stacked on is merged: the stack is over.
     delete sub.stackedOn
     sub.verification = { sha: verifiedSha, at: await $.clock.now() }
-    for (const check of omittedChecks) recordDebt(epic, { key: `verify:${sub.issue}:${verifiedSha}:${omittedChecks.indexOf(check)}`, kind: 'skipped-check', sub: sub.issue, check, note: `PR #${sub.pr} skipped ${check} at ${verifiedSha}` }, await $.clock.now())
+    recordDebts(epic, omittedChecks.map((check, index) => ({ key: `verify:${sub.issue}:${verifiedSha}:${index}`, kind: 'skipped-check' as const, sub: sub.issue, check, note: `PR #${sub.pr} skipped ${check} at ${verifiedSha}` })), await $.clock.now(), { places: 1 })
     return report
   }
   const repairs = [
@@ -1063,14 +1062,15 @@ export async function epicCommand($: EngineInterface, words: string[], project: 
     if (!epic) return none
     // Model: models/workflow/epic_workflow.qnt#humanSkip
     if (epic.state === 'done') return `/flow epic ${verb}: Refused: Epic #${epic.epic} is done, and ${verb} cannot reopen it. Nothing changed. Repair: file what remains as new issues, or start a new epic with /flow epic <title>.`
-    if (verb === 'skip') {
-      const to = nextEpicState(epic.state)!
-      return humanMove($, epic, to, 'skip', reason)
-    }
     // Model: models/workflow/epic_workflow.qnt#humanGoto
-    const to = rest[0] as EpicState | undefined
+    const to = verb === 'skip' ? nextEpicState(epic.state)! : rest[0] as EpicState | undefined
     if (!to || !EPIC_STATES.includes(to)) return `/flow epic goto needs a state: ${EPIC_STATES.join(', ')}.`
-    return humanMove($, epic, to, 'goto', rest.slice(1).join(' '))
+    try {
+      return await humanMove($, epic, to, verb, verb === 'skip' ? reason : rest.slice(1).join(' '))
+    } catch (error) {
+      if (error instanceof DebtRefused) return `/flow epic ${verb}: Refused: ${error.message} Nothing changed. Repair: ${error.repair}`
+      throw error
+    }
   }
   if (epic && epic.state !== 'done') return statusText(epic)
   if (!project) return 'Not started: the project folder is not known yet.'

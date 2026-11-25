@@ -9,7 +9,7 @@ import { DEFAULT_PARALLEL, EPIC_STATES, IN_FLIGHT, ISSUE_STATES, KEY, OWNER_LIVE
 import { readProject } from './project.mjs'
 import { resolveRemote } from './remote.mjs'
 import { readWorkflowRecords } from './waits.mjs'
-import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, requirementIds, rulingProblem } from './epic-closing.ts'
+import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, recordDebts, requirementIds, rulingProblem } from './epic-closing.ts'
 
 const string = { type: 'string' }
 const boolean = { type: 'boolean' }
@@ -308,7 +308,7 @@ function importEpic(workspace, e, before, v) {
   e.evidence.import = { text: v.evidence, at: Date.now(), files: file === '-' ? [] : [resolve(workspace.root, file)] }
   e.state = 'coordinating'
   const merged = Object.values(e.issues).filter(sub => sub.state === 'merged')
-  for (const sub of merged) { mergeDebts(e, sub, Boolean(sub.reviewer && sub.verdict), !sub.mergedUnverified, Date.now()); prepareMergeHandoffs(e, sub) }
+  for (const sub of merged) { mergeDebts(e, sub, Boolean(sub.reviewer && sub.verdict), !sub.mergedUnverified, Date.now(), undefined, Infinity); prepareMergeHandoffs(e, sub) }
   save(workspace, e, before, 'epicImport', before.state, e.state)
   handoffs(workspace, e, merged)
   return { ...epicResult(e), frontier: frontier(e) }
@@ -539,7 +539,7 @@ function verify(e, sub) {
   if (fresh.head?.sha !== sha || fresh.base?.ref !== main || fresh.state !== 'open' || fresh.draft || fresh.mergeable !== true) refuse(`PR #${sub.pr} changed during verification of ${sha}.`)
   const omitted = rollup.filter(check => check.conclusion === 'SKIPPED').map(check => check.name ?? check.context)
   if (!rollup.length) omitted.push('ci:no-checks')
-  for (const [index, check] of omitted.entries()) recordDebt(e, { key: `verify:${sub.issue}:${sha}:${index}`, kind: 'skipped-check', sub: sub.issue, check, note: `PR #${sub.pr} skipped ${check} at ${sha}` }, Date.now())
+  recordDebts(e, omitted.map((check, index) => ({ key: `verify:${sub.issue}:${sha}:${index}`, kind: 'skipped-check', sub: sub.issue, check, note: `PR #${sub.pr} skipped ${check} at ${sha}` })), Date.now(), { places: 1 })
   return { sha, base: main, checks: rollup.map(check => [check.workflowName, check.name ?? check.context].filter(Boolean).join('/')) }
 }
 
@@ -670,8 +670,7 @@ function move(workspace, e, before, sub, to, v) {
     if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
     const verified = from === 'verified' && sub.verification?.sha === pr.head?.sha
     if (!verified) sub.mergedUnverified = true
-    mergeDebts(e, sub, reviewed, verified, Date.now())
-    if (v.override?.trim()) recordDebt(e, { key: `merge:${sub.issue}:override`, kind: 'gate-override', sub: sub.issue, note: v.override.trim() }, Date.now())
+    mergeDebts(e, sub, reviewed, verified, Date.now(), v.override?.trim())
     prepareMergeHandoffs(e, sub)
   } else refuse(`Issue #${sub.issue} cannot move from ${from} to ${to}.`)
   if (v.workspace) sub.workspace = v.workspace
