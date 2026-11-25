@@ -434,6 +434,13 @@ function reviewRounds(wf: Workflow): number {
   return 1 + wf.history.filter(({ tool, from, to }) => tool === 'checkpoint' && from === 'reviewing' && to === 'reviewing').length
 }
 const reviewLimitNotice = `The limit of ${MAX_REVIEW_ROUNDS} review rounds has been reached. No more reviews will start. Use ndev-flow finishedReview --waive-review "<reason>" for nitpicks after checking the current diff, or report any substantive blocker.`
+function readBranchTypes(wf: Workflow): { types: string[]; note?: string } {
+  const range = wf.direct ? 'HEAD~1..HEAD' : `origin/${wf.base}...HEAD`
+  const r = git(wf.root, 'diff', '--name-only', range)
+  if (r.status !== 0) return { types: (wf.changeTypes ?? []).filter(type => type !== 'docs'), note: `The change types were not read: git diff --name-only ${range} exited ${r.status}: ${said(r)}. The review stays full. Repair: git fetch origin ${wf.base}.` }
+  addTypes(wf, r.stdout.split('\n').filter(Boolean), [])
+  return { types: wf.changeTypes ?? [] }
+}
 function startReview(wf: Workflow): string[] {
   const sha = headSha(wf.root)
   if (wf.exportReview?.sha === sha) return []
@@ -444,6 +451,7 @@ function startReview(wf: Workflow): string[] {
     return [reviewLimitNotice, sweepText(wf.deadcode.results), scanLoweredBar(wf)]
   }
   const lowered = scanLoweredBar(wf)
+  const branchTypes = readBranchTypes(wf)
   const issue = ghJson<{ title: string; body: string | null }>(wf.root, wf.repo, ['issue-read', String(wf.issue)])
   const axes = MACHINES[wf.mode as 'light'].twoAxisReview ? ['standards', 'specification'] : ['review']
   const dir = gitDir(wf.root)
@@ -465,7 +473,7 @@ function startReview(wf: Workflow): string[] {
         'If the diff adds, edits, or removes the file, check that change against owner approval. Use the base rules for the rest of the diff unless the owner approved a change to those rules.',
         'For a conflict, cite the section and the changed file and line. Record the sections you checked, no applicable sections, file absent, or an access failure. When the file is absent, use the remaining project guidance.',
       ]),
-      ...reviewerBrief((wf.changeTypes ?? []) as any),
+      ...reviewerBrief(branchTypes.types as any),
       MACHINES[wf.mode as 'light'].reviewBrief ?? '',
       reviewer ? `Your instructions as reviewer are in ${reviewer}: follow them.` : '',
       `## Issue #${wf.issue}: ${issue.title}`,
@@ -486,7 +494,7 @@ function startReview(wf: Workflow): string[] {
     if (inOrca()) ensureReviewWorkers(wf)
   }
   wf.deadcode = { sha, results: sweepDeadCode(wf) }
-  return [sweepText(wf.deadcode.results), lowered]
+  return [sweepText(wf.deadcode.results), lowered, branchTypes.note ?? '']
 }
 function reviewText(wf: Workflow): string {
   const waiver = 'For nitpicks, you can use ndev-flow finishedReview --waive-review "<reason>". The pre-ready checks still run.'

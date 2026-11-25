@@ -119,3 +119,26 @@ test('finished-development joins the open PR of the branch and adds the closing 
   assert.deepEqual(held.state().prs, [77])
   assert.equal(held.body(), 'Groups A and C. Part of #120.\n\nCloses #12\n')
 })
+
+test('finished-development --change-type docs keeps the full review when the branch diff changes code', t => {
+  const held = developing(t)
+  writeFileSync(join(held.work, 'old/widget.ts'), 'export const widget = 2\n')
+  git(held.work, 'commit', '-q', '-am', 'Change the widget')
+  writeFileSync(join(held.work, 'NOTES.md'), 'The widget is 2.\n')
+  const result = held.flow('finished-development', '--message', 'Document the widget', '--file', 'NOTES.md', '--change-type', 'docs')
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  const brief = readFileSync(join(held.work, '.git', 'ndev-review-12-review.md'), 'utf8')
+  assert.doesNotMatch(brief, /documents only/)
+  assert.match(brief, /Backend: check the error paths/)
+  assert.deepEqual(held.state().changeTypes, ['backend', 'docs'])
+})
+
+test('finished-development keeps the short review when the whole branch diff holds documents only', t => {
+  const held = developing(t)
+  writeFileSync(join(held.work, 'NOTES.md'), 'The widget is 1.\n')
+  const result = held.flow('finished-development', '--message', 'Document the widget', '--file', 'NOTES.md', '--change-type', 'docs')
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  const brief = readFileSync(join(held.work, '.git', 'ndev-review-12-review.md'), 'utf8')
+  assert.match(brief, /documents only/)
+  assert.deepEqual(held.state().changeTypes, ['docs'])
+})
