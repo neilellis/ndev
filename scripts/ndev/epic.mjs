@@ -446,6 +446,8 @@ function branchFor(e) {
   return branch
 }
 
+const isRepo = (a, b) => a.toLowerCase() === b.toLowerCase()
+
 function refuseOpenClosingPr(e, sub, since) {
   const shown = `gh issue view ${sub.issue} --repo ${e.repo} --json closedByPullRequestsReferences`
   const script = process.env.NDEV_FLOW_GH || join(releaseRoot, 'scripts/github/gh.sh')
@@ -459,13 +461,13 @@ function refuseOpenClosingPr(e, sub, since) {
     const pull = github(e.root, repo, `/pulls/${number(ref.number, 'closing PR')}`)
     return pull.state === 'open' ? [{ repo, number: ref.number, created: Date.parse(pull.created_at) }] : []
   })
-  const own = pr => pr.repo === e.repo && pr.created > sub.briefedAt
+  const own = pr => isRepo(pr.repo, e.repo) && pr.created > sub.briefedAt
   const others = since ? open.filter(pr => !own(pr)) : open
-  if (others.length) refuse(`Sub-issue #${sub.issue} is waiting, but GitHub says its closing ${others.map(pr => pr.repo === e.repo ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`).join(', ')} is open, so another owner works on it.`, closingPrRepair(e, sub, others, own))
+  if (others.length) refuse(`Sub-issue #${sub.issue} is waiting, but GitHub says its closing ${others.map(pr => isRepo(pr.repo, e.repo) ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`).join(', ')} is open, so another owner works on it.`, closingPrRepair(e, sub, others, own))
 }
 
 function closingPrRepair(e, sub, open, own) {
-  const foreign = open.filter(pr => pr.repo !== e.repo)
+  const foreign = open.filter(pr => !isRepo(pr.repo, e.repo))
   if (foreign.length) return `${foreign.map(pr => `Read it with gh pr view ${pr.number} --repo ${pr.repo}.`).join(' ')} Close it, or remove its closing reference to ${e.repo}#${sub.issue}, then retry.`
   const imports = `run ndev epic import ${e.epic} --issues-file <json> --evidence <text>. If it still records #${sub.issue} as waiting, remove ${open.map(pr => `PR #${pr.number}`).join(', ')} from the Development section of #${sub.issue}.`
   if (open.every(own)) return `If the worker that you started from the last brief opened it, run ndev epic issue ${e.epic} ${sub.issue} implementing --worker <dispatch id> --workspace <path>. If not, ${imports}`

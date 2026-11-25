@@ -1725,3 +1725,11 @@ test('issue 279: a closing PR of another repository gets a repair that does not 
   assert.match(foreign.error.repair, /closing reference to example\/repo#41/)
   assert.doesNotMatch(foreign.error.repair, /ndev epic import/)
 })
+
+test('issue 279: the own PR check ignores the case of the repository name, as GitHub does', t => {
+  const f = waitingClosers(t)
+  f.ok('brief', '40', '41', 'implementer')
+  f.close(70, 'Example/Repo', new Date(Date.now() + 60_000).toISOString())
+  const started = f.start()
+  assert.equal(started.status, 0, JSON.stringify(started))
+})

@@ -1803,7 +1803,7 @@ test('issue 279: the start records the draft PR that the briefed worker opened, 
   expect(foreign.text).not.toContain('ndev epic import')
   w.s.closers[41] = []
   expect((await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })).isError).toBe(false)
-  w.s.closers[41] = [{ number: 70, repository: { name: 'w', owner: { login: 'acme' } } }]
+  w.s.closers[41] = [{ number: 70, repository: { name: 'W', owner: { login: 'Acme' } } }]
   w.s.prs[70] = { state: 'open', merged: false, created_at: '1970-01-01T00:00:00Z' }
   const reopened = await tool($, 'epicIssue', startArgs)
   expect(reopened.isError).toBe(true)

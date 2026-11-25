@@ -533,6 +533,7 @@ function subOf(epic: Epic, args: Args): SubIssue {
 
 type ClosingRef = { number?: unknown; repository?: { name?: unknown; owner?: { login?: unknown } } }
 type OpenClosingPr = { repo: string; number: number; created: number }
+const isRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 async function refuseOpenClosingPr($: EngineInterface, epic: Epic, sub: SubIssue, unchanged: string, since?: number): Promise<void> {
   const shown = `gh issue view ${sub.issue} --repo ${epic.repo} --json closedByPullRequestsReferences`
   const { closedByPullRequestsReferences: refs } = await ghOne<{ closedByPullRequestsReferences?: unknown }>($, epic.root, epic.repo, ['view-json', 'issue', String(sub.issue), '--fields', 'closedByPullRequestsReferences'])
@@ -546,13 +547,13 @@ async function refuseOpenClosingPr($: EngineInterface, epic: Epic, sub: SubIssue
     const pr = await readPr($, epic.root, repo, Number(ref.number))
     if (pr.state === 'open') open.push({ repo, number: Number(ref.number), created: Date.parse(pr.created_at) })
   }
-  const own = (pr: OpenClosingPr) => pr.repo === epic.repo && pr.created > (sub.briefedAt ?? Infinity)
+  const own = (pr: OpenClosingPr) => isRepo(pr.repo, epic.repo) && pr.created > (sub.briefedAt ?? Infinity)
   const others = since ? open.filter(pr => !own(pr)) : open
-  if (others.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${others.map(pr => (pr.repo === epic.repo ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`)).join(', ')} is open, so another owner works on it. ${unchanged} Repair: ${closingPrRepair(epic, sub, others, own)}`)
+  if (others.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${others.map(pr => (isRepo(pr.repo, epic.repo) ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`)).join(', ')} is open, so another owner works on it. ${unchanged} Repair: ${closingPrRepair(epic, sub, others, own)}`)
 }
 
 function closingPrRepair(epic: Epic, sub: SubIssue, open: OpenClosingPr[], own: (pr: OpenClosingPr) => boolean): string {
-  const foreign = open.filter(pr => pr.repo !== epic.repo)
+  const foreign = open.filter(pr => !isRepo(pr.repo, epic.repo))
   if (foreign.length) return `${foreign.map(pr => `read it with \`gh pr view ${pr.number} --repo ${pr.repo}\`.`).join(' ')} Close it, or remove its closing reference to ${epic.repo}#${sub.issue}, then try again.`
   const imports = `run \`ndev epic import ${epic.epic} --issues-file <json> --evidence <text>\`, which records #${sub.issue} as external. If it still records #${sub.issue} as waiting, remove ${open.map(pr => `PR #${pr.number}`).join(', ')} from the Development section of #${sub.issue}.`
   if (open.every(own)) return `if the worker that you started from the last brief opened it, call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "implementing", worker (the dispatch id) and workspace. If not, ${imports}`
