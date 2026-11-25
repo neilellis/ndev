@@ -129,7 +129,8 @@ test('install all plans active harness paths, a single shared release, and leave
   const { env, prefix, install } = fixture(t)
   const result = install('all', '--dry-run')
   assert.equal(result.dryRun, true)
-  assert.deepEqual(result.profiles, ['claude', 'codex', 'opencode'])
+  assert.deepEqual(result.profiles, ['claude', 'codex', 'opencode', 'antigravity'])
+  assert.ok(result.files.includes(join(env.HOME, '.gemini/config/agents/ndev-diff-reviewer.md')))
   assert.ok(result.files.includes(join(prefix, 'bin/ndev')))
   assert.ok(result.files.includes(join(env.CODEX_HOME, 'agents/ndev-diff-reviewer.toml')))
   assert.ok(result.files.includes(join(env.XDG_CONFIG_HOME, 'opencode/plugins/ndev/index.ts')))
@@ -533,4 +534,49 @@ exports.chromium = { launch: async () => ({
   const unknown = await capture(['--device', 'Nokia 3310', '/'])
   assert.equal(unknown.status, 2)
   assert.match(unknown.stderr, /Unknown device "Nokia 3310"\. Try one of: Pixel 7/)
+})
+
+test('the Antigravity profile installs skills, subagents with its tool names, and an owned hook group beside foreign groups', t => {
+  const { env, home, prefix, install } = fixture(t)
+  const config = join(home, '.gemini/config')
+  const hooksFile = join(config, 'hooks.json')
+  mkdirSync(config, { recursive: true })
+  const foreign = { 'orca-status': { Stop: [{ type: 'command', command: 'orca-stop', timeout: 10 }] } }
+  writeFileSync(hooksFile, JSON.stringify(foreign))
+  install('antigravity')
+  install('antigravity')
+  assert.match(readFileSync(join(config, 'skills/ndev-work-light/SKILL.md'), 'utf8'), /^name: ndev-work-light$/m)
+  const reviewer = readFileSync(join(config, 'agents/ndev-diff-reviewer.md'), 'utf8')
+  assert.match(reviewer, /^---\nname: ndev-diff-reviewer\ndescription: ".+"\ntools: \["read_file", "run_command"\]\n---\n<!-- Installed by ndev 2\.0\.0 for antigravity/)
+  assert.match(readFileSync(join(config, 'agents/ndev-dev-task.md'), 'utf8'), /^tools: \["read_file", "write_file", "edit_file", "run_command", "search_web"\]$/m)
+  const hooks = read(hooksFile)
+  assert.deepEqual(hooks['orca-status'], foreign['orca-status'])
+  const binary = join(prefix, 'bin/ndev')
+  const handler = event => ({ type: 'command', command: `'${binary.replaceAll("'", "'\\''")}' hook ${event} --harness antigravity`, timeout: 120 })
+  assert.deepEqual(hooks.ndev, {
+    SessionStart: [handler('session-start')],
+    PreInvocation: [handler('prompt-submit')],
+    PreToolUse: [{ matcher: '*', hooks: [handler('pre-tool-use')] }],
+    PostToolUse: [{ matcher: '*', hooks: [handler('post-tool-use')] }],
+    Stop: [handler('turn-complete')],
+  })
+  const ran = spawnSync('/bin/sh', ['-c', hooks.ndev.PreToolUse[0].hooks[0].command], { cwd: home, env, encoding: 'utf8', input: JSON.stringify({ conversationId: 'c', cwd: home, toolCall: { name: 'run_command', args: { CommandLine: 'pwd' } } }) })
+  assert.equal(ran.status, 0, ran.stderr)
+  assert.deepEqual(JSON.parse(ran.stdout), { decision: 'allow' })
+
+  writeFileSync(hooksFile, JSON.stringify({ ...hooks, ndev: { enabled: false, ...hooks.ndev } }))
+  install('antigravity')
+  assert.equal(read(hooksFile).ndev.enabled, false)
+  const verified = install('verify', 'antigravity')
+  assert.equal(verified.verified, true)
+  assert.match(verified.profiles[0].discovery, /not checked/)
+})
+
+test('an Antigravity hook group named ndev that the installer does not own is refused with its repair', t => {
+  const { home, run } = fixture(t)
+  mkdirSync(join(home, '.gemini/config'), { recursive: true })
+  writeFileSync(join(home, '.gemini/config/hooks.json'), JSON.stringify({ ndev: { Stop: [{ type: 'command', command: 'mine' }] } }))
+  const result = run('antigravity')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /hook group ndev .*hooks\.json.*not owned/i)
 })

@@ -9,12 +9,14 @@ import { isDeepStrictEqual } from 'node:util'
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '../..')
 const version = '2.0.0'
-const builtin = ['claude', 'codex', 'opencode']
+const builtin = ['claude', 'codex', 'opencode', 'antigravity']
 const events = {
   SessionStart: 'session-start', UserPromptSubmit: 'prompt-submit', PreToolUse: 'pre-tool-use',
   PostToolUse: 'post-tool-use', Stop: 'turn-complete', SubagentStop: 'turn-complete',
   SessionEnd: 'session-end', PostCompact: 'compact',
 }
+const antigravityEvents = { SessionStart: 'session-start', PreInvocation: 'prompt-submit', PreToolUse: 'pre-tool-use', PostToolUse: 'post-tool-use', Stop: 'turn-complete' }
+const antigravityToolEvents = new Set(['PreToolUse', 'PostToolUse'])
 const sessionSkill = `---
 name: ndev-session
 description: Run the ndev session duties in a harness without native hooks.
@@ -47,7 +49,7 @@ function parse(argv) {
   if (verify) args.shift()
   const name = args.shift()
   if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) fail(2, 'Name an install profile.', 'Run ndev install --help.')
-  const opts = { name: name === 'opencode2' ? 'opencode' : name, verify }
+  const opts = { name: { opencode2: 'opencode', agy: 'antigravity' }[name] ?? name, verify }
   while (args.length) {
     const flag = args.shift()
     if (flag === '--dry-run' && !verify) opts.dryRun = true
@@ -83,10 +85,14 @@ function profilesFor(opts, home, before) {
         return resolve(value)
       }
       if (profile.hooks && profile.hooks !== 'none') fail(2, `Unsupported hook adapter for profile ${name}.`)
-      if (!!profile.agentsDir !== !!profile.agentFormat || (profile.agentFormat && !['codex-toml', 'opencode-md', 'claude-md'].includes(profile.agentFormat))) fail(2, `Invalid agentsDir or agentFormat for ${name}.`)
+      if (!!profile.agentsDir !== !!profile.agentFormat || (profile.agentFormat && !['codex-toml', 'opencode-md', 'claude-md', 'antigravity-md'].includes(profile.agentFormat))) fail(2, `Invalid agentsDir or agentFormat for ${name}.`)
       return { name, skillsDir: expand(profile.skillsDir), agentsDir: profile.agentsDir && expand(profile.agentsDir), agentFormat: profile.agentFormat, hooks: 'none' }
     }
     const base = readJson(join(here, 'harnesses', `${name}.json`))
+    if (name === 'antigravity') {
+      const config = join(home, '.gemini/config')
+      return { name, skillsDir: join(config, 'skills'), agentsDir: join(config, 'agents'), agentFormat: base.agentFormat, config: join(config, 'hooks.json') }
+    }
     const dir = name === 'claude' ? (process.env.CLAUDE_CONFIG_DIR || join(home, '.claude'))
       : name === 'codex' ? (process.env.CODEX_HOME || join(home, '.codex')) : join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'opencode')
     const config = resolve(dir)
@@ -116,7 +122,26 @@ function releaseFiles(share, binary) {
   return files
 }
 
+function antigravityHookPlan(profile, binary, previous, retire) {
+  const { config } = profile
+  const info = pathInfo(config)
+  if (info && !info.isFile()) fail(1, `Hook configuration ${config} is not a regular file.`)
+  const original = info ? readFileSync(config, 'utf8') : null
+  const document = original === null ? {} : readJson(config)
+  if (!object(document)) fail(1, `Hook configuration ${config} is not a JSON object of named hook groups.`)
+  const { enabled, ...current } = object(document.ndev) ? document.ndev : { current: document.ndev }
+  if (document.ndev !== undefined && !isDeepStrictEqual(current, previous)) {
+    fail(1, `Hook group ndev in ${config} is not owned by this ndev install: it differs from the recorded group.`, `Rename or remove the ndev group in ${quote(config)}, then rerun ndev install ${profile.name}.`)
+  }
+  const handler = event => ({ type: 'command', command: `${quote(binary)} hook ${event} --harness ${profile.name}`, timeout: 120 })
+  const desired = Object.fromEntries(Object.entries(antigravityEvents).map(([event, name]) => [event, antigravityToolEvents.has(event) ? [{ matcher: '*', hooks: [handler(name)] }] : [handler(name)]]))
+  if (retire) delete document.ndev
+  else document.ndev = enabled === undefined ? desired : { enabled, ...desired }
+  return { config, original, text: json(document), desired, mode: info ? info.mode & 0o777 : 0o600 }
+}
+
 function hookPlan(profile, binary, previous, retire = false) {
+  if (profile.name === 'antigravity') return antigravityHookPlan(profile, binary, previous, retire)
   const { config } = profile
   const info = pathInfo(config)
   if (info && !info.isFile()) fail(1, `Hook configuration ${config} is not a regular file.`)
@@ -222,7 +247,12 @@ function verifyRelease(profiles, manifest, manifestPath, binary, repair, cwd) {
   for (const profile of profiles) {
     const installed = installations(manifest.profiles[profile.name]).find(install => isDeepStrictEqual(install.profile, JSON.parse(JSON.stringify(profile))))
     if (!installed) fail(1, `No install record for active ${profile.name} paths.`, repair)
-    if (profile.config) {
+    if (profile.name === 'antigravity') {
+      const { enabled, ...group } = readJson(profile.config).ndev ?? {}
+      if (!isDeepStrictEqual(group, installed.hooks)) fail(1, `Missing or changed ndev hook group in ${profile.config}.`, repair)
+      const payload = { conversationId: 'ndev-install-verify', cwd, workspacePaths: [cwd], toolCall: { name: 'run_command', args: { CommandLine: 'pwd' } } }
+      probe('/bin/sh', ['-c', installed.hooks.PreToolUse[0].hooks[0].command], { input: json(payload) })
+    } else if (profile.config) {
       const config = readJson(profile.config)
       for (const [event, handler] of Object.entries(installed.hooks)) {
         const entries = config.hooks?.[event]?.filter(group => group.hooks?.some(hook => isDeepStrictEqual(hook, handler))) ?? []
@@ -244,7 +274,8 @@ function verifyRelease(profiles, manifest, manifestPath, binary, repair, cwd) {
     if (profile.name === 'opencode') {
       probe(process.execPath, [join(here, 'verify-opencode.mjs')])
     }
-    results.push({ profile: profile.name, skillsDir: profile.skillsDir, agentsDir: profile.agentsDir, ...(profile.hooks === 'none' ? { hookSupport: 'agent instructions only' } : {}) })
+    results.push({ profile: profile.name, skillsDir: profile.skillsDir, agentsDir: profile.agentsDir, ...(profile.hooks === 'none' ? { hookSupport: 'agent instructions only' } : {}),
+      ...(profile.name === 'antigravity' ? { discovery: 'not checked: agy has no non-interactive skill or agent listing' } : {}) })
   }
   return { verified: true, version: manifest.version, binary, profiles: results }
 }

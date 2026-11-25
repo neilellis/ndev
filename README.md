@@ -14,7 +14,9 @@ bin/ndev install all
 ndev install verify all
 ```
 
-Use `claude`, `codex`, or `opencode` in place of `all` to install one profile. The default binary path is `$HOME/.local/bin/ndev`. Add `$HOME/.local/bin` to your path if necessary. In Codex, use `/hooks` to review and trust the installed hooks.
+Use `claude`, `codex`, `opencode`, or `antigravity` in place of `all` to install one profile. The default binary path is `$HOME/.local/bin/ndev`. Add `$HOME/.local/bin` to your path if necessary. In Codex, use `/hooks` to review and trust the installed hooks.
+
+The `antigravity` profile is for Google Antigravity (the app and the `agy` CLI). It installs the skills in `~/.gemini/config/skills`, the agents in `~/.gemini/config/agents`, and an `ndev` hook group in `~/.gemini/config/hooks.json`. Other hook groups in that file stay as they are. Antigravity has no session-end or compaction hook, so stop worktree stacks yourself before you leave a session. `install verify antigravity` reads back the files and runs the tool hook, but it cannot check skill discovery: `agy` has no command that lists skills.
 
 The Claude install uses `CLAUDE_CONFIG_DIR` when set. When that path changes, ndev keeps each recorded Claude home working and refreshes its hooks, skills and agents on reinstall. Copied hooks must match the ownership manifest. Skills and agents reached through directory symlinks retain their recorded ownership. Foreign hooks and files stay protected.
 
@@ -22,9 +24,9 @@ Use `ndev install <profile> --panels` to install the Orca plugin. Orca prints th
 
 ## Set up a new project from an agent
 
-Open the project's Git worktree in Orca. Give the agent this prompt in Claude Code, Codex, or opencode.
+Open the project's Git worktree in Orca. Give the agent this prompt in Claude Code, Codex, opencode, or Antigravity.
 
-> Set up ndev for this project and for the harness you are running in. Use `ndev` or `$HOME/.local/bin/ndev` if it is already installed. Otherwise use `bin/ndev` from the ndev source. If the source is missing, download and extract the archive from `gh api repos/neilellis/ndev/tarball/main` in a temporary directory. Run `install <harness> --dry-run`, then `install <harness>` and `install verify <harness>`. Replace `<harness>` with `claude`, `codex`, or `opencode`.
+> Set up ndev for this project and for the harness you are running in. Use `ndev` or `$HOME/.local/bin/ndev` if it is already installed. Otherwise use `bin/ndev` from the ndev source. If the source is missing, download and extract the archive from `gh api repos/neilellis/ndev/tarball/main` in a temporary directory. Run `install <harness> --dry-run`, then `install <harness>` and `install verify <harness>`. Replace `<harness>` with `claude`, `codex`, `opencode`, or `antigravity`.
 >
 > From this project's Git worktree, run `ndev project status --json` with the installed binary. If the project has no ndev GitHub settings, use its GitHub remote and run `ndev project setup --repo <owner/repo> --no-board`. Use `--board <owner/number>` if I gave you a board, or `ndev project setup --no-repo` if I said there is no GitHub repository. Ask if the remote is unclear. Read back the settings with `ndev project status` and tell me what was set up.
 >
