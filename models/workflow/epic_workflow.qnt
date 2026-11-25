@@ -105,7 +105,7 @@ module epic_workflow {
     phase != "closing" or (debts.open == 0 and SUBS.forall(i => merged(i))),
     phase' = nextPhase(phase),
     sliced' = (sliced or phase == "slicing"),
-    subs' = if (phase == "slicing") SUBS.mapBy(i => { ...UNSLICED, state: "waiting" }) else subs,
+    subs' = if (phase == "slicing") SUBS.mapBy(i => if (subs.get(i).state == "unsliced") { ...UNSLICED, state: "waiting" } else subs.get(i)) else subs,
     prs' = prs, issues' = issues, debts' = debts,
     last' = phase,
     closedBy' = if (phase == "closing") "closing" else closedBy,
@@ -381,6 +381,7 @@ module epic_workflow {
     parallelRespected,
     mainStartsOnLandedBlockers,
     mergedWorkIsNotLost,
+    reslicingKeepsOpenPrs,
   }
 
   val parallelRespected = inFlight.size() <= PARALLEL
@@ -389,10 +390,6 @@ module epic_workflow {
       DEPS.get(i).forall(j => prs.get(j).landed))
   val mergedWorkIsNotLost = SUBS.forall(i => merged(i) implies not(prs.get(i).lost))
   val reslicingKeepsOpenPrs = SUBS.forall(i => not(subs.get(i).state == "waiting" and prs.get(i).life == "open"))
-
-  val findings = and {
-    reslicingKeepsOpenPrs,
-  }
 
   val wSliced = phase == "coordinating"
   val wStarted = SUBS.exists(i => subs.get(i).state == "implementing")

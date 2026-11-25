@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { harnessSession } from '../../hooks/workflow/session.ts'
 import { confirm } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, run } from './common.mjs'
-import { DEFAULT_PARALLEL, EPIC_STATES, IN_FLIGHT, ISSUE_STATES, KEY, OWNER_LIVE_MS, SHORT_NAME, SLICE_CAP, SOURCE_FORM, capNote, coreIdeaProblem, frontier, specPrLinkProblem, specPrLinkRepair, specPrProblem, implementerBrief, nextEpicState, reviewerBrief, sliceProblems, sourcePaths, sourceProblem, stackPlan } from './epic-model.ts'
+import { DEFAULT_PARALLEL, EPIC_STATES, IN_FLIGHT, ISSUE_STATES, KEY, OWNER_LIVE_MS, SHORT_NAME, SLICE_CAP, SOURCE_FORM, capNote, coreIdeaProblem, frontier, specPrLinkProblem, specPrLinkRepair, specPrProblem, implementerBrief, nextEpicState, reviewerBrief, mergedSubIssue, resliced, sliceProblems, sourcePaths, sourceProblem, stackPlan } from './epic-model.ts'
 import { readProject } from './project.mjs'
 import { resolveRemote } from './remote.mjs'
 import { readWorkflowRecords } from './waits.mjs'
@@ -206,6 +206,8 @@ async function start(workspace, argv) {
 }
 
 function slices(root, epic, file) {
+  const merged = mergedSubIssue(epic.issues ?? {})
+  if (merged) refuse(`Epic #${epic.epic}: #${merged.issue} is merged, so the epic cannot be sliced again: a new breakdown must keep each merged sub-issue, and slicing needs each sub-issue open.`, `File new work as new sub-issues of #${epic.epic} on GitHub, then run ndev epic import ${epic.epic} --issues-file <json> --evidence <text>: it keeps each merged sub-issue, records the new ones and moves the epic to coordinating.`)
   const children = github(root, epic.repo, `/issues/${epic.epic}/sub_issues`, true)
   const actual = children.map(child => {
     const n = number(child.number, 'GitHub sub-issue')
@@ -225,7 +227,9 @@ function slices(root, epic, file) {
   }
   const problem = sliceProblems(actual)
   if (problem) refuse(problem, 'Correct the GitHub sub-issues and their blocker links.')
-  return Object.fromEntries(actual.map(s => [s.issue, { ...s, state: 'waiting', rounds: 0 }]))
+  const kept = resliced(epic.issues ?? {}, actual, !file)
+  if ('problem' in kept) refuse(`Epic #${epic.epic}: ${kept.problem}.`, `${kept.repair}, then repeat ndev epic phase ${epic.epic} slicing.`)
+  return kept
 }
 
 function linkedPulls(root, repo, n) {

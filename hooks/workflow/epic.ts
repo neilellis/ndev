@@ -10,7 +10,7 @@ import { type Server, triageRemote } from '../remote'
 import { Refuse, defaultBranch, gh, ghOne, gitOut, git, paths, readChecks, readPr, repoFromOrigin, run, type Pr } from './effects'
 import { SECTION, boundRoot, inFreeTurn, loadWorkflow, registerWorkflowFailure, setDeclined, workflowToolFailed } from './tools'
 
-import { EPIC_STATES, nextEpicState, sliceProblems, SLICE_CAP, capNote, sourcePaths, sourceProblem, SOURCE_FORM, coreIdeaProblem, specPrLinkProblem, specPrLinkRepair, specPrProblem, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
+import { EPIC_STATES, nextEpicState, mergedSubIssue, resliced, sliceProblems, SLICE_CAP, capNote, sourcePaths, sourceProblem, SOURCE_FORM, coreIdeaProblem, specPrLinkProblem, specPrLinkRepair, specPrProblem, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
 export * from '../../scripts/ndev/epic-model'
 import { closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, requirementIds, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
 
@@ -465,6 +465,8 @@ async function epicPhase($: EngineInterface, c: Ctx): Promise<string> {
       if (!approval) throw new Refuse('Refused: "slicing" needs approval: the human\'s approval of the breakdown (title, blocked by, what it delivers), given before any issue was filed. Nothing changed. Repair: show the breakdown to the human, file the issues once approved, and call epicPhase again with approval.')
       const { state } = await ghOne<{ state: string }>($, epic.root, epic.repo, ['issue-read', String(epic.epic)])
       if (state !== 'open') throw new Refuse(`Refused: epic #${epic.epic} is ${state} on GitHub, so its sub-issues cannot be coordinated. Nothing changed. Repair: gh issue reopen ${epic.epic} --repo ${epic.repo}${epic.specPr ? `, and check that spec PR #${epic.specPr} no longer closes it: ${specPrLinkRepair(epic.specPr, epic.repo, epic.epic)}` : ''}, then call epicPhase again.`)
+      const merged = mergedSubIssue(epic.issues)
+      if (merged) throw new Refuse(`Refused: #${merged.issue} is merged, so epic #${epic.epic} cannot be sliced again: a new breakdown must keep each merged sub-issue, and slicing needs each sub-issue open. Nothing changed. Repair: file new work as new sub-issues of #${epic.epic} on GitHub, then run ndev epic import ${epic.epic} --issues-file <json> --evidence <text> in a terminal: it keeps each merged sub-issue, records the new ones and moves the epic to coordinating.`)
       const slices = slicesOf(args)
       const problem = sliceProblems(slices)
       if (problem) throw new Refuse(`Refused: ${problem}. Nothing changed. Repair: correct the list and call epicPhase again.`)
@@ -480,7 +482,9 @@ async function epicPhase($: EngineInterface, c: Ctx): Promise<string> {
         }
       }
       if (problems.length) throw new Refuse(`Refused: each sub-issue must be open in ${epic.repo}. ${problems.join('; ')}. Nothing changed. Repair: file or reopen them, or correct the list.`)
-      epic.issues = Object.fromEntries(slices.map(s => [String(s.issue), { ...s, state: 'waiting' as const, rounds: 0 }]))
+      const kept = resliced(epic.issues, slices)
+      if ('problem' in kept) throw new Refuse(`Refused: ${kept.problem}. Nothing changed. Repair: ${kept.repair}, and call epicPhase again.`)
+      epic.issues = kept
       if (slices.length > SLICE_CAP) recordDebt(epic, { key: `slicing:cap:${epic.history.length}`, kind: 'gate-override', note: capNote(slices.length, capOverride) }, now)
       after = `\n${frontierText(epic)}`
       break

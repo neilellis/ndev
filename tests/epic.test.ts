@@ -466,6 +466,53 @@ test('slicing refuses while the epic issue is closed on GitHub', { timeoutMs: 30
   expect(w.epic()?.state).toBe('coordinating')
 })
 
+const IN_FLIGHT = { issue: 41, key: 'schema', title: 'Schema', blockedBy: [], state: 'implementing', pr: 51, implementer: 'w-schema', rounds: 2 }
+
+test('finishing a reslice keeps each sub-issue that has a record, and starts only the new ones as waiting', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40 })
+  w.files.set(EPIC_FILE(40), JSON.stringify({ ...w.epic(), state: 'slicing', issues: { 41: IN_FLIGHT } }))
+  const r = await tool($, 'epicPhase', { issue: 40, finished: 'slicing', evidence: 'resliced', approval: 'approved', issues: [{ ...SLICES[0], title: 'Schema v2' }, SLICES[1], SLICES[2]] })
+  expect(r.isError).toBe(false)
+  expect(w.epic()?.issues['41']).toEqual({ ...IN_FLIGHT, title: 'Schema v2' })
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'waiting', rounds: 0 })
+  expect(w.epic()?.state).toBe('coordinating')
+})
+
+test('a reslice refuses to drop, rename or re-block a sub-issue that is in flight', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40 })
+  const before = JSON.stringify({ ...w.epic(), state: 'slicing', issues: { 41: IN_FLIGHT } })
+  w.files.set(EPIC_FILE(40), before)
+  const cases: [Record<string, unknown>[], RegExp][] = [
+    [[SLICES[2]], /drops #41, which is "implementing" with PR #51.*Keep #41/],
+    [[{ ...SLICES[0], key: 'tables' }, SLICES[1], SLICES[2]], /#41 is "implementing".*key "schema".*"tables"/],
+    [[{ ...SLICES[0], blockedBy: [43] }, SLICES[1], SLICES[2]], /#41 is "implementing".*blocked by \[\].*\[43\]/],
+  ]
+  for (const [issues, message] of cases) {
+    const refused = await tool($, 'epicPhase', { issue: 40, finished: 'slicing', evidence: 'resliced', approval: 'approved', issues })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toMatch(message)
+    expect(w.files.get(EPIC_FILE(40))).toBe(before)
+  }
+})
+
+test('a reslice after a sub-issue merged is refused, and names the import that keeps it', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40 })
+  const before = JSON.stringify({ ...w.epic(), state: 'slicing', issues: { 41: { ...IN_FLIGHT, state: 'merged' }, 42: { ...IN_FLIGHT, issue: 42, key: 'api', title: 'API', blockedBy: [41], pr: 52, implementer: 'w-api' } } })
+  w.files.set(EPIC_FILE(40), before)
+  for (const issues of [SLICES, [SLICES[1], SLICES[2]], [{ ...SLICES[1], blockedBy: [] }, SLICES[2]]]) {
+    const refused = await tool($, 'epicPhase', { issue: 40, finished: 'slicing', evidence: 'resliced', approval: 'approved', issues })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toMatch(/#41 is merged.*ndev epic import 40 --issues-file/)
+    expect(w.files.get(EPIC_FILE(40))).toBe(before)
+  }
+})
+
 test('slicing refuses a cycle, an unknown blocker, and a closed or unreadable issue by number', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)

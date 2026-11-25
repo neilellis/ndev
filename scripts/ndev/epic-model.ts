@@ -122,6 +122,30 @@ export const nextEpicState = (state: EpicState): EpicState | undefined => EPIC_S
 export const tag = (n: number) => `#${n}`
 export const tags = (ns: number[]) => ns.map(tag).join(', ')
 
+// Model: models/workflow/epic_workflow.qnt#finishPhase
+export function mergedSubIssue(current: Record<string, SubIssue>): SubIssue | undefined {
+  return Object.values(current).find(sub => sub.state === 'merged')
+}
+
+// Model: models/workflow/epic_workflow.qnt#finishPhase
+export function resliced(current: Record<string, SubIssue>, slices: Slice[], keepKeys = false): Record<string, SubIssue> | { problem: string; repair: string } {
+  const listed = new Map(slices.map(s => [s.issue, s]))
+  const out: Record<string, SubIssue> = {}
+  for (const old of Object.values(current)) {
+    if (old.state === 'waiting') continue
+    const s = listed.get(old.issue)
+    const held = `#${old.issue} is "${old.state}"${old.pr ? ` with PR #${old.pr}` : ''}`
+    if (!s) return { problem: `the breakdown drops #${old.issue}, which is "${old.state}"${old.pr ? ` with PR #${old.pr}` : ''}, so its work would have no owner`, repair: `Keep #${old.issue} in the breakdown` }
+    if (!keepKeys && s.key !== old.key) return { problem: `${held}, so its worker key "${old.key}" cannot change to "${s.key}"`, repair: `Give #${old.issue} the key "${old.key}"` }
+    const was = [...old.blockedBy].sort((a, b) => a - b)
+    const now = [...s.blockedBy].sort((a, b) => a - b)
+    if (was.join() !== now.join()) return { problem: `${held}, so its blockers cannot change: it is blocked by [${was.join(', ')}] and the breakdown says [${now.join(', ')}]`, repair: `Keep the blockers of #${old.issue} as [${was.join(', ')}]` }
+    out[String(old.issue)] = { ...old, title: s.title }
+  }
+  for (const s of slices) out[String(s.issue)] ??= { ...s, state: 'waiting', rounds: 0 }
+  return out
+}
+
 // The slicing checks that need no GitHub call: undefined when the list is good.
 export function sliceProblems(slices: Slice[], external: number[] = []): string | undefined {
   if (!slices.length) return 'the issues list is empty; slicing needs at least one sub-issue'

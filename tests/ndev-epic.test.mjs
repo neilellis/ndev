@@ -329,6 +329,65 @@ test('slicing refuses while the epic issue is closed on GitHub', t => {
   assert.equal(f.ok('phase', '40', 'slicing', '--evidence', 'filed', '--approval', 'approved').epic.state, 'coordinating')
 })
 
+const IN_FLIGHT = { issue: 41, key: 'parent', title: 'Parent', blockedBy: [], rounds: 2, state: 'implementing', pr: 61, implementer: 'w1' }
+
+function reslicing(t) {
+  const f = fixture(t)
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  const e = f.ok('start', '40').epic
+  writeFileSync(record, JSON.stringify({ ...e, state: 'slicing', issues: { 41: IN_FLIGHT } }))
+  return { f, record }
+}
+
+test('finishing a reslice keeps each sub-issue that has a record, and starts only the new ones as waiting', t => {
+  const { f } = reslicing(t)
+  f.answers['repos/example/repo/issues/40/sub_issues'][0].title = 'Parent v2'
+  f.save()
+  const e = f.ok('phase', '40', 'slicing', '--evidence', 'resliced', '--approval', 'approved').epic
+  assert.deepEqual(e.issues['41'], { ...IN_FLIGHT, title: 'Parent v2' })
+  assert.equal(e.issues['42'].state, 'waiting')
+  assert.equal(e.state, 'coordinating')
+})
+
+test('a reslice after a sub-issue merged is refused, and names the import that keeps it', t => {
+  const f = fixture(t)
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  const e = f.ok('start', '40').epic
+  writeFileSync(record, JSON.stringify({ ...e, state: 'slicing', issues: { 41: { ...IN_FLIGHT, state: 'merged' }, 42: { ...IN_FLIGHT, issue: 42, key: 'issue-42', title: 'Child', blockedBy: [41], pr: 62, implementer: 'w2' } } }))
+  const before = readFileSync(record, 'utf8')
+  const result = f.call('phase', '40', 'slicing', '--evidence', 'resliced', '--approval', 'approved')
+  assert.equal(result.status, 1, JSON.stringify(result))
+  assert.match(`${result.error.message} Repair: ${result.error.repair}`, /#41 is merged.*ndev epic import 40 --issues-file/)
+  assert.equal(readFileSync(record, 'utf8'), before)
+})
+
+test('a reslice refuses to drop, rename or re-block a sub-issue that is in flight', t => {
+  const { f, record } = reslicing(t)
+  const before = readFileSync(record, 'utf8')
+  const fail = (message, ...extra) => {
+    const result = f.call('phase', '40', 'slicing', '--evidence', 'resliced', '--approval', 'approved', ...extra)
+    assert.equal(result.status, 1, JSON.stringify(result))
+    assert.match(`${result.error.message} Repair: ${result.error.repair}`, message)
+    assert.equal(readFileSync(record, 'utf8'), before)
+  }
+  const sub = f.answers['repos/example/repo/issues/40/sub_issues']
+  f.answers['repos/example/repo/issues/40/sub_issues'] = [sub[1]]
+  f.answers['repos/example/repo/issues/42/dependencies/blocked_by'] = []
+  f.save()
+  fail(/drops #41, which is "implementing" with PR #61.*Keep #41/)
+  f.answers['repos/example/repo/issues/40/sub_issues'] = sub
+  f.answers['repos/example/repo/issues/42/dependencies/blocked_by'] = [{ number: 41 }]
+  f.save()
+  const file = join(f.root, 'issues.json')
+  writeFileSync(file, JSON.stringify([{ issue: 41, key: 'other', blockedBy: [] }, { issue: 42, key: 'issue-42', blockedBy: [41] }]))
+  fail(/#41 is "implementing".*key "parent".*"other"/, '--issues-file', file)
+  sub.push({ number: 43, title: 'Sibling', state: 'open' })
+  f.answers['repos/example/repo/issues/43/dependencies/blocked_by'] = []
+  f.answers['repos/example/repo/issues/41/dependencies/blocked_by'] = [{ number: 43 }]
+  f.save()
+  fail(/#41 is "implementing".*blocked by \[\].*\[43\]/)
+})
+
 test('remote routing selects a repository on the requested server and keeps the reviewer on its original worktree', t => {
   const { root, answers, save, ok, call } = fixture(t)
   answers['orca:environment list'] = { environments: [{ id: 'host-1', name: 'Remote host' }] }

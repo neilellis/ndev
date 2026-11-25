@@ -206,14 +206,25 @@ module steered_test {
 
   run humanCannotSkipClosingTest = skipped.then(humanSkip.fail())
 
-  run reslicingResetsAnOpenPrTest =
+  run reslicingKeepsAnOpenPrTest =
     coordinating
       .then(brief(0))
       .then(start(0))
       .then(workerOpensPr(0))
       .then(humanMove("slicing"))
       .then(finishPhase)
-      .expect(subs.get(0).state == "waiting" and prs.get(0).life == "open" and not(reslicingKeepsOpenPrs))
+      .expect(subs.get(0).state == "implementing" and prs.get(0).life == "open" and subs.get(1).state == "waiting" and reslicingKeepsOpenPrs)
+
+  run reslicingKeepsAClosedPrOwnedTest =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(workerOpensPr(0))
+      .then(humanClosesPr(0))
+      .then(humanMove("slicing"))
+      .then(finishPhase)
+      .then(humanReopensPr(0))
+      .expect(subs.get(0).state == "implementing" and prs.get(0).life == "open" and reslicingKeepsOpenPrs)
 
   run reslicingRefusedAfterAMergeTest =
     coordinating
