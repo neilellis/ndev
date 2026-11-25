@@ -140,6 +140,67 @@ module wide_test {
       .then(block(2))
       .then(unblock(0))
       .expect(inFlight.size() == 2 and subs.get(0).state == "implementing")
+
+  action oneExternal =
+    init
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(finishPhase).then(finishPhase)
+      .then(finishSlicing(Set(0)))
+      .expect(subs.get(0).state == "external" and prs.get(0).life == "open" and subs.get(1).state == "waiting")
+
+  run externalWorkTakesAPlaceTest = oneExternal.then(start(1)).then(start(2).fail())
+
+  run externalWorkCannotStartTest = oneExternal.then(start(0).fail())
+
+  run externalWorkGetsNoBriefTest = oneExternal.then(brief(0).fail())
+
+  run externalWorkCannotBeBlockedTest = oneExternal.then(block(0).fail())
+
+  run mergedExternalWorkFreesItsPlaceTest =
+    oneExternal
+      .then(start(1))
+      .then(humanMergesPr(0))
+      .then(recordMerged(0))
+      .then(start(2))
+      .expect(merged(0) and inFlight.size() == 2 and debts.open == 2 and not(debts.override) and safety)
+
+  run closedExternalPrHoldsItsPlaceUntilReimportTest =
+    oneExternal
+      .then(start(1))
+      .then(humanClosesPr(0))
+      .then(start(2).fail())
+
+  run reimportedClosedExternalWorkWaitsTest =
+    oneExternal
+      .then(start(1))
+      .then(humanClosesPr(0))
+      .then(reimport(0))
+      .expect(subs.get(0).state == "waiting" and inFlight.size() == 1 and safety)
+      .then(start(2))
+      .expect(inFlight.size() == 2 and safety)
+
+  run reimportFindsANewExternalPrTest =
+    init
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(start(0))
+      .then(reimport(1))
+      .expect(subs.get(1).state == "external" and prs.get(1).life == "open" and inFlight.size() == 2 and safety)
+      .then(start(2).fail())
+
+  run startedWorkIsNotReimportedTest = oneExternal.then(start(1)).then(reimport(1).fail())
+
+  run externalWorkBeyondThePlacesTest =
+    init
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(finishPhase).then(finishPhase)
+      .then(finishSlicing(Set(0, 1, 2)))
+      .expect(inFlight.size() == 3 and safety)
+      .then(humanMergesPr(0))
+      .then(recordMerged(0))
+      .then(humanMergesPr(1))
+      .then(recordMerged(1))
+      .expect(inFlight.size() == 1 and safety)
 }
 
 module steered_test {

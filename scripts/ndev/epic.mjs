@@ -251,6 +251,7 @@ function linkedPulls(root, repo, n) {
   })
 }
 
+// Model: models/workflow/epic_workflow.qnt#finishSlicing
 function importedIssue(root, repo, child, kind) {
   const n = number(child.number, 'GitHub issue')
   if (!['open', 'closed'].includes(child.state)) refuse(`GitHub issue #${n} has unknown state ${JSON.stringify(child.state)}.`)
@@ -269,6 +270,7 @@ function importedIssue(root, repo, child, kind) {
   return open.length ? { state: 'external', pr: number(open[0].number, 'existing PR'), note: 'Existing PR remains with its current owner. Resume that workflow; do not dispatch a duplicate.' } : { state: 'waiting' }
 }
 
+// Model: models/workflow/epic_workflow.qnt#reimport
 function importEpic(workspace, e, before, v) {
   if (!['slicing', 'coordinating'].includes(e.state)) refuse(`Epic #${e.epic} is ${e.state}; import requires slicing or coordinating.`, `Run ndev epic status ${e.epic}.`)
   if (!v['issues-file'] || !v.evidence?.trim()) bad('Import requires --issues-file and --evidence.')

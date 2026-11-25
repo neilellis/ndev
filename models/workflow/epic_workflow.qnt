@@ -7,7 +7,7 @@ module epic_workflow {
   const HUMAN_JUMPS: bool
 
   val PHASES = List("framing", "researching", "specifying", "deciding", "spec-review", "slicing", "coordinating", "closing", "done")
-  val IN_FLIGHT = Set("implementing", "reviewing", "fixing", "verified")
+  val IN_FLIGHT = Set("implementing", "reviewing", "fixing", "verified", "external")
   val PUSHED = Set("reviewing", "fixing", "verified")
   val MAIN = -1
 
@@ -96,6 +96,28 @@ module epic_workflow {
     subs' = subs.set(i, s),
     prs' = prs, issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
     last' = name, closedBy' = closedBy,
+  }
+
+  def sliceSub(i: int, ext: Set[int]): Sub =
+    if (subs.get(i).state != "unsliced") subs.get(i)
+    else if (ext.contains(i)) { ...UNSLICED, state: "external" }
+    else { ...UNSLICED, state: "waiting" }
+
+  def slicePr(i: int, ext: Set[int]): Pr =
+    if (ext.contains(i) and subs.get(i).state == "unsliced") { ...NO_PR, life: "open", checks: "pending", mergeable: "clean" }
+    else prs.get(i)
+
+  action finishSlicing(ext: Set[int]): bool = all {
+    phase == "slicing",
+    SUBS.forall(i => issues.get(i) == "open"),
+    ext.forall(i => subs.get(i).state == "unsliced" and prs.get(i).life == "none"),
+    phase' = nextPhase(phase),
+    sliced' = true,
+    subs' = SUBS.mapBy(i => sliceSub(i, ext)),
+    prs' = SUBS.mapBy(i => slicePr(i, ext)),
+    issues' = issues, debts' = debts,
+    last' = phase,
+    closedBy' = closedBy,
   }
 
   action finishPhase = all {
@@ -212,7 +234,7 @@ module epic_workflow {
   action recordMerged(i: int): bool =
     val s = subs.get(i)
     val early = s.state != "verified"
-    val override = not(Set("reviewing", "fixing", "verified").contains(s.state))
+    val override = not(Set("reviewing", "fixing", "verified", "external").contains(s.state))
     val owed = (if (s.reviewed) 0 else 1) + (if (early) 1 else 0) + (if (override) 1 else 0)
     all {
       phase == "coordinating",
@@ -224,6 +246,27 @@ module epic_workflow {
       debts' = debtUp(debts, owed, override),
       prs' = prs, issues' = issues, phase' = phase, sliced' = sliced,
       last' = "merged", closedBy' = closedBy,
+    }
+
+  action reimport(i: int): bool =
+    val s = subs.get(i)
+    val p = prs.get(i)
+    all {
+      phase == "coordinating",
+      if (s.state == "external") all {
+        p.life == "closed",
+        subs' = subs.set(i, { ...s, state: "waiting" }),
+        prs' = prs.set(i, NO_PR),
+        issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
+        last' = "reimport", closedBy' = closedBy,
+      } else all {
+        s.state == "waiting",
+        Set("none", "closed").contains(p.life),
+        subs' = subs.set(i, { ...s, state: "external", stackedOn: MAIN }),
+        prs' = prs.set(i, { ...NO_PR, life: "open", checks: "pending", mergeable: "clean" }),
+        issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
+        last' = "reimport", closedBy' = closedBy,
+      },
     }
 
   def lostNow(i: int): bool =
@@ -247,6 +290,7 @@ module epic_workflow {
       s.state != "blocked",
       s.state != "merged",
       s.state != "unsliced",
+      s.state != "external",
       setSub(i, { ...s, state: "blocked", previous: s.state }, "block"),
     }
 
@@ -338,10 +382,12 @@ module epic_workflow {
 
   action coordinatorStep = any {
     finishPhase,
+    nondet ext = SUBS.powerset().oneOf()
+    finishSlicing(ext),
     ruleDebt,
     recordDebt,
     nondet i = SUBS.oneOf()
-    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), recordMerged(i), recordLost(i), block(i), unblock(i) },
+    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), recordMerged(i), recordLost(i), block(i), unblock(i), reimport(i) },
   }
 
   action workerStep = nondet i = SUBS.oneOf()
@@ -384,9 +430,11 @@ module epic_workflow {
     reslicingKeepsOpenPrs,
   }
 
-  val parallelRespected = inFlight.size() <= PARALLEL
+  val parallelRespected =
+    inFlight.filter(j => subs.get(j).state != "external").size() <= PARALLEL and
+      (Set("start", "unblock").contains(last) implies inFlight.size() <= PARALLEL)
   val mainStartsOnLandedBlockers = SUBS.forall(i =>
-    (IN_FLIGHT.contains(subs.get(i).state) and subs.get(i).startBase == MAIN) implies
+    (IN_FLIGHT.contains(subs.get(i).state) and subs.get(i).state != "external" and subs.get(i).startBase == MAIN) implies
       DEPS.get(i).forall(j => prs.get(j).landed))
   val mergedWorkIsNotLost = SUBS.forall(i => merged(i) implies not(prs.get(i).lost))
   val reslicingKeepsOpenPrs = SUBS.forall(i => not(subs.get(i).state == "waiting" and prs.get(i).life == "open"))
@@ -402,6 +450,7 @@ module epic_workflow {
   val wMerged = SUBS.exists(i => merged(i))
   val wRetargeted = SUBS.exists(i => subs.get(i).startBase != MAIN and prs.get(i).base == MAIN)
   val wRiding = SUBS.exists(i => prs.get(i).ridesOn != MAIN and prs.get(i).landed)
+  val wExternal = SUBS.exists(i => subs.get(i).state == "external")
   val wBlocked = SUBS.exists(i => subs.get(i).state == "blocked")
   val wAllMerged = SUBS.forall(i => merged(i))
   val wClosing = phase == "closing"

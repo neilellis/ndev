@@ -70,6 +70,7 @@ export type Slice = { issue: number; key: string; title: string; blockedBy: numb
 
 export const EPIC_STATES: EpicState[] = ['framing', 'researching', 'specifying', 'deciding', 'spec-review', 'slicing', 'coordinating', 'closing', 'done']
 export const ISSUE_STATES: IssueState[] = ['waiting', 'implementing', 'reviewing', 'fixing', 'verified', 'merged', 'blocked', 'human-pending', 'external']
+// Model: models/workflow/epic_workflow.qnt#IN_FLIGHT
 export const IN_FLIGHT: IssueState[] = ['implementing', 'reviewing', 'fixing', 'verified', 'external']
 // The states in which the implementer has pushed its branch and the record holds its PR.
 const PUSHED: IssueState[] = ['reviewing', 'fixing', 'verified']
