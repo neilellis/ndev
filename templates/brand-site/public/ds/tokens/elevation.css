@@ -1,0 +1,16 @@
+/* {{name}} depth and motion. The site is flat: rules and tinted bands separate
+   content. Shadows appear only on things that float. */
+:root {
+  --elevation-floating: 0 6px 24px #12294120;
+  --elevation-pane:     0 12px 35px #102b4a24;
+  --elevation-overlay:  0 16px 64px #12294130;
+  --elevation-card-film: 0 24px 60px -30px rgba(16,43,74,.35);
+  --elevation-shot-film: 0 40px 90px -40px rgba(16,43,74,.55), 0 0 0 1px rgba(16,43,74,.08);
+
+  --dur-fast:  160ms;
+  --dur:       200ms;
+  --ease:      ease-out;
+  --ease-film-enter: cubic-bezier(0.215, 0.61, 0.355, 1); /* GSAP power3.out */
+  --dur-film-enter:  700ms;
+  --dur-film-fade:   550ms;
+}

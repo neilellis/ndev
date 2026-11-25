@@ -1,0 +1,22 @@
+extends: existence
+message: "'%s' hides which ones. Name them — 'the two fields, `literals` and `regexes`'."
+# WARNING, NOT ERROR, and deliberately. Every error-level rule here names a word with a
+# plain replacement. This one asks for a judgement: sometimes the count IS the point, and
+# the items do not matter. It is also brand new, with one day of field evidence behind it.
+# Promote it to error once it has fired on real writing and been right every time.
+level: warning
+ignorecase: true
+# A collective noun standing in for items the reader was never told. From #1363,
+# 2026-08-12: "the same attribute pair whose disappearance caused #1340". The maintainer asked what
+# an attribute pair is. The answer was two named fields, `literals` and `regexes`, and
+# naming them is SHORTER than the phrase that hid them.
+#
+# This is the noun-stack failure, at its smallest: a counted group is easy to
+# write and gives the reader nothing to check. 'the same X pair' is the worst form, because
+# 'the same' asserts the reader already knows which two.
+#
+# DELIBERATELY NARROW. It matches a count word attached to a code-shaped noun, not 'pair'
+# anywhere. "a pair of runs", "the pair agreed" and ordinary counting are all untouched.
+tokens:
+  - (attribute|field|column|flag|parameter|argument|method|function|key|token|setting|table|column|call|import) (pair|trio|duo|triple|couple)
+  - (pair|trio|duo|triple) of (attributes|fields|columns|flags|parameters|arguments|methods|functions|keys|tokens|settings|tables|calls|imports)

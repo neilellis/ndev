@@ -1,0 +1,6 @@
+#!/bin/sh
+if ! command -v node >/dev/null 2>&1; then
+  printf '%s\n' 'ndev: node is not on PATH. Repair: install Node.js 22.18 or later and run ndev again.' >&2
+  exit 127
+fi
+exec node "$(dirname "$0")/../scripts/cli.mjs" "$@"

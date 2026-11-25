@@ -1,0 +1,6 @@
+extends: existence
+message: "Semicolon joining two ideas — that is two sentences."
+level: warning
+scope: sentence
+tokens:
+  - '\w+;\s+(?:and\s+)?\w+'

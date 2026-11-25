@@ -1,0 +1,234 @@
+/* {{name}} colour tokens.
+   Raw values come from {{source}} public/styles.css and {{filmSource}} film/index.html.
+   Reference the semantic aliases in components, not the raw ramps.
+
+   Light and dark: the semantic aliases follow the reader's colour scheme. Each one is
+   set three times: the light value first, the dark value under
+   prefers-color-scheme for browsers without light-dark(), then light-dark() for the
+   rest. light-dark() also follows a `color-scheme` set on a subtree.
+   Keep the three blocks in step; lib/contrast.test.ts checks that they agree. */
+:root {
+  color-scheme: light dark;
+
+  /* Navy ramp — the brand's ink and its dark bands */
+  --navy-950: #0c1c2c;  /* pressed state; darkest gradient stop */
+  --navy-900: #102846;  /* ink — headings and body ink on paper */
+  --navy-800: #102b4a;  /* navy — primary button, {{product}} band, skip link */
+  --navy-700: #163a62;  /* gradient mid-stop on brand scenes; the navy band in dark */
+  --navy-600: #1b456e;  /* gradient stop; brand hover */
+  --navy-500: #205588;  /* primary button hover */
+
+  /* Blue ramp — the single accent */
+  --blue-600: #2166ac;  /* BRAND ACCENT — eyebrow numbers, italic emphasis, links on hover */
+  --blue-500: #357bb9;  /* focus ring */
+  --blue-200: #a7d8ff;  /* sky — accent on navy */
+  --blue-100: #d4e9fb;  /* light button hover */
+  --blue-50:  #eaf2f9;  /* close-button hover, faint blue wash */
+
+  /* Slate ramp — text and rules */
+  --slate-700: #3f536a; /* body copy */
+  --slate-600: #586b80; /* muted text, notes, meta */
+  --slate-500: #6b8095; /* coordinates and faint labels */
+  --slate-400: #8096ae; /* text-link underline */
+  --slate-300: #bdcddb; /* rules on mist sections */
+  --slate-200: #d2dce5; /* hairline rules on paper */
+
+  /* Surfaces */
+  --white:     #ffffff;
+  --paper:     #f6f8fa; /* page canvas */
+  --mist:      #e8eff5; /* tinted section — experience, about */
+  --sand:      #f4f1e9; /* backing behind {{product}} screenshots */
+
+  /* On-navy text */
+  --navy-text:       #c4d5e6; /* body copy on navy */
+  --navy-text-muted: #b0c7df; /* notes and captions on navy */
+  --navy-text-tab:   #b8cde3; /* unselected tabs on navy */
+  --navy-rule:       #506985; /* rules on navy */
+  --navy-link-rule:  #6489af; /* text-link underline on navy */
+  --navy-tab-rule:   #56708c; /* rule under the tabs on navy */
+
+  /* Concept families — the globe, the film's network, the wordmark accent */
+  --forest-700: #173f35; /* organisation family */
+  --forest-500: #3f7a5f; /* wordmark accent: compass needle, "-i2" */
+  --forest-200: #c6d6cc; /* organisation pane border */
+  --rust-600:   #a94f24; /* AI family */
+  --rust-200:   #e5d5c3; /* AI pane border */
+
+  /* Status */
+  --red-700:   #a42b24; /* errors only */
+  --red-100:   #f5dfdd; /* error badge */
+  --green-700: #24543f; /* success text */
+  --green-100: #e3efe8; /* success badge */
+  --amber-700: #7a4518; /* warning text */
+  --amber-100: #f6ead9; /* warning badge */
+
+  /* Night ramp — the dark scheme. Not from {{source}}: derived from the navy ramp
+     so the dark design reads as the same brand. */
+  --night-950: #0b1724; /* dark canvas */
+  --night-900: #122334; /* dark cards, sidebar */
+  --night-800: #182c40; /* dark tinted section, code */
+  --night-750: #1a3048; /* dark hover wash */
+  --night-700: #22364b; /* dark hairline */
+  --night-600: #2c4258; /* dark rule on tint */
+  --night-ink:    #eef3f8; /* headings on night */
+  --night-muted:  #9fb3c8; /* muted text on night */
+  --night-faint:  #7d93aa; /* faint labels on night */
+  --night-accent: #7cb8ec; /* the accent and focus ring on night */
+  --night-sand:   #201e19; /* backing behind screenshots on night */
+  --night-action-hover: #1d5d9e; /* primary button hover on night */
+  --night-action-press: #18508a; /* primary button pressed on night */
+  --night-forest:    #7cc4a2; /* organisation family on night */
+  --night-forest-rule: #2a4a3d;
+  --night-mark:      #5fa883; /* wordmark accent on night */
+  --night-rust:      #e8956a; /* AI family on night */
+  --night-rust-rule: #4a3526;
+  --night-red:       #f3958b; /* errors on night */
+  --night-red-wash:  #3d1f1d;
+  --night-green:     #9fd8bb;
+  --night-green-wash: #1d3a2e;
+  --night-amber:     #f0c08a;
+  --night-amber-wash: #3a2a17;
+
+  /* ── Semantic aliases: light values ───────────────────────────── */
+  --canvas:            var(--paper);
+  --surface-card:      var(--white);
+  --surface-tint:      var(--mist);
+  --surface-hover:     var(--blue-50);
+  --surface-inverse:   var(--navy-800);
+  --surface-screenshot: var(--sand);
+
+  --text-heading:      var(--navy-900);
+  --text-body:         var(--slate-700);
+  --text-muted:        var(--slate-600);
+  --text-faint:        var(--slate-500);
+  --text-accent:       var(--blue-600);
+  --text-on-inverse:   var(--white);
+  --text-on-inverse-body:  var(--navy-text);
+  --text-on-inverse-muted: var(--navy-text-muted);
+  --text-on-inverse-tab:   var(--navy-text-tab);
+  --text-accent-on-inverse: var(--blue-200);
+  --text-on-action:    var(--white);
+
+  --border-hairline:   var(--slate-200);
+  --border-on-tint:    var(--slate-300);
+  --border-on-inverse: var(--navy-rule);
+  --border-link:       var(--slate-400);
+  --border-link-on-inverse: var(--navy-link-rule);
+  --border-tabs-on-inverse: var(--navy-tab-rule);
+
+  --action:            var(--navy-800);
+  --action-hover:      var(--navy-500);
+  --action-press:      var(--navy-950);
+  --ring:              var(--blue-500);
+
+  --family-organisation: var(--forest-700);
+  --family-organisation-rule: var(--forest-200);
+  --family-ai:           var(--rust-600);
+  --family-ai-rule:      var(--rust-200);
+  --brand-ink:           var(--navy-800);
+  --brand-mark-accent:   var(--forest-500);
+  --error:               var(--red-700);
+  --error-surface:       var(--red-100);
+  --success:             var(--green-700);
+  --success-surface:     var(--green-100);
+  --warning:             var(--amber-700);
+  --warning-surface:     var(--amber-100);
+}
+
+/* Dark values, for browsers without light-dark(). */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas:            var(--night-950);
+    --surface-card:      var(--night-900);
+    --surface-tint:      var(--night-800);
+    --surface-hover:     var(--night-750);
+    --surface-inverse:   var(--navy-700);
+    --surface-screenshot: var(--night-sand);
+
+    --text-heading:      var(--night-ink);
+    --text-body:         var(--navy-text);
+    --text-muted:        var(--night-muted);
+    --text-faint:        var(--night-faint);
+    --text-accent:       var(--night-accent);
+    --text-on-inverse:   var(--white);
+    --text-on-inverse-body:  var(--navy-text);
+    --text-on-inverse-muted: var(--navy-text-muted);
+    --text-on-inverse-tab:   var(--navy-text-tab);
+    --text-accent-on-inverse: var(--blue-200);
+    --text-on-action:    var(--white);
+
+    --border-hairline:   var(--night-700);
+    --border-on-tint:    var(--night-600);
+    --border-on-inverse: var(--navy-rule);
+    --border-link:       var(--slate-500);
+    --border-link-on-inverse: var(--navy-link-rule);
+    --border-tabs-on-inverse: var(--navy-tab-rule);
+
+    --action:            var(--blue-600);
+    --action-hover:      var(--night-action-hover);
+    --action-press:      var(--night-action-press);
+    --ring:              var(--night-accent);
+
+    --family-organisation: var(--night-forest);
+    --family-organisation-rule: var(--night-forest-rule);
+    --family-ai:           var(--night-rust);
+    --family-ai-rule:      var(--night-rust-rule);
+    --brand-ink:           var(--night-ink);
+    --brand-mark-accent:   var(--night-mark);
+    --error:               var(--night-red);
+    --error-surface:       var(--night-red-wash);
+    --success:             var(--night-green);
+    --success-surface:     var(--night-green-wash);
+    --warning:             var(--night-amber);
+    --warning-surface:     var(--night-amber-wash);
+  }
+}
+
+/* light-dark(light, dark): follows color-scheme, on :root and on any subtree. */
+@supports (color: light-dark(#000, #fff)) {
+  :root {
+    --canvas:            light-dark(var(--paper), var(--night-950));
+    --surface-card:      light-dark(var(--white), var(--night-900));
+    --surface-tint:      light-dark(var(--mist), var(--night-800));
+    --surface-hover:     light-dark(var(--blue-50), var(--night-750));
+    --surface-inverse:   light-dark(var(--navy-800), var(--navy-700));
+    --surface-screenshot: light-dark(var(--sand), var(--night-sand));
+
+    --text-heading:      light-dark(var(--navy-900), var(--night-ink));
+    --text-body:         light-dark(var(--slate-700), var(--navy-text));
+    --text-muted:        light-dark(var(--slate-600), var(--night-muted));
+    --text-faint:        light-dark(var(--slate-500), var(--night-faint));
+    --text-accent:       light-dark(var(--blue-600), var(--night-accent));
+    --text-on-inverse:   light-dark(var(--white), var(--white));
+    --text-on-inverse-body:  light-dark(var(--navy-text), var(--navy-text));
+    --text-on-inverse-muted: light-dark(var(--navy-text-muted), var(--navy-text-muted));
+    --text-on-inverse-tab:   light-dark(var(--navy-text-tab), var(--navy-text-tab));
+    --text-accent-on-inverse: light-dark(var(--blue-200), var(--blue-200));
+    --text-on-action:    light-dark(var(--white), var(--white));
+
+    --border-hairline:   light-dark(var(--slate-200), var(--night-700));
+    --border-on-tint:    light-dark(var(--slate-300), var(--night-600));
+    --border-on-inverse: light-dark(var(--navy-rule), var(--navy-rule));
+    --border-link:       light-dark(var(--slate-400), var(--slate-500));
+    --border-link-on-inverse: light-dark(var(--navy-link-rule), var(--navy-link-rule));
+    --border-tabs-on-inverse: light-dark(var(--navy-tab-rule), var(--navy-tab-rule));
+
+    --action:            light-dark(var(--navy-800), var(--blue-600));
+    --action-hover:      light-dark(var(--navy-500), var(--night-action-hover));
+    --action-press:      light-dark(var(--navy-950), var(--night-action-press));
+    --ring:              light-dark(var(--blue-500), var(--night-accent));
+
+    --family-organisation: light-dark(var(--forest-700), var(--night-forest));
+    --family-organisation-rule: light-dark(var(--forest-200), var(--night-forest-rule));
+    --family-ai:           light-dark(var(--rust-600), var(--night-rust));
+    --family-ai-rule:      light-dark(var(--rust-200), var(--night-rust-rule));
+    --brand-ink:           light-dark(var(--navy-800), var(--night-ink));
+    --brand-mark-accent:   light-dark(var(--forest-500), var(--night-mark));
+    --error:               light-dark(var(--red-700), var(--night-red));
+    --error-surface:       light-dark(var(--red-100), var(--night-red-wash));
+    --success:             light-dark(var(--green-700), var(--night-green));
+    --success-surface:     light-dark(var(--green-100), var(--night-green-wash));
+    --warning:             light-dark(var(--amber-700), var(--night-amber));
+    --warning-surface:     light-dark(var(--amber-100), var(--night-amber-wash));
+  }
+}

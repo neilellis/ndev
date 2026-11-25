@@ -1,0 +1,15 @@
+# Catches a pasted issue/PR title sitting in front of its number, e.g.
+#   "fix(web): PosterDrawer intermittently SNAPS shut ... #1000"
+# instead of the bare "#1000".
+#
+# Deliberately NOT `scope: raw`. Raw scope would also read fenced code blocks and
+# ignore vale's own off/on directives, so it fires on legitimate quoted commit
+# messages and gh commands. The cost is that a title hard-wrapped across two lines
+# slips through; the cold reader catches those. A rule that reds on correct
+# usage trains agents to ignore the linter, which is worse than missing a case.
+extends: existence
+message: "Pasted issue/PR title before '#n' — use the bare number."
+level: error
+nonword: true
+tokens:
+  - '(?:fix|feat|docs|chore|refactor|perf|test|integrity|bug|data-loss)\([a-z,\- ]+\):[^#\n]{15,120}#\d+'

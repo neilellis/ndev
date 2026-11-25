@@ -1,0 +1,1 @@
+Use this guide. It changes our height tokens: write them in `rem` (`--btn-h: 2.5rem`, `--btn-h-sm: 2rem`, `--btn-h-lg: 3.25rem`) and apply them as `min-block-size`, so controls grow with the text. Do not set `html { font-size }`. Add `<meta name="text-scale" content="scale">` only as an enhancement. Test at 200% text size and at 320 CSS px.

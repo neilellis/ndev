@@ -1,0 +1,6 @@
+extends: metric
+message: "Hard to read (Flesch reading ease %s, want 50+). Shorter sentences, plainer words."
+level: warning
+formula: |
+  206.835 - 1.015 * (words / sentences) - 84.6 * (syllables / words)
+condition: "< 50"

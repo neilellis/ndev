@@ -1,0 +1,32 @@
+:root { color-scheme: light dark; }
+:root.dark { color-scheme: dark; }
+:root.light { color-scheme: light; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--orca-background, Canvas); color: var(--orca-foreground, CanvasText); font: 13px/1.4 system-ui, sans-serif; }
+.bar { display: flex; gap: 8px; align-items: center; padding: 6px 8px; flex-wrap: wrap; }
+button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--orca-border, #8884); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+button:hover { background: var(--orca-accent, #8882); }
+button:disabled { opacity: .5; cursor: default; }
+:focus-visible { outline: 2px solid var(--orca-primary, #4a8cff); outline-offset: 1px; }
+#status { margin-left: auto; }
+#status.error { color: var(--orca-destructive, #d33); white-space: pre-wrap; }
+.ws { margin: 8px; padding: 10px; border: 1px solid var(--orca-border, #8884); border-radius: 6px; }
+.ws h2 { margin: 0 0 2px; font-size: 14px; }
+.ws .path { opacity: .65; margin: 0 0 8px; word-break: break-all; }
+.ws.focused { border-color: var(--orca-primary, #4a8cff); }
+.badge { font-size: 11px; opacity: .8; margin-left: 6px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 4px 6px; border-top: 1px solid var(--orca-border, #8883); vertical-align: top; }
+td.actions { white-space: nowrap; text-align: right; }
+.missing { opacity: .6; }
+.problem { color: var(--orca-destructive, #d33); white-space: pre-wrap; }
+.keys { color: var(--orca-muted-foreground, inherit); opacity: .85; word-break: break-word; }
+h3 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--orca-muted-foreground, inherit); }
+.res { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 4px 0; border-top: 1px solid var(--orca-border, #8883); }
+.res .what { flex: 1; min-width: 160px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #8888; }
+.dot.running { background: #2a9d4b; }
+.dot.mismatch, .dot.unknown { background: #d9a21b; }
+button.armed { color: var(--orca-destructive, #d33); border-color: var(--orca-destructive, #d33); }
+select { font: inherit; color: inherit; background: var(--orca-card, transparent); border: 1px solid var(--orca-border, #8884); border-radius: 4px; padding: 3px 4px; }

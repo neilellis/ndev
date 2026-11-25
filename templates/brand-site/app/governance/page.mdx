@@ -1,0 +1,37 @@
+export const metadata = { title: "Governance" };
+
+# Governance
+
+How this guide stays true to the brand.
+
+## Sources of truth
+
+| Topic | Source | This guide |
+|---|---|---|
+| Web colours, type, components | `{{sourceRepo}}` `public/styles.css` | Named as tokens in `/ds/tokens/` |
+| Wordmark | `{{source}}/components/site/BrandWordmark.tsx` | Copied into `app/components/Wordmark.tsx` |
+| Globe concepts | `{{source}}/content/home/globe-concepts.ts` | Listed on [Diagrams](/diagrams) |
+| Film | `{{filmSource}}`: `film/index.html`, `script.md`, `timeline.json`, `assets/photos/` | Documented under Video |
+
+When a source changes, update this guide in the same week.
+
+## Changing the brand
+
+1. Propose the change on a branch of `{{repo}}` with a pull request.
+2. Update the token file first, then the pages that describe it.
+3. Check the preview: tokens page, contrast table and every demo.
+4. A {{name}} partner approves before it is merged.
+
+## Checks
+
+Every pull request runs lint, type checking, tests and a full static build. The tests confirm that:
+
+- every page in the sidebar exists;
+- every token used by `components.css` is defined;
+- the token files parse, and contrast is calculated correctly.
+
+## Third-party material
+
+- Source Sans 3 and Source Serif 4 are under the SIL Open Font License. Licences sit with the font files.
+- Photographs are from Unsplash and credited by name on [Photography](/foundations/photography) and [Footage and credits](/video/footage).
+- Client logos belong to their owners. Use them only with “Our team has worked with”.

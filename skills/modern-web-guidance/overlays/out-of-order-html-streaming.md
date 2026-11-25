@@ -1,0 +1,1 @@
+In React or Next.js, render with React and the component map; do not use `setHTML`, `streamHTML` or `<template for>`. Use the accessibility rules: `aria-busy="true"` on a loading panel, a live region only on the short progress text (never `role="alert"`), and focus stays where it is. For a route change, keep the project's own focus handling.

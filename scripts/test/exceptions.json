@@ -1,0 +1,6 @@
+[
+  {
+    "path": "skills/responsive-check/scripts/tests/responsive-check.test.mjs",
+    "reason": "It drives Chromium and WebKit through Playwright, and needs RESPONSIVE_CHECK_WEB_DIR. Run it with: RESPONSIVE_CHECK_WEB_DIR=<dir> node --test skills/responsive-check/scripts/tests/responsive-check.test.mjs"
+  }
+]

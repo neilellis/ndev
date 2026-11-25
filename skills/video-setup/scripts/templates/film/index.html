@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Video</title>
+<style>
+/* Neutral design tokens. Replace them with the project's own. Fonts are system fonts, so the
+   template needs no font files; to use web fonts, add @font-face rules for files in ../assets/. */
+:root {
+  --paper: #f7f7f5; --ink: #1d1d1f; --body: #3c3c43; --muted: #6e6e73;
+  --blue: #2f5f9e; --sky: #b9d4f5; --line: #d8d8dc; --navy: #1f2a3a;
+  --serif: Georgia, "Times New Roman", serif; --sans: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+body { font-family: var(--sans); color: var(--ink); -webkit-font-smoothing: antialiased; }
+em { font-family: var(--serif); font-style: italic; font-weight: 400; }
+
+#stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--paper); }
+.scene, .post { position: absolute; inset: 0; opacity: 0; overflow: hidden; }
+.dark { background: radial-gradient(1200px 800px at 70% 30%, #34507a 0%, #222f44 45%, #121821 100%); color: #fff; }
+.copy { position: absolute; left: 140px; top: 240px; width: 1000px; }
+.eyebrow { font-size: 22px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--blue); }
+.dark .eyebrow { color: var(--sky); }
+h1, h2 { font-weight: 400; letter-spacing: -.045em; line-height: 1.02; font-size: 104px; margin-top: 36px; }
+h1 em, h2 em { color: var(--blue); }
+.dark h1 em, .dark h2 em { color: var(--sky); }
+p { font-size: 30px; color: var(--body); margin-top: 28px; max-width: 900px; }
+.dark p { color: #d7e3ef; }
+.picture { position: absolute; right: 120px; top: 200px; width: 620px; height: 560px; border-radius: 8px; background: linear-gradient(135deg, var(--sky), var(--blue)); }
+
+/* Captions: keep the bottom 150 px clear for them. */
+.spot { position: absolute; pointer-events: none; } /* the box an arrow cue points at */
+#captions { position: absolute; left: 0; right: 0; bottom: 54px; display: flex; justify-content: center; z-index: 50; pointer-events: none; }
+.cap { position: absolute; bottom: 0; max-width: 1500px; padding: 14px 30px 16px; border-radius: 6px;
+  background: rgba(20, 20, 24, .84); color: #fff; font: 600 42px/1.25 var(--sans); text-align: center; opacity: 0; }
+
+.post { background: #fff; display: flex; align-items: center; justify-content: center; }
+.post h2 { font-size: 72px; margin: 0 0 40px; }
+.post dt { font: 600 22px var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--blue); margin-top: 24px; }
+.post dd { font-size: 30px; color: var(--body); }
+</style>
+</head>
+<body>
+<div id="stage">
+
+<!-- One section per line of the script, numbered from s0. Cues: see the video-scenes skill. -->
+<section class="scene" id="s0">
+  <div class="copy">
+    <div class="eyebrow" data-in="s+0.2">The question</div>
+    <h1 data-in="s+0.4">One idea <em>per scene.</em></h1>
+  </div>
+  <div class="picture" data-in="s+0.8"></div>
+</section>
+
+<section class="scene dark" id="s1">
+  <div class="copy">
+    <div class="eyebrow" data-in="s+0.2">How it works</div>
+    <h2 data-in="s+0.4">Light and dark <em>alternate.</em></h2>
+  </div>
+</section>
+
+<!-- Delete the credits page for a video type without one (how-to). -->
+<section class="post" id="credits">
+  <div>
+    <h2 data-in="c+0.2">Credits</h2>
+    <dl>
+      <div data-in="c+0.4"><dt>Photography</dt><dd>Via Unsplash: name each photographer</dd></div>
+    </dl>
+  </div>
+</section>
+
+<div id="captions"></div>
+</div>
+
+<script src="../node_modules/gsap/dist/gsap.min.js"></script>
+<script>
+{
+  // ?voice=<id> plays that voice's timings; no voice plays the main cut.
+  const voice = new URLSearchParams(location.search).get("voice");
+  if (voice && !/^[a-z0-9-]+$/.test(voice)) throw new Error(`Bad voice "${voice}"`);
+  document.write(`<script src="timeline${voice ? "-" + voice : ""}.js" onerror="throw new Error('No timeline for voice ${voice}')"><\/script>`);
+}
+</script>
+<script src="../scripts/video-kit/arrow.js"></script>
+<script src="runtime.js"></script>
+<script src="film.js"></script>
+</body>
+</html>

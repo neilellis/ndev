@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# pre-push — run every check of the CI guards job on the committed tree before a push.
+#
+# WHAT IT GUARDS
+#   A push sends only a tree that passed the whole-tree checks, on a clean
+#   worktree, on top of the current base branch. Git runs this hook for every
+#   client (a person, Claude, Codex), so it is the one gate no harness skips.
+#   See kb/precheck-and-push.md for the design.
+#
+# HOW TO WIRE IT
+#   1. Copy this file to .githooks/pre-push in the repository and make it
+#      executable (chmod +x). Commit it.
+#   2. Write the checks script that it runs (default: scripts/whole-tree-checks.sh).
+#      It must accept --base <commit> and exit 0 pass, 1 defect, 2 could not run.
+#      It must run the same checks as the CI guards job.
+#   3. Install the shared dispatcher once per clone: kb/hooks/install-guard-hooks.sh.
+#   This is a Git hook, not a Claude Code hook. It needs no .claude/settings.json entry.
+#
+# SETTINGS (git config, all optional)
+#   guard.baseBranch      the branch to test against (main if not set)
+#   guard.checks          the checks script, relative to the root
+#                         (scripts/whole-tree-checks.sh if not set)
+#   guard.timeoutSeconds  ends a hung run (2700 if not set). This is not a
+#                         speed limit: set it at about 3 times the slowest
+#                         healthy run on a loaded machine. A busy machine must
+#                         never refuse a push, or people learn to skip the hook.
+#
+# NEVER bypass this hook with --no-verify or a hooks-path override.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+refuse() { printf 'ERROR: push refused: %s\n' "$*" >&2; exit 1; }
+
+base_branch="$(git config --get guard.baseBranch || printf 'main')"
+checks="$(git config --get guard.checks || printf 'scripts/whole-tree-checks.sh')"
+timeout_seconds="$(git config --get guard.timeoutSeconds || printf '2700')"
+case "$timeout_seconds" in
+  ''|*[!0-9]*) refuse "guard.timeoutSeconds is '$timeout_seconds', not a whole number of seconds. Fix it with: git config guard.timeoutSeconds 2700" ;;
+esac
+
+[ -z "$(git status --porcelain --untracked-files=all)" ] \
+  || refuse 'a clean worktree is required so that the guards test the committed tree. Commit or preserve the pending changes first.'
+
+head="$(git rev-parse --verify HEAD)"
+zero=0000000000000000000000000000000000000000
+push_heads=()
+push_bases=()
+while read -r local_ref local_oid _remote_ref remote_oid; do
+  [ "$local_oid" = "$zero" ] && continue   # a branch deletion needs no checks
+  [ "$local_oid" = "$head" ] \
+    || refuse "check out $local_ref in its own worktree before you push it. This worktree can test only HEAD."
+  push_heads+=("$local_oid")
+  push_bases+=("$remote_oid")
+done
+
+if [ "${#push_heads[@]}" -eq 0 ]; then
+  printf 'INFO: no commits to push, so no checks are necessary.\n'
+  exit 0
+fi
+
+# Move only the remote-tracking ref. Never merge after Git has prepared the push.
+git fetch --no-tags origin "+refs/heads/$base_branch:refs/remotes/origin/$base_branch" \
+  || refuse "cannot fetch origin/$base_branch. Check the network and the remote, then retry."
+base="$(git rev-parse --verify "refs/remotes/origin/$base_branch")"
+git merge-base --is-ancestor "$base" "$head" \
+  || refuse "HEAD does not contain the current origin/$base_branch. Run push-checked.sh to pull, resolve any conflicts, and retry."
+
+# A new branch is compared with the base. An existing branch is compared with the
+# remote tip that Git supplies. Every outgoing commit is inspected, so a change
+# and its revert still need checks when the final tree is identical.
+has_changes=false
+for index in "${!push_heads[@]}"; do
+  comparison="${push_bases[$index]}"
+  [ "$comparison" = "$zero" ] && comparison="$base"
+  changed_paths="$(git log --format= --name-only --diff-merges=separate "$comparison..${push_heads[$index]}")" \
+    || refuse "cannot inspect the outgoing commits from $comparison. Fetch the remote branch and retry."
+  tree_changes="$(git diff --name-only "$comparison" "${push_heads[$index]}")" \
+    || refuse "cannot compare $comparison with ${push_heads[$index]}. Fetch the remote branch and retry."
+  if [ -n "$changed_paths" ] || [ -n "$tree_changes" ]; then
+    has_changes=true
+  fi
+done
+if [ "$has_changes" = false ]; then
+  printf 'INFO: the outgoing commits change no files, so no checks are necessary.\n'
+  exit 0
+fi
+
+[ -x "$checks" ] || refuse "$checks is missing or not executable. Update this checkout, or set git config guard.checks."
+timeout_bin="$(command -v timeout || command -v gtimeout || true)"
+[ -n "$timeout_bin" ] || refuse 'timeout (or gtimeout) is not on PATH, so a hung run could not end. On macOS install it with: brew install coreutils'
+
+temporary_root="${TMPDIR:-/tmp}"
+evidence="$(mktemp -d "${temporary_root%/}/pre-push-guards.XXXXXX")"
+log="$evidence/checks.log"
+printf 'INFO: running %s --base %s (log: %s)\n' "$checks" "$base" "$log"
+
+status=0
+(
+  # In a linked worktree, Git's local variables force every nested Git command
+  # to this root. Fixtures that make their own repositories then break.
+  git_environment="$(git rev-parse --local-env-vars)"
+  while IFS= read -r git_variable; do
+    [ -n "$git_variable" ] && unset "$git_variable"
+  done <<< "$git_environment"
+  set -o pipefail
+  "$timeout_bin" "$timeout_seconds" "./$checks" --base "$base" 2>&1 | tee "$log"
+) || status=$?
+
+case "$status" in
+  0) ;;
+  124) refuse "$checks did not finish in $timeout_seconds seconds (exit 124). Read $log for the step that hung." ;;
+  *) refuse "$checks exited $status. Read $log, fix the defect, commit and retry." ;;
+esac
+
+[ "$(git rev-parse HEAD)" = "$head" ] || refuse 'HEAD changed while the guards ran. Retry for the current commit.'
+[ -z "$(git status --porcelain --untracked-files=all)" ] \
+  || refuse 'the guards changed the worktree. A check must not write files. Inspect the change before you retry.'
+printf 'Whole-tree guards passed for %s against origin/%s %s.\n' "$head" "$base_branch" "$base"

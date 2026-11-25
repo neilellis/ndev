@@ -1,0 +1,30 @@
+export const metadata = { title: "Progressive disclosure" };
+
+# Progressive disclosure
+
+Show the few things the reader needs now. Put the rest one tap or click away. This applies Hick's law and Miller's law. See [Heuristics and laws](/ux/heuristics).
+
+<Rule>
+The examples come from the website. The rules are a recommendation.
+</Rule>
+
+## Reduce, do not shrink
+
+When space is short, do not make everything smaller until it fits. Decide what the reader does not need yet, and put it behind a control. On phones the website hides the section notes beside each eyebrow. It does not shrink them.
+
+## How the website does it
+
+| Pattern | Example | Without JavaScript |
+|---|---|---|
+| Tabs | The {{product}} tour shows one screenshot at a time. | All panels show as ordinary sections. |
+| Pane on demand | Select a globe concept to open its description and essay link. | The concept list is still in the page. |
+| Menu button | At 800px and below, the main navigation is behind “Menu”. | — |
+| Linked detail | Essay cards show a title, a summary and the reading time. The full text is one click away. | Plain links. |
+
+## Rules
+
+1. Do not hide a control that the reader needs to finish the task. Hide only extra detail.
+2. Show a fact once. Disclosure adds new facts. It does not show the same fact a second time.
+3. The control that opens the detail must be easy to find. It must meet the 44px [touch target](/ux/input-and-touch).
+4. The page must work without JavaScript. Start with all content visible, then add the control with script. The {{product}} tabs work this way.
+5. Hover is not disclosure on a phone. Anything that opens on hover must also open on tap or with the keyboard.

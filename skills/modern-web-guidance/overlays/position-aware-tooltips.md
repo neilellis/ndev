@@ -1,0 +1,1 @@
+In a React app, do not hand-write this control. Use the shadcn `tooltip` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`. Flip the arrow from the `data-side` attribute on the content. Test that focus is not obscured (WCAG 2.4.11). Use the native pattern below only on a page with no React (a static page, an artifact, generated HTML).

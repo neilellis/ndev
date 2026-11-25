@@ -1,0 +1,14 @@
+extends: substitution
+message: "Latin abbreviation — write '%s' instead of '%s' (STE GR-6)."
+level: error
+ignorecase: true
+# `nonword: true` is load-bearing. Vale wraps a swap key in \b…\b by default, and \b
+# cannot follow the literal "." these patterns end with, so the rule matched nothing at
+# all and reported clean. The test harness caught it; a reader never would.
+nonword: true
+# A non-native reader has to translate these twice. Each has a plain English form that is
+# no longer, and "etc." has none at all — it stands for the items the writer did not name.
+swap:
+  'e\.g\.': for example
+  'i\.e\.': that is
+  'etc\.': name the items, or write "and more"

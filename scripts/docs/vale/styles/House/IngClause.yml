@@ -1,0 +1,9 @@
+extends: existence
+message: "An '-ing' clause doing the work of a verb — '%s'. Start a new sentence with a real subject (STE Rule 3.5)."
+level: error
+ignorecase: true
+# The commonest tell of generated prose: a second idea welded onto the first with a
+# comma, so the sentence carries two claims and the reader has to hold both. It is also
+# the shape that hides a missing subject — "making it easy" never says for whom.
+tokens:
+  - ', (making|allowing|enabling|ensuring|providing|leveraging|helping)\b'

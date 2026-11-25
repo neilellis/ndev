@@ -1,0 +1,13 @@
+extends: existence
+message: "'%s' — borrowed jargon. Say 'test entry point', or 'the place the test calls the code from'."
+level: error
+ignorecase: true
+nonword: true
+# 'seam' comes from Michael Feathers' *Working Effectively with Legacy Code*. A reader who
+# has met that book decodes it at once, and everyone else must be told what it means before
+# the sentence works. A writer who must define it in bold each time has found jargon.
+#
+# 'seamless' is not matched: the trailing \b needs a non-word character after 'seam'. That
+# word is banned separately, as corporate filler, by House.Corporate.
+tokens:
+  - '\bseams?\b'

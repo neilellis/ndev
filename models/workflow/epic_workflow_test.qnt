@@ -1,0 +1,216 @@
+module chain_test {
+  import epic_workflow(SUBS = Set(0, 1, 2), DEPS = Map(0 -> Set(), 1 -> Set(0), 2 -> Set(1)), PARALLEL = 2, ROUND_LIMIT = 3, MAX_DEBT = 4, HUMAN_JUMPS = false).* from "./epic_workflow"
+
+  action coordinating =
+    init
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .expect(phase == "coordinating" and SUBS.forall(i => subs.get(i).state == "waiting"))
+
+  action firstInReview =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(workerOpensPr(0))
+      .then(toReviewing(0))
+      .expect(subs.get(0).state == "reviewing" and prs.get(0).base == MAIN)
+
+  run blockedSubCannotStartTest = coordinating.then(start(1).fail())
+
+  run stackedStartNeedsTheBriefTest = firstInReview.then(start(1).fail())
+
+  action secondStacked =
+    firstInReview
+      .then(brief(1))
+      .expect(subs.get(1).stackedOn == 0)
+      .then(start(1))
+      .then(workerOpensPr(1))
+      .expect(prs.get(1).base == 0 and wStacked)
+
+  run stackOnUnpushedBlockerRefusedTest =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(brief(1).fail())
+
+  action secondInReview =
+    secondStacked
+      .then(toReviewing(1))
+      .then(workerMarksReady(1))
+      .then(ciEndsWith(1, "green"))
+
+  run stackedPrIsNotVerifiedTest = secondInReview.then(verify(1).fail())
+
+  action firstMerged =
+    secondInReview
+      .then(workerMarksReady(0))
+      .then(ciEndsWith(0, "green"))
+      .then(verify(0))
+      .then(humanMergesPr(0))
+      .then(recordMerged(0))
+      .expect(merged(0) and prs.get(0).landed and issues.get(0) == "closed" and debts.open == 0)
+
+  run stackStillOnBlockerBranchTest = firstMerged.then(verify(1).fail())
+
+  run retargetedStackIsVerifiedTest =
+    firstMerged
+      .then(retarget(1))
+      .then(verify(1))
+      .expect(subs.get(1).stackedOn == MAIN and wVerifiedAfterStack and safety)
+
+  run conflictRefusesVerifyTest =
+    firstInReview
+      .then(workerMarksReady(0))
+      .then(ciEndsWith(0, "green"))
+      .then(baseMovesTo(0, "conflict"))
+      .then(verify(0).fail())
+
+  run unmergedPrCannotBeRecordedMergedTest = firstInReview.then(recordMerged(0).fail())
+
+  run stackedMergeLandsWithItsBaseTest =
+    secondStacked
+      .then(humanMergesPr(1))
+      .expect(prs.get(1).ridesOn == 0 and not(prs.get(1).landed) and issues.get(1) == "open")
+      .then(humanMergesPr(0))
+      .expect(prs.get(1).landed and wRiding)
+
+  run earlyMergeOwesDebtTest =
+    firstInReview
+      .then(humanMergesPr(0))
+      .then(recordMerged(0))
+      .expect(debts.open == 2)
+
+  run roundsPassTheLimitWithAWarningTest =
+    firstInReview
+      .then(toFixing(0)).then(fixedToReviewing(0))
+      .then(toFixing(0)).then(fixedToReviewing(0))
+      .then(toFixing(0)).then(fixedToReviewing(0))
+      .then(toFixing(0))
+      .expect(subs.get(0).rounds == 4 and wRoundLimit)
+
+  run coordinatingWaitsForAllMergedTest = firstMerged.then(finishPhase.fail())
+
+  run humanMergeIntoStackDoesNotLandTest =
+    secondStacked
+      .then(humanMergesPr(1))
+      .then(toReviewing(1))
+      .then(recordMerged(1))
+      .then(brief(2))
+      .then(start(2))
+      .expect(subs.get(2).startBase == MAIN and not(prs.get(1).landed) and not(mainStartsOnLandedBlockers))
+
+  run humanMergeAfterBaseMergedIsLostTest =
+    secondStacked
+      .then(humanMergesPr(0))
+      .then(recordMerged(0))
+      .then(humanMergesPr(1))
+      .then(toReviewing(1))
+      .then(recordMerged(1))
+      .expect(prs.get(1).lost and not(mergedWorkIsNotLost) and safety)
+}
+
+module wide_test {
+  import epic_workflow(SUBS = Set(0, 1, 2), DEPS = Map(0 -> Set(), 1 -> Set(), 2 -> Set()), PARALLEL = 2, ROUND_LIMIT = 3, MAX_DEBT = 4, HUMAN_JUMPS = false).* from "./epic_workflow"
+
+  action twoInFlight =
+    init
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(start(0))
+      .then(start(1))
+
+  run parallelLimitRefusesStartTest = twoInFlight.then(start(2).fail())
+
+  action placeRetaken = twoInFlight.then(block(0)).then(start(2))
+
+  run unblockRefusedWhilePlacesAreTakenTest = placeRetaken.then(unblock(0).fail())
+
+  run unblockWaitsForAPlaceTest =
+    placeRetaken
+      .then(block(2))
+      .then(unblock(0))
+      .expect(inFlight.size() == 2 and subs.get(0).state == "implementing")
+}
+
+module steered_test {
+  import epic_workflow(SUBS = Set(0, 1, 2), DEPS = Map(0 -> Set(), 1 -> Set(0), 2 -> Set(1)), PARALLEL = 2, ROUND_LIMIT = 3, MAX_DEBT = 4, HUMAN_JUMPS = true).* from "./epic_workflow"
+
+  action coordinating =
+    init
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+      .then(finishPhase).then(finishPhase).then(finishPhase)
+
+  run humanCannotGotoDoneTest = coordinating.then(humanMove("done").fail())
+
+  action skipped =
+    coordinating
+      .then(humanSkip)
+      .expect(phase == "closing" and debts.open == 1 and debts.override)
+
+  run closingNeedsRuledDebtTest = skipped.then(finishPhase.fail())
+
+  run closingRefusesUnmergedSubsTest =
+    skipped
+      .then(ruleDebt)
+      .then(finishPhase.fail())
+
+  action earlyMerge(i: int): bool =
+    brief(i)
+      .then(start(i))
+      .then(workerOpensPr(i))
+      .then(toReviewing(i))
+      .then(humanMergesPr(i))
+      .then(recordMerged(i))
+      .then(ruleDebt)
+      .then(ruleDebt)
+
+  run closingAfterRuledOverrideTest =
+    coordinating
+      .then(earlyMerge(0))
+      .then(earlyMerge(1))
+      .then(earlyMerge(2))
+      .then(humanSkip)
+      .then(ruleDebt)
+      .then(finishPhase)
+      .expect(phase == "done" and wDoneByOverride and safety)
+
+  run closingRefusesOpenDebtTest =
+    coordinating
+      .then(earlyMerge(0))
+      .then(earlyMerge(1))
+      .then(earlyMerge(2))
+      .then(humanSkip)
+      .expect(phase == "closing" and debts.open == 1)
+      .then(finishPhase.fail())
+
+  run skippedChecksOweDebtAtVerifyTest =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(workerOpensPr(0))
+      .then(toReviewing(0))
+      .then(workerMarksReady(0))
+      .then(ciEndsWith(0, "skipped"))
+      .then(verify(0))
+      .expect(subs.get(0).state == "verified" and debts.open == 1)
+
+  run humanCannotSkipClosingTest = skipped.then(humanSkip.fail())
+
+  run reslicingResetsAnOpenPrTest =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(workerOpensPr(0))
+      .then(humanMove("slicing"))
+      .then(finishPhase)
+      .expect(subs.get(0).state == "waiting" and prs.get(0).life == "open" and not(reslicingKeepsOpenPrs))
+
+  run reslicingRefusedAfterAMergeTest =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(workerOpensPr(0))
+      .then(humanMergesPr(0))
+      .then(humanMove("slicing"))
+      .then(finishPhase.fail())
+}

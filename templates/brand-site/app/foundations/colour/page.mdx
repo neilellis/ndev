@@ -1,0 +1,94 @@
+export const metadata = { title: "Colour" };
+
+# Colour
+
+A restrained palette: navy ink on cool paper, with a single blue accent. Most screens are 90% paper and navy. Blue is used sparingly, so it marks what matters.
+
+## Core palette
+
+<SwatchGrid>
+  <Swatch token="--navy-900" hex="#102846" label="Ink" />
+  <Swatch token="--navy-800" hex="#102b4a" label="Navy" />
+  <Swatch token="--blue-600" hex="#2166ac" label="Blue — the accent" />
+  <Swatch token="--blue-200" hex="#a7d8ff" label="Sky — accent on navy" />
+  <Swatch token="--paper" hex="#f6f8fa" label="Paper — the canvas" />
+  <Swatch token="--white" hex="#ffffff" label="White — cards" />
+  <Swatch token="--mist" hex="#e8eff5" label="Mist — tinted band" />
+  <Swatch token="--sand" hex="#f4f1e9" label="Sand — behind screenshots" />
+</SwatchGrid>
+
+## Text and rules
+
+<SwatchGrid>
+  <Swatch token="--slate-700" hex="#3f536a" label="Body" />
+  <Swatch token="--slate-600" hex="#586b80" label="Muted" />
+  <Swatch token="--slate-500" hex="#6b8095" label="Faint" />
+  <Swatch token="--slate-400" hex="#8096ae" label="Link underline" />
+  <Swatch token="--slate-300" hex="#bdcddb" label="Rule on mist" />
+  <Swatch token="--slate-200" hex="#d2dce5" label="Hairline" />
+  <Swatch token="--navy-text" hex="#c4d5e6" label="Body on navy" />
+  <Swatch token="--navy-rule" hex="#506985" label="Rule on navy" />
+</SwatchGrid>
+
+## Concept families
+
+The website's globe and the film's network diagram sort ideas into two families. These colours carry that meaning and nothing else. Always pair them with a second cue, a shape or a label, so the meaning survives without colour.
+
+<SwatchGrid>
+  <Swatch token="--forest-700" hex="#173f35" label="Organisation (round)" />
+  <Swatch token="--rust-600" hex="#a94f24" label="AI (diamond or square)" />
+  <Swatch token="--forest-500" hex="#3f7a5f" label="Wordmark accent" />
+  <Swatch token="--red-700" hex="#a42b24" label="Error only" />
+</SwatchGrid>
+
+<Demo surface="white" label="Family legend">
+  <div className="family-legend">
+    <span><i className="family-mark" />Organisation</span>
+    <span className="family-ai"><i className="family-mark" />AI</span>
+  </div>
+</Demo>
+
+## Navy states
+
+<SwatchGrid>
+  <Swatch token="--navy-500" hex="#205588" label="Button hover" />
+  <Swatch token="--navy-600" hex="#1b456e" label="Gradient stop" />
+  <Swatch token="--navy-700" hex="#163a62" label="Gradient stop" />
+  <Swatch token="--navy-950" hex="#0c1c2c" label="Pressed, darkest stop" />
+  <Swatch token="--blue-500" hex="#357bb9" label="Focus ring" />
+  <Swatch token="--blue-100" hex="#d4e9fb" label="Light button hover" />
+</SwatchGrid>
+
+## Dark scheme
+
+The site follows the reader's light or dark setting. Components use the semantic tokens (`--canvas`, `--text-body`, `--surface-inverse` and the rest), and each one has a light and a dark value. The dark scheme is not taken from {{source}}. It is a recommendation, derived from the navy ramp. The navy band stays navy, one step lighter, and the primary button turns blue.
+
+<SwatchGrid>
+  <Swatch token="--night-950" hex="#0b1724" label="Canvas" />
+  <Swatch token="--night-900" hex="#122334" label="Cards" />
+  <Swatch token="--night-800" hex="#182c40" label="Tinted band" />
+  <Swatch token="--night-ink" hex="#eef3f8" label="Headings" />
+  <Swatch token="--navy-text" hex="#c4d5e6" label="Body" />
+  <Swatch token="--night-muted" hex="#9fb3c8" label="Muted" />
+  <Swatch token="--night-accent" hex="#7cb8ec" label="Accent and focus ring" />
+  <Swatch token="--blue-600" hex="#2166ac" label="Primary button" />
+</SwatchGrid>
+
+The [Accessibility](/accessibility) page rates every pairing in both schemes.
+
+## Gradients
+
+Gradients come from the film. Use them for full-bleed dark scenes, end cards and soft light backgrounds. Never put a gradient on a button or behind body text in a card.
+
+<GradientTile token="--gradient-brand-radial" label="Brand radial — dark scenes" />
+<GradientTile token="--gradient-end-card" label="End card — the closing call to action" />
+<GradientTile token="--gradient-paper-sky" label="Paper to sky — light scenes behind screenshots" />
+<GradientTile token="--gradient-globe-halo" label="Globe halo — white scene with a soft centre" />
+<GradientTile token="--scrim-photo-left" label="Photo scrim — text on the left of a photograph" />
+
+## Proportion
+
+<DoDont
+  good={<ul><li>Paper or white for most of the page, navy for one band.</li><li>Blue on eyebrow numbers, italic emphasis and hover states.</li><li>Sky for the accent on navy.</li></ul>}
+  bad={<ul><li>Blue backgrounds behind large areas of text.</li><li>Green and orange used as decoration.</li><li>New accent colours, tints of red or purple.</li></ul>}
+/>

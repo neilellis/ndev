@@ -1,0 +1,25 @@
+export const metadata = { title: "Breakpoints" };
+
+# Breakpoints
+
+The website uses four widths where the layout changes. Between them, the layout is fluid.
+
+<Rule>
+These values come from the media queries in `{{source}}/public/styles.css`. The website's script also uses 801px to close the open menu.
+</Rule>
+
+## The scale
+
+| Query | Name | What changes |
+|---|---|---|
+| `min-width: 1550px` | Wide | The hero gets more top padding. The globe area grows to 685px. |
+| `max-width: 1100px` | Tablet | The gutter drops to 35px. Header links tighten to a 20px gap and 15px text. Hero and section headings get smaller. The footer uses two columns. |
+| `max-width: 800px` | Phone | One column. The “Menu” button replaces the header links. The gutter drops to 21px. Section padding drops to 58px. Section notes hide. Tabs scroll sideways. |
+| `max-width: 390px` | Small phone | Headings drop again, for example the hero to `clamp(46px, 15vw, 58px)`. Hero buttons stack. Contact type gets smaller. |
+
+## Rules
+
+- Write media queries with these exact values. Do not add a new breakpoint for one component. Change the component so it is fluid instead.
+- Use `max-width` queries for 1100, 800 and 390. Use `min-width` only for the wide layout.
+- Keep JavaScript in step with CSS. If a script reacts to width, use the same value. The menu script uses `(min-width: 801px)`, the first width above the phone layout.
+- There are no named breakpoint tokens. CSS custom properties do not work inside media queries.

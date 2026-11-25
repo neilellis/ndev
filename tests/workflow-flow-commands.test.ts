@@ -1,0 +1,208 @@
+// Workflow tests: The /flow commands and /unblock. The shared harness is in tests/workflow-harness.ts.
+import { expect, test } from './sdk-testing'
+import { CHECKS, engine, start, tool, command, unblock } from './workflow-harness'
+import { workflowHost } from './workflow-host'
+
+// ---- /flow ----
+test('/flow status shows the state and the next step', async ($, on) => {
+  engine(on)
+  await start($)
+  const out = await command($, 'status')
+  expect(out).toContain('in the state "developing"')
+  expect(out).toContain('Next:')
+})
+
+test('a record from before addMigration has no list, and status still answers', async ($, on) => {
+  engine(on, { wf: { migrations: undefined } })
+  await start($)
+  const out = await command($, 'status')
+  expect(out).not.toContain('failed')
+  expect(out).toContain('in the state "developing"')
+})
+
+test('/flow guide shows the guide, with or without a workflow, and changes nothing', async ($, on) => {
+  const w = engine(on, { wf: null })
+  await start($, w)
+  expect(await command($, 'guide')).toContain('# The guide')
+  expect(w.state()).toBeUndefined()
+  expect(w.gh).toEqual([])
+})
+
+test('/flow guide names the file and the repair when the guide is missing', async ($, on) => {
+  engine(on, { guide: false })
+  await start($)
+  const out = await command($, 'guide')
+  expect(out).toContain('/kb/workflow.md')
+  expect(out).toContain('claude plugin update')
+})
+
+test('/flow with an unknown word lists the commands', async ($, on) => {
+  engine(on)
+  await start($)
+  expect(await command($, 'bogus')).toContain('/flow skip')
+})
+
+test('/flow skip moves on, tells the agent and records it on the PR', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  const out = await command($, 'skip the review is not needed')
+  expect(out).toContain('from "developing" to "reviewing"')
+  expect(w.state()?.state).toBe('reviewing')
+  expect(w.prompts[0]).toContain('in the state "reviewing"')
+  expect(w.gh.some(c => c.includes('comment 12') && c.includes('the review is not needed'))).toBe(true)
+})
+
+test('/flow skip of ci lets done pass on red checks, for that commit only', async ($, on) => {
+  const w = engine(on, { wf: { state: 'ci' }, checks: CHECKS({ name: 'flaky', conclusion: 'failure' }) })
+  await start($, w)
+  await command($, 'skip flaky suite')
+  expect(w.state()?.state).toBe('finishing')
+  expect((await tool($, 'done', { message: 'finished', remembered: 'none: nothing durable' })).isError).toBe(false)
+})
+
+test('/flow skip of ci gives no pass to a later commit', async ($, on) => {
+  const w = engine(on, { wf: { state: 'ci' }, checks: CHECKS({ name: 'flaky', conclusion: 'failure' }) })
+  await start($, w)
+  await command($, 'skip flaky suite')
+  w.s.sha = 'later'
+  w.s.upstream = 'later'
+  w.s.pr = { ...w.s.pr, head: { sha: 'later', ref: 'issue-7' } }
+  const r = await tool($, 'done', { message: 'finished', remembered: 'none: nothing durable' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('Red checks')
+})
+
+test('/flow skip refuses when blocked and names unblock', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  await tool($, 'blocked', { message: 'help' })
+  expect(await command($, 'skip')).toContain('/flow unblock')
+  expect(w.state()?.state).toBe('blocked')
+})
+
+test('/flow unblock withdraws the alert and restores the state', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  await tool($, 'blocked', { message: 'help' })
+  await command($, 'unblock use Postgres')
+  expect(w.state()?.state).toBe('developing')
+  expect(w.alerts).toEqual(['raise', 'withdraw'])
+  expect(w.prompts[0]).toContain('use Postgres')
+})
+
+test('/unblock gives the answer to the agent, withdraws the alert and restores the state', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  await tool($, 'blocked', { message: 'which database?' })
+  const text = await unblock($, 'use Postgres')
+  expect(text).toContain('back in the state "developing"')
+  expect(w.state()?.state).toBe('developing')
+  expect(w.alerts).toEqual(['raise', 'withdraw'])
+  expect(w.prompts[0]).toContain('use Postgres')
+})
+
+test('/unblock with no message changes nothing and says the message is needed', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  await tool($, 'blocked', { message: 'which database?' })
+  for (const args of ['', '   ']) {
+    const text = await unblock($, args)
+    expect(text).toContain('/unblock <message>')
+    expect(text).toContain('which database?')
+  }
+  expect(w.state()?.state).toBe('blocked')
+  expect(w.alerts).toEqual(['raise'])
+  expect(w.prompts).toEqual([])
+})
+
+test('/unblock when nothing is blocked says so and changes nothing', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  expect(await unblock($, 'use Postgres')).toContain('is not blocked')
+  expect(w.state()?.state).toBe('developing')
+  expect(w.prompts).toEqual([])
+})
+
+// ---- the wait tools ----
+test('a long-period wait reports its limiting deadline or hook budget and restores the workflow', { timeoutMs: 60_000 }, async () => {
+  const { world: w, call } = workflowHost()
+  w.s.sleepAdvances = true
+  let remainingMs = 10_000
+  const pauses: number[] = []
+  w.s.onSleep = seconds => { pauses.push(seconds); remainingMs -= 150 }
+  w.s.probe = () => ({ exitCode: 1 })
+  const budget = { ms: 10_000, get remainingMs() { return remainingMs } }
+  const began = w.s.now
+  const r = await call('waitFor', { issue: 7, shell_command: 'false', period: 300 }, budget)
+  expect(r.text).not.toContain('no tool.call hook')
+  expect(r.isError).toBe(true)
+  if (r.text.includes("the host's time budget for one hook is nearly spent")) {
+    expect(r.text).toMatch(/^waitFor stopped its wait for `false` to exit 0 after \d+ attempts and \d+ s, because the host's time budget for one hook is nearly spent: \d+ ms are left of 10000 ms/)
+    expect(r.text).toContain('Repair: call waitFor again')
+  } else {
+    expect(r.text).toMatch(/^waitFor gave up on `false` to exit 0 within its timeout of 1200 s, after \d+ attempts\. The last check: exit code 1\./)
+    expect(r.text).toContain('Repair: call it again, for at most 1200 s more')
+    expect(w.s.now - began).toBeGreaterThanOrEqual(1_180_000)
+  }
+  expect(pauses.some(seconds => seconds > 2)).toBe(true)
+  expect(w.s.now - began).toBeLessThanOrEqual(1_200_000)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait whose own time runs low during a long pause stops inside the pause, and names the cause and the repair', { timeoutMs: 180_000 }, async () => {
+  const { world: w, call } = workflowHost()
+  w.s.sleepAdvances = true
+  let remainingMs = 10_000
+  const pauses: number[] = []
+  w.s.onSleep = seconds => { pauses.push(seconds); remainingMs = 1999 }
+  w.s.probe = () => ({ exitCode: 1 })
+  const r = await call('waitFor', { issue: 7, shell_command: 'false', period: 1100 }, { ms: 10_000, get remainingMs() { return remainingMs } })
+  expect(r.isError).toBe(true)
+  expect(r.text).toMatch(/waitFor stopped its wait for `false` to exit 0 after \d+ attempts/)
+  expect(r.text).toContain("the host's time budget for one hook is nearly spent")
+  expect(r.text).toContain('1999 ms are left of 10000 ms')
+  expect(r.text).toContain('Repair: call waitFor again')
+  expect(pauses).toEqual([2])
+  expect(w.s.probes).toHaveLength(1)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait at the hook budget threshold can finish normally', async () => {
+  const { world: w, call } = workflowHost()
+  w.s.sleepAdvances = true
+  const exits = [1, 0]
+  w.s.probe = () => ({ exitCode: exits.shift()! })
+  const r = await call('waitFor', { issue: 7, shell_command: 'ready', period: 5 }, { ms: 10_000, remainingMs: 2000 })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('ended after 2 checks')
+  expect(r.text).not.toContain('budget')
+  expect(w.s.now).toBe(5000)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('a wait below the hook budget threshold refuses before its first check', async () => {
+  const { world: w, call } = workflowHost()
+  w.s.sleepAdvances = true
+  w.s.probe = () => ({ exitCode: 0 })
+  const r = await call('waitFor', { issue: 7, shell_command: 'ready' }, { ms: 10_000, remainingMs: 1999 })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('after 0 attempts')
+  expect(r.text).toContain('1999 ms are left of 10000 ms')
+  expect(w.s.probes).toHaveLength(0)
+  expect(w.s.now).toBe(0)
+  expect(w.state()?.state).toBe('developing')
+})
+
+// Without an answer the agent reads only "no tool.call hook answered this call", as it does when a hook runs past its budget.
+test('a workflow tool whose hook the host drops still answers, with the tool, the cause and the repair', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  // The hook reads the clock before its own error handling starts, and again inside it.
+  Object.defineProperty(w.s, 'now', { get: () => { throw new Error('the clock broke') } })
+  const r = await tool($, 'waitFor', { shell_command: 'false' })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('workflow waitFor gave no answer')
+  expect(r.text).toContain('its hook failed outside its own error handling')
+  expect(r.text).toContain('clock.now')
+  expect(r.text).toContain('Repair: call status and read the state, then call waitFor again')
+})

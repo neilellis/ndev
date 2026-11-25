@@ -1,0 +1,17 @@
+import { it, expect } from "vitest";
+import { buildVale, staleValeFiles } from "@/scripts/copy/vale.mjs";
+
+it("publishes Vale rules that match the banned list", () => {
+  // Fix: node scripts/copy/vale.mjs --write
+  expect(staleValeFiles()).toEqual([]);
+});
+
+it("writes Vale rules with no errors and no lookaround patterns", () => {
+  const rules = Object.entries(buildVale()).filter(([name]) => name.endsWith(".yml"));
+  expect(rules.length).toBeGreaterThan(0);
+  for (const [name, body] of rules) {
+    const text = body.toString();
+    expect(text, name).toMatch(/^level: (warning|suggestion)$/m);
+    expect(text, name).not.toMatch(/\(\?[=!<]/);
+  }
+});

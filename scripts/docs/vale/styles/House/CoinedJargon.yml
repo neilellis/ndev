@@ -1,0 +1,18 @@
+extends: existence
+message: "Coined jargon: '%s'. Say the plain thing."
+level: error
+ignorecase: true
+tokens:
+  - de-flakes?
+  - de-flaking
+  - re-green(ed|ing)?
+  - over-assertion
+  - root-caused?
+  - smoke it
+  - the ask\b
+  - (headline|main|core|real|original) ask\b
+  - (two|three|four|both) asks\b
+  - blast[- ]radius
+  - greenfielding
+  - sunsetting
+  - colou?r-blind

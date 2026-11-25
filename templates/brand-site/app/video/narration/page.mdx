@@ -1,0 +1,46 @@
+export const metadata = { title: "Narration" };
+
+# Narration
+
+A deep, calm British voice. It sounds like a trusted adviser, not an advert.
+
+## Voice
+
+| Setting | Value |
+|---|---|
+| Model | OpenAI `gpt-4o-mini-tts` |
+| Voice | `onyx` |
+| Word timings | OpenAI `whisper-1` |
+| Tempo | 1.12× after generation |
+
+Voice instructions, as sent with every line:
+
+```text
+Speak with a natural, educated British accent (southern English, received pronunciation).
+Calm, confident, warm corporate narrator. Measured pace. Say '{{name}}' as '{{nameSpoken}}'.
+```
+
+The credits page says: “Voice — Generated with OpenAI text-to-speech.” Always disclose a generated voice.
+
+## Writing for the ear
+
+- One or two sentences per scene, about 8–30 words.
+- Lead with the point. Put the strongest word at the end of the sentence.
+- Use the colon for a turn: “It’s coordination: who decides, who answers for it, and whether anyone still knows why.”
+- Lists of three, joined with “and”.
+- No acronyms the listener has to decode, except AI.
+
+## Write it the way it is spoken
+
+| Write | Not | Because |
+|---|---|---|
+| seventeen | 17 | Text-to-speech reads figures unreliably |
+| {{domainSpoken}} | {{domain}} | The voice must say “dot” |
+| {{name}} (with the instruction above) | a spelling the voice gets wrong | The instruction fixes the pronunciation |
+
+## Changing a line
+
+1. Edit the line in `scripts/vo.json` and `script.md`.
+2. Regenerate the voice for that scene only, then the timeline.
+3. Check that the word cues still match words the narrator actually says. A missing word fails the render.
+4. Listen to the whole film: tempo, pronunciation of names, and no clipped endings.

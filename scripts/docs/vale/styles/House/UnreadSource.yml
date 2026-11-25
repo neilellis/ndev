@@ -1,0 +1,46 @@
+extends: existence
+message: "The reader has not read it — '%s'. State the fact itself."
+level: error
+ignorecase: true
+# Sourcing a fact to a document the reader has not opened. "The issue says this side matches"
+# is unreadable to anyone who has not just read the issue — which is everyone, including the
+# maintainer skimming a hundred comments. The fix is always the same: drop the attribution and
+# state the fact, or state the fact and then say where it came from.
+# Caught by the cold reader on the #989 plan, three times in one comment, which vale passed clean.
+#
+# 2026-08-03, the #1055 plan: the verb list was too short and the negated form slipped past it
+# entirely. "The issue names a column that is empty", "It proposes matching X" and "The issue does
+# not mention halves" all read as facts the reader cannot check, sourced to a text nobody has
+# opened — and all three passed. Verbs of naming, proposing and asking are added below, and an
+# optional negation ("does not mention", "never says") now sits between the noun and the verb.
+#
+# 2026-08-03, the #1041 plan: a DECISION sourced to an unread text slipped past, twice — "the reply
+# on the issue chose option 1 and asked for the skill section" and "following the reply on the
+# issue". Two holes. The nouns covered documents but not the replies and answers written on them,
+# and the verbs covered saying and asking but not deciding. A decision is the worst one to source
+# this way: the reader is being told an argument is already settled by a text they cannot see.
+# Both are widened below, and the bare attribution form ("following the reply on the issue") is
+# added as its own token, because it carries no verb for the first rule to find.
+#
+# 2026-08-03, the #1089 plan: the same failure aimed at a NOTE another agent left — "The note
+# left for the next agent said: check whether those two steps have gone." The reader has not seen
+# that note. Worse, it was carrying an instruction that turned out to be wrong, so the sentence
+# passed on a bad conclusion under borrowed authority. `note`, `notes`, `state comment` and
+# `handover note` join the noun list. Only the bare form is caught: a modifier sitting between the
+# noun and the verb ("the note LEFT FOR THE NEXT AGENT said") is unbounded text and a regex for it
+# would over-match, so that shape stays a cold-reader question.
+#
+# 2026-08-03, the #1055 plan: the same failure aimed at a CONVENTION rather than a document —
+# "Skipping silently is ruled out by this repository's standing rule that a failure is always
+# logged and never swallowed." A cold reader quoted it as a policy it was expected to already
+# know, and vale passed it clean. Sourcing a fact to the repo's own rulebook is worse than
+# sourcing it to an issue, because there is no number to click: the reader cannot even go and
+# look. The fix is the same as everywhere else in this rule — state the rule itself: "in this
+# codebase a failure is always logged and never swallowed". Last token below.
+tokens:
+  - (the|this) (issue|spec|ticket|plan|report|thread|comment|reply|replies|answer|answers|response|discussion|conversation|wiki page|linked page|design doc|note|notes|state comment|handover|handover note) ((does not|doesn't|did not|didn't|never|also) )?(say|says|said|report|reports|note|notes|state|states|mention|mentions|describe|describes|claim|claims|explain|explains|name|names|named|propose|proposes|proposed|suggest|suggests|suggested|ask|asks|asked|want|wants|wanted|call|calls|called|choose|chooses|chose|pick|picks|picked|decide|decides|decided|confirm|confirms|confirmed|rules? out|ruled out|approve|approves|approved|reject|rejects|rejected)
+  - (the|this) (reply|replies|answer|answers|response|comment|discussion|thread) (on|to|in) (the )?(issue|spec|ticket|plan|report|thread|pull request|pr)
+  - as (the|per the) (issue|spec|ticket|plan|report|thread|comment)
+  - per the (issue|spec|ticket|plan|report|thread|comment)
+  - according to (the|that) (issue|spec|ticket|plan|report|thread|comment)
+  - (this|the) (repository|repo|project|codebase)('s)? (own )?(standing |house )?(rule|rules|convention|conventions|policy|policies|guideline|guidelines)

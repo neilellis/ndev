@@ -1,0 +1,22 @@
+/* {{name}} layout and spacing tokens. The website uses generous, editorial
+   spacing; these name the values it repeats. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 35px;  /* column gutter between ruled columns */
+  --space-7: 45px;
+  --space-8: 58px;  /* section padding on phones */
+  --space-9: 90px;  /* section padding on desktop */
+
+  --wrap-max:    1320px;
+  --wrap-gutter: 56px;  /* per side on desktop; 35px tablet, 21px phone */
+  --header-h:    110px;
+
+  --radius-xs:   2px;   /* buttons, chips, motion toggle — near-square */
+  --radius-sm:   3px;   /* screenshots */
+  --radius-md:   5px;   /* floating panes */
+  --radius-round: 50%;  /* avatars, family dots */
+}

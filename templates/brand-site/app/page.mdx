@@ -1,0 +1,44 @@
+export const metadata = { title: "Overview" };
+
+# {{name}} brand guide
+
+How {{name}} looks, sounds and moves: on the website, in documents and in film. Every value here comes from the live website at [{{domain}}](https://{{domain}}) or from the {{name}} film, so people and AI tools can produce work that sits beside them without a seam.
+
+<Demo surface="white" label="The brand in one line">
+  <div className="section-heading">
+    <h2>Strategic insight. <em>Lasting impact.</em></h2>
+    <p>AI, data and organisational transformation. Calm, evidence-led and specific. One blue accent on navy and paper, set in Source Sans with Source Serif italics for emphasis.</p>
+  </div>
+</Demo>
+
+## Start here
+
+- **Building with an AI tool?** Read [Core principles](/core-principles) first. It is the short version of everything else.
+- **Making a web page or document?** Use [Tokens](/tokens), then [Components](/components) and [Page sections](/sections).
+- **Making a film or generating video?** Start with the [Film overview](/video), then [Generation prompts](/video/prompts).
+- **Writing anything?** Read the [writing rules](/copy) and check the [banned words](/copy/banned).
+
+## Use the stylesheet
+
+The whole system is one stylesheet. Link it, wrap your content in `.nv`, and use the class names shown on these pages.
+
+```html
+<link rel="stylesheet" href="/ds/styles.css">
+<div class="nv">
+  <p class="eyebrow"><span>01 /</span>Our services</p>
+  <h2>People, technology and <em>the work between them.</em></h2>
+</div>
+```
+
+The tokens live in `/ds/tokens/` as plain CSS custom properties. Fonts and logo files are in `/ds/assets/`.
+
+## Where this comes from
+
+<Rule>
+The website's stylesheet uses raw values rather than named tokens. This guide names them. If the website and this guide disagree, the live website wins for web work and the film wins for video. Report the difference so this guide can be corrected.
+</Rule>
+
+| Source | What it gives |
+|---|---|
+| `{{sourceRepo}}` | Colours, type, layout, components, voice and the wordmark |
+| `{{filmSource}}` | Film format, scene looks, gradients, captions, narration, motion and photography sourcing |

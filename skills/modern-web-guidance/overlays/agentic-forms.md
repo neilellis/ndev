@@ -1,0 +1,1 @@
+Keep the attribute rules and the `toolautosubmit` rule. Replace the sample CSS colours with tokens: the agent-active outline uses the accent token and the wait state uses the ring token. Do not use the infinite pulse. Use a one-time entrance (opacity and a 4 px rise) with a still state under reduced motion, and stop all motion when the page no longer waits for the user.

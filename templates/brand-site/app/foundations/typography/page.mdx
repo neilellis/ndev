@@ -1,0 +1,57 @@
+export const metadata = { title: "Typography" };
+
+# Typography
+
+Two Adobe open-source families, self-hosted: **Source Sans 3** for everything and **Source Serif 4** for emphasis. Both are in `/ds/assets/fonts/` with their licences.
+
+## The signature
+
+Headings are set in Source Sans at regular weight with tight negative tracking. The emphasised phrase switches to Source Serif italic in blue. That contrast is the brand's most recognisable typographic move.
+
+<Demo surface="paper">
+  <h2 style={{ fontSize: "var(--fs-section)", letterSpacing: "var(--tracking-section)", maxWidth: "14ch" }}>Complex challenges need a <em style={{ color: "var(--text-accent)" }}>clear perspective.</em></h2>
+</Demo>
+
+## Scale
+
+<TypeScale />
+
+| Role | Desktop | Tablet (≤1100px) | Phone (≤800px) |
+|---|---|---|---|
+| Home hero | 70–105px, −0.057em | 72px | 50px (44px at ≤390px) |
+| Page title | 44–76px, −0.045em | — | 46px |
+| Section heading | 40–65px, −0.045em | — | 39–43px |
+| Card title | 27–30px, −0.025em | — | 23–25px |
+| Body | 18px / 1.6 | 18px | 17px |
+| Eyebrow | 13px, 600, +0.11em, capitals | — | 12px |
+
+## Rules
+
+- Headings are weight 400. Use 600 only for buttons, links, eyebrows, labels and the nav.
+- Line height is 1.12 for headings and 1.6 for body.
+- Keep body lines to about 70 characters.
+- Use the serif for italic emphasis, numbers in ruled lists (`01`, `02`), article titles and quotes.
+- Never use the serif in buttons, labels or captions.
+- Sentence case everywhere. Capitals only for eyebrows and small labels, through CSS.
+
+## Eyebrows
+
+Numbered eyebrows open each home-page section. The number is blue and set apart by a slash.
+
+<Demo surface="paper">
+  <div className="section-top">
+    <p className="eyebrow"><span>01 /</span>Our services</p>
+    <p className="section-note">People, technology and the work between them.</p>
+  </div>
+</Demo>
+
+## In film
+
+Film type is larger for a 1920×1080 frame watched at a distance:
+
+| Role | Size |
+|---|---|
+| Headline | 68–132px (hook 132px, most scenes 70–104px), weight 400, −0.045em, line height 1.02 |
+| Eyebrow | 22px, 600, +0.14em, capitals |
+| Body text | 26px minimum |
+| Caption | 42px semibold, see [captions](/video/captions) |

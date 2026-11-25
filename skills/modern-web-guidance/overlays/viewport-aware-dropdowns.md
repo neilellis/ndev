@@ -1,0 +1,1 @@
+In a React app, do not hand-write this control. Use the shadcn `dropdown-menu` and `popover` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`. Use Radix collision options to flip at the edge, and `data-side` with `--radix-popper-transform-origin` for the open animation. Use `position-try` only on a page with no React, with the guide's polyfill.

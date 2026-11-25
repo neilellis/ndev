@@ -1,0 +1,1 @@
+Do not build a scroller in place of the shadcn `carousel` from the component map in `${CLAUDE_PLUGIN_ROOT}/kb/ui-components.md`. Use the effect only on a native scroll-snap row that is not a carousel (for example, a chip row). Keep the reduced-motion and `@supports` guards.

@@ -1,0 +1,42 @@
+import { it, expect } from "vitest";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { NAV } from "@/lib/nav";
+import { tokenNames } from "@/lib/tokens";
+import { TOKENS_DIR, DS_DIR } from "@/lib/ds";
+
+const root = process.cwd();
+
+it("has a page for every sidebar link", () => {
+  for (const item of NAV.flatMap((s) => s.items)) {
+    const dir = path.join(root, "app", item.href);
+    const found = ["page.mdx", "page.tsx"].some((f) => existsSync(path.join(dir, f)));
+    expect(found, `${item.href} has no page`).toBe(true);
+  }
+});
+
+it("defines every token the stylesheets use", async () => {
+  const defined = await tokenNames(TOKENS_DIR);
+  for (const file of [path.join(DS_DIR, "components.css"), path.join(root, "app", "globals.css")]) {
+    const used = [...readFileSync(file, "utf8").matchAll(/var\((--[A-Za-z0-9-]+)/g)].map((m) => m[1]);
+    const missing = [...new Set(used)].filter((n) => !defined.has(n));
+    expect(missing, `${path.basename(file)} uses undefined tokens`).toEqual([]);
+  }
+});
+
+it("only references design-system assets that exist", () => {
+  const pages: string[] = [];
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(mdx|tsx)$/.test(e.name)) pages.push(p);
+    }
+  };
+  walk(path.join(root, "app"));
+  for (const page of pages) {
+    for (const m of readFileSync(page, "utf8").matchAll(/"(\/ds\/[^"]+)"/g)) {
+      expect(existsSync(path.join(root, "public", m[1])), `${m[1]} in ${path.relative(root, page)}`).toBe(true);
+    }
+  }
+});

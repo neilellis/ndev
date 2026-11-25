@@ -1,0 +1,45 @@
+extends: existence
+message: "Overclaim marker — '%s'. Say what you measured and what it does not show."
+level: error
+ignorecase: true
+# Overclaiming is the most serious class of prose error: a claim that reaches a reader and is
+# later found wrong costs more than any missing claim.
+#
+# These words are the tell. Each of them asserts certainty *instead of* supplying evidence, and
+# every one is deletable: a sentence that earns its conclusion does not need "clearly", and a
+# sentence that does not earn it is not rescued by it. "The opposite is true" is the worst of the
+# set, because it inverts a reader's prior with no measurement attached at all.
+#
+# 2026-08-05, the #1025 plan. A cold reader caught this sentence, which vale passed clean:
+#
+#     "The issue read that as the matcher losing us credit. The opposite is true. It was refusing
+#      entries that were wrong, and a re-read of the key removed them."
+#
+# Every clause after the marker was defensible. The marker was not. What had actually been measured
+# was that the answer key's entries were withdrawn — nothing had been established about the
+# matcher's own reasoning, which was never inspected. The rewrite kept the finding and dropped the
+# certainty: "The evidence points the other way. […] Note what that does and does not show."
+#
+# NOT included, deliberately: bare "proves" and "proved". This repo mutation-*proves* guards in
+# both directions and says so constantly, and that is a claim about a procedure actually carried
+# out, not a rhetorical intensifier. Flagging it would train agents to ignore the linter.
+#
+# NARROWED the same day, before shipping. The first draft matched "(beyond|without) (doubt|
+# question|dispute)" bare, and fired four times on the very plan that motivated it — every one on
+# "put forward as beyond dispute", which REPORTS somebody else's certainty rather than asserting the
+# author's. That is the failure mode this harness exists to stop: a rule that fires on careful prose
+# teaches agents to ignore the linter, which is worse than no linter. The assertive form needs a
+# copula ("this is beyond dispute"); the reported form does not have one. Same reasoning narrowed
+# the bare "the opposite" token, which would have fired on the ordinary phrase "the opposite of".
+tokens:
+  - the (opposite|reverse|converse) is (true|the case)
+  - (in fact,? )?quite the (opposite|reverse)
+  - obviously
+  - clearly (shows|demonstrates|proves|means|indicates)
+  - it is clear that
+  - conclusively
+  - definitively (shows|proves|settles|answers)
+  - (is|are|was|were|remains|remain) (beyond|without) (doubt|question|dispute)
+  - leaves no doubt
+  - needless to say
+  - (it )?goes without saying

@@ -1,0 +1,31 @@
+extends: existence
+message: "Code doesn't do this — '%s'. Say who changed it and what changed."
+level: error
+ignorecase: true
+# Code described as an agent with intentions or a life of its own. The reader has to
+# translate the metaphor back into the fact before they can check it — and the fact is
+# usually shorter. "the function grew a parameter" -> "#834 added a parameter".
+# Caught by the cold reader on the #834 wiki page, which vale had passed clean.
+tokens:
+  - grew (a|an|one|two|three|another|its own) [a-z-]*\s?(parameter|argument|flag|option|field|column|method|branch|case)
+  - (learn|learn(s|ed)|teach(es)?) (it|itself|the (code|function|module|command|test)) to
+  - (the|this) (code|function|module|command|script|test|guard|query) (wants|knows|thinks|believes|decides|prefers|remembers|forgets|likes|is happy)
+  - (wants|knows|thinks|decides) to (be|do|see|have) (called|run|passed|given)
+  - code (that )?(cares|worries|panics) about
+  # Same class, named-library subject: a library described as perceiving or permitting.
+  # "Motion never noticed the panel was leaving, so it allowed the deletion" -> say what
+  # ran and what it did. (Cold reader, #1000 plan, 2026-08-02 — the generic-noun tokens
+  # above all require "the code|function|module|…", so a proper noun slipped straight past.)
+  - (motion|base ui|react|next\.js|playwright|vitest|webpack|turbopack|tailwind|vercel|supabase|alembic) ((never|not|also|then|simply|just|already) )*(notices|noticed|notice|realises|realised|realizes|realized|allows|allowed|refuses|refused|agrees|agreed|wants|knows|thinks|remembers|forgets|cares)
+  # Same class again, tooling and test doubles as the subject, with verbs of PERCEPTION.
+  # From #1363, 2026-08-12: "the checker sees what it reads" and "a stand-in cannot notice
+  # when the real type moves". Neither noun was in the generic list above, and none of
+  # see/notice was in the verb list, so both went straight past.
+  #
+  # 'reads' is deliberately absent from the verbs. A program really does read a file, and
+  # "gates.sh reads the body" is the plain fact. It is SEEING and NOTICING that are the
+  # metaphor — say what the tool reports, or what it fails to catch.
+  - (the|this|a|an|its)\s+((real|type)\s+)?(checker|linter|matcher|scorer|extractor|parser|scanner|loader|gate|stand-in|double|fixture|mock)\s+((never|not|also|then|simply|just|already|cannot|can't|could not|couldn't)\s+)*(sees|saw|see|notices|noticed|notice|realises|realised|realizes|realized|understands|understood|knows|thinks|believes|cares|wants|decides|remembers|forgets)
+  # A type or field described as moving of its own accord, where the fact is that somebody
+  # renamed it. "when the real type moves" -> "when someone renames the field".
+  - (the|this|a|an|its)\s+((real|underlying|production)\s+)?(type|field|attribute|column|parameter|method|class|signature)\s+((then|later|simply|just)\s+)*(moves|moved|shifts|shifted|drifts|drifted|walks|wanders)

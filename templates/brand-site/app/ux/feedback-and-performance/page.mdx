@@ -1,0 +1,43 @@
+export const metadata = { title: "Feedback & performance" };
+
+# Feedback and performance
+
+The reader must always know that the site heard them and is doing something. This is Nielsen's first heuristic and the Doherty threshold. See [Heuristics and laws](/ux/heuristics).
+
+<Rule>
+The messages come from the website's feedback form, `{{source}}/components/feedback/FeedbackButton.tsx`. The timings and techniques are a recommendation.
+</Rule>
+
+## The 400ms line
+
+Give feedback within 400ms of an action. If the result takes longer, show a pressed state, a status message or a placeholder first. Silence after 400ms makes people ask “Did that work?”
+
+The website is a static export, so most pages load at once. Feedback matters most for forms and for anything that waits on a network call.
+
+## Show progress
+
+- **Status messages.** Long tasks get a polite live message. The feedback form says “Capturing page… This can take a moment.” with `role="status"` and `aria-live="polite"`.
+- **Disable while busy.** The feedback form disables its fields while it sends, so the reader cannot send twice.
+- **Show the shell first.** Render the page layout before slow content arrives. Do not block the whole page on one slow part.
+- **Reserve space.** Give images a width and height, so the layout does not jump when they load. The {{product}} screenshots do this.
+- **Lazy-load images below the fold** with `loading="lazy"`.
+- **Optimistic updates** only when the action almost never fails. Do not use them for a message or a booking, where the reader needs to know it really worked.
+
+## Error messages
+
+An error message has three parts. All three are required.
+
+1. **Say that it failed**, in plain words. Do not show a code as the main message.
+2. **Say what went wrong.** “Enter a message before you send it.” is better than “An error occurred.”
+3. **Say what to do next.** “Enter a valid email address, or clear the Email field.”
+
+<DoDont
+  good={<ul><li>“Screen sharing was cancelled. Choose an option and try again.”</li><li>“This report is too large. Remove an attachment and try again.”</li></ul>}
+  bad={<ul><li>“Error 413.”</li><li>“Something went wrong.”</li></ul>}
+/>
+
+Put the message next to the field it is about, with `role="alert"`. People remember a bad error more than a good page, so take care with every one.
+
+## Confirmations
+
+Confirm success in words: “Your message was sent. Thank you.” The last thing a reader sees stays with them.

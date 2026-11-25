@@ -1,0 +1,72 @@
+export const metadata = { title: "UI kit" };
+
+# UI kit
+
+A home page built only from the design system. Use it to see how the [components](/components) and [page sections](/sections) fit together, and as a starting point for a new {{name}} page.
+
+<Rule>
+The copy comes from `{{source}}/components/home/Hero.tsx`, `ServicesSection.tsx`, `content/home/services.ts` and `components/site/ContactSection.tsx`. The live website is the reference. If this page and the website disagree, the website wins.
+</Rule>
+
+## The page
+
+<Demo surface="paper" label="Hero">
+  <p className="eyebrow" style={{ marginBottom: 26 }}>AI · Data · Organisational transformation</p>
+  <h1 style={{ fontSize: "clamp(44px, 5.4vw, 84px)", letterSpacing: "var(--tracking-display)", lineHeight: "var(--lh-display)" }}>Strategic insight. <em style={{ color: "var(--text-accent)" }}>Lasting impact.</em></h1>
+  <p style={{ fontSize: "var(--fs-body-lg)", color: "var(--text-body)", maxWidth: 520, margin: "28px 0 32px" }}>Complex challenges need a clear perspective. We bring the expertise, evidence and practical experience to move your business forward.</p>
+  <div className="demo-row"><a className="button button-dark" href="#the-page">Discover {{product}}</a><a className="text-link" href="#the-page">How we can help</a></div>
+</Demo>
+
+<Demo surface="navy" label="{{product}} band">
+  <div className="section-top"><p className="eyebrow"><span>01 /</span>Introducing {{product}}</p></div>
+  <div className="section-heading">
+    <h2>See the organisation. <em>Understand the work.</em></h2>
+    <p>A digital twin of your organisation, grounded in evidence. {{product}} maps your teams, systems, suppliers and AI agents together. See how work connects, what each can do, what it may do, and who answers for it.</p>
+  </div>
+</Demo>
+
+<Demo surface="paper" label="Services">
+  <div className="section-top"><p className="eyebrow"><span>02 /</span>Our services</p></div>
+  <div className="section-heading">
+    <h2>Strategy with <em>the means to deliver.</em></h2>
+    <p>We work alongside your people to understand the challenge, find the right approach and make change happen. Technology earns its place by solving a real business problem.</p>
+  </div>
+  <div className="service-columns">
+    <article><span className="service-number">01</span><h3>Data infrastructure & management</h3><p>Build the foundations for reliable decisions and useful AI. Bring order, quality and ownership to the data your organisation depends on.</p><ul><li>Modern data platforms</li><li>Data governance and quality</li></ul></article>
+    <article><span className="service-number">02</span><h3>AI transformation</h3><p>Turn the possibilities of AI into a practical strategy. Identify valuable uses, test them in context and put appropriate governance around them.</p><ul><li>Executive AI strategy and assessment</li><li>MVPs and practical experimentation</li></ul></article>
+    <article><span className="service-number">03</span><h3>Business transformation strategy</h3><p>Connect ambition to delivery. Align teams, suppliers and decision makers around a shared understanding of the work and the outcomes that matter.</p><ul><li>Requirements and business analysis</li><li>Multi-vendor management</li></ul></article>
+  </div>
+</Demo>
+
+<Demo surface="paper" label="Contact">
+  <p className="eyebrow" style={{ marginBottom: 26 }}><span>05 /</span>Let’s talk</p>
+  <div className="section-heading">
+    <h2>What needs to <em>change?</em></h2>
+    <div>
+      <p>Whether you are shaping an AI strategy, addressing a data challenge or exploring {{product}}, we would welcome a conversation.</p>
+      <div className="demo-row" style={{ marginTop: 24 }}><a className="button button-dark" href="#the-page">Book a conversation</a></div>
+    </div>
+  </div>
+</Demo>
+
+## How it is put together
+
+| Band | Surface | Parts |
+|---|---|---|
+| Hero | Paper | Eyebrow, display heading with the signature move, intro, one dark button, one text link |
+| {{product}} | Navy | Section top, section heading |
+| Services | Paper | Section top, section heading, service columns |
+| Contact | Paper | Eyebrow, heading, one dark button |
+
+The website puts Experience, Ideas & insights and About us between Services and Contact. See [Page sections](/sections). Each service column above shows two of its four items. The full lists are on the website.
+
+## Start a new page
+
+Link the design system stylesheet and wrap the page in `.nv`:
+
+```html
+<link rel="stylesheet" href="{{siteUrl}}/ds/styles.css">
+<body class="nv">
+  <!-- Copy the bands above. Keep one dark button per view. -->
+</body>
+```

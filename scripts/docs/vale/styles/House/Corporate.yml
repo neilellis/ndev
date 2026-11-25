@@ -1,0 +1,30 @@
+extends: substitution
+message: "Corporate-speak — say '%s' instead of '%s'."
+level: error
+ignorecase: true
+swap:
+  leverage: use
+  utilise: use
+  utilize: use
+  stakeholders?: the people involved
+  synergy: (delete)
+  circle back: come back to it
+  touch base: talk
+  key learnings: what we learned
+  going forward: from now on
+  granular: detailed
+  at scale: across the whole system
+  best-in-class: (delete)
+  move the needle: make a difference
+  low-hanging fruit: the easy wins
+  deep dive: look closely at
+  holistic: whole
+  paradigm: approach
+  actionable: something you can act on
+  empowers?: lets
+  seamless: (delete)
+  robust: reliable
+  mission-critical: essential
+  unpack: explain
+  ideate: come up with ideas
+  operationalise: put into practice

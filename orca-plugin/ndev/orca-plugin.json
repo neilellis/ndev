@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "id": "ndev",
+  "publisher": "neilellis",
+  "name": "ndev",
+  "version": "2.0.0",
+  "execution": "trusted-worker",
+  "description": "View ndev files, resources, interviews, workflows, and responsive evidence for the active worktree.",
+  "license": "MIT",
+  "repository": "https://github.com/neilellis/ndev",
+  "engines": { "orca": ">=1.4.245" },
+  "pluginApi": 1,
+  "main": "worker/main.mjs",
+  "contributes": {
+    "panels": [
+      { "id": "files", "title": "ndev Files", "icon": "file-text", "entry": "panel/index.html" },
+      { "id": "view", "title": "Worktree view", "icon": "activity", "entry": "panel/view.html" },
+      { "id": "interview", "title": "Interview", "icon": "bot", "entry": "panel/interview.html" },
+      { "id": "walk-doc", "title": "Walk-doc", "icon": "book", "entry": "panel/walk-doc.html" },
+      { "id": "triage", "title": "Triage", "icon": "flag", "entry": "panel/triage.html" },
+      { "id": "fix-all-prs", "title": "Fix all PRs", "icon": "code", "entry": "panel/fix-all-prs.html" },
+      { "id": "responsive-matrix", "title": "Responsive matrix", "icon": "bar-chart-3", "entry": "panel/responsive-matrix.html" }
+    ]
+  },
+  "capabilities": [{ "kind": "workspace:read" }]
+}
