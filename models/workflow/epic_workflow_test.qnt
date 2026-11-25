@@ -73,6 +73,9 @@ module chain_test {
       .expect(prs.get(1).ridesOn == 0 and not(prs.get(1).landed) and issues.get(1) == "open")
       .then(humanMergesPr(0))
       .expect(prs.get(1).landed and wRiding)
+      .then(toReviewing(1))
+      .then(recordMerged(1))
+      .expect(merged(1) and safety)
 
   run earlyMergeOwesDebtTest =
     firstInReview
@@ -90,23 +93,30 @@ module chain_test {
 
   run coordinatingWaitsForAllMergedTest = firstMerged.then(finishPhase.fail())
 
-  run humanMergeIntoStackDoesNotLandTest =
+  action ridingOnOpenBase =
     secondStacked
       .then(humanMergesPr(1))
       .then(toReviewing(1))
-      .then(recordMerged(1))
-      .then(brief(2))
-      .then(start(2))
-      .expect(subs.get(2).startBase == MAIN and not(prs.get(1).landed) and not(mainStartsOnLandedBlockers))
+      .expect(not(prs.get(1).landed) and not(lostNow(1)))
 
-  run humanMergeAfterBaseMergedIsLostTest =
+  run humanMergeIntoStackDoesNotLandTest = ridingOnOpenBase.then(recordMerged(1).fail())
+
+  run ridingOnOpenBaseIsNotLostTest = ridingOnOpenBase.then(recordLost(1).fail())
+
+  action mergedAfterBase =
     secondStacked
       .then(humanMergesPr(0))
       .then(recordMerged(0))
       .then(humanMergesPr(1))
       .then(toReviewing(1))
-      .then(recordMerged(1))
-      .expect(prs.get(1).lost and not(mergedWorkIsNotLost) and safety)
+      .expect(prs.get(1).lost)
+
+  run humanMergeAfterBaseMergedIsNotRecordedTest = mergedAfterBase.then(recordMerged(1).fail())
+
+  run humanMergeAfterBaseMergedBlocksTest =
+    mergedAfterBase
+      .then(recordLost(1))
+      .expect(subs.get(1).state == "blocked" and subs.get(1).previous == "reviewing" and safety)
 }
 
 module wide_test {

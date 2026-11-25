@@ -23,6 +23,7 @@ export type SubIssue = {
   mergeSha?: string
   // True when a human merged the PR before "verified", so the verify checks did not run.
   mergedUnverified?: boolean
+  lost?: boolean
   verification?: { sha: string; at?: number }
   // The state that a block interrupted, and the only state the issue goes back to.
   previous?: IssueState

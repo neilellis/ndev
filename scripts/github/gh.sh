@@ -278,12 +278,12 @@ rest_first() {
   [ -z "$out" ] || printf '%s\n' "$out"
 }
 
-PR_FIELDS="number,state,isDraft,mergeable,mergeStateStatus,body,createdAt,headRefOid,headRefName,baseRefName,title,url,author,mergeCommit,isCrossRepository"
+PR_FIELDS="number,state,isDraft,mergeable,mergeStateStatus,body,createdAt,mergedAt,headRefOid,headRefName,baseRefName,title,url,author,mergeCommit,isCrossRepository"
 PR_FROM_GH='{number, title, state: (if .state == "MERGED" then "closed" else (.state | ascii_downcase) end), merged: (.state == "MERGED"), draft: .isDraft,
   mergeable: (if .mergeable == "MERGEABLE" then true elif .mergeable == "CONFLICTING" then false else null end),
-  mergeable_state: (.mergeStateStatus | ascii_downcase), body, created_at: .createdAt, head: {sha: .headRefOid, ref: .headRefName, crossRepository: .isCrossRepository},
+  mergeable_state: (.mergeStateStatus | ascii_downcase), body, created_at: .createdAt, merged_at: .mergedAt, head: {sha: .headRefOid, ref: .headRefName, crossRepository: .isCrossRepository},
   base: {ref: .baseRefName}, url, user: {login: .author.login}, merge_commit_sha: .mergeCommit.oid}'
-PR_FROM_REST='{number, title, state, merged: (.merged // false), draft, mergeable, mergeable_state, body, created_at, head: {sha: .head.sha, ref: .head.ref, crossRepository: (if .head.repo and .base.repo then .head.repo.id != .base.repo.id else null end)},
+PR_FROM_REST='{number, title, state, merged: (.merged // false), draft, mergeable, mergeable_state, body, created_at, merged_at, head: {sha: .head.sha, ref: .head.ref, crossRepository: (if .head.repo and .base.repo then .head.repo.id != .base.repo.id else null end)},
   base: {ref: .base.ref}, url: .html_url, user: {login: .user.login}, merge_commit_sha}'
 LISTED_OBJ_GH='{number, title, state: (if .state == "MERGED" then "closed" else (.state | ascii_downcase) end), merged: (.state == "MERGED"), draft: .isDraft,
   created_at: .createdAt, head: {sha: .headRefOid, ref: .headRefName}, url, user: {login: .author.login}}'

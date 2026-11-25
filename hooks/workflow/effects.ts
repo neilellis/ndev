@@ -207,7 +207,7 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
 }
 
 // ---- GitHub reads ----
-export type Pr = { number: number; state: string; merged?: boolean; draft: boolean; mergeable: boolean | null; mergeable_state?: string; body: string | null; created_at: string; head: { sha: string; ref: string }; merge_commit_sha?: string | null; base?: { ref: string } }
+export type Pr = { number: number; state: string; merged?: boolean; draft: boolean; mergeable: boolean | null; mergeable_state?: string; body: string | null; created_at: string; merged_at?: string | null; head: { sha: string; ref: string }; merge_commit_sha?: string | null; base?: { ref: string } }
 export function readPr($: EngineInterface, root: string, repo: string, n: number) {
   return ghOne<Pr>($, root, repo, ['pr-read', String(n)])
 }

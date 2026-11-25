@@ -218,11 +218,26 @@ module epic_workflow {
       phase == "coordinating",
       s.state != "merged",
       prs.get(i).life == "merged",
+      prs.get(i).landed,
       debts.open + owed <= MAX_DEBT,
       subs' = subs.set(i, { ...s, state: "merged" }),
       debts' = debtUp(debts, owed, override),
       prs' = prs, issues' = issues, phase' = phase, sliced' = sliced,
       last' = "merged", closedBy' = closedBy,
+    }
+
+  def lostNow(i: int): bool =
+    val p = prs.get(i)
+    p.life == "merged" and not(p.landed) and (p.lost or prs.get(p.ridesOn).life == "closed")
+
+  action recordLost(i: int): bool =
+    val s = subs.get(i)
+    all {
+      phase == "coordinating",
+      s.state != "merged",
+      s.state != "blocked",
+      lostNow(i),
+      setSub(i, { ...s, state: "blocked", previous: s.state }, "lost"),
     }
 
   action block(i: int): bool =
@@ -326,7 +341,7 @@ module epic_workflow {
     ruleDebt,
     recordDebt,
     nondet i = SUBS.oneOf()
-    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), recordMerged(i), block(i), unblock(i) },
+    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), recordMerged(i), recordLost(i), block(i), unblock(i) },
   }
 
   action workerStep = nondet i = SUBS.oneOf()
@@ -364,6 +379,8 @@ module epic_workflow {
     startedRespectsBlockers,
     stackedOnPushedBlocker,
     parallelRespected,
+    mainStartsOnLandedBlockers,
+    mergedWorkIsNotLost,
   }
 
   val parallelRespected = inFlight.size() <= PARALLEL
@@ -374,8 +391,6 @@ module epic_workflow {
   val reslicingKeepsOpenPrs = SUBS.forall(i => not(subs.get(i).state == "waiting" and prs.get(i).life == "open"))
 
   val findings = and {
-    mainStartsOnLandedBlockers,
-    mergedWorkIsNotLost,
     reslicingKeepsOpenPrs,
   }
 

@@ -596,11 +596,13 @@ function move(workspace, e, before, sub, to, v) {
   if (to === 'blocked' && !['blocked','merged'].includes(from)) {
     if (!v.note?.trim()) bad(`Blocking #${sub.issue} requires --note.`)
     sub.previous = from
+    delete sub.lost
   // Model: models/workflow/epic_workflow.qnt#unblock
   } else if (from === 'blocked' && sub.previous === to) {
     const inFlight = Object.values(e.issues).filter(i => IN_FLIGHT.includes(i.state))
     if (IN_FLIGHT.includes(to) && inFlight.length >= e.parallel) refuse(`Issue #${sub.issue} goes back to ${to}, and all ${e.parallel} parallel places are taken by ${inFlight.map(i => `#${i.issue}`).join(', ')}.`, `Wait for one to merge, or raise parallel with ndev epic start ${e.epic} --parallel <n>.`)
     delete sub.previous
+    delete sub.lost
   }
   else if (from === to && v.workspace && from !== 'blocked') sub.workspace = v.workspace
   // Model: models/workflow/epic_workflow.qnt#start
@@ -636,12 +638,15 @@ function move(workspace, e, before, sub, to, v) {
     const reviewed = Boolean(sub.reviewer && sub.verdict)
     const reachedReview = Boolean(sub.reviewer) || ['reviewing','fixing','verified'].includes(from)
     if (!reachedReview && !v.override?.trim()) refuse(`Sub-issue #${sub.issue} never reached reviewing.`, 'Repeat the merged move with --pr and --override <reason> to record review debt.')
-    if (v.pr && sub.pr && number(v.pr, 'PR') !== sub.pr) refuse(`Review of PR #${sub.pr} cannot transfer to PR #${v.pr}.`, 'Keep the recorded PR, or reconcile the sub-issue before merging.')
+    if (v.pr && sub.pr && number(v.pr, 'PR') !== sub.pr && !(from === 'blocked' && sub.lost && v.override?.trim())) refuse(`Review of PR #${sub.pr} cannot transfer to PR #${v.pr}.`, 'Keep the recorded PR, or reconcile the sub-issue before merging.')
     if (v.pr) sub.pr = number(v.pr, 'PR')
     if (!sub.pr) bad('Merged requires the PR number.')
     const pr = github(e.root, e.repo, `/pulls/${sub.pr}`)
     // Model: models/workflow/epic_workflow.qnt#humanMergesPr
     if (pr.merged !== true) refuse(`GitHub has not merged PR #${sub.pr}.`)
+    const main = branchFor(e)
+    if (pr.base?.ref !== main) landedThroughBlocker(workspace, e, before, sub, pr, main, from)
+    delete sub.lost
     if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
     const verified = from === 'verified' && sub.verification?.sha === pr.head?.sha
     if (!verified) sub.mergedUnverified = true
@@ -654,6 +659,34 @@ function move(workspace, e, before, sub, to, v) {
   sub.state = to
   const result = save(workspace, e, before, `epicIssue #${sub.issue}`, from, to)
   return to === 'merged' ? handoffs(workspace, e, sub) : result
+}
+
+// Model: models/workflow/epic_workflow.qnt#recordMerged
+function landedThroughBlocker(workspace, e, before, sub, pr, main, from) {
+  const into = pr.base?.ref ?? '(no base)'
+  const again = `ndev epic issue ${e.epic} ${sub.issue} merged --pr <the new PR> --override <reason>`
+  const reopen = `Run gh pr create --repo ${e.repo} --base ${main} --head ${pr.head?.ref}, merge that PR, then run ${again}.`
+  const on = sub.stackedOn === undefined ? undefined : e.issues[String(sub.stackedOn)]
+  const under = on?.pr ? github(e.root, e.repo, `/pulls/${on.pr}`) : undefined
+  if (!on || !under || under.head?.ref !== into) refuse(`GitHub says PR #${sub.pr} of #${sub.issue} merged into "${into}", which is not the default branch "${main}"${on?.pr ? ` and not the branch of PR #${on.pr} of #${on.issue}` : ''}, so ${main} does not have it.`, reopen)
+  const closed = under.merged !== true && under.state === 'closed'
+  if (under.merged !== true && !closed) refuse(`PR #${sub.pr} of #${sub.issue} merged into ${into}, the branch of PR #${on.pr} of #${on.issue}, which is not merged, so ${main} does not have it yet.`, `Merge PR #${on.pr}, run ndev epic issue ${e.epic} ${on.issue} merged, then record #${sub.issue} again.`)
+  if (!closed) {
+    const landed = Date.parse(under.merged_at ?? '')
+    const rode = Date.parse(pr.merged_at ?? '')
+    if (Number.isNaN(landed) || Number.isNaN(rode)) refuse(`GitHub gave no merge time for PR #${Number.isNaN(rode) ? sub.pr : on.pr}, so it is not known whether PR #${sub.pr} merged into ${into} before PR #${on.pr} took that branch to ${main}.`, `Read both with gh pr view <n> --repo ${e.repo} --json mergedAt, then record #${sub.issue} again.`)
+    if (landed > rode) return
+  }
+  const why = closed ? `PR #${on.pr} of #${on.issue} closed without merging` : `PR #${on.pr} of #${on.issue} had merged into ${main}`
+  const lostText = `PR #${sub.pr} merged into ${into} after ${why}, so its change is not on ${main}.`
+  if (from === 'blocked') refuse(lostText, reopen)
+  // Model: models/workflow/epic_workflow.qnt#recordLost
+  sub.note = `${lostText} ${reopen}`
+  sub.previous = from
+  sub.state = 'blocked'
+  sub.lost = true
+  save(workspace, e, before, `epicIssue #${sub.issue}`, from, 'blocked')
+  refuse(`Not recorded as merged: ${lostText} #${sub.issue} is now blocked (it was ${from}).`, reopen)
 }
 
 function notifyCoordinator(workspace, e, changed, from) {

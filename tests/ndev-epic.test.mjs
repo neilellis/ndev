@@ -1100,6 +1100,100 @@ test('a historical accepted check omission cannot waive a closing-suite skip', t
   assert.match(result.error.message, /closing.*integration.*debt/i)
 })
 
+function stackedFixture(t, child) {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = {
+    41: { issue: 41, key: 'parent', title: 'Parent', blockedBy: [], rounds: 0, state: 'merged', pr: 61, reviewer: 'r1', verdict: 'approve' },
+    42: { issue: 42, key: 'child', title: 'Child', blockedBy: [41], rounds: 0, state: 'reviewing', pr: 62, reviewer: 'r2', verdict: 'approve', stackedOn: 41 },
+  }
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: true, merged_at: '2026-11-02T00:00:00Z' })
+  f.answers['repos/example/repo/pulls/62'] = { number: 62, state: 'closed', merged: true, head: { ref: 'child', sha: 'c' }, base: { ref: 'parent' }, ...child }
+  f.save()
+  return f
+}
+
+test('a merged move refuses a stacked PR merged into the branch of an open blocker', t => {
+  const f = stackedFixture(t, { merged_at: '2026-11-01T00:00:00Z' })
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'open', merged: false })
+  f.save()
+  const result = f.call('issue', '40', '42', 'merged')
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /PR #62.*parent.*PR #61 of #41.*not merged/)
+  assert.equal(f.ok('status', '40').epic.issues['42'].state, 'reviewing')
+})
+
+test('a merged move records a stacked PR when its blocker merged after it', t => {
+  const f = stackedFixture(t, { merged_at: '2026-11-01T00:00:00Z' })
+  f.ok('issue', '40', '42', 'merged')
+  assert.equal(f.ok('status', '40').epic.issues['42'].state, 'merged')
+})
+
+test('a stacked PR merged after its blocker merged is blocked with the repair, and a new PR into main ends the block', t => {
+  const f = stackedFixture(t, { merged_at: '2026-11-03T00:00:00Z' })
+  const result = f.call('issue', '40', '42', 'merged')
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /after PR #61.*not on main/)
+  assert.match(JSON.stringify(result.error), /gh pr create --repo example\/repo --base main --head child/)
+  const sub = f.ok('status', '40').epic.issues['42']
+  assert.equal(sub.state, 'blocked')
+  assert.equal(sub.previous, 'reviewing')
+  assert.match(sub.note, /gh pr create --repo example\/repo --base main --head child/)
+  f.answers['repos/example/repo/pulls/65'] = { number: 65, state: 'closed', merged: true, head: { ref: 'child', sha: 'd' }, base: { ref: 'main' } }
+  f.save()
+  f.ok('issue', '40', '42', 'merged', '--pr', '65', '--override', 'the change of PR #62 merged again through PR #65')
+  assert.deepEqual([f.ok('status', '40').epic.issues['42'].state, f.ok('status', '40').epic.issues['42'].pr], ['merged', 65])
+})
+
+test('a stacked PR whose blocker PR closed unmerged is blocked, and a second lost PR from blocked keeps previous', t => {
+  const f = stackedFixture(t, { merged_at: '2026-11-02T00:00:00Z' })
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'closed', merged: false })
+  f.save()
+  const result = f.call('issue', '40', '42', 'merged')
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /PR #62.*closed.*not on main/)
+  assert.deepEqual([f.ok('status', '40').epic.issues['42'].state, f.ok('status', '40').epic.issues['42'].previous], ['blocked', 'reviewing'])
+  f.answers['repos/example/repo/pulls/64'] = { number: 64, state: 'closed', merged: true, head: { ref: 'child-b', sha: 'e' }, base: { ref: 'parent' }, merged_at: '2026-11-04T00:00:00Z' }
+  f.save()
+  const again = f.call('issue', '40', '42', 'merged', '--pr', '64', '--override', 'merged again')
+  assert.equal(again.status, 1)
+  assert.match(JSON.stringify(again.error), /PR #64[\s\S]*--head child-b/)
+  const sub = f.ok('status', '40').epic.issues['42']
+  assert.deepEqual([sub.state, sub.previous, sub.pr], ['blocked', 'reviewing', 62])
+})
+
+test('a blocked sub-issue whose PR was not lost cannot take another PR with an override', t => {
+  const f = stackedFixture(t, { base: { ref: 'main' }, merged: false, state: 'open' })
+  f.ok('issue', '40', '42', 'blocked', '--note', 'waiting for a human')
+  f.answers['repos/example/repo/pulls/66'] = { number: 66, state: 'closed', merged: true, head: { ref: 'other', sha: 'f' }, base: { ref: 'main' } }
+  f.save()
+  const result = f.call('issue', '40', '42', 'merged', '--pr', '66', '--override', 'swap')
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /PR #62.*PR #66/)
+})
+
+test('an unblock and a new block end the PR swap that a lost PR allows', t => {
+  const f = stackedFixture(t, { merged_at: '2026-11-03T00:00:00Z' })
+  assert.equal(f.call('issue', '40', '42', 'merged').status, 1)
+  f.ok('issue', '40', '42', 'reviewing')
+  f.ok('issue', '40', '42', 'blocked', '--note', 'waiting for a human')
+  f.answers['repos/example/repo/pulls/66'] = { number: 66, state: 'closed', merged: true, head: { ref: 'other', sha: 'f' }, base: { ref: 'main' } }
+  f.save()
+  const result = f.call('issue', '40', '42', 'merged', '--pr', '66', '--override', 'swap')
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /PR #62.*PR #66/)
+})
+
+test('a merged move refuses a PR merged into a branch that is neither the default branch nor its blocker branch', t => {
+  const f = stackedFixture(t, { base: { ref: 'release' }, merged_at: '2026-11-01T00:00:00Z' })
+  const result = f.call('issue', '40', '42', 'merged')
+  assert.equal(result.status, 1)
+  assert.match(result.error.message, /"release".*"main"/)
+  assert.equal(f.ok('status', '40').epic.issues['42'].state, 'reviewing')
+})
+
 test('a merged move cannot transfer review evidence to a different PR', t => {
   const f = fixture(t)
   const e = f.ok('start', '40').epic

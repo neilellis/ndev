@@ -1260,6 +1260,98 @@ test('the merge of a blocker names each issue stacked on it and the instruction 
   expect(plain.text).not.toContain('Stacked on')
 })
 
+test('merged refuses a stacked PR that a human merged into the branch of its open blocker, because main does not have it yet', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'reviewing', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, implementer: 'd2', reviewer: 'r2', stackedOn: 41 }))
+  w.s.prs[12] = head('issue-41')
+  w.s.prs[13] = { state: 'closed', merged: true, base: { ref: 'issue-41' }, merged_at: '2026-11-02T00:00:00Z' }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged' })
+  expect(r.isError).toBe(true)
+  for (const part of ['PR #13', 'issue-41', 'PR #12 of #41', 'not merged', 'Nothing changed', 'merge PR #12']) expect(r.text).toContain(part)
+  expect(w.epic()?.issues['42']?.state).toBe('reviewing')
+})
+
+test('merged records a stacked PR when its blocker merged after it, because that merge carried it to main', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'merged', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, implementer: 'd2', reviewer: 'r2', stackedOn: 41 }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41'), merged_at: '2026-11-03T00:00:00Z' }
+  w.s.prs[13] = { state: 'closed', merged: true, base: { ref: 'issue-41' }, merged_at: '2026-11-02T00:00:00Z' }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged' })
+  expect(r.isError).toBe(false)
+  expect(w.epic()?.issues['42']?.state).toBe('merged')
+})
+
+test('a stacked PR merged into its blocker branch after the blocker merged is blocked, not merged, and the note names the repair', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'merged', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, implementer: 'd2', reviewer: 'r2', stackedOn: 41 }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41'), merged_at: '2026-11-02T00:00:00Z' }
+  w.s.prs[13] = { state: 'closed', merged: true, ...head('issue-42'), base: { ref: 'issue-41' }, merged_at: '2026-11-03T00:00:00Z' }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged' })
+  expect(r.isError).toBe(true)
+  for (const part of ['PR #13', 'issue-41', 'after PR #12', 'not on main', 'gh pr create --repo acme/w --base main --head issue-42', 'override']) expect(r.text).toContain(part)
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'blocked', previous: 'reviewing' })
+  expect(w.epic()?.issues['42']?.note).toContain('gh pr create --repo acme/w --base main --head issue-42')
+  w.s.prs[15] = { state: 'closed', merged: true, base: { ref: 'main' } }
+  const fixed = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged', pr: 15, override: 'the lost change of PR #13 merged again through PR #15' })
+  expect(fixed.isError).toBe(false)
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'merged', pr: 15 })
+})
+
+test('a stacked PR whose blocker PR closed without merging is blocked, and a second lost PR from blocked keeps the state it goes back to', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'reviewing', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, implementer: 'd2', reviewer: 'r2', stackedOn: 41 }))
+  w.s.prs[12] = { state: 'closed', merged: false, ...head('issue-41') }
+  w.s.prs[13] = { state: 'closed', merged: true, ...head('issue-42'), base: { ref: 'issue-41' }, merged_at: '2026-11-02T00:00:00Z' }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged' })
+  expect(r.isError).toBe(true)
+  for (const part of ['PR #13', 'closed', 'not on main', 'gh pr create --repo acme/w --base main --head issue-42']) expect(r.text).toContain(part)
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'blocked', previous: 'reviewing' })
+  const history = w.epic()?.history.length
+  w.s.prs[14] = { state: 'closed', merged: true, ...head('issue-42b'), base: { ref: 'issue-41' }, merged_at: '2026-11-04T00:00:00Z' }
+  const again = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged', pr: 14, override: 'merged again' })
+  expect(again.isError).toBe(true)
+  for (const part of ['PR #14', 'Nothing changed', '--base main --head issue-42b']) expect(again.text).toContain(part)
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'blocked', previous: 'reviewing', pr: 13 })
+  expect(w.epic()?.history.length).toBe(history)
+})
+
+test('a blocked sub-issue takes a new PR only while its PR is lost: an unblock and a new block end that', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'merged', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], state: 'reviewing', pr: 13, implementer: 'd2', reviewer: 'r2', stackedOn: 41 }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41'), merged_at: '2026-11-02T00:00:00Z' }
+  w.s.prs[13] = { state: 'closed', merged: true, ...head('issue-42'), base: { ref: 'issue-41' }, merged_at: '2026-11-03T00:00:00Z' }
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged' })).isError).toBe(true)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'reviewing' })).isError).toBe(false)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'blocked', note: 'waiting for a human' })).isError).toBe(false)
+  w.s.prs[15] = { state: 'closed', merged: true, base: { ref: 'main' } }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 42, state: 'merged', pr: 15, override: 'swap' })
+  expect(r.isError).toBe(true)
+  for (const part of ['PR #13', 'PR #15', 'Nothing changed']) expect(r.text).toContain(part)
+  expect(w.epic()?.issues['42']).toMatchObject({ state: 'blocked', pr: 13 })
+})
+
+test('merged refuses a PR merged into a branch that is not the default branch and not the branch of its blocker', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'reviewing', pr: 12, reviewer: 'r1' }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41'), base: { ref: 'release' } }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(r.isError).toBe(true)
+  for (const part of ['PR #12', '"release"', '"main"', 'Nothing changed', 'gh pr create --repo acme/w --base main --head issue-41']) expect(r.text).toContain(part)
+  expect(w.epic()?.issues['41']?.state).toBe('reviewing')
+})
+
 test('verified refuses a PR whose base is not the default branch, and a pass clears stackedOn', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)

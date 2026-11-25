@@ -7,7 +7,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { LoadedConfig } from '../config'
 import { type Server, triageRemote } from '../remote'
-import { Refuse, defaultBranch, gh, ghOne, gitOut, git, paths, readChecks, readPr, repoFromOrigin, run } from './effects'
+import { Refuse, defaultBranch, gh, ghOne, gitOut, git, paths, readChecks, readPr, repoFromOrigin, run, type Pr } from './effects'
 import { SECTION, boundRoot, inFreeTurn, loadWorkflow, registerWorkflowFailure, setDeclined, workflowToolFailed } from './tools'
 
 import { EPIC_STATES, nextEpicState, sliceProblems, SLICE_CAP, capNote, sourcePaths, sourceProblem, SOURCE_FORM, coreIdeaProblem, specPrLinkProblem, specPrLinkRepair, specPrProblem, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
@@ -630,6 +630,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
   }
   if (to === 'merged' && from !== 'merged' && !['reviewing', 'fixing', 'verified'].includes(from)) {
     if (!str(args, 'override')) throw new Refuse(`Refused: #${sub.issue} never reached reviewing. Supply override with the reason to record debt.`)
+    if (isCount(args.pr) && sub.pr && Number(args.pr) !== sub.pr && !(from === 'blocked' && sub.lost)) throw new Refuse(`Refused: the record of #${sub.issue} has PR #${sub.pr}, and its review does not transfer to PR #${args.pr}. Nothing changed. Repair: record the merge of PR #${sub.pr}; only a sub-issue that is blocked because its PR was lost takes a new PR.`)
     if (isCount(args.pr)) sub.pr = Number(args.pr)
     if (!sub.pr) throw new Refuse(`Refused: merging #${sub.issue} needs its PR number.`)
   }
@@ -639,12 +640,14 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
     if (!note) throw new Refuse(`Refused: a block needs note: what blocks #${sub.issue} and who can end it. Nothing changed.`)
     sub.previous = from
     sub.note = note
+    delete sub.lost
   // Model: models/workflow/epic_workflow.qnt#unblock
   } else if (from === 'blocked' && to !== 'merged') {
     if (to !== sub.previous) throw new Refuse(`Refused: #${sub.issue} is blocked, and goes back only to the state it was in, "${sub.previous}". Nothing changed.`)
     const inFlight = Object.values(epic.issues).filter(i => IN_FLIGHT.includes(i.state))
     if (IN_FLIGHT.includes(to) && inFlight.length >= epic.parallel) throw new Refuse(`Refused: #${sub.issue} goes back to "${to}", and all ${epic.parallel} parallel places are taken by ${tags(inFlight.map(i => i.issue))}. Nothing changed. Repair: wait for one to merge, or ask the human to raise parallel (epicStarted with parallel).`)
     sub.previous = undefined
+    delete sub.lost
   } else {
     if (!MOVES[from].includes(to) && to !== 'merged') throw new Refuse(`Refused: #${sub.issue} is in the state "${from}", and "${to}" does not follow it. From "${from}" it goes to: ${[...MOVES[from], ...(from === 'merged' ? [] : ['blocked'])].join(', ') || 'nothing'}. Nothing changed.`)
     switch (`${from}>${to}`) {
@@ -709,6 +712,11 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         const early = from !== 'verified' || sub.verification?.sha !== pr.head.sha
         // Model: models/workflow/epic_workflow.qnt#humanMergesPr
         if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: ${early ? `from "${from}", "merged" records only a PR that a human already merged. Move #${sub.issue} to "verified" first, then merge it` : 'merge it'}, then call epicIssue again.`)
+        const main = await defaultBranch($, epic.root, epic.repo).catch((e: unknown) => {
+          throw new Refuse(`Refused: the default branch of ${epic.repo} was not read, so it is not known whether PR #${sub.pr} reached it: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}. Nothing changed. Repair: check gh auth status and the GitHub rate limit (gh api rate_limit), then call epicIssue again.`)
+        })
+        if (pr.base?.ref !== main) await landedThroughBlocker($, epic, sub, pr, main, from, now)
+        delete sub.lost
         if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
         if (early) {
           sub.mergedUnverified = true
@@ -735,6 +743,35 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
   moved(epic, `epicIssue #${sub.issue}`, to, now, from)
   await saveEpic($, epic)
   return answer(epic, `#${sub.issue} moved from "${from}" to "${to}".${extra}${to === 'merged' ? `\n${frontierText(epic)}` : ''}`)
+}
+
+// Model: models/workflow/epic_workflow.qnt#recordMerged
+async function landedThroughBlocker($: EngineInterface, epic: Epic, sub: SubIssue, pr: Pr, main: string, from: IssueState, now: number): Promise<void> {
+  const into = pr.base?.ref ?? '(no base)'
+  const again = `call epicIssue with sub ${sub.issue}, state "merged", pr <the new PR> and override`
+  const reopen = `run \`gh pr create --repo ${epic.repo} --base ${main} --head ${pr.head.ref}\`, merge that PR, then ${again}`
+  const on = sub.stackedOn === undefined ? undefined : epic.issues[String(sub.stackedOn)]
+  const under = on?.pr ? await readPr($, epic.root, epic.repo, on.pr) : undefined
+  if (!on || !under || under.head.ref !== into) throw new Refuse(`Refused: GitHub says PR #${sub.pr} of #${sub.issue} merged into "${into}", which is not the default branch "${main}"${on?.pr ? ` and not the branch of PR #${on.pr} of #${on.issue}` : ''}, so ${main} does not have it. Nothing changed. Repair: ${reopen}.`)
+  const closed = !under.merged && under.state === 'closed'
+  if (!under.merged && !closed) throw new Refuse(`Refused: PR #${sub.pr} of #${sub.issue} merged into ${into}, the branch of PR #${on.pr} of #${on.issue}, which is not merged, so ${main} does not have it yet. Nothing changed. Repair: merge PR #${on.pr}, call epicIssue with sub ${on.issue} and state "merged", then call it for #${sub.issue} again.`)
+  if (!closed) {
+    const landed = Date.parse(under.merged_at ?? '')
+    const rode = Date.parse(pr.merged_at ?? '')
+    if (Number.isNaN(landed) || Number.isNaN(rode)) throw new Refuse(`Refused: GitHub gave no merge time for PR #${Number.isNaN(rode) ? sub.pr : on.pr} (merged_at ${JSON.stringify(Number.isNaN(rode) ? pr.merged_at : under.merged_at)}), so it is not known whether PR #${sub.pr} merged into ${into} before PR #${on.pr} took that branch to ${main}. Nothing changed. Repair: read both with \`gh pr view <n> --repo ${epic.repo} --json mergedAt\` and call epicIssue again.`)
+    if (landed > rode) return
+  }
+  const why = closed ? `PR #${on.pr} of #${on.issue} closed without merging` : `PR #${on.pr} of #${on.issue} had merged into ${main}`
+  const note = `PR #${sub.pr} merged into ${into} after ${why}, so its change is not on ${main}. Repair: ${reopen}.`
+  if (from === 'blocked') throw new Refuse(`Refused: ${note.replace(' Repair:', ' Nothing changed. Repair:')}`)
+  // Model: models/workflow/epic_workflow.qnt#recordLost
+  sub.state = 'blocked'
+  sub.previous = from
+  sub.note = note
+  sub.lost = true
+  moved(epic, `epicIssue #${sub.issue}`, 'blocked', now, from)
+  await saveEpic($, epic)
+  throw new Refuse(`Not recorded as merged: ${note} #${sub.issue} is now blocked (it was "${from}").`)
 }
 
 // The checks before a sub-issue counts as verified. Each one is passed, failed or not run.
