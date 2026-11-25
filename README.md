@@ -1,12 +1,135 @@
 # ndev
 
-`ndev` runs development workflows from a terminal or an agent harness. It uses Orca for worktrees, workers, messages, browser captures, and panels. It uses GitHub for issues, pull requests, and checks.
+**One CLI, installer and formally verified workflow engine for coding agents across Claude Code, Codex and opencode.**
+
+`ndev` turns ad-hoc agent sessions into repeatable engineering workflows. It pairs one command-line tool with [Orca](https://orca.stably.ai) for worktrees, workers, browser captures and panels. It uses GitHub for issues, pull requests, checks and project boards.
+
+[Documentation site](https://neilellis.github.io/ndev/) · [Specification](docs/ndev-2/spec.md) · [Skills index](skills/README.md) · [Agents](agents/README.md) · [Knowledge base](kb/README.md) · [Formal Quint models](models/workflow/) · [Contributing](CONTRIBUTING.md)
+
+## Why ndev
+
+Coding agents lose track of process on real repositories. They skip reviews, push unchecked trees, collide across branches and behave differently in each harness. `ndev` moves workflow rules out of fragile prompts into one audited CLI and shared hook layer.
+
+| Value | What ndev does |
+| --- | --- |
+| **One method across harnesses** | Installs the same CLI, skills, subagents and native hooks into Claude Code, Codex and opencode. An ownership manifest updates owned files and leaves foreign files untouched. |
+| **Formally verified state machines** | Issue and epic lifecycles are specified in [Quint](models/workflow/) and checked in CI. Every transition validates its preconditions and prints the exact next step. |
+| **Guarded Git and pull requests** | Native pre-tool hooks block unchecked `git commit` and `git push` during active work. `ndev flow checkpoint` commits named files, runs local checks and pushes safely with lease verification. |
+| **Multi-issue epic orchestration** | Coordinates sub-issues, blocker graphs, stacked pull requests, parallel worker caps and review debt across local or remote Orca hosts. |
+| **Worker safety and PR queues** | `ndev triage` gates local worker launches on CPU load and requires positive exit and release proof before retry. `ndev fix-prs` repairs open PRs in a managed queue. |
+| **Orca panels with CLI parity** | Shows live workflow status, files, interviews, triage, PR queues and responsive screenshot matrices in Orca panels or as plain text on headless hosts. |
+| **Cost protection for native chats** | Opt-in `ndev chat-guard` blocks native Orca chat sends after 50 minutes of idle time and offers `continue`, `hand-off` or `new-session`. |
+
+## Architecture
+
+Every harness hook, skill, terminal command and Orca panel drives the same `ndev` binary and local state records.
+
+```mermaid
+flowchart LR
+    subgraph Callers["Harnesses & terminals"]
+        CC["Claude Code\n/ndev-* + hooks"]
+        CX["Codex\n$ndev-* + hooks"]
+        OC["opencode\nndev-* + server plugin"]
+        AG["Antigravity\nndev-* + hooks.json"]
+        SH["Terminal\nndev <group> <cmd>"]
+    end
+
+    CLI["ndev CLI\n15 command groups · --json contract"]
+
+    subgraph Engines["Execution & state"]
+        ORCA["Orca\nWorktrees · Workers · Panels · Browser"]
+        GH["GitHub\nIssues · PRs · Checks · Boards"]
+        STATE["Local state\n.neil-dev.json · workflow records"]
+        QUINT["Quint models\nissue_workflow.qnt · epic_workflow.qnt"]
+    end
+
+    CC --> CLI
+    CX --> CLI
+    OC --> CLI
+    AG --> CLI
+    SH --> CLI
+    CLI --> ORCA
+    CLI --> GH
+    CLI --> STATE
+    QUINT -. verifies .-> CLI
+```
+
+## Workflows
+
+### Single-issue workflow (`ndev flow`)
+
+`ndev flow` tracks one issue from start to merge in an isolated worktree. Choose a **mode**: `light` for focused changes, `heavy` for planned work, or `hack` for prototypes. Choose **steering**: `interactive` for human interviews and sign-off, or `auto` for autonomous runs.
+
+```mermaid
+stateDiagram-v2
+    [*] --> setup
+    setup --> interviewing: start (interactive, light/heavy)
+    setup --> planning: start (auto, heavy)
+    setup --> developing: start (auto light / hack)
+    interviewing --> planning: interview complete (heavy)
+    interviewing --> developing: interview complete (light)
+    planning --> developing: finished-plan
+    planning --> blocked: finished-plan (awaits sign-off)
+    developing --> reviewing: finished-development (light/heavy)
+    developing --> hardening: finished-hacking (hack)
+    hardening --> reviewing: finished-development
+    reviewing --> ci: finished-review
+    ci --> smoke: finished-checks (smoke due)
+    ci --> finishing: finished-checks (no smoke)
+    smoke --> finishing: finished-smoke
+    finishing --> done: done (clean)
+    finishing --> revising: done (new feedback)
+    done --> revising: revisit (feedback or conflict)
+    revising --> ci: finished-revision
+    done --> [*]
+```
+
+The full transition rules and 16 safety invariants live in [models/workflow/issue_workflow.qnt](models/workflow/issue_workflow.qnt).
+
+### Multi-issue epic workflow (`ndev epic`)
+
+`ndev epic` guides large initiatives through nine phases from framing to closing. During `coordinating`, sub-issues move through an enforced lifecycle with stacked PR support, rebase handoffs and debt tracking.
+
+```mermaid
+stateDiagram-v2
+    [*] --> framing
+    framing --> researching: epic phase
+    researching --> specifying: epic phase
+    specifying --> deciding: epic phase
+    state "spec-review" as spec_review
+    deciding --> spec_review: epic phase
+    spec_review --> slicing: epic phase
+    slicing --> coordinating: all sub-issues open
+    coordinating --> closing: all sub-issues merged
+    closing --> done: open debt = 0, all merged
+    done --> [*]
+```
+
+Sub-issues inside `coordinating` follow the lifecycle in [models/workflow/epic_workflow.qnt](models/workflow/epic_workflow.qnt):
+
+```mermaid
+stateDiagram-v2
+    [*] --> unsliced
+    unsliced --> waiting: slicing complete
+    waiting --> implementing: start (within parallel limit)
+    implementing --> reviewing: PR opened
+    reviewing --> fixing: changes requested
+    fixing --> reviewing: fixes pushed
+    reviewing --> verified: base=main, clean, checks green
+    verified --> merged: PR merged
+    merged --> [*]
+```
+
+### Triage and PR repair (`ndev triage`, `ndev fix-prs`)
+
+- **`ndev triage`** loads open issues, groups related tasks and dispatches Orca workers safely. It starts one worker by default, holds starts when local 1-minute load exceeds CPU cores, and verifies worker exit and release before any retry. See [Orca worker safety](docs/ndev-2/orca-worker-safety.md).
+- **`ndev fix-prs`** runs a repair queue across open PRs. Each repair worktree starts in `light` mode with `auto` steering. Pass `--no-merge` to leave green PRs for a human to merge.
 
 ## Install
 
-Use Node.js 22.18 or later. Install Orca and make sure `orca` is on your path. For GitHub work, sign in with the GitHub CLI.
+Use Node.js 22.18 or later. Install Orca and make sure `orca` is on your `PATH`. For GitHub work, sign in with the GitHub CLI (`gh auth login`).
 
-From a copy of this repository, run the install plan first.
+From a copy of this repository, preview the install plan before writing files:
 
 ```sh
 bin/ndev install all --dry-run
@@ -14,17 +137,23 @@ bin/ndev install all
 ndev install verify all
 ```
 
-Use `claude`, `codex`, `opencode`, or `antigravity` in place of `all` to install one profile. The default binary path is `$HOME/.local/bin/ndev`. Add `$HOME/.local/bin` to your path if necessary. In Codex, use `/hooks` to review and trust the installed hooks.
+Use `claude`, `codex`, `opencode` or `antigravity` in place of `all` to install one profile. The default binary path is `$HOME/.local/bin/ndev`. Add `$HOME/.local/bin` to your `PATH` if necessary. In Codex, run `/hooks` to review and trust the installed hooks.
 
-The `antigravity` profile is for Google Antigravity (the app and the `agy` CLI). It installs the skills in `~/.gemini/config/skills`, the agents in `~/.gemini/config/agents`, and an `ndev` hook group in `~/.gemini/config/hooks.json`. Other hook groups in that file stay as they are. Antigravity has no session-end or compaction hook, so stop worktree stacks yourself before you leave a session. `install verify antigravity` reads back the files and runs the tool hook, but it cannot check skill discovery: `agy` has no command that lists skills.
+The `antigravity` profile supports Google Antigravity (the app and the `agy` CLI). It installs skills in `~/.gemini/config/skills`, agents in `~/.gemini/config/agents`, and an `ndev` hook group in `~/.gemini/config/hooks.json`. Other hook groups in that file stay unchanged. Antigravity has no session-end or compaction hook, so stop worktree stacks before leaving a session.
 
-The Claude install uses `CLAUDE_CONFIG_DIR` when set. When that path changes, ndev keeps each recorded Claude home working and refreshes its hooks, skills and agents on reinstall. Copied hooks must match the ownership manifest. Skills and agents reached through directory symlinks retain their recorded ownership. Foreign hooks and files stay protected.
+The Claude installer respects `CLAUDE_CONFIG_DIR` when set. If that path changes, `ndev` tracks each recorded Claude home and refreshes its hooks, skills and agents on reinstall. Copied hooks must match the ownership manifest. Skills and agents reached through directory symlinks keep their recorded ownership. Foreign hooks and files stay protected.
 
-Use `ndev install <profile> --panels` to install the Orca plugin. Orca prints the approval command if the plugin asks for trust. Open the panel in the correct Orca workspace. Use the CLI text view in a terminal or on a headless host.
+Pass `--panels` to install the `neilellis.ndev` Orca plugin:
+
+```sh
+ndev install claude --panels
+```
+
+If Orca asks for plugin trust, `ndev` prints the approval command with its fingerprint. Open the panel in the matching Orca workspace. Terminals and headless hosts use the CLI text view automatically.
 
 ## Set up a new project from an agent
 
-Open the project's Git worktree in Orca. Give the agent this prompt in Claude Code, Codex, opencode, or Antigravity.
+Open the project worktree in Orca and give Claude Code, Codex, opencode or Antigravity this prompt:
 
 > Set up ndev for this project and for the harness you are running in. Use `ndev` or `$HOME/.local/bin/ndev` if it is already installed. Otherwise use `bin/ndev` from the ndev source. If the source is missing, download and extract the archive from `gh api repos/neilellis/ndev/tarball/main` in a temporary directory. Run `install <harness> --dry-run`, then `install <harness>` and `install verify <harness>`. Replace `<harness>` with `claude`, `codex`, `opencode`, or `antigravity`.
 >
@@ -32,13 +161,9 @@ Open the project's Git worktree in Orca. Give the agent this prompt in Claude Co
 >
 > If the project has no `NORTH_STAR.md` at the repository root, ask me to create it. I can also give you the project's purpose and guiding rules so you can draft the file for my approval. Keep the file if it already exists.
 
-The install adds the CLI, skills, and hooks to your user account. Project setup records the GitHub settings in `.neil-dev.json`. Run project setup in each new repository. If the installer has just added the skills or hooks, start a fresh agent session. In Codex, use `/hooks` to review and trust the new hooks.
+The install adds the CLI, skills and hooks to your user account. Project setup writes GitHub settings to `.neil-dev.json`. Run project setup in each new repository and start a fresh agent session after installing new skills or hooks.
 
-## Skills
-
-Use the [skill index](skills/README.md) to find a task, compare related skills and see retired entry points. Skills are installed as `ndev-<name>` in each harness. To refresh Claude and Codex, run each profile’s dry-run, install and verify commands. Reinstall uses the ownership manifest to retire old files and preserve unrelated skills and hooks. Start a fresh session afterward.
-
-## Use
+## Everyday use
 
 ```sh
 ndev --help
@@ -46,30 +171,29 @@ ndev project status
 ndev project setup --repo owner/name --no-board
 ndev flow start 42 --short-name fix-login
 ndev flow status --json
-ndev pane view
+ndev flow checkpoint --message "Validate input" --file src/login.ts
+ndev pane view --open
 ```
 
-Resume an existing PR in an isolated checkout by naming its issue and PR before starting work:
+Resume an existing open PR in an isolated checkout without creating a duplicate PR:
 
 ```sh
 ndev flow start 1401 --pr 1402
 ```
 
-If a local workflow already names an alias branch or an accidental duplicate PR, repair its association:
+Repair an existing local workflow that points at an alias branch or duplicate PR:
 
 ```sh
 ndev flow repair --issue 1401 --pr 1402
 ```
 
-The repair checks the open PR, issue link, origin, canonical head and local ancestry. It keeps the local branch, files, commits and existing canonical branch intact. Future checkpoints publish `HEAD` to the canonical PR branch. Prior review, CI and smoke evidence is cleared. Renew it on the resulting head. A pending operation, shared workflow or record in another worktree refuses repair and names the recovery. To take over from another owner, add `--take-over` only after that owner finishes. The command requires Orca to confirm that owner finished. An old timestamp or absent status is insufficient. It does not close duplicate PRs or merge anything.
+`ndev flow repair` checks the open PR, issue link, origin, canonical head and local ancestry. It preserves the local branch, files, commits and canonical branch while routing future checkpoints to the canonical PR branch. Prior review, CI and smoke evidence is cleared so fresh verification runs on the resulting head. Taking over from another owner requires `--take-over` and Orca confirmation that the previous owner has finished. Repair never closes duplicate PRs or merges code.
 
-`ndev flow` gives the current phase and the next step. Use `ndev flow checkpoint` to commit named files and run the workflow checks. Use `ndev wait` for one blocking wait. In Orca, the watcher checks the current PR head and sends an update when a check fails or the checks finish.
-
-Use `ndev <group> --help` to see the commands in a group. Use `ndev <group> <command> --help` to see its flags.
+Use `ndev wait` for one bounded blocking wait. In Orca, `ndev watch` checks the PR head and reports failed or completed checks. Use `ndev <group> --help` for the commands in any group, and `ndev <group> <command> --help` for its flags.
 
 ### Run from Codex chat
 
-Install the Codex profile with `ndev install codex` and start a fresh session. Type one of these commands in the chat.
+Install the Codex profile with `ndev install codex`, trust hooks with `/hooks`, and start a fresh session. Run commands directly in chat:
 
 ```text
 $ndev-cli flow status
@@ -78,15 +202,31 @@ $ndev-triage --open
 $ndev-triage launch
 ```
 
-`$ndev-cli` runs an ndev command and returns its result. `$ndev-triage` loads and groups issues, then shows a plan. Use `$ndev-triage launch` when you want Orca to start the workers.
+`$ndev-cli` runs any `ndev` command and returns its result. `$ndev-triage` loads and groups open issues into a plan. `$ndev-triage launch` starts approved Orca workers.
 
-## Source and tests
+## Skills, agents and documentation
 
-- The [ndev 2.0 spec](docs/ndev-2/spec.md) defines the CLI, hooks, installer, and panel protocol.
-- The [parity list](docs/ndev-2/parity.md) maps the older Claude Code plugin to the new commands and tests.
-- [The knowledge base](kb/README.md) holds workflow and development guides.
-- [The scripts guide](scripts/README.md) lists shared tools.
+- **Published docs site**: built from [docs-site/](docs-site/README.md) with Next.js static export and deployed to GitHub Pages by [.github/workflows/pages.yml](.github/workflows/pages.yml). Includes live Quint-to-Mermaid workflow diagrams and full-text search.
+- **[Skills index](skills/README.md)**: lists every skill installed as `ndev-<name>`, compares related skills and records retired entry points.
+- **[Agents index](agents/README.md)**: defines subagent roles, models, tools and isolation boundaries.
+- **[Knowledge base](kb/README.md)**: holds the project-neutral engineering method (core beliefs, testing, guards, verification, CI, Git worktrees and house writing style).
+- **[ndev 2.0 specification](docs/ndev-2/spec.md)** and **[parity list](docs/ndev-2/parity.md)**: define the CLI, hooks, installer, Orca panel protocol and migration coverage.
+- **[Shared scripts](scripts/README.md)** and **[Orca panel plugin](orca-plugin/ndev/README.md)**: document shared helpers and desktop panels.
 
-Run `npm test` for the CLI, installer, and panel regression suites, and every other tracked `*.test.mjs` file except those in `scripts/test/exceptions.json`. Set `NDEV_TEST_NATIVE_HARNESSES=1` to include native install trials when all three harnesses are available. The install tests use temporary homes.
+## Source, tests and formal checks
 
-The `sdk` job of the CI workflow runs the retained `*.test.ts` and `*.test.tsx` suite with `node scripts/test/sdk.mjs`, on the runtime that `scripts/test/sdk-runtime.json` pins. `CONTRIBUTING.md` says how to run it here.
+Run the native CLI, installer and panel regression suites:
+
+```sh
+npm test
+```
+
+`npm test` runs every tracked `*.test.mjs` file except those listed in `scripts/test/exceptions.json`. Set `NDEV_TEST_NATIVE_HARNESSES=1` to include native install trials when Claude Code, Codex, opencode and Antigravity are installed. Install tests use temporary homes.
+
+Run the formal Quint checks (`typecheck`, model links and simulation tests):
+
+```sh
+scripts/ci/formal-check.sh
+```
+
+The `sdk` job in [.github/workflows/ndev.yml](.github/workflows/ndev.yml) runs the retained `*.test.ts` and `*.test.tsx` suite with `node scripts/test/sdk.mjs` on the runtime pinned in `scripts/test/sdk-runtime.json`. See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor setup and plugin version guard rules.

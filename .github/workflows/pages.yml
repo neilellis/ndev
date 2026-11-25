@@ -1,0 +1,93 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs-site/**"
+      - "docs/**"
+      - "kb/**"
+      - "skills/**"
+      - "agents/**"
+      - "models/**"
+      - "orca-plugin/ndev/README.md"
+      - "scripts/README.md"
+      - "CONTRIBUTING.md"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "docs-site/**"
+      - "docs/**"
+      - "kb/**"
+      - "skills/**"
+      - "agents/**"
+      - "models/**"
+      - "orca-plugin/ndev/README.md"
+      - "scripts/README.md"
+      - "CONTRIBUTING.md"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@949feb2413d645899dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: docs-site/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: docs-site
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck, lint and unit test
+        working-directory: docs-site
+        run: |
+          pnpm run typecheck
+          pnpm run lint
+          pnpm test
+      - name: Build static site
+        working-directory: docs-site
+        run: pnpm run build
+      - name: Verify exported HTML and internal links
+        working-directory: docs-site
+        run: pnpm run verify:links
+      - name: Setup Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/out
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
