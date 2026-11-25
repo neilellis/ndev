@@ -749,6 +749,25 @@ test('a changed record with no type or a wrong type is reported after the edit, 
   assert.equal(call('pre-tool-use', 'Bash', { command: 'git commit -am change' }), null)
 })
 
+test('a merge commit checks the records against the merged branch, so records that branch brought in do not refuse it', t => {
+  const { root, recordFile, record, call, git } = recordsFixture(t)
+  git('switch', '-q', '-c', 'other')
+  writeFileSync(recordFile, record('- File: src/report.js').replace('type: product\n', ''))
+  git('commit', '-q', '-am', 'record with no type')
+  git('switch', '-q', '-')
+  writeFileSync(join(root, 'src/other.js'), 'export {}\n')
+  git('add', 'src/other.js')
+  git('commit', '-q', '-m', 'other')
+  git('merge', '-q', '--no-commit', '--no-ff', 'other')
+  for (const command of ['git commit --no-edit', 'ndev flow checkpoint --issue 3 --message m --file src/other.js']) {
+    const result = call('pre-tool-use', 'Bash', { command })
+    assert.equal(result?.hookSpecificOutput?.permissionDecision, undefined, `${command}: ${result?.hookSpecificOutput?.permissionDecisionReason}`)
+  }
+  writeFileSync(recordFile, record('- File: src/report.js\n- File: src/gone.js').replace('type: product\n', ''))
+  const reason = call('pre-tool-use', 'Bash', { command: 'git commit -am merge' }).hookSpecificOutput.permissionDecisionReason
+  assert.match(reason, /this commit is refused:[\s\S]*src\/gone\.js[\s\S]*ndev requirements links --base MERGE_HEAD/)
+})
+
 test('a commit is checked again after a link problem is repaired outside the record', t => {
   const { root, recordFile, record, call } = recordsFixture(t)
   writeFileSync(recordFile, record('- File: src/new.js'))

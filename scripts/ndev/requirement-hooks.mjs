@@ -51,12 +51,13 @@ export function recordCheck(root, cached) {
   const key = changedRecordKey(root)
   if (!key) return null
   if (cached?.key === key) return { ...cached, fresh: false }
+  const base = run('git', ['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: root }).status === 0 ? 'MERGE_HEAD' : 'HEAD'
   const failed = []
   for (const name of CHECKS) {
-    const ran = run(process.execPath, [CLI, 'requirements', name, '--base', 'HEAD', '--root', root], { cwd: root, timeout: 120_000 })
+    const ran = run(process.execPath, [CLI, 'requirements', name, '--base', base, '--root', root], { cwd: root, timeout: 120_000 })
     const output = [ran.stdout.trim(), ran.stderr.trim()].filter(Boolean).join('\n')
-    if (ran.status !== 0 && ran.status !== 1) throw new CliError(1, `ndev requirements ${name} --base HEAD in ${root} exited ${ran.status}: ${output || 'no output'}`, { repair: `Run ndev requirements ${name} --base HEAD in ${root} and repair the cause.` })
-    if (ran.status === 1) failed.push({ output, command: `ndev requirements ${name} --base HEAD` })
+    if (ran.status !== 0 && ran.status !== 1) throw new CliError(1, `ndev requirements ${name} --base ${base} in ${root} exited ${ran.status}: ${output || 'no output'}`, { repair: `Run ndev requirements ${name} --base ${base} in ${root} and repair the cause.` })
+    if (ran.status === 1) failed.push({ output, command: `ndev requirements ${name} --base ${base}` })
   }
   return { key, ok: !failed.length, output: failed.map(f => f.output).join('\n'), commands: failed.map(f => f.command), fresh: true }
 }
