@@ -552,9 +552,20 @@ function handoffs(workspace, e, parents) {
   const failures = []
   const inspect = 'Inspect the Orca Run mailbox and its receipt before resending the rebase instructions.'
   for (const sub of Array.isArray(parents) ? parents : [parents]) {
-    for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.stackedOn === sub.issue && item.handoff?.blocker === sub.issue && item.handoff.state !== 'sent')) {
+    for (const child of Object.values(e.issues).filter(item => item.state !== 'merged' && item.stackedOn === sub.issue && item.handoff?.blocker === sub.issue && !['sent', 'owner'].includes(item.handoff.state))) {
       const h = child.handoff
-      if (!child.implementer) continue
+      if (!child.implementer) {
+        const brief = `ndev epic brief ${e.epic} ${child.issue} implementer`
+        const owned = ['external', 'human-pending'].includes(child.state)
+        const repair = owned ? `Tell the existing owner of #${child.issue} to rebase onto the default branch and retarget its PR; this epic does not message it.` : child.state === 'blocked' ? `Run ndev epic issue ${e.epic} ${child.issue} ${child.previous}, then ${brief}: it starts from the default branch.` : `Generate a new brief with ${brief}: it starts from the default branch.`
+        if (owned) {
+          const before = structuredClone(e)
+          h.state = 'owner'
+          save(workspace, e, before, 'handoff-owner', sub.state, sub.state)
+        }
+        failures.push({ issue: child.issue, recipient: 'no implementer', message: `#${child.issue} is ${child.state} and stacked on merged #${sub.issue}, and it has no implementer to receive the rebase.`, repair })
+        continue
+      }
       const recipient = `dispatch:${child.implementer}`
       if (h.state === 'sending' && !h.requestId) {
         failures.push({ issue: child.issue, recipient, message: `Delivery to ${child.implementer} is uncertain for #${child.issue}.`, repair: inspect })

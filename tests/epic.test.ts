@@ -1358,6 +1358,35 @@ test('the merge of a blocker names each issue stacked on it and the instruction 
   expect(plain.text).not.toContain('Stacked on')
 })
 
+test('the merge of a blocker names a stacked sub-issue with no implementer and tells the coordinator to brief it again', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'verified', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], stackedOn: 41 }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41') }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('#42 (waiting, no PR recorded) has no implementer to tell')
+  expect(r.text).toContain('mcp__ndev__epicBrief with issue 40, sub 42 and role "implementer"')
+  expect(r.text).not.toContain('send its implementer')
+  const fresh = await tool($, 'epicBrief', { issue: 40, sub: 42, role: 'implementer' })
+  expect(fresh.isError).toBe(false)
+  expect(fresh.text).toContain('--base-branch origin/main')
+  expect(w.epic()?.issues['42']?.stackedOn).toBeUndefined()
+})
+
+test('the merge of a blocker tells the coordinator to unblock a blocked stacked sub-issue with no implementer before its new brief', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'verified', pr: 12 }), sub(42, { key: 'api', title: 'API', blockedBy: [41], stackedOn: 41, state: 'blocked', previous: 'waiting', note: 'waits for a key' }))
+  w.s.prs[12] = { state: 'closed', merged: true, ...head('issue-41') }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('#42 (blocked, no PR recorded) has no implementer to tell')
+  expect(r.text).toContain('call mcp__ndev__epicIssue with issue 40, sub 42 and state "waiting", then call mcp__ndev__epicBrief with issue 40, sub 42')
+})
+
 test('merged refuses a stacked PR that a human merged into the branch of its open blocker, because main does not have it yet', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)
