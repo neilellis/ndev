@@ -203,6 +203,16 @@ module heavy_test {
       .then(followUpThisAgent)
       .expect(wf.state == "developing" and heavyPlansAfterReopen)
 
+  run heavyFollowUpInPlanningIsNoPlanTest =
+    initWith("small_project", "interactive")
+      .then(startedWith(false, false, false, false))
+      .then(askRound(true))
+      .then(chatAnswersWith(true))
+      .then(leaveInterview)
+      .expect(wf.state == "planning")
+      .then(followUpThisAgent)
+      .expect(wf.state == "planning" and not(wf.planned))
+
   run heavyStrawManPlanSkipsSignOffTest =
     initWith("straw_man", "interactive")
       .then(startedWith(false, false, false, false))

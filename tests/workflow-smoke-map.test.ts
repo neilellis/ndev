@@ -27,6 +27,8 @@ for (const [name, history, want] of [
     const r = await tool($, 'followUp', { mode: 'this_agent', message: 'Sub work' })
     expect(r.isError).toBe(false)
     expect(w.prRecord(12)!.state).toBe(want)
+    const n = Number(/issues\/(\d+)/.exec(r.text)![1])
+    expect(!!w.issueRecord(n)!.planned).toBe(want === 'developing')
   })
 }
 

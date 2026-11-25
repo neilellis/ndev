@@ -93,6 +93,7 @@ export type Workflow = {
   followUpOf?: number
   // followUp this_agent: the interview and the base check of the PR that carries the issue stand for it.
   noInterview?: true
+  planned?: true
   migrations: { name: string; path: string }[]
   merged?: boolean
   feedbackAt?: number
@@ -384,7 +385,7 @@ export async function factsFor($: EngineInterface, root: string, project: Loaded
     mode: (own?.mode ?? settings?.mode ?? project?.config.mode ?? 'light') as Facts['mode'],
     steering: (own?.steering ?? settings?.steering ?? project?.config.steering ?? 'interactive') as Facts['steering'],
     level: project?.config.projectLevel as ProjectLevel | undefined,
-    planned: own && 'history' in own ? hasPlanned((own as Workflow).history) : undefined,
+    planned: own && 'history' in own ? hasPlanned(own as Workflow) : undefined,
   }
 }
 
@@ -2397,7 +2398,7 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
     const pr = wf.prs[0]!
     let child = (await readHeld($, wf.root)).issues.find(o => o.issue === n)
     if (!child) {
-      child = { issue: n, root: wf.root, repo: wf.repo, base: wf.base, branch: wf.branch, prs: [pr], state: 'developing', owner: wf.owner, evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], noInterview: true }
+      child = { issue: n, root: wf.root, repo: wf.repo, base: wf.base, branch: wf.branch, prs: [pr], state: 'developing', owner: wf.owner, evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], noInterview: true, planned: hasPlanned(wf) || undefined }
       await saveWorkflow($, child)
     }
     const carrier = wf.pr ? wf : await loadPrRecord($, wf.root, pr)
@@ -2423,7 +2424,7 @@ async function followUp($: EngineInterface, c: Ctx): Promise<string> {
     }
     const worktree = entry.worktree
     const branch = await gitOut(worktree, $, 'rev-parse', '--abbrev-ref', 'HEAD')
-    if (!(await loadWorkflow($, worktree, n))) await saveWorkflow($, { issue: n, root: worktree, repo: wf.repo, base: wf.base, branch, prs: [], state: 'developing', evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], followUpOf: wf.issue })
+    if (!(await loadWorkflow($, worktree, n))) await saveWorkflow($, { issue: n, root: worktree, repo: wf.repo, base: wf.base, branch, prs: [], state: 'developing', evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], followUpOf: wf.issue, planned: hasPlanned(wf) || undefined })
     const spawned = await $.agent.spawn({ subagentType: 'ndev:issue-implementer', prompt: `Work on issue #${n} of ${wf.repo}, in its own worktree ${worktree} on the branch ${branch}, and open its own PR. The worktree is claimed for you: do not claim another, and do not call started. Commit and push only through mcp__ndev__checkpoint with issue ${n}, worktree "${worktree}", the message and each file: it runs the check scripts, and a raw git commit or push is refused. It came up during #${wf.issue}. ${message}`, description: `Follow-up issue #${n}`, cwd: worktree })
     if ('deny' in spawned && spawned.deny) throw new Refuse(`The issue #${n} and the worktree ${worktree} exist, and the agent did not start: ${String(spawned.deny)}\nCall followUp again with the same text to retry: it reuses both.`)
     notes.push(`An agent works on #${n} in its own worktree ${worktree} and PR, by this followUp call. It commits there through checkpoint with issue ${n}, which refuses until that worktree has the check scripts.`)

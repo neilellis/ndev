@@ -40,8 +40,8 @@ export type Position = { state: State; previous?: State }
 // Model: models/workflow/issue_workflow.qnt#reopen
 export const reopenState = (facts: Facts): State => facts.mode === 'heavy' && !facts.planned ? 'planning' : MACHINES[facts.mode].reopen
 // Model: models/workflow/issue_workflow.qnt#moved
-export const hasPlanned = (history: readonly { tool: string; from?: State; to: State }[]) =>
-  history.some(h => h.from === 'planning' && (h.tool === 'finishedPlan' || (h.to !== 'blocked' && h.to !== 'wait')))
+export const hasPlanned = (w: { planned?: boolean; history: readonly { tool: string; from?: State; to: State }[] }) =>
+  !!w.planned || w.history.some(h => h.from === 'planning' && h.to !== 'planning' && (h.tool === 'finishedPlan' || (h.to !== 'blocked' && h.to !== 'wait')))
 export type Move = Position | { refused: string }
 
 export const mayMerge = (level?: ProjectLevel) => level === 'straw_man' || level === 'poc'

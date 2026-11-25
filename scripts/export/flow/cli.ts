@@ -240,7 +240,7 @@ const facts = (wf: Workflow, config: Config, extra: Record<string, unknown> = {}
   baseChecked: MACHINES[wf.mode as 'light'].baseCheck && !wf.baseCheck ? false : undefined,
   remembered: !!wf.hooks?.remember?.result,
   merged: !!wf.merged,
-  planned: hasPlanned(wf.history),
+  planned: hasPlanned(wf),
   ...extra,
 })
 type Position = { state: string; previous?: string }
@@ -1923,7 +1923,7 @@ function publicFollowUp(wf: Workflow, config: Config, args: Args, existing: numb
     const pr = readPr(wf, prOf(wf))
     gh(wf, ['subissues', 'link', String(wf.issue), String(entry.issue)])
     if (!hasIssueRef(pr.body || '', entry.issue)) gh(wf, ['pr-edit', String(pr.number), '--body-file', writeTemp(wf, 'pr-body.md', `${(pr.body || '').trimEnd()}\n\nCloses #${entry.issue}\n`)])
-    if (!readRecord(wf.root, entry.issue)) save({ issue: entry.issue, root: wf.root, repo: wf.repo, base: wf.base, branch: wf.branch, ...(wf.localBranch ? { localBranch: wf.localBranch } : {}), prs: [pr.number], mode: wf.mode, steering: wf.steering, owner: wf.owner, state: 'developing', baseCheck: wf.baseCheck, evidence: {}, history: [], followUps: [], migrations: [] })
+    if (!readRecord(wf.root, entry.issue)) save({ issue: entry.issue, root: wf.root, repo: wf.repo, base: wf.base, branch: wf.branch, ...(wf.localBranch ? { localBranch: wf.localBranch } : {}), prs: [pr.number], mode: wf.mode, steering: wf.steering, owner: wf.owner, state: 'developing', baseCheck: wf.baseCheck, evidence: {}, history: [], followUps: [], migrations: [], ...(hasPlanned(wf) ? { planned: true } : {}) })
   }
   if ((mode === 'worktree' || mode === 'subagent') && !entry.dispatchId) {
     const main = gitOk(wf.root, 'worktree', 'list', '--porcelain', '-z').split('\0')[0]!.slice(9)

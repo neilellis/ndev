@@ -220,7 +220,7 @@ module issue_workflow {
 
   action moved(w: Workflow, m: Move, tool: str): bool = all {
     m.ok,
-    wf' = { ...w, state: m.state, previous: m.previous, planned: w.planned or (w.state == "planning" and (tool == "finishedPlan" or not(HELD.contains(m.state)))) },
+    wf' = { ...w, state: m.state, previous: m.previous, planned: w.planned or (w.state == "planning" and m.state != "planning" and (tool == "finishedPlan" or not(HELD.contains(m.state)))) },
     visited' = visited.union(Set(m.state)),
     last' = tool,
   }

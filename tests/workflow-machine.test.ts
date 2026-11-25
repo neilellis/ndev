@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, boardColumn, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep, humanStep, STATES } from '../hooks/workflow/machine'
+import { ATTEMPT_LIMIT, afterSkip, afterStarted, afterTool, boardColumn, hasPlanned, flowPicture, hooksFiredBy, orcaView, mayCommitToBase, mayMerge, maySkipReview, needsPlanSignOff, needsSmoke, nextStep, humanStep, STATES } from '../hooks/workflow/machine'
 import type { Facts, State, Tool } from '../hooks/workflow/machine'
 import { inferChangeTypes, isDocsOnly, pagesOf, reviewerBrief } from '../hooks/workflow/change-types'
 
@@ -123,6 +123,17 @@ test('a heavy issue with no plan goes back to planning, not to developing', () =
   expect(afterTool({ state: 'developed' }, 'checkpoint', facts({ planned: true }))).toEqual({ state: 'developing' })
   expect(afterTool({ state: 'ci' }, 'followUpThisAgent', facts({ mode: 'light', planned: false }))).toEqual({ state: 'developing' })
   expect(afterTool({ state: 'ci' }, 'followUpThisAgent', facts({ mode: 'hack', planned: false }))).toEqual({ state: 'hardening' })
+})
+
+test('only a move out of planning that is not a hold counts as a plan', () => {
+  const h = (tool: string, from: State, to: State) => ({ at: 1, tool, from, to })
+  expect(hasPlanned({ history: [] })).toBe(false)
+  expect(hasPlanned({ history: [h('finishedPlan', 'planning', 'blocked')] })).toBe(true)
+  expect(hasPlanned({ history: [h('skip', 'planning', 'developing')] })).toBe(true)
+  expect(hasPlanned({ history: [h('blocked', 'planning', 'blocked')] })).toBe(false)
+  expect(hasPlanned({ history: [h('waitForPr', 'planning', 'wait')] })).toBe(false)
+  expect(hasPlanned({ history: [h('followUpThisAgent', 'planning', 'planning')] })).toBe(false)
+  expect(hasPlanned({ history: [], planned: true })).toBe(true)
 })
 
 test('done: a commit goes back to the checks only while the PR is open', () => {
