@@ -667,6 +667,14 @@ function move(workspace, e, before, sub, to, v) {
   // Model: models/workflow/epic_workflow.qnt#fixedToReviewing
   } else if (from === 'fixing' && to === 'reviewing') {
     if (v.worker) sub.reviewer = v.worker
+  // Model: models/workflow/epic_workflow.qnt#reverify
+  } else if (from === 'verified' && to === 'reviewing') {
+    const checkedSha = sub.verification?.sha
+    if (!checkedSha) refuse(`Sub-issue #${sub.issue} is verified but its record has no verified head.`, `Restore the last valid ${pathFor(workspace.root, e.epic)}.`)
+    const pr = github(e.root, e.repo, `/pulls/${sub.pr}`)
+    if (pr.state !== 'open' || pr.merged !== false || !pr.head?.sha) refuse(`PR #${sub.pr} of #${sub.issue} must be open to review again; GitHub reports state ${pr.state}, merged ${pr.merged}, head ${pr.head?.sha}.`, `Run ndev epic status ${e.epic} and record what happened to PR #${sub.pr}.`)
+    if (pr.head.sha === checkedSha) refuse(`PR #${sub.pr} of #${sub.issue} is at ${pr.head.sha}, the head that verify checked (${checkedSha}), so it has nothing new to review.`, `Merge PR #${sub.pr} and run ndev epic issue ${e.epic} ${sub.issue} merged, or push the change first and then run ndev epic issue ${e.epic} ${sub.issue} reviewing.`)
+    if (v.worker) sub.reviewer = v.worker
   // Model: models/workflow/epic_workflow.qnt#verify
   } else if (from === 'reviewing' && to === 'verified') {
     if (v.verdict !== 'approve' && !(v.verdict === 'changes' && v.note?.trim())) bad('Verification requires --verdict approve or resolved changes with --note.')

@@ -1633,3 +1633,28 @@ test('issue 279: brief and start refuse a waiting sub-issue whose closing PR is 
   f.ok('brief', '40', '41', 'implementer')
   assert.equal(f.ok('issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root).epic.issues[41].state, 'implementing')
 })
+
+test('issue 280: a verified sub-issue goes back to reviewing only after its PR head moved, and the refusal names both heads', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  const verified = 'a'.repeat(40)
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'verified', pr: 61, implementer: 'worker-1', reviewer: 'review-1', verdict: 'approve', verification: { sha: verified, base: 'main', checks: [] } } }
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  f.answers['repos/example/repo/pulls/61'].head.sha = verified
+  f.save()
+  const before = readFileSync(record, 'utf8')
+  const still = f.call('issue', '40', '41', 'reviewing')
+  assert.equal(still.status, 1, JSON.stringify(still))
+  assert.match(still.error.message, new RegExp(`PR #61 of #41 is at ${verified}, the head that verify checked \\(${verified}\\)`))
+  assert.match(still.error.repair, /ndev epic issue 40 41 reviewing/)
+  assert.equal(readFileSync(record, 'utf8'), before)
+  const pushed = 'b'.repeat(40)
+  f.answers['repos/example/repo/pulls/61'].head.sha = pushed
+  f.save()
+  const moved = f.ok('issue', '40', '41', 'reviewing', '--worker', 'review-2').epic.issues[41]
+  assert.equal(moved.state, 'reviewing')
+  assert.equal(moved.reviewer, 'review-2')
+  assert.equal(moved.verification.sha, verified)
+})

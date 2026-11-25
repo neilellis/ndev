@@ -627,7 +627,7 @@ const MOVES: Record<IssueState, IssueState[]> = {
   implementing: ['reviewing'],
   reviewing: ['fixing', 'verified', 'merged'],
   fixing: ['reviewing', 'merged'],
-  verified: ['merged'],
+  verified: ['reviewing', 'merged'],
   merged: [],
   blocked: [],
 }
@@ -719,6 +719,16 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         if (worker) sub.reviewer = worker
         break
       }
+      // Model: models/workflow/epic_workflow.qnt#reverify
+      case 'verified>reviewing': {
+        const checked = sub.verification?.sha
+        if (!checked) throw new Refuse(`Refused: #${sub.issue} is verified, and its record has no verified head. Nothing changed. Repair: restore the last valid ${epic.root}/.neil-dev.epic-${epic.epic}.json.`)
+        const pr = await readPr($, epic.root, epic.repo, sub.pr!)
+        if (pr.state !== 'open' || pr.merged) throw new Refuse(`Refused: PR #${sub.pr} of #${sub.issue} must be open to review again, and GitHub says state "${pr.state}", merged ${Boolean(pr.merged)}. Nothing changed. Repair: call mcp__ndev__epicStatus with issue ${epic.epic} and record what happened to PR #${sub.pr}.`)
+        if (pr.head.sha === checked) throw new Refuse(`Refused: PR #${sub.pr} of #${sub.issue} is at ${pr.head.sha}, the head that verify checked (${checked}), so it has nothing new to review. Nothing changed. Repair: merge PR #${sub.pr} and call epicIssue with state "merged", or push the change first and then call epicIssue with state "reviewing".`)
+        if (worker) sub.reviewer = worker
+        break
+      }
       // Model: models/workflow/epic_workflow.qnt#verify
       case 'reviewing>verified': {
         if (args.verdict !== 'approve' && !(args.verdict === 'changes' && note)) throw new Refuse(`Refused: "verified" needs verdict "approve", or verdict "changes" with a note that says each finding was fixed or overruled. Nothing changed.`)
@@ -742,7 +752,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         const early = from !== 'verified' || moved
         const pushed = `PR #${sub.pr} is at ${pr.head.sha.slice(0, 8)}, not the head ${(sub.verification?.sha ?? 'unknown').slice(0, 8)} that verify checked`
         // Model: models/workflow/epic_workflow.qnt#humanMergesPr
-        if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: ${moved ? `${pushed}, so its merge will owe verification debt. Merge it` : early ? `from "${from}", "merged" records only a PR that a human already merged. Move #${sub.issue} to "verified" first, then merge it` : 'merge it'}, then call epicIssue again.`)
+        if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: ${moved ? `${pushed}. Call epicIssue with state "reviewing" to review and verify the new head, or merge it and owe verification debt` : early ? `from "${from}", "merged" records only a PR that a human already merged. Move #${sub.issue} to "verified" first, then merge it` : 'merge it'}, then call epicIssue again.`)
         const main = await defaultBranch($, epic.root, epic.repo).catch((e: unknown) => {
           throw new Refuse(`Refused: the default branch of ${epic.repo} was not read, so it is not known whether PR #${sub.pr} reached it: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}. Nothing changed. Repair: check gh auth status and the GitHub rate limit (gh api rate_limit), then call epicIssue again.`)
         })
@@ -970,7 +980,7 @@ const SPECS: Spec[] = [
   },
   {
     name: 'epicIssue',
-    description: 'Record a move of one sub-issue: waiting→implementing, implementing→reviewing, reviewing→fixing, fixing→reviewing, reviewing→verified (runs the verify checks, which refuse a PR whose base is not the default branch), verified→merged (names each sub-issue stacked on it and what to tell its worker), reviewing or fixing→merged (only when a human already merged the PR), any→blocked and back. The same state with workspace records the workspace only.',
+    description: 'Record a move of one sub-issue: waiting→implementing, implementing→reviewing, reviewing→fixing, fixing→reviewing, reviewing→verified (runs the verify checks, which refuse a PR whose base is not the default branch), verified→reviewing (only after a push moved the PR head from the verified one), verified→merged (names each sub-issue stacked on it and what to tell its worker), reviewing or fixing→merged (only when a human already merged the PR), any→blocked and back. The same state with workspace records the workspace only.',
     properties: {
       issue: num('The epic issue'),
       sub: num('The sub-issue'),

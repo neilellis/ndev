@@ -316,6 +316,16 @@ module epic_workflow {
     setPr(i, { ...NO_PR, life: "open", base: subs.get(i).startBase, checks: "pending", mergeable: "clean" }, "openPr"),
   }
 
+  action reverify(i: int): bool =
+    val s = subs.get(i)
+    all {
+      phase == "coordinating",
+      s.state == "verified",
+      not(s.headVerified),
+      prs.get(i).life == "open",
+      setSub(i, { ...s, state: "reviewing" }, "reverify"),
+    }
+
   action workerPushes(i: int): bool = all {
     Set("implementing", "fixing", "verified", "blocked").contains(subs.get(i).state),
     prs.get(i).life == "open",
@@ -391,7 +401,7 @@ module epic_workflow {
     ruleDebt,
     recordDebt,
     nondet i = SUBS.oneOf()
-    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), recordMerged(i), recordLost(i), block(i), unblock(i), reimport(i) },
+    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), reverify(i), recordMerged(i), recordLost(i), block(i), unblock(i), reimport(i) },
   }
 
   action workerStep = nondet i = SUBS.oneOf()
@@ -450,6 +460,7 @@ module epic_workflow {
   val wFixing = SUBS.exists(i => subs.get(i).state == "fixing")
   val wRoundLimit = SUBS.exists(i => subs.get(i).rounds >= ROUND_LIMIT)
   val wVerified = SUBS.exists(i => subs.get(i).state == "verified")
+  val wReverified = last == "reverify"
   val wPushedAfterVerify = SUBS.exists(i => subs.get(i).state == "verified" and not(subs.get(i).headVerified))
   val wVerifiedAfterStack = SUBS.exists(i => subs.get(i).state == "verified" and subs.get(i).startBase != MAIN)
   val wMerged = SUBS.exists(i => merged(i))

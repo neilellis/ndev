@@ -1769,3 +1769,21 @@ test('issue 279: epicBrief and the start of a waiting sub-issue refuse while Git
   expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/wt/41' })).isError).toBe(false)
   expect(w.epic()?.issues['41']?.state).toBe('implementing')
 })
+
+test('issue 280: a verified sub-issue goes back to reviewing only after its PR head moved, and the refusal names both heads', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41, { state: 'verified', pr: 12, implementer: 'd1', reviewer: 'r1', verdict: 'approve', verification: { sha: SHA, at: 1 } }))
+  const before = w.files.get(EPIC_FILE(40))
+  const still = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'reviewing' })
+  expect(still.isError).toBe(true)
+  expect(still.text).toContain(`PR #12 of #41 is at ${SHA}, the head that verify checked (${SHA})`)
+  expect(still.text).toContain('Nothing changed.')
+  expect(w.files.get(EPIC_FILE(40))).toBe(before)
+  const pushed = 'bbbbbbbb22222222'
+  w.s.prs[12] = { head: { sha: pushed, ref: 'issue-41' } }
+  const moved = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'reviewing', worker: 'r2' })
+  expect(moved.isError).toBe(false)
+  expect(w.epic()?.issues['41']).toMatchObject({ state: 'reviewing', reviewer: 'r2', verification: { sha: SHA } })
+})

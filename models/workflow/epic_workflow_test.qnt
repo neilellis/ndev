@@ -108,6 +108,16 @@ module chain_test {
       .expect(subs.get(0).state == "verified" and not(subs.get(0).headVerified))
       .then(humanMergesPr(0)).then(recordMerged(0))
       .expect(merged(0) and debts.open == 1 and not(debts.override))
+  run reverifyAfterPushOwesNoDebtTest =
+    firstVerified.then(workerPushes(0)).then(reverify(0))
+      .expect(subs.get(0).state == "reviewing" and not(subs.get(0).headVerified))
+      .then(ciEndsWith(0, "green")).then(verify(0))
+      .expect(subs.get(0).headVerified)
+      .then(humanMergesPr(0)).then(recordMerged(0))
+      .expect(merged(0) and debts.open == 0 and safety)
+
+  run reverifyOfAVerifiedHeadIsRefusedTest = firstVerified.then(reverify(0).fail())
+
   run pushAfterVerifyIsNotMergedTest =
     firstVerified
       .then(workerPushes(0))
