@@ -131,6 +131,16 @@ test('a failed check under a finished PR is named, and the work stays done', asy
   expect(w.state()?.history.some(h => h.from === 'done')).toBe(false)
 })
 
+test('a failed check under a finished PR that a reminder already named does not block the work in done', async ($, on) => {
+  const red = 'PR #12 has failed checks on aaaaaaaa: unit tests (failure). Read their logs (the ndev:fix-ci skill), fix the cause, and call checkpoint.'
+  const w = engine(on, { wf: { state: 'done', nudges: { count: 1, fingerprint: `done|${SHA}||7|${red}` } }, pr: { mergeable_state: 'unstable' }, checks: CHECKS({ name: 'unit tests', conclusion: 'failure' }) })
+  await start($, w)
+  await idle(w)
+  expect(w.state()?.state).toBe('done')
+  expect(w.state()?.blocked).toBeUndefined()
+  expect(w.prompts).toEqual([])
+})
+
 test('status in done reads the PR: a conflict is named with its repair, and the PR is not called ready', async ($, on) => {
   const w = engine(on, { wf: { state: 'done' }, pr: { mergeable: false, mergeable_state: 'dirty' } })
   await start($, w)
