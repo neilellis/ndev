@@ -2086,6 +2086,7 @@ async function done($: EngineInterface, c: Ctx): Promise<string> {
     // An issue record ends in developed: its PR record goes on to done for it.
     const unfinished = siblings.filter(o => !o.pr && o.state !== 'done' && o.state !== 'developed')
     const migrations = new Set([wf, ...siblings].flatMap(o => o.migrations.map(m => m.path))).size
+    // Model: models/workflow/issue_workflow.qnt#doneReadyHeld
     if (unfinished.length) notes.push(`PR #${n} also carries ${unfinished.map(o => `#${o.issue} ("${o.state}")`).join(', ')}, so it must not merge yet. The last of these issues to finish decides the merge.`)
     if (mayMerge(facts.level) && !unfinished.length) {
       if (migrations) notes.push(`This PR has ${migrations} migration(s), so done did not merge it. This project level lets you merge: load the ndev:merge skill now and follow it for PR #${n}.`)

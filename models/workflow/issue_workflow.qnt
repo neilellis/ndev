@@ -511,12 +511,16 @@ module issue_workflow {
     iv' = iv, pr' = pr, branch' = branch, issue' = issue, humanMoved' = humanMoved,
   }
 
-  action doneReady = all {
+  action doneReady = doneReadyWith(false)
+
+  action doneReadyHeld = doneReadyWith(true)
+
+  action doneReadyWith(mergeHeld: bool): bool = all {
     wf.state == "finishing",
     pr.life != "merged",
     not(pr.feedback),
     not(doneProblems(wf, pr, branch)),
-    val merges = mayMerge(wf.level)
+    val merges = mayMerge(wf.level) and not(mergeHeld)
     all {
       moved({ ...wf, merged: merges }, afterTool(wf.state, wf.previous, "done", factsOf(wf)), "done"),
       pr' = if (merges) { ...pr, life: "merged" } else pr,
@@ -716,7 +720,7 @@ module issue_workflow {
     checkpoint(commits),
     finishedHacking, finishedDevelopment, finishedReview, finishedChecks, finishedSmoke,
     answerFeedback, finishedRevision,
-    doneNoChange, doneAfterHumanMerge, doneWithFeedback, doneReady,
+    doneNoChange, doneAfterHumanMerge, doneWithFeedback, doneReady, doneReadyHeld,
     nondet tool = Set("blocked", "wait").oneOf()
     agentHolds(tool),
     followUpThisAgent, waitEnds,

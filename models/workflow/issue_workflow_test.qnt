@@ -21,6 +21,23 @@ module light_test {
       .then(doneReady)
       .expect(wf.state == "done" and pr.life == "merged" and issue == "closed" and safety)
 
+  run lightHeldMergeWaitsForTheWatchdogTest =
+    initWith("poc", "interactive")
+      .then(startedWith(false, false, false, false))
+      .then(askRound(false))
+      .then(paneEndsWith("submitted", true, true))
+      .then(leaveInterview)
+      .then(checkpointWith(true, false))
+      .then(finishedDevelopmentWith(false))
+      .then(finishedReview)
+      .then(ciEndsWith("green"))
+      .then(finishedChecksWith(false))
+      .then(doneReadyWith(true))
+      .expect(wf.state == "done" and not(wf.merged) and pr.life == "open" and issue == "open" and safety)
+      .then(humanMergesPr)
+      .then(watchdogSeesMerge)
+      .expect(wf.merged and issue == "closed" and safety)
+
   run lightHeavyExitNeedsNoAnswerTest =
     initWith("small_project", "interactive")
       .then(startedWith(false, false, false, false))
