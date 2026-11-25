@@ -836,6 +836,24 @@ test('epicBrief writes the brief in the git dir, out of the worktree, and a revi
   expect(role.isError).toBe(true)
 })
 
+test('epicBrief refuses an implementer for a sub-issue that has started, and any brief outside coordinating, and names the state', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/w/41' })).isError).toBe(false)
+  const started = await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })
+  expect(started.isError).toBe(true)
+  expect(started.text).toContain('#41 is in the state "implementing"')
+  expect(started.text).toContain('dispatch:d1')
+  expect(w.files.has(`${ROOT}/.git/worktrees/x/ndev-epic/epic-40-41-implementer.md`)).toBe(false)
+  w.files.set(EPIC_FILE(40), JSON.stringify({ ...w.epic(), state: 'closing' }))
+  for (const [n, role] of [[43, 'implementer'], [41, 'reviewer']] as const) {
+    const closing = await tool($, 'epicBrief', { issue: 40, sub: n, role, pr: 12 })
+    expect(closing.isError).toBe(true)
+    expect(closing.text).toContain('epic #40 is in "closing"')
+  }
+})
+
 test('epicStatus shows the state, the next step and the sub-issues by state', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)

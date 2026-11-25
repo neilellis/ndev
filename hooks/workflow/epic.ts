@@ -532,9 +532,11 @@ function subOf(epic: Epic, args: Args): SubIssue {
 async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   const { args } = c
   const epic = await boundEpic($, c, 'epicBrief')
+  if (epic.state !== 'coordinating') throw new Refuse(`Refused: briefs are written only in the state "coordinating", and epic #${epic.epic} is in "${epic.state}". Nothing was written.`)
   const sub = subOf(epic, args)
   const role = str(args, 'role')
   if (role !== 'implementer' && role !== 'reviewer') throw new Refuse(`Refused: role must be "implementer" or "reviewer", and it is ${JSON.stringify(args.role)}. Nothing was written.`)
+  if (role === 'implementer' && sub.state !== 'waiting') throw new Refuse(`Refused: #${sub.issue} is in the state "${sub.state}", and an implementer brief is only for a waiting sub-issue. Nothing was written. Repair: ${sub.implementer ? `its implementer is dispatch:${sub.implementer}; message it with \`orca orchestration send --to dispatch:${sub.implementer}\`` : `call mcp__ndev__epicStatus with issue ${epic.epic} for its owner`}.`)
   const specFiles = epic.evidence.specifying?.files ?? []
   let pr: number | undefined
   let base: string | undefined
@@ -546,9 +548,7 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
     if (!pr) throw new Refuse(`Refused: a reviewer brief needs the PR: #${sub.issue} has no pr recorded. Nothing was written. Repair: call epicBrief with pr, the number of the implementer's PR.`)
   } else {
     const main = await defaultBranch($, epic.root, epic.repo)
-    // A waiting issue stacks where the record allows it now. One that has started keeps the stack it started on.
-    const kept = sub.stackedOn === undefined ? undefined : epic.issues[String(sub.stackedOn)]
-    const plan = sub.state === 'waiting' ? stackPlan(epic, sub) : kept && kept.state !== 'merged' ? { on: kept } : undefined
+    const plan = stackPlan(epic, sub)
     if (plan && 'why' in plan) throw new Refuse(`Refused: #${sub.issue} cannot start yet: ${plan.why}. Nothing was written. Repair: call mcp__ndev__epicNext with issue ${epic.epic} for what can start now.`)
     if (plan) {
       const on = plan.on
@@ -562,7 +562,7 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
       stack = { on, branch: head.head.ref, base: main }
     }
     base = stack?.branch ?? main
-    unstacked = !stack && sub.state === 'waiting' && sub.stackedOn !== undefined
+    unstacked = !stack && sub.stackedOn !== undefined
   }
   const { gitDir } = await paths($, epic.root)
   const folder = `${gitDir}/ndev-epic`

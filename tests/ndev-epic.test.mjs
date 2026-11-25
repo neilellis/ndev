@@ -1359,3 +1359,23 @@ test('goto and skip refuse a done epic, name the new-epic path, and write nothin
   }
   assert.throws(() => readFileSync(join(f.home, 'orca.log')), { code: 'ENOENT' })
 })
+
+test('an implementer brief refuses a sub-issue that has started and an epic outside coordinating, and names the state', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40', '--run', 'run-1', '--repo-id', 'local').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'waiting' }, 43: { issue: 43, key: 'other', title: 'Other', blockedBy: [], rounds: 0, state: 'waiting' } }
+  const file = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(file, JSON.stringify(e))
+  f.ok('issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root)
+  const started = f.call('brief', '40', '41', 'implementer')
+  assert.equal(started.status, 1, JSON.stringify(started))
+  assert.match(started.error.message, /#41 is implementing/)
+  assert.match(started.error.repair, /dispatch:worker-1/)
+  const saved = JSON.parse(readFileSync(file, 'utf8'))
+  saved.state = 'closing'
+  writeFileSync(file, JSON.stringify(saved))
+  const closing = f.call('brief', '40', '43', 'implementer')
+  assert.equal(closing.status, 1, JSON.stringify(closing))
+  assert.match(closing.error.message, /Epic #40 is closing/)
+})

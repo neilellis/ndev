@@ -445,7 +445,8 @@ function brief(workspace, e, before, sub, role, pr) {
   if (!['implementer','reviewer'].includes(role)) bad('Name implementer or reviewer.')
   if (e.state !== 'coordinating') refuse(`Epic #${e.epic} is ${e.state}.`)
   if (['external', 'human-pending', 'merged'].includes(sub.state)) refuse(`Sub-issue #${sub.issue} is ${sub.state}; it cannot receive a new ${role} worker.`, `Run ndev epic status ${e.epic} and contact its existing owner.`)
-  const placement = sub.state === 'waiting' && role === 'implementer' ? e.remote : sub.remote
+  if (role === 'implementer' && sub.state !== 'waiting') refuse(`Sub-issue #${sub.issue} is ${sub.state}; an implementer brief is only for a waiting sub-issue.`, sub.implementer ? `Its implementer is dispatch:${sub.implementer}: message it with orca orchestration send.` : `Run ndev epic status ${e.epic} for its owner.`)
+  const placement = role === 'implementer' ? e.remote : sub.remote
   let files = e.evidence.specifying?.files ?? []
   if (placement) {
     files = files.map(f => relative(workspace.root, resolve(workspace.root, f)))
@@ -457,7 +458,7 @@ function brief(workspace, e, before, sub, role, pr) {
   let body
   if (role === 'implementer') {
     const f = frontier(e)
-    if (sub.state === 'waiting' && ![...f.ready, ...f.stacked.map(s => s.sub)].includes(sub)) refuse(`Sub-issue #${sub.issue} is outside the current frontier.`)
+    if (![...f.ready, ...f.stacked.map(s => s.sub)].includes(sub)) refuse(`Sub-issue #${sub.issue} is outside the current frontier.`)
     const base = branchFor(e)
     const plan = stackPlan(e, sub)
     if (plan?.why) refuse(plan.why)
@@ -469,7 +470,7 @@ function brief(workspace, e, before, sub, role, pr) {
       if (head.state !== 'open' || head.merged || !head.head?.ref) refuse(`Blocker PR #${plan.on.pr} is ${head.state}. Its branch cannot carry #${sub.issue}.`)
       stack = { on: plan.on, branch: head.head.ref, base }
       sub.stackedOn = plan.on.issue
-    } else if (sub.state === 'waiting') delete sub.stackedOn
+    } else delete sub.stackedOn
     if (placement) { sub.remote = placement; sub.remoteRepo = e.remoteRepo }
     else delete sub.remote
     const repoSelector = placement ? e.remoteRepo : e.repoId ? `id:${e.repoId}` : `path:${workspace.root}`
