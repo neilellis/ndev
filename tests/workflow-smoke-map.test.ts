@@ -17,6 +17,19 @@ test('followUp this_agent from the PR stage sends the PR back, and the agent goe
     expect(((await tool($, 'status')).text)).toContain(`Issue #${n}`)
 })
 
+for (const [name, history, want] of [
+  ['followUp this_agent sends a heavy issue that never planned back to planning', [], 'planning'],
+  ['followUp this_agent sends a heavy issue with a signed-off plan back to developing', [{ at: 1, tool: 'finishedPlan', from: 'planning', to: 'blocked' }, { at: 2, tool: 'unblocked', from: 'blocked', to: 'developing' }], 'developing'],
+] as const) {
+  test(name, async ($, on) => {
+    const w = engine(on, { config: { mode: 'heavy' }, wf: { state: 'ci', prs: [12], history: [...history] }, pr: pull() })
+    await start($, w)
+    const r = await tool($, 'followUp', { mode: 'this_agent', message: 'Sub work' })
+    expect(r.isError).toBe(false)
+    expect(w.prRecord(12)!.state).toBe(want)
+  })
+}
+
 test('waitForIssue takes several issues and ends when all of them reach the state', async ($, on) => {
   const w = engine(on, { wf: { state: 'developing' } })
     await start($, w)

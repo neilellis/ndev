@@ -34,8 +34,14 @@ export type Facts = {
   noChange?: boolean
   // Only for done after the review: the tool read the PR, and a human merged it.
   prMerged?: boolean
+  planned?: boolean
 }
 export type Position = { state: State; previous?: State }
+// Model: models/workflow/issue_workflow.qnt#reopen
+export const reopenState = (facts: Facts): State => facts.mode === 'heavy' && !facts.planned ? 'planning' : MACHINES[facts.mode].reopen
+// Model: models/workflow/issue_workflow.qnt#moved
+export const hasPlanned = (history: readonly { tool: string; from?: State; to: State }[]) =>
+  history.some(h => h.from === 'planning' && (h.tool === 'finishedPlan' || (h.to !== 'blocked' && h.to !== 'wait')))
 export type Move = Position | { refused: string }
 
 export const mayMerge = (level?: ProjectLevel) => level === 'straw_man' || level === 'poc'
@@ -234,11 +240,11 @@ export function afterTool(position: Position, tool: Tool, facts: Facts): Move {
   if (tool === 'followUpOther') return state === 'done' ? wrong(position, tool, facts.mode) : { state }
   if (tool === 'followUpThisAgent') {
     if (state === 'done' || state === 'setup') return wrong(position, tool, facts.mode)
-    return { state: PAST_DEVELOPMENT.includes(state) ? MACHINES[facts.mode].reopen : state }
+    return { state: PAST_DEVELOPMENT.includes(state) ? reopenState(facts) : state }
   }
   if (tool === 'checkpoint') {
     // More work on an issue that had finished: it is in development again.
-    if (state === 'developed') return { state: MACHINES[facts.mode].reopen }
+    if (state === 'developed') return { state: reopenState(facts) }
     if (state === 'developing' || state === 'hardening' || state === 'reviewing' || state === 'revising' || state === 'ci') return { state }
     // Documents leave the tested code as it was, but a change that now holds them has a smoke test due.
     if (state === 'finishing' && facts.docsOnly && facts.smoke) return { state: 'smoke' }

@@ -20,7 +20,7 @@ import { CHANGE_MAP_LIMIT, buildChangeMap, changeMapBlock, withChangeBlock } fro
 import { takeScreenshots } from './screenshot'
 import { CHECKS_WAIT, gitCode, gitFolder, OWN_WAIT, pushNames, pushesOnly, RAW_GIT } from './git-guard.ts'
 import { liveCallEnd, liveCallFailed, liveCallStart, liveGitDir, liveName, livePath, readLive, shownArgs, shownValue, writeLive } from './live'
-import { ATTEMPT_LIMIT, BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
+import { ATTEMPT_LIMIT, BEFORE_REVIEW, MACHINES, hasPlanned, reopenState, MERGEABLE_BEFORE_DONE, afterStarted, afterTool, baseCheckScript, boardColumn, mayCommitToBase, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView, hooksFiredBy, type OrcaView, type StageHook, FLOW, STATES } from './machine'
 import type { Facts, Position, State, Tool } from './machine'
 import { answeredRounds, answerText, commentBody, emptyFile, exitProblem, finishRound, interviewFileName, INTERVIEW_FILE_PATTERN, INTERVIEW_KEYS, interviewOnly, parseChatAnswers, parseRound, resultOf, roundMarkdown, startingAnswers } from './interview-model'
 import type { InterviewFile, InterviewRound } from './interview-model'
@@ -384,6 +384,7 @@ export async function factsFor($: EngineInterface, root: string, project: Loaded
     mode: (own?.mode ?? settings?.mode ?? project?.config.mode ?? 'light') as Facts['mode'],
     steering: (own?.steering ?? settings?.steering ?? project?.config.steering ?? 'interactive') as Facts['steering'],
     level: project?.config.projectLevel as ProjectLevel | undefined,
+    planned: own && 'history' in own ? hasPlanned((own as Workflow).history) : undefined,
   }
 }
 
@@ -1676,7 +1677,7 @@ async function backToDevelopers($: EngineInterface, project: LoadedConfig | unde
   carrier.issues = [...new Set([...issuesOf(carrier), issue])].sort((a, b) => a - b)
   carrier.issue = carrier.issues[0]!
   // A hack PR goes back to hardening: the new work must be pinned like the rest before it is pushed.
-  const reopen = MACHINES[(await factsFor($, carrier.root, project, carrier)).mode].reopen
+  const reopen = reopenState(await factsFor($, carrier.root, project, carrier))
   const wasBack = carrier.state === reopen
   if (carrier.state === 'blocked' || carrier.state === 'wait') carrier.previous = reopen
   else if (!wasBack) moved(carrier, tool, { state: reopen }, await $.clock.now())

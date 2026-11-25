@@ -17,6 +17,7 @@ module issue_workflow {
     smokeDue: bool,
     merged: bool,
     recorded: bool,
+    planned: bool,
   }
 
   type Interview = {
@@ -56,6 +57,7 @@ module issue_workflow {
     noChange: bool,
     prMerged: bool,
     prOpen: bool,
+    planned: bool,
   }
 
   pure val MODES = Set("light", "heavy", "hack")
@@ -78,7 +80,8 @@ module issue_workflow {
   pure def afterInterview(mode: str): str = if (mode == "heavy") "planning" else "developing"
   pure def firstState(mode: str, steering: str): str =
     if (steering == "interactive" and interviews(mode)) "interviewing" else afterInterview(mode)
-  pure def reopen(mode: str): str = if (mode == "hack") "hardening" else "developing"
+  pure def reopen(mode: str, planned: bool): str =
+    if (mode == "hack") "hardening" else if (mode == "heavy" and not(planned)) "planning" else "developing"
   pure def hasBaseCheck(mode: str): bool = mode != "hack"
   pure def holdsLocally(state: str, mode: str): bool = state == "hardening" or (mode == "hack" and state == "developing")
   pure def holdsForReview(state: str): bool = state == "reviewing" or state == "developed"
@@ -107,9 +110,9 @@ module issue_workflow {
     else if (tool == "followUpOther") (if (state == "done") REFUSED else goTo(state))
     else if (tool == "followUpThisAgent")
       (if (state == "done" or state == "setup") REFUSED
-       else goTo(if (PAST_DEVELOPMENT.contains(state)) reopen(f.mode) else state))
+       else goTo(if (PAST_DEVELOPMENT.contains(state)) reopen(f.mode, f.planned) else state))
     else if (tool == "checkpoint")
-      (if (state == "developed") goTo(reopen(f.mode))
+      (if (state == "developed") goTo(reopen(f.mode, f.planned))
        else if (Set("developing", "hardening", "reviewing", "revising", "ci").contains(state)) goTo(state)
        else if (state == "finishing" and f.docsOnly and f.smoke) goTo("smoke")
        else if (state == "smoke" or state == "finishing") goTo(if (f.docsOnly) state else "ci")
@@ -143,7 +146,7 @@ module issue_workflow {
 
   pure def factsOf(w: Workflow): Facts = {
     mode: w.mode, steering: w.steering, level: w.level,
-    smoke: false, feedback: false, docsOnly: false, noChange: false, prMerged: false, prOpen: false,
+    smoke: false, feedback: false, docsOnly: false, noChange: false, prMerged: false, prOpen: false, planned: w.planned,
   }
 
   pure def inInterview(w: Workflow): bool =
@@ -201,7 +204,7 @@ module issue_workflow {
     steering == "interactive" or (steering == "auto" and INIT_MODE != "hack"),
     wf' = {
       state: "setup", previous: "", mode: INIT_MODE, steering: steering, level: level,
-      baseChecked: false, attempts: 0, checksEv: "none", smokeEv: "none", smokeDue: INIT_MODE == "hack", merged: false, recorded: false,
+      baseChecked: false, attempts: 0, checksEv: "none", smokeEv: "none", smokeDue: INIT_MODE == "hack", merged: false, recorded: false, planned: false,
     },
     iv' = {
       asked: 0, answered: 0, trust: false, askedAfterTrust: false, posted: false, pane: false, chat: false,
@@ -217,7 +220,7 @@ module issue_workflow {
 
   action moved(w: Workflow, m: Move, tool: str): bool = all {
     m.ok,
-    wf' = { ...w, state: m.state, previous: m.previous },
+    wf' = { ...w, state: m.state, previous: m.previous, planned: w.planned or (w.state == "planning" and (tool == "finishedPlan" or not(HELD.contains(m.state)))) },
     visited' = visited.union(Set(m.state)),
     last' = tool,
   }
@@ -777,10 +780,8 @@ module issue_workflow {
     heldHasPrevious, noRoundAfterTrust, atMostOneRoundWithoutAnswers, agentAsksBeforeHeavyPlan,
     lightNeverPlans, heavyPlansBeforeCode, hackHardensBeforeReview, hackNeverInterviews,
     checksBeforeFinishing, redPastLimitBlocks, agentDoneDelivers, prOpensOnlyAfterStart,
-    noChatRoundOutsideInterview, answersReachGitHub, noWorkLeftBehind,
+    noChatRoundOutsideInterview, answersReachGitHub, noWorkLeftBehind, heavyPlansAfterReopen,
   }
-
-  val findings: bool = heavyPlansAfterReopen
 
   val wInterviewing: bool = wf.state == "interviewing"
   val wPlanning: bool = wf.state == "planning"
@@ -805,7 +806,7 @@ module issue_workflow {
   val wPrReplaced: bool = last == "startedReplacesMergedPr"
   val wChecksBlocked: bool = last == "finishedChecksRedBlocked"
   val wRevisedAfterDone: bool = last == "startedAfterDone"
-  val wReopenedAfterReview: bool = last == "followUpThisAgent" and wf.state == reopen(wf.mode) and visited.contains("ci")
+  val wReopenedAfterReview: bool = last == "followUpThisAgent" and wf.state == reopen(wf.mode, wf.planned) and visited.contains("ci")
   val wPrReady: bool = pr.life == "open" and not(pr.draft)
 }
 

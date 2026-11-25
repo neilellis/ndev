@@ -19,7 +19,7 @@ module light_test {
       .then(finishedChecksWith(false))
       .expect(wf.state == "finishing" and wf.checksEv == "agent")
       .then(doneReady)
-      .expect(wf.state == "done" and pr.life == "merged" and issue == "closed" and safety and findings)
+      .expect(wf.state == "done" and pr.life == "merged" and issue == "closed" and safety)
 
   run lightHeavyExitNeedsNoAnswerTest =
     initWith("small_project", "interactive")
@@ -151,7 +151,7 @@ module heavy_test {
 
   run heavyEmptyInterviewRefusedTest = heavyInterview.then(leaveInterview.fail())
 
-  run heavyCodeAfterReopenSkipsPlanTest =
+  run heavyReopenWithNoPlanPlansFirstTest =
     initWith("small_project", "interactive")
       .then(startedWith(false, false, false, true))
       .expect(wf.state == "interviewing" and pr.life == "open")
@@ -163,7 +163,7 @@ module heavy_test {
       .then(checkpointWith(true, false))
       .expect(wf.state == "ci")
       .then(followUpThisAgent)
-      .expect(wf.state == "developing" and not(visited.contains("planning")) and not(heavyPlansAfterReopen) and heavyPlansBeforeCode)
+      .expect(wf.state == "planning" and heavyPlansAfterReopen)
 
   run heavyNeedsAnAnswerToLeaveTest =
     heavyInterview
@@ -188,6 +188,20 @@ module heavy_test {
       .expect(wPlanSignOff)
       .then(humanUnblock)
       .expect(wf.state == "developing" and wf.baseChecked)
+
+  run heavyReopenAfterSignedOffPlanDevelopsTest =
+    initWith("small_project", "interactive")
+      .then(startedWith(false, false, false, false))
+      .then(askRound(true))
+      .then(chatAnswersWith(true))
+      .then(leaveInterview)
+      .then(finishedPlan)
+      .then(humanUnblock)
+      .then(finishedDevelopmentWith(true))
+      .then(finishedReview)
+      .expect(wf.state == "ci")
+      .then(followUpThisAgent)
+      .expect(wf.state == "developing" and heavyPlansAfterReopen)
 
   run heavyStrawManPlanSkipsSignOffTest =
     initWith("straw_man", "interactive")

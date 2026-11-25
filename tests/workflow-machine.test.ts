@@ -106,13 +106,23 @@ test('no phase tool moves a blocked workflow', () => {
 
 test("followUp('this_agent') sends a state past development back to developing", () => {
   for (const from of ['reviewing', 'ci', 'smoke', 'finishing'] as State[]) {
-    expect(afterTool({ state: from }, 'followUpThisAgent', facts())).toEqual({ state: 'developing' })
+    expect(afterTool({ state: from }, 'followUpThisAgent', facts({ planned: true }))).toEqual({ state: 'developing' })
   }
   for (const from of ['planning', 'developing', 'revising'] as State[]) {
     expect(afterTool({ state: from }, 'followUpThisAgent', facts())).toEqual({ state: from })
   }
   expect('refused' in afterTool({ state: 'done' }, 'followUpThisAgent', facts())).toBe(true)
   expect('refused' in afterTool({ state: 'setup' }, 'followUpThisAgent', facts())).toBe(true)
+})
+
+test('a heavy issue with no plan goes back to planning, not to developing', () => {
+  for (const from of ['reviewing', 'ci', 'smoke', 'finishing'] as State[]) {
+    expect(afterTool({ state: from }, 'followUpThisAgent', facts({ planned: false }))).toEqual({ state: 'planning' })
+  }
+  expect(afterTool({ state: 'developed' }, 'checkpoint', facts({ planned: false }))).toEqual({ state: 'planning' })
+  expect(afterTool({ state: 'developed' }, 'checkpoint', facts({ planned: true }))).toEqual({ state: 'developing' })
+  expect(afterTool({ state: 'ci' }, 'followUpThisAgent', facts({ mode: 'light', planned: false }))).toEqual({ state: 'developing' })
+  expect(afterTool({ state: 'ci' }, 'followUpThisAgent', facts({ mode: 'hack', planned: false }))).toEqual({ state: 'hardening' })
 })
 
 test('done: a commit goes back to the checks only while the PR is open', () => {

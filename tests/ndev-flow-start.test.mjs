@@ -79,3 +79,32 @@ test('skip out of the interview drops the open chat round and says so', t => {
   assert.equal(JSON.parse(readFileSync(record, 'utf8')).chatRound, undefined)
   assert.match(result.stdout, /"The login page"/)
 })
+
+for (const [name, history, want] of [
+  ['checkpoint on a heavy issue with a signed-off plan goes back to developing', [{ at: 1, tool: 'finishedPlan', from: 'planning', to: 'blocked' }], 'developing'],
+  ['checkpoint on a heavy issue that never planned goes back to planning', [], 'planning'],
+]) {
+  test(name, t => {
+    const held = fixture(t, { state: 'developed', mode: 'heavy', steering: 'interactive', history })
+    const run = (...args) => {
+      const r = spawnSync(args[0], args.slice(1), { cwd: held.root, encoding: 'utf8' })
+      assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}`)
+    }
+    const origin = realpathSync(mkdtempSync(join(tmpdir(), 'ndev-flow-origin-')))
+    t.after(() => rmSync(origin, { recursive: true, force: true }))
+    run('git', 'init', '-q', '--bare', origin)
+    run('git', 'remote', 'add', 'origin', origin)
+    run('git', 'switch', '-q', '-c', 'b')
+    run('git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base')
+    run('mkdir', '-p', 'scripts/ndev/workflow')
+    for (const check of ['fast-checks', 'pre-commit-check', 'pre-push-check']) {
+      writeFileSync(join(held.root, 'scripts/ndev/workflow', `${check}.sh`), '#!/bin/sh\nexit 0\n')
+      chmodSync(join(held.root, 'scripts/ndev/workflow', `${check}.sh`), 0o755)
+    }
+    writeFileSync(join(held.root, 'a.txt'), 'more work\n')
+    const result = spawnSync(ndev, ['flow', 'checkpoint', '--issue', '12', '--message', 'More work', '--file', 'a.txt'], { cwd: held.root, encoding: 'utf8', env: { ...process.env, NDEV_FLOW_GH: held.gh } })
+    assert.ifError(result.error)
+    assert.equal(result.status, 0, result.stderr || result.stdout)
+    assert.equal(held.state().state, want)
+  })
+}

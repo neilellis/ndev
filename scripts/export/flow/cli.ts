@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const bundled = existsSync(join(HERE, 'profile.json'))
 const workflowModules = bundled ? join(HERE, 'workflow') : resolve(HERE, '../../../hooks/workflow')
-const { BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterSkip, afterStarted, afterTool, baseCheckScript, hooksFiredBy, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView } = await import(join(workflowModules, 'machine.ts'))
+const { BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterSkip, afterStarted, afterTool, baseCheckScript, hasPlanned, hooksFiredBy, mayMerge, maySkipReview, needsSmoke, nextStep, orcaView } = await import(join(workflowModules, 'machine.ts'))
 const { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isWebPath, requiredSmokeTypes, reviewerBrief } = await import(join(workflowModules, 'change-types.ts'))
 const { RECORDS_DIR, citedIds, issueRecordNotes, planLine, recordFileOf, summarise, traceProblems, verificationProblems } = await import(join(workflowModules, 'records.ts'))
 const { harnessSession } = await import(join(workflowModules, 'session.ts'))
@@ -240,6 +240,7 @@ const facts = (wf: Workflow, config: Config, extra: Record<string, unknown> = {}
   baseChecked: MACHINES[wf.mode as 'light'].baseCheck && !wf.baseCheck ? false : undefined,
   remembered: !!wf.hooks?.remember?.result,
   merged: !!wf.merged,
+  planned: hasPlanned(wf.history),
   ...extra,
 })
 type Position = { state: string; previous?: string }
