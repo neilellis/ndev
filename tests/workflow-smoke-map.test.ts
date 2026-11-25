@@ -237,6 +237,17 @@ test('a project with the workflow off writes no live file', async ($, on) => {
   expect(liveFile(w, 'issue-7')).toBeUndefined()
 })
 
+for (const state of ['ci', 'done'] as const) {
+  test(`comment posts in ${state} and leaves the state, so its ack can answer feedback there`, async ($, on) => {
+    const w = engine(on, { wf: { state } })
+    await start($, w)
+    const r = await tool($, 'comment', { pr: 12, message: 'Answered in the thread. ack:901' })
+    expect(r.isError).toBe(false)
+    expect(w.gh.some(c => c.includes('comment 12') && c.includes('ack:901'))).toBe(true)
+    expect(w.state()?.state).toBe(state)
+  })
+}
+
 // ---- the mode and the steering of one issue ----
 test('started takes the mode that the agent chooses, and the record of that issue keeps it', async ($, on) => {
   const w = engine(on, { wf: null, config: { mode: 'light' } })

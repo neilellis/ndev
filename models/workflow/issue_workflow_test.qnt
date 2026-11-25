@@ -135,6 +135,18 @@ module light_test {
       .then(finishedRevision)
       .expect(wf.state == "ci")
 
+  run lightCommentAnswersFeedbackInDoneTest =
+    lightDoneOpen
+      .then(reviewerComments)
+      .then(answerFeedback)
+      .expect(wf.state == "done" and not(pr.feedback) and safety)
+
+  run lightCommentAnswersFeedbackInCiTest =
+    lightInCi
+      .then(reviewerComments)
+      .then(answerFeedback)
+      .expect(wf.state == "ci" and not(pr.feedback) and safety)
+
   run lightHeldCommitsBlockDoneAfterHumanMergeTest =
     initWith("small_project", "auto")
       .then(startedWith(false, false, false, false))

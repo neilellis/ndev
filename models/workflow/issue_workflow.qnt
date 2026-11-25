@@ -470,7 +470,6 @@ module issue_workflow {
   }
 
   action answerFeedback = all {
-    wf.state == "revising",
     pr.feedback,
     pr' = { ...pr, feedback: false },
     wf' = wf, visited' = visited, last' = "answerFeedback",
