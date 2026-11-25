@@ -17,6 +17,6 @@ test('provision.sh provisions, repeats with no change, and verify-server.sh chec
   }
   const r = spawnSync('docker', ['run', '--rm', '--network', 'none', '-v', `${skill}:/skill:ro`, image, 'bash', '/skill/scripts/tests/provision-container.sh'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
   const output = `${r.stdout}${r.stderr}`
-  assert.equal(r.status, 0, output.split('\n').filter(line => /^FAIL|failed/.test(line)).join('\n') || output)
+  assert.equal(r.status, 0, output.split('\n').filter(line => /^FAIL|failed|provision\.sh:.*(exited with code|step )/.test(line)).join('\n') || output)
   assert.match(r.stdout, /^provision \(in container\): all passed$/m)
 })
