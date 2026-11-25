@@ -9,7 +9,7 @@ import { DEFAULT_PARALLEL, EPIC_STATES, IN_FLIGHT, ISSUE_STATES, KEY, OWNER_LIVE
 import { readProject } from './project.mjs'
 import { resolveRemote } from './remote.mjs'
 import { readWorkflowRecords } from './waits.mjs'
-import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, recordDebts, requirementIds, rulingProblem } from './epic-closing.ts'
+import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, recordDebts, requirementIds, rulingConflict, rulingProblem } from './epic-closing.ts'
 
 const string = { type: 'string' }
 const boolean = { type: 'boolean' }
@@ -367,6 +367,9 @@ function ruleDebt(workspace, e, before, key, v) {
   const ruling = readObject(resolve(workspace.root, v.file))
   const problem = rulingProblem(ruling)
   if (problem) bad(`Debt ${key} ${problem}.`)
+  const conflict = rulingConflict(debt, ruling)
+  if (conflict) refuse(`${conflict}.`, `Keep the ruling, or record what changed as a new debt with its own key and rule on that.`)
+  if (debt.ruling) return epicResult(e)
   if (ruling.verdict === 'issue-filed') {
     const found = github(e.root, e.repo, `/issues/${ruling.issue}`)
     if (found?.number !== ruling.issue || found.state !== 'open' || found.pull_request) refuse(`Debt ${key} needs an open follow-up issue #${ruling.issue} in ${e.repo}.`)

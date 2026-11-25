@@ -217,6 +217,8 @@ const engine = (on: On, opts: Opts = {}) => {
         return s.files === '__fail__' ? ok('', 1, 'HTTP 502: Bad Gateway') : ok(s.files.map(f => `${f.status}\t${f.filename}\n`).join(''))
       }
       if (a[2] === 'api' && line.includes('/commits/main')) return ok(JSON.stringify({ sha: CLOSING_SHA }))
+      const issueApi = a[2] === 'api' ? new RegExp(`^repos/${REPO}/issues/(\\d+)$`).exec(a[3] ?? '') : null
+      if (issueApi && typeof s.issues[Number(issueApi[1])] === 'object') return ok(JSON.stringify({ number: Number(issueApi[1]), ...(s.issues[Number(issueApi[1])] as object) }))
       if (a[2] === 'default-branch') return ok('{"default_branch":"main"}')
       return ok('', 1, `gh.sh not faked: ${line}`)
     }
@@ -1704,4 +1706,31 @@ test('issue 248: verify with skipped checks needs one place under the debt cap, 
   const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'verified', verdict: 'approve' })
   expect(r.isError).toBe(false)
   expect(w.epic()?.debts?.filter(debt => debt.key.startsWith('verify:41:')).length).toBe(5)
+})
+
+test('issue 257: epicDebtRuling refuses a different ruling of a ruled debt and prints the one it has', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40 })
+  await tool($, 'epicDebt', { issue: 40, key: 'docs', kind: 'gate-override', note: 'Docs check omitted' })
+  const accepted = { issue: 40, key: 'docs', ruling: { verdict: 'accepted', reason: 'The owner accepts it' } }
+  expect((await tool($, 'epicDebtRuling', accepted)).isError).toBe(false)
+  expect((await tool($, 'epicDebtRuling', accepted)).isError).toBe(false)
+  const before = w.files.get(EPIC_FILE(40))
+  const r = await tool($, 'epicDebtRuling', { issue: 40, key: 'docs', ruling: { verdict: 'fixed', reason: 'Repaired', evidence: 'commit abc' } })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('docs already has the ruling accepted: The owner accepts it')
+  expect(w.files.get(EPIC_FILE(40))).toBe(before)
+})
+
+test('issue 257: the same issue-filed ruling again changes nothing after its follow-up issue closed', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await tool($, 'epicStarted', { issue: 40 })
+  await tool($, 'epicDebt', { issue: 40, key: 'docs', kind: 'gate-override', note: 'Docs check omitted' })
+  const filed = { issue: 40, key: 'docs', ruling: { verdict: 'issue-filed', reason: 'Track it', issue: 90 } }
+  w.s.issues[90] = { state: 'open', title: 'Follow-up' }
+  expect((await tool($, 'epicDebtRuling', filed)).isError).toBe(false)
+  w.s.issues[90] = { state: 'closed', title: 'Follow-up' }
+  expect((await tool($, 'epicDebtRuling', filed)).isError).toBe(false)
 })

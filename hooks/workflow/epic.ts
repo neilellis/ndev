@@ -12,7 +12,7 @@ import { SECTION, boundRoot, inFreeTurn, loadWorkflow, registerWorkflowFailure, 
 
 import { EPIC_STATES, nextEpicState, mergedSubIssue, resliced, sliceProblems, SLICE_CAP, capNote, sourcePaths, sourceProblem, SOURCE_FORM, coreIdeaProblem, specPrLinkProblem, specPrLinkRepair, specPrProblem, stackPlan, frontierText, implementerBrief, reviewerBrief, unstackSteps, ISSUE_STATES, IN_FLIGHT, PLAN_STATES, ROUND_LIMIT, DEFAULT_PARALLEL, OWNER_LIVE_MS, KEY, SHORT_NAME, tag, tags, link, type EpicState, type IssueState, type Role, type SubIssue, type Epic, type Slice, type Stack } from '../../scripts/ndev/epic-model'
 export * from '../../scripts/ndev/epic-model'
-import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, recordDebts, requirementIds, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
+import { DebtRefused, closingFollowups, closingProblems, closingSha, configureClosing, debtProblem, decisionIds, mergeDebts, recordDebt, recordDebts, requirementIds, rulingConflict, rulingProblem, type ClosingEvidence, type DebtRuling } from '../../scripts/ndev/epic-closing'
 
 // What the human can do next in each epic state, as options. kb/workflow.md "What the human can do next" lists them.
 export function epicHumanStep(epic: Epic): string {
@@ -398,6 +398,9 @@ async function epicDebtRuling($: EngineInterface, c: Ctx): Promise<string> {
   const problem = rulingProblem(c.args.ruling)
   if (problem) throw new Refuse(`Refused: debt ${key} ${problem}.`)
   const ruling = c.args.ruling as DebtRuling
+  const conflict = rulingConflict(debt, ruling)
+  if (conflict) throw new Refuse(`Refused: ${conflict}. Nothing changed. Repair: keep the ruling, or record what changed as a new debt with its own key and rule on that.`)
+  if (debt.ruling) return answer(epic, `Debt ${key} ruled ${ruling.verdict}: ${ruling.reason}`)
   if (ruling.verdict === 'issue-filed') {
     const found = await ghOne<{ number: number; state: string; pull_request?: unknown }>($, epic.root, epic.repo, ['api', `repos/${epic.repo}/issues/${ruling.issue}`])
     if (found?.number !== ruling.issue || found.state !== 'open' || found.pull_request) throw new Refuse(`Refused: debt ${key} needs open follow-up issue #${ruling.issue}.`)

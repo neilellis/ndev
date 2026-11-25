@@ -1551,3 +1551,36 @@ test('issue 248: verify with skipped checks needs one place under the debt cap, 
   assert.equal(refused.status, 1, JSON.stringify(refused))
   assert.match(refused.error.message, /4 open debts.*cap is 4/)
 })
+
+test('issue 257: a ruled debt refuses a different ruling and prints the one it has', t => {
+  const f = fixture(t)
+  f.ok('start', '40')
+  const debt = join(f.home, 'debt.json'), ruling = join(f.home, 'ruling.json')
+  writeFileSync(debt, JSON.stringify({ key: 'docs', kind: 'gate-override', note: 'Docs check omitted' }))
+  f.ok('debt', '40', '--file', debt)
+  writeFileSync(ruling, JSON.stringify({ verdict: 'accepted', reason: 'The owner accepts it' }))
+  f.ok('ruling', '40', 'docs', '--file', ruling)
+  f.ok('ruling', '40', 'docs', '--file', ruling)
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  const before = readFileSync(record, 'utf8')
+  writeFileSync(ruling, JSON.stringify({ verdict: 'fixed', reason: 'Repaired', evidence: 'commit abc' }))
+  const refused = f.call('ruling', '40', 'docs', '--file', ruling)
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /docs already has the ruling accepted: The owner accepts it/)
+  assert.equal(readFileSync(record, 'utf8'), before)
+})
+
+test('issue 257: the same issue-filed ruling again changes nothing after its follow-up issue closed', t => {
+  const f = fixture(t)
+  f.ok('start', '40')
+  const debt = join(f.home, 'debt.json'), ruling = join(f.home, 'ruling.json')
+  writeFileSync(debt, JSON.stringify({ key: 'docs', kind: 'gate-override', note: 'Docs check omitted' }))
+  f.ok('debt', '40', '--file', debt)
+  writeFileSync(ruling, JSON.stringify({ verdict: 'issue-filed', reason: 'Track it', issue: 90 }))
+  f.answers['repos/example/repo/issues/90'] = { number: 90, state: 'open' }
+  f.save()
+  f.ok('ruling', '40', 'docs', '--file', ruling)
+  f.answers['repos/example/repo/issues/90'] = { number: 90, state: 'closed' }
+  f.save()
+  f.ok('ruling', '40', 'docs', '--file', ruling)
+})

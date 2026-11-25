@@ -70,6 +70,14 @@ export function rulingProblem(ruling: unknown): string | undefined {
   if (ruling.verdict === 'issue-filed' && !issue(ruling.issue)) return 'an issue-filed ruling needs a positive issue number'
 }
 
+const rulingText = (ruling: DebtRuling) => `${ruling.verdict}: ${ruling.reason}${ruling.evidence ? ` (evidence: ${ruling.evidence})` : ''}${ruling.issue ? ` (issue #${ruling.issue})` : ''}`
+
+// Model: models/workflow/epic_workflow.qnt#ruleDebt
+export function rulingConflict(debt: EpicDebt, ruling: DebtRuling): string | undefined {
+  if (!debt.ruling || rulingText(debt.ruling) === rulingText(ruling)) return undefined
+  return `Debt ${debt.key} already has the ruling ${rulingText(debt.ruling)}. A debt is ruled once`
+}
+
 export function debtProblem(debt: unknown): string | undefined {
   if (!object(debt) || !text(debt.key) || !/^[a-z0-9][a-z0-9._:-]{0,119}$/.test(debt.key)) return 'debt needs a stable key of lower-case letters, numbers, dots, colons, underscores or hyphens'
   if (!['skipped-check', 'merge-without-review', 'gate-override'].includes(debt.kind) || !text(debt.note)) return 'debt needs a kind and a note'
