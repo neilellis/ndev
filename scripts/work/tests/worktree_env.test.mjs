@@ -1104,7 +1104,7 @@ test('with old keys and a bad issue file, a resource still changes, and the old 
 })
 
 const issueOn = (wt, n) => JSON.parse(readFileSync(join(wt, `.neil-dev.issue-${n}.json`), 'utf8'))
-const setInterview = (wt, value) => spawnSync(SCRIPT, ['set-interview', '--worktree', wt], { input: JSON.stringify(value), encoding: 'utf8' })
+const setInterview = (wt, expected, value) => spawnSync(SCRIPT, ['set-interview', '--worktree', wt, ...(expected === undefined ? [] : ['--expect-rev', String(expected)])], { input: JSON.stringify(value), encoding: 'utf8' })
 const ROUNDS = [{ title: 'R', questions: [], answers: [], at: 1 }]
 
 test('an issue file with interview answers still saves a workflow, and keeps the answers', () => {
@@ -1124,13 +1124,13 @@ test('set-interview changes only the answers: the workflow and the PR records st
   assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'developing' }).status, 0)
   assert.equal(setWorkflow(wt, 1, { issue: 7, state: 'reviewing' }).status, 0)
   assert.equal(setWorkflow(wt, 0, { issue: 7, pr: 12, state: 'ci' }).status, 0)
-  const first = setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS, draft: { a: { selected: [] } } })
+  const first = setInterview(wt, 0, { version: 1, issue: 7, rounds: ROUNDS, draft: { a: { selected: [] } } })
   assert.equal(first.status, 0, first.stderr)
   assert.equal(issueOn(wt, 7).workflow.rev, 2)
   assert.equal(issueOn(wt, 7).prs[12].state, 'ci')
   assert.deepEqual(issueOn(wt, 7).rounds, ROUNDS)
   // What the writer leaves out goes: a finished round has no draft.
-  assert.equal(setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS }).status, 0)
+  assert.equal(setInterview(wt, 1, { version: 1, issue: 7, rounds: ROUNDS }).status, 0)
   assert.equal(issueOn(wt, 7).draft, undefined)
   assert.equal(issueOn(wt, 7).workflow.rev, 2)
 })
@@ -1139,10 +1139,10 @@ test('set-interview keeps the open chat round of Orca Chat until the answers rep
   const wt = workflowRepo()
   assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'interviewing' }).status, 0)
   const chatRound = { title: 'R', questions: [{ id: 'a', header: 'A', question: 'A?', suggested: 'x' }] }
-  const saved = setInterview(wt, { version: 1, issue: 7, rounds: [], chatRound })
+  const saved = setInterview(wt, 0, { version: 1, issue: 7, rounds: [], chatRound })
   assert.equal(saved.status, 0, saved.stderr)
   assert.deepEqual(issueOn(wt, 7).chatRound, chatRound)
-  assert.equal(setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS }).status, 0)
+  assert.equal(setInterview(wt, 1, { version: 1, issue: 7, rounds: ROUNDS }).status, 0)
   assert.equal(issueOn(wt, 7).chatRound, undefined)
   assert.equal(issueOn(wt, 7).workflow.state, 'interviewing')
 })
@@ -1150,10 +1150,28 @@ test('set-interview keeps the open chat round of Orca Chat until the answers rep
 test('set-interview refuses a stale copy of the workflow, and names what it refused', () => {
   const wt = workflowRepo()
   assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'developing' }).status, 0)
-  const refused = setInterview(wt, { version: 1, issue: 7, rounds: ROUNDS, workflow: { issue: 7, state: 'setup', rev: 0 } })
+  const refused = setInterview(wt, 0, { version: 1, issue: 7, rounds: ROUNDS, workflow: { issue: 7, state: 'setup', rev: 0 } })
   assert.equal(refused.status, 2)
   assert.match(refused.stderr, /workflow/)
   assert.equal(issueOn(wt, 7).workflow.state, 'developing')
+})
+
+test('set-interview refuses a writer whose revision of the answers is stale, and changes nothing', () => {
+  const wt = workflowRepo()
+  assert.equal(setWorkflow(wt, 0, { issue: 7, state: 'interviewing' }).status, 0)
+  const submitted = setInterview(wt, 0, { version: 1, issue: 7, rounds: ROUNDS, posted: false })
+  assert.equal(submitted.status, 0, submitted.stderr)
+  assert.equal(submitted.stdout.trim(), '1')
+  assert.equal(issueOn(wt, 7).interviewRev, 1)
+  const stale = setInterview(wt, 0, { version: 1, issue: 7, rounds: [] })
+  assert.equal(stale.status, 5, stale.stderr)
+  assert.match(stale.stderr, /the interview of #7 in .*\.neil-dev\.issue-7\.json is at revision 1, and this writer expected 0\. Nothing was changed\. Repair: read the file again and redo the change\./)
+  assert.deepEqual(issueOn(wt, 7).rounds, ROUNDS)
+  assert.equal(issueOn(wt, 7).posted, false)
+  const unnamed = setInterview(wt, undefined, { version: 1, issue: 7, rounds: [] })
+  assert.equal(unnamed.status, 2)
+  assert.match(unnamed.stderr, /--expect-rev/)
+  assert.deepEqual(issueOn(wt, 7).rounds, ROUNDS)
 })
 
 test('moving old state into an issue file keeps its answers', () => {

@@ -27,7 +27,7 @@
 //   worktree-env.sh migrate [--worktree <dir>]
 //   worktree-env.sh init [--worktree <dir>]
 //   worktree-env.sh set-setting --key mode|steering --value <value> [--worktree <dir>]
-//   worktree-env.sh set-interview [--worktree <dir>]   (the interview answers of one issue as JSON on stdin; the workflow and the PR records in that file stay)
+//   worktree-env.sh set-interview --expect-rev <n> [--worktree <dir>]   (the interview answers of one issue as JSON on stdin; the workflow and the PR records in that file stay)
 //   worktree-env.sh set-workflow --expect-rev <n> [--worktree <dir>]   (the state of one issue as JSON on stdin)
 //
 // add-dev-server names a running server by what it shows ("docs", "ui"); the same name again
@@ -38,8 +38,8 @@
 //
 // Exit codes: 0 done; 1 a stop failed (its entry stays); 2 bad usage, an unreadable file or a
 // held lock; 3 refused (the main checkout, a file that is not git-ignored, or an id or pid that
-// another worktree lists); 4 remove-stack or remove-dev-server: not listed; 5 set-workflow: a stale
-// revision.
+// another worktree lists); 4 remove-stack or remove-dev-server: not listed; 5 set-workflow or
+// set-interview: a stale revision.
 import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -367,7 +367,7 @@ function withLockFile(root, name, fn) {
 
 // The interview tool owns these keys of an issue file, and set-interview writes them. See InterviewFile
 // in hooks/workflow/interview-model.ts, and issueFileProblem in hooks/workflow/tools.ts, which keeps the same list.
-const INTERVIEW_KEYS = ['rounds', 'draft', 'chatRound', 'commentIds', 'posted', 'closed', 'startedByFollowUp']
+const INTERVIEW_KEYS = ['rounds', 'draft', 'chatRound', 'commentIds', 'posted', 'closed', 'startedByFollowUp', 'interviewRev']
 const interviewOf = value => Object.fromEntries(Object.entries(value).filter(([key]) => INTERVIEW_KEYS.includes(key)))
 
 // One issue file as { workflow, prs, interview }. A missing file holds none. A shape this script does not know
@@ -582,6 +582,8 @@ function setWorkflow(values) {
 // Replaces the interview keys of one issue file, under its lock. A copy of the workflow is refused, so
 // that an old read of the file cannot put a record back at an earlier revision.
 function setInterview(values) {
+  const expected = Number(need(values, 'expect-rev'))
+  if (!Number.isInteger(expected) || expected < 0) throw new Fail(2, `worktree-env: --expect-rev "${values['expect-rev']}" is not a revision number.`)
   let file
   try {
     file = JSON.parse(readFileSync(0, 'utf8'))
@@ -594,7 +596,13 @@ function setInterview(values) {
   if (extra.length > 0) throw new Fail(2, `worktree-env: set-interview for #${file.issue} takes only ${INTERVIEW_KEYS.join(', ')}, and got ${quoted(extra)}. Nothing was changed. Repair: remove that key; set-workflow writes the workflow.`)
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
   ignoreLocally(root, gitDirs(root).common, file.issue)
-  withIssueLock(root, file.issue, () => writeIssue(root, file.issue, { ...readIssue(root, file.issue), interview: interviewOf(file) }))
+  withIssueLock(root, file.issue, () => {
+    const held = readIssue(root, file.issue)
+    const current = held.interview?.interviewRev ?? 0
+    if (current !== expected) throw new Fail(5, `worktree-env: the interview of #${file.issue} in ${join(root, issueName(file.issue))} is at revision ${current}, and this writer expected ${expected}. Nothing was changed. Repair: read the file again and redo the change.`)
+    writeIssue(root, file.issue, { ...held, interview: { ...interviewOf(file), interviewRev: expected + 1 } })
+  })
+  console.log(String(expected + 1))
 }
 
 // Rewrites a version 1 file ({ version: 1, stacks: [...] }) as version 2, with the stacks under

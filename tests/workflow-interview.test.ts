@@ -312,6 +312,31 @@ test('in Orca Chat the round comes back as Markdown for the chat, and answersJso
   expect(w.state()?.state).toBe('planning')
 })
 
+test('in Orca Chat the answers are refused, and the other writer keeps its round, when the file changed after they were read', async ($, on) => {
+  const w = engine(on, { wf: asking({ mode: 'heavy' }) })
+  w.s.env.ORCA_STRUCTURED_SESSION = '1'
+  await start($, w)
+  expect((await tool($, 'interview', { interviewJson: ROUND })).isError).toBe(false)
+  const other = { title: 'From the terminal', questions: [], answers: [], at: 1 }
+  let raced = false
+  w.s.failWrite = (path: string) => {
+    if (path !== INTERVIEW_FILE || raced) return false
+    raced = true
+    const held = JSON.parse(w.files.get(path)!) as { interviewRev?: number }
+    w.files.set(path, JSON.stringify({ ...held, rounds: [other], interviewRev: (held.interviewRev ?? 0) + 1 }))
+    return false
+  }
+  const r = await tool($, 'interview', { answersJson: { store: { selected: ['Cookie'] }, name: { other: 'session' }, browsers: { selected: ['Chrome'] } } })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('the answers did not reach')
+  expect(r.text).toContain('is at revision 2, and this writer expected 1')
+  expect(interviewFile(w).rounds).toEqual([other])
+  w.s.failWrite = undefined
+  const again = await tool($, 'interview', { answersJson: { store: { selected: ['Cookie'] }, name: { other: 'session' }, browsers: { selected: ['Chrome'] } } })
+  expect(again.isError).toBe(false)
+  expect(interviewFile(w).rounds.length).toBe(2)
+})
+
 test('in Orca Chat answersJson refuses an answer that is not an option, and one with no round open', async ($, on) => {
   const w = engine(on, { wf: asking({ mode: 'heavy' }) })
   w.s.env.ORCA_CHAT_SCRATCH_DIR = '/scratch'
@@ -426,13 +451,13 @@ test('a followUp worker gets the interview files: the parent leaves them, and th
 })
 
 test('the child of a followUp takes the answers at started, and a heavy child can leave with no questions', async ($, on) => {
-  const parentFile = JSON.stringify({ version: 1, issue: 3, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }] })
+  const parentFile = JSON.stringify({ version: 1, issue: 3, rounds: [{ title: 'R', questions: [], answers: [], at: 1 }], interviewRev: 4 })
   const handOver = '/main/.git/ndev-interview-handover-7.json'
   const w = engine(on, { wf: null, config: { mode: 'heavy', steering: 'interactive' }, files: { [handOver]: JSON.stringify({ followUpOf: 3, at: 5, files: [{ name: '.neil-dev.issue-3.json', text: parentFile }] }) } })
   await human($, w)
   await tool($, 'started', { issue: 7, shortName: 'add-sub' })
   expect(w.state()?.state).toBe('interviewing')
-  expect(JSON.parse(w.files.get(`${ROOT}/.neil-dev.issue-3.json`)!)).toEqual(JSON.parse(parentFile))
+  expect(JSON.parse(w.files.get(`${ROOT}/.neil-dev.issue-3.json`)!)).toEqual({ ...JSON.parse(parentFile), interviewRev: 1 })
   expect(JSON.parse(w.files.get(INTERVIEW_FILE)!).startedByFollowUp).toEqual({ of: 3, at: 5 })
   const r = await tool($, 'interview')
   expect(r.isError).toBe(false)

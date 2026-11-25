@@ -314,9 +314,12 @@ export const engine = (on: On, opts: Opts = {}) => {
         const written = JSON.parse(String(e.init?.stdin)) as { issue: number }
         const at = `${a[a.indexOf('--worktree') + 1]}/.neil-dev.issue-${written.issue}.json`
         if (s.failWrite?.(at)) return ok('', 2, `disk full: ${at}`)
-        const held = JSON.parse(files.get(at) ?? '{}') as { workflow?: unknown; prs?: unknown }
-        files.set(at, JSON.stringify({ ...written, ...(held.workflow ? { workflow: held.workflow } : {}), ...(held.prs ? { prs: held.prs } : {}) }))
-        return ok()
+        const held = JSON.parse(files.get(at) ?? '{}') as { workflow?: unknown; prs?: unknown; interviewRev?: number }
+        const expected = Number(a[a.indexOf('--expect-rev') + 1])
+        if (!a.includes('--expect-rev') || !Number.isInteger(expected)) return ok('', 2, 'worktree-env: --expect-rev is required.')
+        if ((held.interviewRev ?? 0) !== expected) return ok('', 5, `the interview of #${written.issue} is at revision ${held.interviewRev ?? 0}, and this writer expected ${expected}`)
+        files.set(at, JSON.stringify({ ...written, interviewRev: expected + 1, ...(held.workflow ? { workflow: held.workflow } : {}), ...(held.prs ? { prs: held.prs } : {}) }))
+        return ok(`${expected + 1}\n`)
       }
       if (a[2] === 'stop-all') {
         steps.push(`worktree-env.sh ${a.slice(2).join(' ')}`)

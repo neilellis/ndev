@@ -37,11 +37,12 @@ export type InterviewFile = {
   posted?: boolean
   closed?: { at: number; asked: boolean }
   startedByFollowUp?: { of: number; at: number }
+  interviewRev?: number
 }
 
 // The keys of an issue file that the interview owns. The workflow and the PR records in that file belong to
 // set-workflow. INTERVIEW_KEYS in scripts/work/worktree_env.mjs keeps the same list.
-export const INTERVIEW_KEYS = ['rounds', 'draft', 'chatRound', 'commentIds', 'posted', 'closed', 'startedByFollowUp'] as const
+export const INTERVIEW_KEYS = ['rounds', 'draft', 'chatRound', 'commentIds', 'posted', 'closed', 'startedByFollowUp', 'interviewRev'] as const
 export const interviewFileName = (issue: number) => `.neil-dev.issue-${issue}.json`
 export const INTERVIEW_FILE_PATTERN = '.neil-dev.issue-*.json'
 export const emptyFile = (issue: number): InterviewFile => ({ version: 1, issue, rounds: [] })

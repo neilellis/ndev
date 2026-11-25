@@ -326,6 +326,7 @@ test('a pending interview survives a bad answer and accepts an answer by questio
   const result = JSON.parse(output(flow(p, ['interview', '--answers-file', input])))
   assert.equal(result.rounds[0].answers[0].other, 'CLI and tests')
   assert.equal(result.state, 'interviewing')
+  assert.equal(JSON.parse(readFileSync(p.file, 'utf8')).interviewRev, 2)
 })
 
 test('two issues on one PR wait for the last developer and share one PR review record', () => {

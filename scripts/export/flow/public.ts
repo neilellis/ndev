@@ -187,7 +187,7 @@ function updateRound(root: string, issue: number, mode: Mode, args: Record<strin
     file.rounds.push(finishRound(file.chatRound, parsed.answers, 'submitted', Date.now()))
     delete file.chatRound
   }
-  checked('bash', [worktreeScript, 'set-interview', '--worktree', root], { cwd: root, input: JSON.stringify(file) })
+  checked('bash', [worktreeScript, 'set-interview', '--worktree', root, '--expect-rev', String(file.interviewRev ?? 0)], { cwd: root, input: JSON.stringify(file) })
   return view()
 }
 

@@ -1277,7 +1277,7 @@ function leaveInterviewFile(wf: Workflow, verb: string): string[] {
   if (raw.rounds?.length && raw.posted === false) throw new Fail(1, `ndev-flow: the interview answers of #${wf.issue} are not on GitHub ("posted": false in ${path}), so #${wf.issue} stays in "${wf.state}". Nothing changed. Repair: run /flow ${verb} in a Claude Code session on this worktree, which posts them first; or post them on #${wf.issue} with ${FLOW} comment, set "posted" to true in that file, and run ${FLOW} ${verb} again.`)
   if (!raw.chatRound) return []
   const { workflow, prs, chatRound, ...interview } = raw
-  const r = run('bash', [`${HOME}/scripts/work/worktree-env.sh`, 'set-interview', '--worktree', wf.root], { cwd: wf.root, input: JSON.stringify(interview) })
+  const r = run('bash', [`${HOME}/scripts/work/worktree-env.sh`, 'set-interview', '--worktree', wf.root, '--expect-rev', String(raw.interviewRev ?? 0)], { cwd: wf.root, input: JSON.stringify(interview) })
   if (r.status !== 0) throw new Fail(1, `ndev-flow: the chat round "${chatRound.title}" of #${wf.issue} was not dropped: worktree-env.sh set-interview exited ${r.status}: ${said(r)}. Nothing changed. Repair: fix the cause, then run ${FLOW} ${verb} again.`)
   return [`The chat round "${chatRound.title}" had no answers, and it is dropped.`]
 }

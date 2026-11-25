@@ -3333,8 +3333,10 @@ async function readInterview($: EngineInterface, root: string, issue: number): P
 }
 // Through the script, under the lock of the issue file, because the workflow is in that file too.
 async function writeInterview($: EngineInterface, root: string, file: InterviewFile): Promise<void> {
-  const r = await run($, ['bash', envScript($), 'set-interview', '--worktree', root], { cwd: root, stdin: JSON.stringify(file) })
+  const expected = file.interviewRev ?? 0
+  const r = await run($, ['bash', envScript($), 'set-interview', '--worktree', root, '--expect-rev', String(expected)], { cwd: root, stdin: JSON.stringify(file) })
   if (r.exitCode !== 0) throw new Error(`${interviewPath(root, file.issue)} was not saved: set-interview exited ${r.exitCode}: ${said(r)}`)
+  file.interviewRev = expected + 1
 }
 
 // The file stays out of commits, in the exclude file that all worktrees share. A failure is a note,
@@ -3359,7 +3361,10 @@ async function prepareInterview($: EngineInterface, root: string, issue: number)
   const path = handOverPath(common, issue)
   try {
     const handed = JSON.parse(await $.fs.read(path)) as { followUpOf: number; at: number; files: { name: string; text: string }[] }
-    for (const f of handed.files) await writeInterview($, root, interviewOnly(Number(/\d+/.exec(f.name)?.[0]), JSON.parse(f.text) as object))
+    for (const f of handed.files) {
+      const n = Number(/\d+/.exec(f.name)?.[0])
+      await writeInterview($, root, { ...interviewOnly(n, JSON.parse(f.text) as object), interviewRev: (await readInterview($, root, n)).interviewRev })
+    }
     const own = await readInterview($, root, issue)
     if (!own.rounds.length && !own.startedByFollowUp) await writeInterview($, root, { ...own, startedByFollowUp: { of: handed.followUpOf, at: handed.at } })
     const removed = await run($, ['rm', '-f', path], { cwd: root })
