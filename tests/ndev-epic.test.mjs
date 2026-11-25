@@ -1625,7 +1625,7 @@ test('issue 279: brief and start refuse a waiting sub-issue whose closing PR is 
     const refused = f.call(...args)
     assert.equal(refused.status, 1, JSON.stringify(refused))
     assert.match(refused.error.message, /#41 is waiting.*PR #70.*open/)
-    assert.equal(refused.error.repair, 'Run ndev epic import 40 --issues-file <json> --evidence <text>.')
+    assert.equal(refused.error.repair, 'Run ndev epic import 40 --issues-file <json> --evidence <text>. If it still records #41 as waiting, remove PR #70 from the Development section of #41.')
     assert.equal(readFileSync(record, 'utf8'), before)
   }
   f.answers['repos/example/repo/pulls/70'].state = 'closed'
@@ -1653,8 +1653,75 @@ test('issue 280: a verified sub-issue goes back to reviewing only after its PR h
   const pushed = 'b'.repeat(40)
   f.answers['repos/example/repo/pulls/61'].head.sha = pushed
   f.save()
+  const unmerged = f.call('issue', '40', '41', 'merged')
+  assert.match(unmerged.error.repair, /ndev epic issue 40 41 reviewing/)
+  f.answers['repos/example/repo/pulls/61'].state = 'closed'
+  f.save()
+  const shut = f.call('issue', '40', '41', 'reviewing')
+  assert.match(shut.error.repair, /ndev epic issue 40 41 merged.*gh pr reopen 61.*ndev epic issue 40 41 blocked/)
+  f.answers['repos/example/repo/pulls/61'].state = 'open'
+  f.save()
   const moved = f.ok('issue', '40', '41', 'reviewing', '--worker', 'review-2').epic.issues[41]
   assert.equal(moved.state, 'reviewing')
   assert.equal(moved.reviewer, 'review-2')
   assert.equal(moved.verification.sha, verified)
+})
+
+function waitingClosers(t, ...closers) {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'waiting' } }
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  function close(number, repo, created) {
+    const [owner, name] = repo.split('/')
+    closers.push({ number, url: `https://github.com/${repo}/pull/${number}`, repository: { name, owner: { login: owner } } })
+    f.answers['closers:41'] = { closedByPullRequestsReferences: closers }
+    f.answers[`repos/${repo}/pulls/${number}`] = { number, state: 'open', merged: false, created_at: created, head: { ref: 'work', sha: 'r'.repeat(40) } }
+    f.save()
+  }
+  return { ...f, record, close, start: () => f.call('issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root) }
+}
+
+test('issue 279: the start records the draft PR that the briefed worker opened, and refuses a reopened one', t => {
+  const f = waitingClosers(t)
+  f.ok('brief', '40', '41', 'implementer')
+  f.close(70, 'example/repo', '2020-01-01T00:00:00Z')
+  const refused = f.start()
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /PR #70/)
+  f.answers['repos/example/repo/pulls/70'].created_at = new Date(Date.now() + 60_000).toISOString()
+  f.save()
+  const again = f.call('brief', '40', '41', 'implementer')
+  assert.equal(again.status, 1, JSON.stringify(again))
+  const started = f.start()
+  assert.equal(started.status, 0, JSON.stringify(started))
+  assert.equal(started.result.epic.issues[41].state, 'implementing')
+})
+
+test('issue 279: an import forgets the brief, so a PR opened after it is refused at the start', t => {
+  const f = waitingClosers(t)
+  f.ok('brief', '40', '41', 'implementer')
+  f.answers['repos/example/repo/issues/40/sub_issues'] = [{ number: 41, title: 'Part', state: 'open' }]
+  f.answers['repos/example/repo/issues/41/timeline'] = []
+  f.save()
+  const manifest = join(f.home, 'import.json')
+  writeFileSync(manifest, JSON.stringify([{ issue: 41, key: 'part', kind: 'implementation', blockedBy: [] }]))
+  f.ok('import', '40', '--issues-file', manifest, '--evidence', 'reconciled')
+  f.close(70, 'example/repo', new Date(Date.now() + 60_000).toISOString())
+  const refused = f.start()
+  assert.equal(refused.status, 1, JSON.stringify(refused))
+  assert.match(refused.error.message, /PR #70/)
+})
+
+test('issue 279: a closing PR of another repository gets a repair that does not send the caller to import', t => {
+  const f = waitingClosers(t)
+  f.close(7, 'acme/other', '2020-01-01T00:00:00Z')
+  const foreign = f.call('brief', '40', '41', 'implementer')
+  assert.equal(foreign.status, 1, JSON.stringify(foreign))
+  assert.match(foreign.error.message, /PR acme\/other#7/)
+  assert.match(foreign.error.repair, /gh pr view 7 --repo acme\/other/)
+  assert.match(foreign.error.repair, /closing reference to example\/repo#41/)
+  assert.doesNotMatch(foreign.error.repair, /ndev epic import/)
 })

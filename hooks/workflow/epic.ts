@@ -532,20 +532,31 @@ function subOf(epic: Epic, args: Args): SubIssue {
 }
 
 type ClosingRef = { number?: unknown; repository?: { name?: unknown; owner?: { login?: unknown } } }
-async function refuseOpenClosingPr($: EngineInterface, epic: Epic, sub: SubIssue, unchanged: string): Promise<void> {
+type OpenClosingPr = { repo: string; number: number; created: number }
+async function refuseOpenClosingPr($: EngineInterface, epic: Epic, sub: SubIssue, unchanged: string, since?: number): Promise<void> {
   const shown = `gh issue view ${sub.issue} --repo ${epic.repo} --json closedByPullRequestsReferences`
   const { closedByPullRequestsReferences: refs } = await ghOne<{ closedByPullRequestsReferences?: unknown }>($, epic.root, epic.repo, ['view-json', 'issue', String(sub.issue), '--fields', 'closedByPullRequestsReferences'])
   if (!Array.isArray(refs) || refs.length >= 100) throw new Refuse(`Refused: the closing PR evidence of #${sub.issue} is missing or may be truncated: ${JSON.stringify(refs)}. ${unchanged} Repair: run \`${shown}\`, then try again.`)
-  const open: string[] = []
+  const open: OpenClosingPr[] = []
   for (const ref of refs as ClosingRef[]) {
     const owner = ref?.repository?.owner?.login
     const name = ref?.repository?.name
     if (typeof owner !== 'string' || typeof name !== 'string' || !isCount(ref.number)) throw new Refuse(`Refused: the closing PR ${JSON.stringify(ref)} of #${sub.issue} names no repository or number. ${unchanged} Repair: run \`${shown}\`, then try again.`)
     const repo = `${owner}/${name}`
     const pr = await readPr($, epic.root, repo, Number(ref.number))
-    if (pr.state === 'open') open.push(repo === epic.repo ? `PR #${ref.number}` : `PR ${repo}#${ref.number}`)
+    if (pr.state === 'open') open.push({ repo, number: Number(ref.number), created: Date.parse(pr.created_at) })
   }
-  if (open.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${open.join(', ')} is open, so another owner works on it. ${unchanged} Repair: run \`ndev epic import ${epic.epic} --issues-file <json> --evidence <text>\`, which records #${sub.issue} as external.`)
+  const own = (pr: OpenClosingPr) => pr.repo === epic.repo && pr.created > (sub.briefedAt ?? Infinity)
+  const others = since ? open.filter(pr => !own(pr)) : open
+  if (others.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${others.map(pr => (pr.repo === epic.repo ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`)).join(', ')} is open, so another owner works on it. ${unchanged} Repair: ${closingPrRepair(epic, sub, others, own)}`)
+}
+
+function closingPrRepair(epic: Epic, sub: SubIssue, open: OpenClosingPr[], own: (pr: OpenClosingPr) => boolean): string {
+  const foreign = open.filter(pr => pr.repo !== epic.repo)
+  if (foreign.length) return `${foreign.map(pr => `read it with \`gh pr view ${pr.number} --repo ${pr.repo}\`.`).join(' ')} Close it, or remove its closing reference to ${epic.repo}#${sub.issue}, then try again.`
+  const imports = `run \`ndev epic import ${epic.epic} --issues-file <json> --evidence <text>\`, which records #${sub.issue} as external. If it still records #${sub.issue} as waiting, remove ${open.map(pr => `PR #${pr.number}`).join(', ')} from the Development section of #${sub.issue}.`
+  if (open.every(own)) return `if the worker that you started from the last brief opened it, call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "implementing", worker (the dispatch id) and workspace. If not, ${imports}`
+  return imports
 }
 
 // Model: models/workflow/epic_workflow.qnt#brief
@@ -608,7 +619,8 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   const restacks = (stack && sub.stackedOn !== stack.on.issue) || unstacked
   if (stack) sub.stackedOn = stack.on.issue
   else if (unstacked) delete sub.stackedOn
-  if (movesServer || restacks) await saveEpic($, epic)
+  if (role === 'implementer') sub.briefedAt = await $.clock.now()
+  if (role === 'implementer' || movesServer || restacks) await saveEpic($, epic)
   const stackedNote = stack ? `\nStacked on #${stack.on.issue}: the worktree starts from origin/${stack.branch}, the head of PR #${stack.on.pr}, which is not merged. The record has stackedOn ${stack.on.issue} for #${sub.issue}. The brief tells the worker to give its PR the base ${stack.branch}.` : ''
   const record = role === 'implementer'
     ? `mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "implementing", worker (the dispatch id) and workspace (${remote ? `the worktree id on the server, <repoId>::<path>: ${worktreeIdRepair(remote)}` : 'the absolute path of the new worktree'})`
@@ -689,7 +701,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         const inFlight = Object.values(epic.issues).filter(i => IN_FLIGHT.includes(i.state))
         if (inFlight.length >= epic.parallel) throw new Refuse(`Refused: all ${epic.parallel} parallel places are taken by ${tags(inFlight.map(i => i.issue))}. Nothing changed. Repair: wait for one to merge, or ask the human to raise parallel (epicStarted with parallel).`)
         if (!worker) throw new Refuse(`Refused: "implementing" needs worker, the dispatch id of the implementer. Nothing changed.`)
-        await refuseOpenClosingPr($, epic, sub, 'Nothing changed.')
+        await refuseOpenClosingPr($, epic, sub, 'Nothing changed.', sub.briefedAt)
         sub.implementer = worker
         if (workspace) sub.workspace = workspace
         break
@@ -724,7 +736,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         const checked = sub.verification?.sha
         if (!checked) throw new Refuse(`Refused: #${sub.issue} is verified, and its record has no verified head. Nothing changed. Repair: restore the last valid ${epic.root}/.neil-dev.epic-${epic.epic}.json.`)
         const pr = await readPr($, epic.root, epic.repo, sub.pr!)
-        if (pr.state !== 'open' || pr.merged) throw new Refuse(`Refused: PR #${sub.pr} of #${sub.issue} must be open to review again, and GitHub says state "${pr.state}", merged ${Boolean(pr.merged)}. Nothing changed. Repair: call mcp__ndev__epicStatus with issue ${epic.epic} and record what happened to PR #${sub.pr}.`)
+        if (pr.state !== 'open' || pr.merged) throw new Refuse(`Refused: PR #${sub.pr} of #${sub.issue} must be open to review again, and GitHub says state "${pr.state}", merged ${Boolean(pr.merged)}. Nothing changed. Repair: if it merged, call epicIssue with state "merged". If it closed, reopen it with \`gh pr reopen ${sub.pr} --repo ${epic.repo}\`, or call epicIssue with state "blocked" and a note.`)
         if (pr.head.sha === checked) throw new Refuse(`Refused: PR #${sub.pr} of #${sub.issue} is at ${pr.head.sha}, the head that verify checked (${checked}), so it has nothing new to review. Nothing changed. Repair: merge PR #${sub.pr} and call epicIssue with state "merged", or push the change first and then call epicIssue with state "reviewing".`)
         if (worker) sub.reviewer = worker
         break

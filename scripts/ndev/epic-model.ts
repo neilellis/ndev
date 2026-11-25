@@ -33,6 +33,7 @@ export type SubIssue = {
   // The sub-issue whose PR branch this one started from, while that PR was not merged. epicBrief sets it with the
   // stacked brief, and only a pass of the verify checks clears it: by then the PR's base is the default branch.
   stackedOn?: number
+  briefedAt?: number
 }
 export type Epic = {
   epic: number

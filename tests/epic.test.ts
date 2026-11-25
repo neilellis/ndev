@@ -1787,3 +1787,28 @@ test('issue 280: a verified sub-issue goes back to reviewing only after its PR h
   expect(moved.isError).toBe(false)
   expect(w.epic()?.issues['41']).toMatchObject({ state: 'reviewing', reviewer: 'r2', verification: { sha: SHA } })
 })
+
+test('issue 279: the start records the draft PR that the briefed worker opened, refuses a reopened one, and a foreign PR gets its own repair', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41))
+  const startArgs = { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/wt/41' }
+  w.s.closers[41] = [{ number: 7, repository: { name: 'other', owner: { login: 'acme' } } }]
+  w.s.prs[7] = { state: 'open', merged: false }
+  const foreign = await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })
+  expect(foreign.isError).toBe(true)
+  expect(foreign.text).toContain('gh pr view 7 --repo acme/other')
+  expect(foreign.text).toContain(`closing reference to ${REPO}#41`)
+  expect(foreign.text).not.toContain('ndev epic import')
+  w.s.closers[41] = []
+  expect((await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })).isError).toBe(false)
+  w.s.closers[41] = [{ number: 70, repository: { name: 'w', owner: { login: 'acme' } } }]
+  w.s.prs[70] = { state: 'open', merged: false, created_at: '1970-01-01T00:00:00Z' }
+  const reopened = await tool($, 'epicIssue', startArgs)
+  expect(reopened.isError).toBe(true)
+  expect(reopened.text).toContain('PR #70')
+  w.s.prs[70] = { state: 'open', merged: false, created_at: new Date(w.s.now + 60_000).toISOString() }
+  expect((await tool($, 'epicIssue', startArgs)).isError).toBe(false)
+  expect(w.epic()?.issues['41']?.state).toBe('implementing')
+})

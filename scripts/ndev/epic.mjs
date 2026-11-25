@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { harnessSession } from '../../hooks/workflow/session.ts'
 import { confirm } from '../export/flow/public.ts'
-import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, run } from './common.mjs'
+import { releaseRoot, argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, run } from './common.mjs'
 import { DEFAULT_PARALLEL, EPIC_STATES, IN_FLIGHT, ISSUE_STATES, KEY, OWNER_LIVE_MS, SHORT_NAME, SLICE_CAP, SOURCE_FORM, capNote, coreIdeaProblem, frontier, specPrLinkProblem, specPrLinkRepair, specPrProblem, implementerBrief, nextEpicState, reviewerBrief, mergedSubIssue, resliced, sliceProblems, sourcePaths, sourceProblem, stackPlan } from './epic-model.ts'
 import { readProject } from './project.mjs'
 import { resolveRemote } from './remote.mjs'
@@ -291,6 +291,7 @@ function importEpic(workspace, e, before, v) {
     const managed = old && !['waiting', 'external', 'merged', 'human-pending'].includes(old.state)
     if (old && (old.kind && old.kind !== entry.kind || old.state === 'merged' && imported.state !== 'merged' || managed && (entry.kind === 'human' || !isDeepStrictEqual(old.blockedBy, blockedBy) || old.pr !== undefined && imported.pr !== old.pr))) refuse(`Import of #${n} conflicts with its saved ${old.state} workflow.`, `Run ndev epic status ${e.epic} and reconcile #${n} with its existing owner.`)
     issues[n] = { ...(old ?? { rounds: 0 }), issue: n, key: entry.key, title: child.title, kind: entry.kind, blockedBy, ...(managed && imported.state !== 'merged' ? {} : imported) }
+    if (!managed) delete issues[n].briefedAt
   }
   const externalBlockers = {}
   const externalIds = [...new Set(Object.values(issues).flatMap(s => s.blockedBy).filter(n => !issues[n]))]
@@ -445,9 +446,10 @@ function branchFor(e) {
   return branch
 }
 
-function refuseOpenClosingPr(e, sub) {
+function refuseOpenClosingPr(e, sub, since) {
   const shown = `gh issue view ${sub.issue} --repo ${e.repo} --json closedByPullRequestsReferences`
-  const out = checked('gh', ['issue', 'view', String(sub.issue), '-R', e.repo, '--json', 'closedByPullRequestsReferences'], { cwd: e.root, repair: `Run ${shown}, then retry.` })
+  const script = process.env.NDEV_FLOW_GH || join(releaseRoot, 'scripts/github/gh.sh')
+  const out = checked('bash', [script, 'view-json', 'issue', String(sub.issue), '--fields', 'closedByPullRequestsReferences'], { cwd: e.root, env: { ...process.env, GH_REPO: e.repo }, repair: `Run ${shown}, then retry.` })
   let refs
   try { refs = JSON.parse(out).closedByPullRequestsReferences } catch (error) { refuse(`Closing PR evidence of #${sub.issue} is invalid JSON: ${error.message}.`, `Run ${shown}, then retry.`) }
   if (!Array.isArray(refs) || refs.length >= 100) refuse(`Closing PR evidence of #${sub.issue} is missing or may be truncated: ${JSON.stringify(refs)}.`, `Run ${shown}, then retry.`)
@@ -455,9 +457,19 @@ function refuseOpenClosingPr(e, sub) {
     const repo = `${ref?.repository?.owner?.login}/${ref?.repository?.name}`
     if (!ref?.repository?.owner?.login || !ref.repository.name) refuse(`Closing PR ${JSON.stringify(ref)} of #${sub.issue} names no repository.`, `Run ${shown}, then retry.`)
     const pull = github(e.root, repo, `/pulls/${number(ref.number, 'closing PR')}`)
-    return pull.state === 'open' ? [repo === e.repo ? `PR #${ref.number}` : `PR ${repo}#${ref.number}`] : []
+    return pull.state === 'open' ? [{ repo, number: ref.number, created: Date.parse(pull.created_at) }] : []
   })
-  if (open.length) refuse(`Sub-issue #${sub.issue} is waiting, but GitHub says its closing ${open.join(', ')} is open, so another owner works on it.`, `Run ndev epic import ${e.epic} --issues-file <json> --evidence <text>.`)
+  const own = pr => pr.repo === e.repo && pr.created > sub.briefedAt
+  const others = since ? open.filter(pr => !own(pr)) : open
+  if (others.length) refuse(`Sub-issue #${sub.issue} is waiting, but GitHub says its closing ${others.map(pr => pr.repo === e.repo ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`).join(', ')} is open, so another owner works on it.`, closingPrRepair(e, sub, others, own))
+}
+
+function closingPrRepair(e, sub, open, own) {
+  const foreign = open.filter(pr => pr.repo !== e.repo)
+  if (foreign.length) return `${foreign.map(pr => `Read it with gh pr view ${pr.number} --repo ${pr.repo}.`).join(' ')} Close it, or remove its closing reference to ${e.repo}#${sub.issue}, then retry.`
+  const imports = `run ndev epic import ${e.epic} --issues-file <json> --evidence <text>. If it still records #${sub.issue} as waiting, remove ${open.map(pr => `PR #${pr.number}`).join(', ')} from the Development section of #${sub.issue}.`
+  if (open.every(own)) return `If the worker that you started from the last brief opened it, run ndev epic issue ${e.epic} ${sub.issue} implementing --worker <dispatch id> --workspace <path>. If not, ${imports}`
+  return `R${imports.slice(1)}`
 }
 
 // Model: models/workflow/epic_workflow.qnt#brief
@@ -516,6 +528,7 @@ function brief(workspace, e, before, sub, role, pr) {
   argv.push('--agent', config.agent, '--spec', body, '--task-title', `#${sub.issue} ${sub.title} (${role})`)
   if (config.model) argv.push('--model', config.model)
   argv.push('--json')
+  if (role === 'implementer') sub.briefedAt = Date.now()
   if (!isDeepStrictEqual(e, before)) save(workspace, e, before, 'epicBrief', sub.state, sub.state)
   return { path, argv, role, agent: config.agent, model: config.model, remote: placement, issue: sub.issue }
 }
@@ -650,7 +663,7 @@ function move(workspace, e, before, sub, to, v) {
     if (stack && sub.stackedOn !== stack.on.issue) refuse(`Issue #${sub.issue} needs a brief stacked on #${stack.on.issue}.`)
     if (e.remote && !sub.remote) refuse(`Generate the remote implementer brief for #${sub.issue} first.`)
     if (!v.worker) bad('Implementing requires --worker.')
-    refuseOpenClosingPr(e, sub)
+    refuseOpenClosingPr(e, sub, sub.briefedAt)
     sub.implementer = v.worker
   // Model: models/workflow/epic_workflow.qnt#toReviewing
   } else if (from === 'implementing' && to === 'reviewing') {
@@ -672,7 +685,7 @@ function move(workspace, e, before, sub, to, v) {
     const checkedSha = sub.verification?.sha
     if (!checkedSha) refuse(`Sub-issue #${sub.issue} is verified but its record has no verified head.`, `Restore the last valid ${pathFor(workspace.root, e.epic)}.`)
     const pr = github(e.root, e.repo, `/pulls/${sub.pr}`)
-    if (pr.state !== 'open' || pr.merged !== false || !pr.head?.sha) refuse(`PR #${sub.pr} of #${sub.issue} must be open to review again; GitHub reports state ${pr.state}, merged ${pr.merged}, head ${pr.head?.sha}.`, `Run ndev epic status ${e.epic} and record what happened to PR #${sub.pr}.`)
+    if (pr.state !== 'open' || pr.merged !== false || !pr.head?.sha) refuse(`PR #${sub.pr} of #${sub.issue} must be open to review again; GitHub reports state ${pr.state}, merged ${pr.merged}, head ${pr.head?.sha}.`, `If it merged, run ndev epic issue ${e.epic} ${sub.issue} merged. If it closed, reopen it with gh pr reopen ${sub.pr} --repo ${e.repo}, or run ndev epic issue ${e.epic} ${sub.issue} blocked --note <text>.`)
     if (pr.head.sha === checkedSha) refuse(`PR #${sub.pr} of #${sub.issue} is at ${pr.head.sha}, the head that verify checked (${checkedSha}), so it has nothing new to review.`, `Merge PR #${sub.pr} and run ndev epic issue ${e.epic} ${sub.issue} merged, or push the change first and then run ndev epic issue ${e.epic} ${sub.issue} reviewing.`)
     if (v.worker) sub.reviewer = v.worker
   // Model: models/workflow/epic_workflow.qnt#verify
@@ -692,7 +705,7 @@ function move(workspace, e, before, sub, to, v) {
     if (!sub.pr) bad('Merged requires the PR number.')
     const pr = github(e.root, e.repo, `/pulls/${sub.pr}`)
     // Model: models/workflow/epic_workflow.qnt#humanMergesPr
-    if (pr.merged !== true) refuse(`GitHub has not merged PR #${sub.pr}.`)
+    if (pr.merged !== true) refuse(`GitHub has not merged PR #${sub.pr}.`, from === 'verified' && sub.verification?.sha !== pr.head?.sha ? `PR #${sub.pr} is at ${pr.head?.sha}, not the head ${sub.verification?.sha} that verify checked. Run ndev epic issue ${e.epic} ${sub.issue} reviewing to review and verify it, or merge it and owe verification debt.` : undefined)
     const main = branchFor(e)
     if (pr.base?.ref !== main) landedThroughBlocker(workspace, e, before, sub, pr, main, from)
     delete sub.lost
