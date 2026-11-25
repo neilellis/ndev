@@ -531,6 +531,23 @@ function subOf(epic: Epic, args: Args): SubIssue {
   return sub
 }
 
+type ClosingRef = { number?: unknown; repository?: { name?: unknown; owner?: { login?: unknown } } }
+async function refuseOpenClosingPr($: EngineInterface, epic: Epic, sub: SubIssue, unchanged: string): Promise<void> {
+  const shown = `gh issue view ${sub.issue} --repo ${epic.repo} --json closedByPullRequestsReferences`
+  const { closedByPullRequestsReferences: refs } = await ghOne<{ closedByPullRequestsReferences?: unknown }>($, epic.root, epic.repo, ['view-json', 'issue', String(sub.issue), '--fields', 'closedByPullRequestsReferences'])
+  if (!Array.isArray(refs) || refs.length >= 100) throw new Refuse(`Refused: the closing PR evidence of #${sub.issue} is missing or may be truncated: ${JSON.stringify(refs)}. ${unchanged} Repair: run \`${shown}\`, then try again.`)
+  const open: string[] = []
+  for (const ref of refs as ClosingRef[]) {
+    const owner = ref?.repository?.owner?.login
+    const name = ref?.repository?.name
+    if (typeof owner !== 'string' || typeof name !== 'string' || !isCount(ref.number)) throw new Refuse(`Refused: the closing PR ${JSON.stringify(ref)} of #${sub.issue} names no repository or number. ${unchanged} Repair: run \`${shown}\`, then try again.`)
+    const repo = `${owner}/${name}`
+    const pr = await readPr($, epic.root, repo, Number(ref.number))
+    if (pr.state === 'open') open.push(repo === epic.repo ? `PR #${ref.number}` : `PR ${repo}#${ref.number}`)
+  }
+  if (open.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${open.join(', ')} is open, so another owner works on it. ${unchanged} Repair: run \`ndev epic import ${epic.epic} --issues-file <json> --evidence <text>\`, which records #${sub.issue} as external.`)
+}
+
 // Model: models/workflow/epic_workflow.qnt#brief
 async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
   const { args } = c
@@ -553,6 +570,7 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
     const main = await defaultBranch($, epic.root, epic.repo)
     const plan = stackPlan(epic, sub)
     if (plan && 'why' in plan) throw new Refuse(`Refused: #${sub.issue} cannot start yet: ${plan.why}. Nothing was written. Repair: call mcp__ndev__epicNext with issue ${epic.epic} for what can start now.`)
+    await refuseOpenClosingPr($, epic, sub, 'Nothing was written.')
     if (plan) {
       const on = plan.on
       const again = `then call epicBrief again`
@@ -671,6 +689,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         const inFlight = Object.values(epic.issues).filter(i => IN_FLIGHT.includes(i.state))
         if (inFlight.length >= epic.parallel) throw new Refuse(`Refused: all ${epic.parallel} parallel places are taken by ${tags(inFlight.map(i => i.issue))}. Nothing changed. Repair: wait for one to merge, or ask the human to raise parallel (epicStarted with parallel).`)
         if (!worker) throw new Refuse(`Refused: "implementing" needs worker, the dispatch id of the implementer. Nothing changed.`)
+        await refuseOpenClosingPr($, epic, sub, 'Nothing changed.')
         sub.implementer = worker
         if (workspace) sub.workspace = workspace
         break

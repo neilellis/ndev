@@ -37,8 +37,8 @@ function fixture(t) {
   save()
   writeFileSync(join(home, 'gh'), [
     '#!/usr/bin/env node', "const fs=require('node:fs')",
-    "const path=process.argv[2] === 'pr' ? (process.argv.includes('closingIssuesReferences') ? 'links:' : 'checks:')+process.argv[4] : process.argv.slice(2).find(v => v.startsWith('repos/'))?.split('?')[0]",
-    `const answer=JSON.parse(fs.readFileSync(${JSON.stringify(responses)}))[path]`,
+    "const path=process.argv[2] === 'pr' ? (process.argv.includes('closingIssuesReferences') ? 'links:' : 'checks:')+process.argv[4] : process.argv[2] === 'issue' ? 'closers:'+process.argv[4] : process.argv.slice(2).find(v => v.startsWith('repos/'))?.split('?')[0]",
+    `const answer=JSON.parse(fs.readFileSync(${JSON.stringify(responses)}))[path] ?? (path?.startsWith('closers:') ? { closedByPullRequestsReferences: [] } : undefined)`,
     'if (!answer) {console.error("Unexpected gh call "+process.argv.slice(2).join(" ")); process.exit(9)}',
     'console.log(JSON.stringify(answer))',
   ].join('\n'), { mode: 0o755 })
@@ -1608,4 +1608,28 @@ test('issue 250: a merge owes override debt exactly when the sub-issue is not in
   assert.equal(readFileSync(record, 'utf8'), before)
   const merged = f.ok('issue', '40', '41', 'merged', '--override', 'Owner merged the blocked PR').epic
   assert.deepEqual(merged.debts.map(debt => debt.key), ['merge:41:pr:61:verification', 'merge:41:override'])
+})
+
+test('issue 279: brief and start refuse a waiting sub-issue whose closing PR is open again on GitHub', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'waiting' } }
+  const record = join(f.root, '.neil-dev.epic-40.json')
+  writeFileSync(record, JSON.stringify(e))
+  f.answers['closers:41'] = { closedByPullRequestsReferences: [{ number: 70, url: 'https://github.com/example/repo/pull/70', repository: { name: 'repo', owner: { login: 'example' } } }] }
+  f.answers['repos/example/repo/pulls/70'] = { number: 70, state: 'open', merged: false, head: { ref: 'reopened', sha: 'r'.repeat(40) } }
+  f.save()
+  const before = readFileSync(record, 'utf8')
+  for (const args of [['brief', '40', '41', 'implementer'], ['issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root]]) {
+    const refused = f.call(...args)
+    assert.equal(refused.status, 1, JSON.stringify(refused))
+    assert.match(refused.error.message, /#41 is waiting.*PR #70.*open/)
+    assert.equal(refused.error.repair, 'Run ndev epic import 40 --issues-file <json> --evidence <text>.')
+    assert.equal(readFileSync(record, 'utf8'), before)
+  }
+  f.answers['repos/example/repo/pulls/70'].state = 'closed'
+  f.save()
+  f.ok('brief', '40', '41', 'implementer')
+  assert.equal(f.ok('issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root).epic.issues[41].state, 'implementing')
 })

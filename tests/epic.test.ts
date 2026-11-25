@@ -145,7 +145,7 @@ const engine = (on: On, opts: Opts = {}) => {
   }))
   const s = {
     closing: false, now: 1_000, issues: {} as Record<number, { state: string; title: string } | string>,
-    prs: { 30: { body: 'The spec of the epic.\n\nRefs #40' } } as Record<number, Record<string, unknown>>, links: {} as Record<number, unknown>, checks: { check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }], statuses: [] } as unknown,
+    prs: { 30: { body: 'The spec of the epic.\n\nRefs #40' } } as Record<number, Record<string, unknown>>, links: {} as Record<number, unknown>, closers: {} as Record<number, unknown[]>, checks: { check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }], statuses: [] } as unknown,
     files: [] as { status: string; filename: string }[] | '__fail__', ignored: true, exclude: [] as string[],
     servers: [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'dev-build VM 5e6f' }] as { id: string; name: string }[], orcaFails: '',
   }
@@ -209,6 +209,7 @@ const engine = (on: On, opts: Opts = {}) => {
         return typeof answer === 'string' ? ok('', 1, answer) : ok(JSON.stringify({ number: n, body: '', url: '', ...answer }))
       }
       if (a[2] === 'pr-read') return ok(JSON.stringify({ number: n, state: 'open', merged: false, draft: false, mergeable: true, mergeable_state: 'clean', body: 'Closes #5', created_at: '2026-11-01T00:00:00Z', head: { sha: SHA, ref: 'issue-5' }, base: { ref: 'main' }, ...s.prs[n] }))
+      if (a[2] === 'view-json' && a[3] === 'issue' && a.slice(5).join(' ') === '--fields closedByPullRequestsReferences') return ok(JSON.stringify({ closedByPullRequestsReferences: s.closers[Number(a[4])] ?? [] }))
       if (a[2] === 'view-json' && a[3] === 'pr' && a.slice(5).join(' ') === '--fields closingIssuesReferences') return ok(JSON.stringify({ closingIssuesReferences: s.links[Number(a[4])] ?? [] }))
       if (a[2] === 'commit-checks') return ok(JSON.stringify(s.checks))
       // GitHub refuses the diff of a PR over 300 files (HTTP 406), and lists up to 3000 files a page at a time.
@@ -1746,4 +1747,25 @@ test('issue 250: an SDK merge refuses an override from reviewing, fixing or veri
   expect(r.isError).toBe(true)
   expect(r.text).toMatch(/#41 is reviewing.*no override/)
   expect(w.files.get(EPIC_FILE(40))).toBe(before)
+})
+
+test('issue 279: epicBrief and the start of a waiting sub-issue refuse while GitHub says its closing PR is open again', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41))
+  w.s.closers[41] = [{ number: 70, url: `https://github.com/${REPO}/pull/70`, repository: { name: 'w', owner: { login: 'acme' } } }]
+  w.s.prs[70] = { state: 'open', merged: false }
+  const before = w.files.get(EPIC_FILE(40))
+  for (const [name, args] of [['epicBrief', { issue: 40, sub: 41, role: 'implementer' }], ['epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/wt/41' }]] as const) {
+    const r = await tool($, name, args)
+    expect(r.isError).toBe(true)
+    expect(r.text).toMatch(/#41 is waiting[^\n]*PR #70[^\n]*open/)
+    expect(r.text).toContain('Repair: run `ndev epic import 40 --issues-file <json> --evidence <text>`')
+    expect(w.files.get(EPIC_FILE(40))).toBe(before)
+  }
+  w.s.prs[70] = { state: 'closed', merged: false }
+  expect((await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })).isError).toBe(false)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/wt/41' })).isError).toBe(false)
+  expect(w.epic()?.issues['41']?.state).toBe('implementing')
 })

@@ -445,6 +445,21 @@ function branchFor(e) {
   return branch
 }
 
+function refuseOpenClosingPr(e, sub) {
+  const shown = `gh issue view ${sub.issue} --repo ${e.repo} --json closedByPullRequestsReferences`
+  const out = checked('gh', ['issue', 'view', String(sub.issue), '-R', e.repo, '--json', 'closedByPullRequestsReferences'], { cwd: e.root, repair: `Run ${shown}, then retry.` })
+  let refs
+  try { refs = JSON.parse(out).closedByPullRequestsReferences } catch (error) { refuse(`Closing PR evidence of #${sub.issue} is invalid JSON: ${error.message}.`, `Run ${shown}, then retry.`) }
+  if (!Array.isArray(refs) || refs.length >= 100) refuse(`Closing PR evidence of #${sub.issue} is missing or may be truncated: ${JSON.stringify(refs)}.`, `Run ${shown}, then retry.`)
+  const open = refs.flatMap(ref => {
+    const repo = `${ref?.repository?.owner?.login}/${ref?.repository?.name}`
+    if (!ref?.repository?.owner?.login || !ref.repository.name) refuse(`Closing PR ${JSON.stringify(ref)} of #${sub.issue} names no repository.`, `Run ${shown}, then retry.`)
+    const pull = github(e.root, repo, `/pulls/${number(ref.number, 'closing PR')}`)
+    return pull.state === 'open' ? [repo === e.repo ? `PR #${ref.number}` : `PR ${repo}#${ref.number}`] : []
+  })
+  if (open.length) refuse(`Sub-issue #${sub.issue} is waiting, but GitHub says its closing ${open.join(', ')} is open, so another owner works on it.`, `Run ndev epic import ${e.epic} --issues-file <json> --evidence <text>.`)
+}
+
 // Model: models/workflow/epic_workflow.qnt#brief
 function brief(workspace, e, before, sub, role, pr) {
   if (!['implementer','reviewer'].includes(role)) bad('Name implementer or reviewer.')
@@ -464,6 +479,7 @@ function brief(workspace, e, before, sub, role, pr) {
   if (role === 'implementer') {
     const f = frontier(e)
     if (![...f.ready, ...f.stacked.map(s => s.sub)].includes(sub)) refuse(`Sub-issue #${sub.issue} is outside the current frontier.`)
+    refuseOpenClosingPr(e, sub)
     const base = branchFor(e)
     const plan = stackPlan(e, sub)
     if (plan?.why) refuse(plan.why)
@@ -634,6 +650,7 @@ function move(workspace, e, before, sub, to, v) {
     if (stack && sub.stackedOn !== stack.on.issue) refuse(`Issue #${sub.issue} needs a brief stacked on #${stack.on.issue}.`)
     if (e.remote && !sub.remote) refuse(`Generate the remote implementer brief for #${sub.issue} first.`)
     if (!v.worker) bad('Implementing requires --worker.')
+    refuseOpenClosingPr(e, sub)
     sub.implementer = v.worker
   // Model: models/workflow/epic_workflow.qnt#toReviewing
   } else if (from === 'implementing' && to === 'reviewing') {
