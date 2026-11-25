@@ -623,6 +623,8 @@ function move(workspace, e, before, sub, to, v) {
   } else if (from === 'implementing' && to === 'reviewing') {
     if (!v.worker || !v.pr) bad('Reviewing requires the PR number and reviewer dispatch ID.')
     sub.pr = number(v.pr, 'PR')
+    const pr = github(e.root, e.repo, `/pulls/${sub.pr}`)
+    if (pr.state !== 'open' || pr.merged !== false || pr.draft !== false) refuse(`PR #${sub.pr} of #${sub.issue} must be open and ready for review; GitHub reports state ${pr.state}, merged ${pr.merged}, draft ${pr.draft}.`, `Have the implementer open the PR or mark it ready with gh pr ready ${sub.pr} --repo ${e.repo}, then repeat ndev epic issue ${e.epic} ${sub.issue} reviewing.`)
     sub.reviewer = v.worker
   // Model: models/workflow/epic_workflow.qnt#toFixing
   } else if (from === 'reviewing' && to === 'fixing') {

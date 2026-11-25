@@ -675,6 +675,8 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
       case 'implementing>reviewing': {
         if (!isCount(args.pr)) throw new Refuse(`Refused: "reviewing" needs pr, the number of the implementer's PR, and it got ${JSON.stringify(args.pr)}. Nothing changed.`)
         if (!worker) throw new Refuse(`Refused: "reviewing" needs worker, the dispatch id of the reviewer. Nothing changed.`)
+        const pr = await readPr($, epic.root, epic.repo, Number(args.pr))
+        if (pr.state !== 'open' || pr.merged || pr.draft !== false) throw new Refuse(`Refused: PR #${Number(args.pr)} of #${sub.issue} must be open and ready for review, and GitHub says state "${pr.state}", merged ${Boolean(pr.merged)}, draft ${pr.draft}. Nothing changed. Repair: have the implementer open the PR or mark it ready with \`gh pr ready ${Number(args.pr)} --repo ${epic.repo}\`, then call epicIssue again.`)
         sub.pr = Number(args.pr)
         sub.reviewer = worker
         if (workspace) sub.workspace = workspace

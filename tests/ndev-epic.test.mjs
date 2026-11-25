@@ -29,7 +29,9 @@ function fixture(t) {
     'repos/example/repo/issues/42/dependencies/blocked_by': [{ number: 41 }],
     'repos/example/repo/pulls/50': { number: 50, state: 'open', merged: false, body: 'The spec of the epic.\n\nRefs #40' },
     'links:50': { closingIssuesReferences: [] },
-    'repos/example/repo/pulls/61': { number: 61, state: 'open', merged: false, head: { ref: 'parent', sha: 'abc' }, base: { ref: 'main' } },
+    'repos/example/repo/pulls/61': { number: 61, state: 'open', merged: false, draft: false, head: { ref: 'parent', sha: 'abc' }, base: { ref: 'main' } },
+    'repos/example/repo/pulls/62': { number: 62, state: 'open', merged: false, draft: false, head: { ref: 'child', sha: 'child-sha' }, base: { ref: 'parent' } },
+    'repos/example/repo/pulls/63': { number: 63, state: 'open', merged: false, draft: false, head: { ref: 'sibling', sha: 'sibling-sha' }, base: { ref: 'parent' } },
   }
   const save = () => writeFileSync(responses, JSON.stringify(answers))
   save()
@@ -1378,4 +1380,25 @@ test('an implementer brief refuses a sub-issue that has started and an epic outs
   const closing = f.call('brief', '40', '43', 'implementer')
   assert.equal(closing.status, 1, JSON.stringify(closing))
   assert.match(closing.error.message, /Epic #40 is closing/)
+})
+
+test('reviewing reads the PR on GitHub and refuses unless it is open and ready', t => {
+  const f = fixture(t)
+  const e = f.ok('start', '40', '--run', 'run-1', '--repo-id', 'local').epic
+  e.state = 'coordinating'
+  e.issues = { 41: { issue: 41, key: 'part', title: 'Part', blockedBy: [], rounds: 0, state: 'waiting' } }
+  writeFileSync(join(f.root, '.neil-dev.epic-40.json'), JSON.stringify(e))
+  f.ok('issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root)
+  for (const [over, shown] of [[{ draft: true }, /draft true/], [{ state: 'closed', draft: false }, /state closed/], [{ state: 'closed', merged: true, draft: false }, /merged true/]]) {
+    Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'open', merged: false }, over)
+    f.save()
+    const refused = f.call('issue', '40', '41', 'reviewing', '--pr', '61', '--worker', 'review-1')
+    assert.equal(refused.status, 1, JSON.stringify(refused))
+    assert.match(refused.error.message, /PR #61 of #41 must be open and ready/)
+    assert.match(refused.error.message, shown)
+    assert.equal(f.ok('status', '40').epic.issues[41].state, 'implementing')
+  }
+  Object.assign(f.answers['repos/example/repo/pulls/61'], { state: 'open', merged: false, draft: false })
+  f.save()
+  assert.equal(f.ok('issue', '40', '41', 'reviewing', '--pr', '61', '--worker', 'review-1').epic.issues[41].state, 'reviewing')
 })

@@ -854,6 +854,25 @@ test('epicBrief refuses an implementer for a sub-issue that has started, and any
   }
 })
 
+test('epicIssue reviewing reads the PR on GitHub and refuses unless it is open and ready', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/w/41' })).isError).toBe(false)
+  for (const [pr, shown] of [[{ draft: true }, 'draft true'], [{ state: 'closed' }, 'state "closed"'], [{ state: 'closed', merged: true }, 'merged true']] as const) {
+    w.s.prs[12] = pr
+    const refused = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'reviewing', pr: 12, worker: 'r1' })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain('PR #12 of #41 must be open and ready')
+    expect(refused.text).toContain(shown)
+    expect(w.epic()?.issues['41']?.state).toBe('implementing')
+    expect(w.epic()?.issues['41']?.pr).toBeUndefined()
+  }
+  w.s.prs[12] = {}
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'reviewing', pr: 12, worker: 'r1' })).isError).toBe(false)
+  expect(w.epic()?.issues['41']?.state).toBe('reviewing')
+})
+
 test('epicStatus shows the state, the next step and the sub-issues by state', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)
