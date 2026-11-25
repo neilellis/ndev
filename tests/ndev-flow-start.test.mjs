@@ -99,7 +99,9 @@ for (const [name, history, want] of [
     run('git', 'init', '-q', '--bare', origin)
     run('git', 'remote', 'add', 'origin', origin)
     run('git', 'switch', '-q', '-c', 'b')
-    run('git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base')
+    run('git', 'config', 'user.name', 't')
+    run('git', 'config', 'user.email', 't@t')
+    run('git', 'commit', '-q', '--allow-empty', '-m', 'base')
     run('mkdir', '-p', 'scripts/ndev/workflow')
     for (const check of ['fast-checks', 'pre-commit-check', 'pre-push-check']) {
       writeFileSync(join(held.root, 'scripts/ndev/workflow', `${check}.sh`), '#!/bin/sh\nexit 0\n')

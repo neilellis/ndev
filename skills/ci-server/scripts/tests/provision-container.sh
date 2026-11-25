@@ -41,6 +41,7 @@ esac'
 fake mount 'echo "mount $*" >>"$FAKE_STATE/calls"; [ -e "$FAKE_STATE/mount-fails" ] && { echo "mount: $1: permission denied (fake)" >&2; exit 32; }; echo "$1" >>"$FAKE_STATE/mounted"'
 fake mountpoint 'grep -qx "${@: -1}" "$FAKE_STATE/mounted" 2>/dev/null'
 fake fallocate 'out="${@: -1}"; dd if=/dev/zero of="$out" bs=1M count=1 2>/dev/null'
+fake mkswap 'echo "mkswap $*" >>"$FAKE_STATE/calls"; [ -f "${@: -1}" ]'
 fake swapon 'if [ "$1" = --show ]; then [ -e "$FAKE_STATE/swapon-fails" ] && { echo "swapon: cannot read /proc/swaps (fake)" >&2; exit 1; }; cat "$FAKE_STATE/swap" 2>/dev/null; else echo "$1 file 1M 0B -2" >"$FAKE_STATE/swap"; fi; exit 0'
 fake ufw 'case "$1" in status) [ -e "$FAKE_STATE/ufw-on" ] && echo "Status: active" ;; --force) touch "$FAKE_STATE/ufw-on" ;; esac; exit 0'
 fake systemctl 'echo "systemctl $*" >>"$FAKE_STATE/calls"

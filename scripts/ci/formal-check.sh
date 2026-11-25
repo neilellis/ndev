@@ -41,7 +41,7 @@ for file in "${files[@]}"; do
   modules="$(sed -nE 's/^module[[:space:]]+([A-Za-z0-9_]+).*/\1/p' "$file")"
   [[ -n "$modules" ]] || { report "$rel has no module" ""; continue; }
   for module in $modules; do
-    if ! out="$(cd "$(dirname "$file")" && "$quint" test "$(basename "$file")" --main="$module" --match 'Test$' 2>&1)"; then
+    if ! out="$(cd "$(dirname "$file")" && "$quint" test "$(basename "$file")" --backend=typescript --main="$module" --match 'Test$' 2>&1)"; then
       report "$rel module $module" "$out"
       continue
     fi
