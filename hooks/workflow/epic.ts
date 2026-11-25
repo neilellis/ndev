@@ -715,9 +715,11 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         const pr = await readPr($, epic.root, epic.repo, sub.pr!)
         const reviewed = Boolean(sub.reviewer && sub.verdict)
         // Model: models/workflow/epic_workflow.qnt#workerPushes
-        const early = from !== 'verified' || sub.verification?.sha !== pr.head.sha
+        const moved = from === 'verified' && sub.verification?.sha !== pr.head.sha
+        const early = from !== 'verified' || moved
+        const pushed = `PR #${sub.pr} is at ${pr.head.sha.slice(0, 8)}, not the head ${(sub.verification?.sha ?? 'unknown').slice(0, 8)} that verify checked`
         // Model: models/workflow/epic_workflow.qnt#humanMergesPr
-        if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: ${early ? `from "${from}", "merged" records only a PR that a human already merged. Move #${sub.issue} to "verified" first, then merge it` : 'merge it'}, then call epicIssue again.`)
+        if (!pr.merged) throw new Refuse(`Refused: GitHub says PR #${sub.pr} is not merged (state "${pr.state}"). Nothing changed. Repair: ${moved ? `${pushed}, so its merge will owe verification debt. Merge it` : early ? `from "${from}", "merged" records only a PR that a human already merged. Move #${sub.issue} to "verified" first, then merge it` : 'merge it'}, then call epicIssue again.`)
         const main = await defaultBranch($, epic.root, epic.repo).catch((e: unknown) => {
           throw new Refuse(`Refused: the default branch of ${epic.repo} was not read, so it is not known whether PR #${sub.pr} reached it: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}. Nothing changed. Repair: check gh auth status and the GitHub rate limit (gh api rate_limit), then call epicIssue again.`)
         })
@@ -726,7 +728,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         if (pr.merge_commit_sha) sub.mergeSha = pr.merge_commit_sha
         if (early) {
           sub.mergedUnverified = true
-          extra = `\nA human merged PR #${sub.pr}${sub.mergeSha ? ` (merge commit ${sub.mergeSha})` : ''} while #${sub.issue} was in "${from}", so the verify checks did not run and the record says so. If the PR added migrations, ndev:merge did not run them: check them with the human.`
+          extra = `\nA human merged PR #${sub.pr}${sub.mergeSha ? ` (merge commit ${sub.mergeSha})` : ''} ${moved ? `after a push: ${pushed}, so the merged head is unverified` : `while #${sub.issue} was in "${from}", so the verify checks did not run`} and the record says so. If the PR added migrations, ndev:merge did not run them: check them with the human.`
         }
         mergeDebts(epic, sub, reviewed, !early, now)
         if (str(args, 'override')) recordDebt(epic, { key: `merge:${sub.issue}:override`, kind: 'gate-override', sub: sub.issue, note: str(args, 'override') }, now)

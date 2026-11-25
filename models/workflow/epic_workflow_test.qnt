@@ -83,6 +83,36 @@ module chain_test {
       .then(recordMerged(0))
       .expect(debts.open == 2)
 
+  action firstVerified =
+    firstInReview
+      .then(workerMarksReady(0))
+      .then(ciEndsWith(0, "green"))
+      .then(verify(0))
+
+  run verifiedMergeOwesNoDebtTest =
+    firstVerified
+      .then(humanMergesPr(0))
+      .then(recordMerged(0))
+      .expect(merged(0) and debts.open == 0)
+
+  run pushAfterVerifyOwesVerificationDebtOnlyTest =
+    firstVerified
+      .then(workerPushes(0))
+      .expect(subs.get(0).state == "verified" and prs.get(0).checks == "pending")
+      .then(humanMergesPr(0))
+      .then(recordMerged(0))
+      .expect(merged(0) and debts.open == 1 and not(debts.override) and safety)
+
+  run pushWhileBlockedAfterVerifyOwesVerificationDebtTest =
+    firstVerified.then(block(0)).then(workerPushes(0)).then(unblock(0))
+      .expect(subs.get(0).state == "verified" and not(subs.get(0).headVerified))
+      .then(humanMergesPr(0)).then(recordMerged(0))
+      .expect(merged(0) and debts.open == 1 and not(debts.override))
+  run pushAfterVerifyIsNotMergedTest =
+    firstVerified
+      .then(workerPushes(0))
+      .then(recordMerged(0).fail())
+
   run roundsPassTheLimitWithAWarningTest =
     firstInReview
       .then(toFixing(0)).then(fixedToReviewing(0))

@@ -745,6 +745,27 @@ test('merged needs GitHub to say so, and answers with the new frontier', { timeo
   expect(r.text).toMatch(/Ready[^\n]*#42/)
 })
 
+test('a push after verify is named at merge: the moved head owes verification debt, and only a merge counts as merged', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await reviewing($, w)
+  await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'verified', verdict: 'approve' })
+  w.s.prs[12] = { head: { sha: 'dddddddd44444444', ref: 'issue-41' } }
+  const early = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(early.isError).toBe(true)
+  expect(early.text).toContain('PR #12 is not merged')
+  expect(early.text).toContain('dddddddd')
+  expect(early.text).not.toContain('Move #41 to "verified" first')
+  expect(w.epic()?.issues['41']?.state).toBe('verified')
+  w.s.prs[12] = { state: 'closed', merged: true, merge_commit_sha: 'eeeeeeee55555555', head: { sha: 'dddddddd44444444', ref: 'issue-41' } }
+  const r = await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'merged' })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('dddddddd')
+  expect(r.text).not.toContain('verify checks did not run')
+  expect(w.epic()?.issues['41']).toMatchObject({ state: 'merged', mergedUnverified: true })
+  expect(w.epic()?.debts?.map(d => d.kind)).toEqual(['skipped-check'])
+})
+
 test('a PR that a human merged in reviewing or fixing is recorded as merged, with its merge commit and the new frontier', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)

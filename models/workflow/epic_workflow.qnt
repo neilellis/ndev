@@ -19,6 +19,7 @@ module epic_workflow {
     startBase: int,
     reviewed: bool,
     verifiedBase: int,
+    headVerified: bool,
   }
 
   type Pr = {
@@ -47,7 +48,7 @@ module epic_workflow {
     val i = PHASES.indices().filter(k => PHASES[k] == p).fold(0, (a, k) => k)
     if (i + 1 < PHASES.length()) PHASES[i + 1] else p
 
-  val UNSLICED: Sub = { state: "unsliced", previous: "", rounds: 0, stackedOn: MAIN, startBase: MAIN, reviewed: false, verifiedBase: MAIN }
+  val UNSLICED: Sub = { state: "unsliced", previous: "", rounds: 0, stackedOn: MAIN, startBase: MAIN, reviewed: false, verifiedBase: MAIN, headVerified: false }
   val NO_PR: Pr = { life: "none", draft: true, base: MAIN, checks: "none", mergeable: "unknown", ridesOn: MAIN, landed: false, lost: false }
 
   def merged(j: int): bool = subs.get(j).state == "merged"
@@ -225,7 +226,7 @@ module epic_workflow {
       Set("green", "skipped").contains(p.checks),
       s.stackedOn == MAIN or merged(s.stackedOn),
       p.checks == "green" or debts.open < MAX_DEBT,
-      subs' = subs.set(i, { ...s, state: "verified", stackedOn: MAIN, verifiedBase: p.base, reviewed: true }),
+      subs' = subs.set(i, { ...s, state: "verified", stackedOn: MAIN, verifiedBase: p.base, reviewed: true, headVerified: true }),
       debts' = if (p.checks == "skipped") debtUp(debts, 1, false) else debts,
       prs' = prs, issues' = issues, phase' = phase, sliced' = sliced,
       last' = "verify", closedBy' = closedBy,
@@ -233,7 +234,7 @@ module epic_workflow {
 
   action recordMerged(i: int): bool =
     val s = subs.get(i)
-    val early = s.state != "verified"
+    val early = s.state != "verified" or not(s.headVerified)
     val override = not(Set("reviewing", "fixing", "verified", "external").contains(s.state))
     val owed = (if (s.reviewed) 0 else 1) + (if (early) 1 else 0) + (if (override) 1 else 0)
     all {
@@ -316,9 +317,12 @@ module epic_workflow {
   }
 
   action workerPushes(i: int): bool = all {
-    Set("implementing", "fixing").contains(subs.get(i).state),
+    Set("implementing", "fixing", "verified", "blocked").contains(subs.get(i).state),
     prs.get(i).life == "open",
-    setPr(i, { ...prs.get(i), checks: "pending" }, "push"),
+    subs' = subs.set(i, { ...subs.get(i), headVerified: false }),
+    prs' = prs.set(i, { ...prs.get(i), checks: "pending" }),
+    issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
+    last' = "push", closedBy' = closedBy,
   }
 
   action workerMarksReady(i: int): bool = all {
@@ -446,6 +450,7 @@ module epic_workflow {
   val wFixing = SUBS.exists(i => subs.get(i).state == "fixing")
   val wRoundLimit = SUBS.exists(i => subs.get(i).rounds >= ROUND_LIMIT)
   val wVerified = SUBS.exists(i => subs.get(i).state == "verified")
+  val wPushedAfterVerify = SUBS.exists(i => subs.get(i).state == "verified" and not(subs.get(i).headVerified))
   val wVerifiedAfterStack = SUBS.exists(i => subs.get(i).state == "verified" and subs.get(i).startBase != MAIN)
   val wMerged = SUBS.exists(i => merged(i))
   val wRetargeted = SUBS.exists(i => subs.get(i).startBase != MAIN and prs.get(i).base == MAIN)
