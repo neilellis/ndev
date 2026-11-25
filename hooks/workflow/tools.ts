@@ -1283,8 +1283,21 @@ async function mergedBeforeDone($: EngineInterface, wf: Workflow): Promise<Pr | 
   const pr = await readPr($, wf.root, wf.repo, n)
   return pr.merged ? pr : undefined
 }
-const mergedRefusal = (pr: Pr, tool: string, sha: string) =>
-  `Refused: PR #${pr.number} is merged, at ${pr.head.sha.slice(0, 8)}${pr.head.sha === sha ? '' : `, and HEAD is ${sha.slice(0, 8)}`}, so ${tool === 'checkpoint' ? 'its branch takes no commit that the PR would carry' : tool === 'finishedReview' ? 'a push to its branch reaches no PR' : 'there are no checks left for it'}. Nothing changed. Repair: call done with a message and remembered: it ends the workflow of a merged PR. File other work with followUp and the mode issue_only.`
+// Model: models/workflow/issue_workflow.qnt#checkpointWith
+async function mergedBeforeCheckpoint($: EngineInterface, wf: Workflow): Promise<Pr | undefined> {
+  const n = wf.prs[0]
+  if (wf.direct || !n || wf.state === 'done') return undefined
+  const pr = await readPr($, wf.root, wf.repo, n).catch((error: unknown) => {
+    throw new Refuse(`Refused: checkpoint could not read PR #${n} of ${wf.repo} to check that it is not merged: ${String(error).slice(0, 300)}. Nothing changed. Repair: check gh auth status and the GitHub rate limit (gh api rate_limit), then call checkpoint again.`)
+  })
+  return pr.merged ? pr : undefined
+}
+const doneRoute = (state: State) =>
+  MERGEABLE_BEFORE_DONE.includes(state) || state === 'finishing' ? 'call done with a message and remembered: it ends the workflow of a merged PR'
+    : BEFORE_REVIEW.includes(state) ? 'with its issue closed, call done with a message and remembered: it ends the workflow of a merged PR. While the issue is open, ask the human to run /flow goto reviewing, then call done'
+    : 'ask the human to run /flow goto reviewing, then call done with a message and remembered: it ends the workflow of a merged PR'
+const mergedRefusal = (pr: Pr, tool: string, sha: string, route = doneRoute('reviewing')) =>
+  `Refused: PR #${pr.number} is merged, at ${pr.head.sha.slice(0, 8)}${pr.head.sha === sha ? '' : `, and HEAD is ${sha.slice(0, 8)}`}, so ${tool === 'checkpoint' ? 'its branch takes no commit that the PR would carry' : tool === 'finishedReview' ? 'a push to its branch reaches no PR' : 'there are no checks left for it'}. Nothing changed. Repair: ${route}. Done refuses while commits did not merge. File other work with followUp and the mode issue_only.`
 
 // A finished PR can still take a commit, such as a conflict fix, until it merges or closes.
 async function isOpenAfterDone($: EngineInterface, wf: Workflow): Promise<boolean> {
@@ -1333,9 +1346,9 @@ async function checkpointOnce($: EngineInterface, c: Ctx): Promise<string> {
   const declared = declaredTypes(args)
   const facts = await factsFor($, wf.root, project, wf)
   const prOpen = await isOpenAfterDone($, wf)
-  const mergedPr = await mergedBeforeDone($, wf)
-  if (mergedPr) throw new Refuse(mergedRefusal(mergedPr, 'checkpoint', await head(wf.root, $)))
   legal(wf, 'checkpoint', { ...facts, prOpen })
+  const mergedPr = await mergedBeforeCheckpoint($, wf)
+  if (mergedPr) throw new Refuse(mergedRefusal(mergedPr, 'checkpoint', await head(wf.root, $), doneRoute(wf.state)))
   refuseBeforeBaseCheck(wf, 'checkpoint', facts.mode)
   havePr(wf, true)
   const before = await head(wf.root, $)

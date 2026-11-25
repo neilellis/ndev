@@ -120,7 +120,7 @@ test('a failed write of the map does not stop the push, and the note says that C
   await start($, w)
   w.s.dirty = [' M a.ts']
   w.s.staged = true
-  w.s.prReadsFor = { 12: ['HTTP 403: rate limit'] }
+  w.s.prReadsFor = { 12: [w.s.pr, 'HTTP 403: rate limit'] }
   const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
   expect(r.isError).toBe(false)
   expect(w.pushes.length).toBe(1)

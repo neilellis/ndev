@@ -383,7 +383,7 @@ module issue_workflow {
 
   action checkpointWith(commits: bool, docsOnly: bool): bool = all {
     not(wf.state == "done") or pr.life == "open",
-    not(MERGEABLE_BEFORE_DONE.contains(wf.state) and pr.life == "merged"),
+    pr.life != "merged",
     not(wf.state == "developing" and hasBaseCheck(wf.mode) and not(wf.baseChecked)),
     pr.life != "none",
     val local = holdsLocally(wf.state, wf.mode)
@@ -485,6 +485,7 @@ module issue_workflow {
     issue == "closed",
     pr.life == "merged" or not(branch.change),
     pr.life != "open",
+    pr.life != "merged" or not(branch.unpushed),
     wf.state != "interviewing" or canPost(iv, pr),
     moved({ ...wf, merged: pr.life == "merged" }, afterTool(wf.state, wf.previous, "done", { ...factsOf(wf), noChange: true }), "done"),
     iv' = if (wf.state == "interviewing") closeFile(iv) else iv, pr' = pr, branch' = branch, issue' = issue, humanMoved' = humanMoved,
@@ -776,10 +777,10 @@ module issue_workflow {
     heldHasPrevious, noRoundAfterTrust, atMostOneRoundWithoutAnswers, agentAsksBeforeHeavyPlan,
     lightNeverPlans, heavyPlansBeforeCode, hackHardensBeforeReview, hackNeverInterviews,
     checksBeforeFinishing, redPastLimitBlocks, agentDoneDelivers, prOpensOnlyAfterStart,
-    noChatRoundOutsideInterview, answersReachGitHub,
+    noChatRoundOutsideInterview, answersReachGitHub, noWorkLeftBehind,
   }
 
-  val findings: bool = and { heavyPlansAfterReopen, noWorkLeftBehind }
+  val findings: bool = heavyPlansAfterReopen
 
   val wInterviewing: bool = wf.state == "interviewing"
   val wPlanning: bool = wf.state == "planning"

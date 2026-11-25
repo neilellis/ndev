@@ -87,3 +87,66 @@ test('in ci, checkpoint refuses to commit or push to the branch of a merged PR',
   expect(w.commits.length).toBe(0)
   expect(w.pushes.length).toBe(0)
 })
+
+test('in finishing, checkpoint refuses to commit or push to the branch of a merged PR, and names done', async ($, on) => {
+  const w = engine(on, { wf: { state: 'finishing' }, pr: MERGED_PR })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { message: 'more', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('PR #12 is merged')
+  expect(r.text).toContain('call done')
+  expect(w.commits.length).toBe(0)
+  expect(w.pushes.length).toBe(0)
+  expect(w.state()?.state).toBe('finishing')
+})
+
+test('in developing, checkpoint refuses to commit or push to the branch of a merged PR, and names the goto that leads to done', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing', baseChecked: true } as never, pr: MERGED_PR })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { message: 'more', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('PR #12 is merged')
+  expect(r.text).toContain('with its issue closed, call done')
+  expect(r.text).toContain('/flow goto reviewing')
+  expect(w.commits.length).toBe(0)
+  expect(w.pushes.length).toBe(0)
+  expect(w.state()?.state).toBe('developing')
+})
+
+test('in developing, checkpoint refuses when the read of its PR fails, names the PR, and commits nothing', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developing', baseChecked: true } as never })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  w.s.staged = true
+  w.s.prReadsFor = { 12: ['HTTP 403: rate limit'] }
+  const r = await tool($, 'checkpoint', { message: 'more', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('could not read PR #12')
+  expect(r.text).toContain('rate limit')
+  expect(w.commits.length).toBe(0)
+  expect(w.pushes.length).toBe(0)
+})
+
+test('in developed, checkpoint refuses for a merged PR and names the goto, because done is not legal there', async ($, on) => {
+  const w = engine(on, { wf: { state: 'developed' }, pr: MERGED_PR })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { message: 'more', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('PR #12 is merged')
+  expect(r.text).toContain('Repair: ask the human to run /flow goto reviewing, then call done')
+  expect(w.commits.length).toBe(0)
+  expect(w.state()?.state).toBe('developed')
+})
+
+test('in blocked, checkpoint refuses for its state before it reads the PR', async ($, on) => {
+  const w = engine(on, { wf: { state: 'blocked', previous: 'developing' } as never, pr: MERGED_PR })
+  await start($, w)
+  w.s.dirty = [' M a.ts']
+  const r = await tool($, 'checkpoint', { message: 'more', files: ['a.ts'] })
+  expect(r.isError).toBe(true)
+  expect(r.text).not.toContain('PR #12 is merged')
+  expect(w.commits.length).toBe(0)
+})

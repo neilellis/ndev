@@ -249,7 +249,7 @@ module hack_test {
 
   run hackRefusesAutoTest = hackStart.then(setAuto.fail())
 
-  run hackHeldWorkIsLostWhenClosedAsNoChangeTest =
+  run hackHeldWorkBlocksNoChangeDoneAfterMergeTest =
     initWith("small_project", "interactive")
       .then(startedWith(false, false, false, false))
       .then(checkpointWith(true, false))
@@ -261,12 +261,35 @@ module hack_test {
       .then(checkpointWith(true, false))
       .expect(branch.unpushed)
       .then(humanMergesPr)
-      .then(doneNoChange)
-      .expect(wf.state == "done" and not(noWorkLeftBehind))
+      .then(doneNoChange.fail())
 }
 
 module steered_test {
   import issue_workflow(INIT_MODE = "light", MODE_SWITCH = true, MAX_ROUNDS = 3, HUMAN_JUMPS = true).* from "./issue_workflow"
+
+  run checkpointAfterGotoRefusesMergedPrTest =
+    initWith("small_project", "auto")
+      .then(startedWith(false, false, false, false))
+      .then(finishedInterview)
+      .then(checkpointWith(true, false))
+      .then(finishedDevelopmentWith(false))
+      .then(finishedReview)
+      .then(humanMergesPr)
+      .then(humanGotoTo("finishing"))
+      .expect(wf.state == "finishing" and pr.life == "merged" and not(branch.unpushed))
+      .then(checkpointWith(true, false).fail())
+
+  run checkpointInDevelopingRefusesMergedPrTest =
+    initWith("small_project", "auto")
+      .then(startedWith(false, false, false, false))
+      .then(finishedInterview)
+      .then(checkpointWith(true, false))
+      .then(finishedDevelopmentWith(false))
+      .then(finishedReview)
+      .then(humanMergesPr)
+      .then(humanGotoTo("developing"))
+      .expect(wf.state == "developing" and pr.life == "merged")
+      .then(checkpointWith(true, false).fail())
 
   run skipClosesTheChatRoundTest =
     initWith("small_project", "interactive")
