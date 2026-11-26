@@ -165,7 +165,7 @@ issue-new) if [ -n "$ACCEPTED_BODY" ]; then cp "$5" "$ACCEPTED_BODY"; echo 'lost
 api) if [ -z "$SEARCH_DELAY" ]; then jq -n --rawfile body "$ACCEPTED_BODY" '[{number:40,body:$body},{number:55,body:"unrelated"},{number:67,body:$body,pull_request:{}}]' | jq -r "$5"; fi ;;
 pr-list) [ -z "$EXISTING_PR" ] || echo '{"number":9}' ;;
 pr-new) printf '{"url":"https://github.com/test/project/pull/%s"}\\n' \"\${NEW_PR:-9}\" ;;
-pr-read) if [ -n "$RETIRED_PR" ] && [ "$2" = "9" ]; then echo '{"number":9,"state":"closed","merged":true}'; exit 0; fi; if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",created_at:process.env.PR_CREATED,...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
+pr-read) if [ -n "$RETIRED_PR_FAIL" ] && [ "$2" = "9" ]; then echo "$RETIRED_PR_FAIL" >&2; exit 37; fi; if [ -n "$RETIRED_PR" ] && [ "$2" = "9" ]; then echo '{"number":9,"state":"closed","merged":'"\${RETIRED_PR_MERGED:-true}"'}'; exit 0; fi; if [ -n "$PR_READ_FAIL" ]; then echo "$PR_READ_FAIL" >&2; exit 37; fi; if [ -n "$REPAIR_PR" ]; then cat "$REPAIR_PR"; exit; fi; node -e 'console.log(JSON.stringify({number:9,state:"open",created_at:process.env.PR_CREATED,...(process.env.PR_MERGEABLE === undefined ? {} : {mergeable:JSON.parse(process.env.PR_MERGEABLE)}),draft:process.env.PR_DRAFT==="1",head:{crossRepository:false,sha:process.env.PR_SHA || require("node:child_process").execSync("git rev-parse HEAD").toString().trim(),ref:require("node:child_process").execSync("git branch --show-current").toString().trim()},body:require("node:fs").readFileSync(process.env.PR_BODY,"utf8")}))' ;;
 pr-edit) cp "$4" "$PR_BODY" ;;
 feedback) [ -z "$FEEDBACK" ] || cat "$FEEDBACK" ;;
 comment|subissues|pr-ready) echo '{"ok":true}' ;;
@@ -706,6 +706,57 @@ esac
   const repair = (args = [], extra = {}) => flow(p, ['repair', '--issue', '7', '--pr', '10', ...args], { ...fake, REPAIR_PR: prFile, ...extra })
   return { ...p, fake: { ...fake, REPAIR_PR: prFile }, repair, read, setPr, setRecord }
 }
+
+const spent = (p, record) => p.setRecord({ state: 'reviewing', exportReview: { sha: git(p.work, 'rev-parse', 'HEAD'), runs: [] }, ...record })
+
+for (const [name, record, env] of [
+  ['of the same PR', { prs: [10], reviewRounds: 3 }, {}],
+  ['onto another PR while the earlier one is closed and not merged', { prs: [9], reviewRounds: 3 }, { RETIRED_PR: '1', RETIRED_PR_MERGED: 'false' }],
+  ['of a workflow opened before the counter existed', { prs: [10], history: [{ tool: 'checkpoint', from: 'reviewing', to: 'reviewing' }, { tool: 'checkpoint', from: 'reviewing', to: 'reviewing' }] }, {}],
+]) {
+  test(`a repair ${name} keeps the used review rounds, and no unreviewed head can finish`, () => {
+    const p = repairProject()
+    spent(p, record)
+    assert.equal(JSON.parse(output(p.repair([], env))).workflow.reviewRounds, 3)
+    const reviewing = JSON.parse(output(flow(p, ['finished-development', '--issue', '7', '--file', 'next.txt'], p.fake)))
+    assert.match(reviewing.next, /No more reviews will start/)
+    assert.doesNotMatch(existsSync(p.fake.ORCA_LOG) ? readFileSync(p.fake.ORCA_LOG, 'utf8') : '', /worker-start/)
+    const refused = flow(p, ['finished-review', '--review', 'Looks fine', '--deadcode', 'None', '--remembered', 'None'], p.fake)
+    assert.equal(refused.status, 1, refused.stdout)
+    assert.match(refused.stderr, /3 review rounds.*authorise-review/)
+    assert.doesNotMatch(readFileSync(p.fake.GH_LOG, 'utf8'), /pr-ready/)
+  })
+}
+
+test('a repair onto a new PR after the earlier one merged starts the review rounds again', () => {
+  const p = repairProject()
+  spent(p, { prs: [9], reviewRounds: 3 })
+  assert.equal(JSON.parse(output(p.repair([], { RETIRED_PR: '1' }))).workflow.reviewRounds, undefined)
+})
+
+for (const [name, merged, rounds] of [['is closed and not merged', 'false', 3], ['merged', 'true', undefined]]) {
+  test(`a repair out of a shared workflow keeps its review verdicts, and its rounds unless the shared PR ${name}`, () => {
+    const p = repairProject()
+    const held = JSON.parse(readFileSync(p.file, 'utf8'))
+    held.workflow.state = 'developed'
+    const reviewHistory = { ['a'.repeat(40)]: { dispatches: [{ axis: 'standards', environment: 'local', dispatchId: 'd-1' }], objection: { axis: 'standards', environment: 'local', dispatchId: 'd-1', lines: ['changes'], at: 1 } } }
+    held.prs = { 9: { ...held.workflow, pr: 9, issues: [7, 8], state: 'reviewing', reviewRounds: 3, reviewHistory, off: { at: 1, reason: 'Retired' } } }
+    writeFileSync(p.file, JSON.stringify(held))
+    const repaired = JSON.parse(output(p.repair([], { RETIRED_PR: '1', RETIRED_PR_MERGED: merged }))).workflow
+    assert.equal(repaired.reviewRounds, rounds)
+    assert.deepEqual(repaired.reviewHistory, reviewHistory)
+  })
+}
+
+test('a repair that cannot read the PR holding the used review rounds rebinds nothing and names the repair', () => {
+  const p = repairProject()
+  spent(p, { prs: [9], reviewRounds: 3 })
+  const before = readFileSync(p.file, 'utf8')
+  const result = p.repair([], { RETIRED_PR_FAIL: 'Permission denied by GitHub' })
+  assert.equal(result.status, 1, result.stdout)
+  assert.match(result.stderr, /earlier PR #9.*Permission denied by GitHub.*Nothing was rebound\..*run ndev flow repair again/s)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+})
 
 test('repair adopts the canonical PR without moving refs or losing dirty work, and checkpoint publishes only its branch', () => {
   const p = repairProject()

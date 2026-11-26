@@ -911,6 +911,12 @@ function rememberObjection(wf: Workflow, sha: string, { axis, environment, dispa
   reviews.objection = { axis, environment, dispatchId, lines, at: now() }
   save(wf)
 }
+function mergeReviews(wf: Workflow, from: Workflow) {
+  for (const [sha, reviews] of Object.entries<CommitReviews>(from.reviewHistory ?? {})) {
+    for (const run of reviews.dispatches) rememberDispatch(wf, sha, run)
+    if (reviews.objection) reviewsOf(wf, sha).objection ??= reviews.objection
+  }
+}
 function refuseObjected(wf: Workflow, sha: string) {
   const objection: CommitReviews['objection'] = wf.reviewHistory?.[sha]?.objection
   if (objection) throw new Fail(1, `Reviewer ${reviewerName(objection)} reported changes for ${sha}: ${objection.lines.join(' | ')}. That verdict stands, and this commit cannot be authorised or approved again. Repair: fix its findings, commit them with ndev flow checkpoint, then authorise the new HEAD.`)
@@ -1094,7 +1100,7 @@ function finishedReview(wf: Workflow, config: Config, args: Args) {
   const reviewed = headSha(wf.root)
   const authorised = !waived && wf.reviewAuthorisation?.sha === reviewed
   const approval = authorised ? requireApprovals(wf, reviewed) : ''
-  if (!waived && !authorised && wf.exportReview?.sha && wf.exportReview.sha !== reviewed) {
+  if (!waived && !authorised && wf.exportReview?.sha !== reviewed && (wf.exportReview?.sha || reviewRounds(wf) >= MAX_REVIEW_ROUNDS)) {
     if (!standalone && wf.reviewAuthorisation) throw new Fail(1, `The limit of ${MAX_REVIEW_ROUNDS} review rounds has been reached. The authorisation covers ${wf.reviewAuthorisation.sha}, but HEAD is ${reviewed}, and it covers one commit only. Repair: a human runs ${authoriseCommand(wf, reviewed)} in a terminal in Orca, or use ndev-flow finishedReview --waive-review "<reason>" for nitpicks.`)
     if (reviewRounds(wf) >= MAX_REVIEW_ROUNDS) throw new Fail(1, reviewLimitNotice)
     if (!standalone) throw new Fail(1, `Review covers ${wf.exportReview.sha}, but HEAD is ${reviewed}. Review the current commit before recording evidence or give a reason with --waive-review.`)
@@ -1831,6 +1837,15 @@ function repairOwner(wf: Workflow, args: Args) {
     throw new Fail(1, `Session ${owner} has not been confirmed finished for issue #${wf.issue}: ${JSON.stringify(status)}. Leave its work intact and retry after the owner finishes.`)
   }
 }
+function mergedEarlier(wf: Workflow, number: number): boolean {
+  const refusal = `Issue #${wf.issue} repair could not read the earlier PR #${number}, which holds the used review rounds`
+  const repair = 'Nothing was rebound. Repair: fix that read, then run ndev flow repair again.'
+  let pr: Pr
+  try { pr = readPr(wf, number) }
+  catch (error) { throw new Fail(1, `${refusal}: ${(error as Error).message}. ${repair}`) }
+  if (pr?.number !== number) throw new Fail(1, `${refusal}: GitHub answered ${JSON.stringify(pr)}. ${repair}`)
+  return pr.merged === true
+}
 function repairFlow(root: string, config: Config, args: Args) {
   const issue = Number(need(args, 'issue'))
   const number = Number(need(args, 'pr'))
@@ -1880,6 +1895,13 @@ function repairFlow(root: string, config: Config, args: Args) {
   if (held?.branch === pr.head.ref && held.base === pr.base.ref && (held.localBranch || held.branch) === localBranch && held.prs[0] === number && held.owner?.session === session() && held.lastRepair?.head === sha && held.lastRepair?.remote === remote) return report(held, config, ['Association already repaired; nothing changed.'])
   const wf: Workflow = held || { issue, root, repo, base: pr.base.ref, branch: localBranch, prs: [], state: (config.steering || 'interactive') === 'interactive' ? 'interviewing' : 'developing', mode: args.mode || config.mode || 'light', steering: config.steering || 'interactive', history: [], evidence: {}, followUps: [], migrations: [], attempts: 0, nudges: { count: 0 }, shortName: `repair-pr-${number}` }
   const previous = { branch: wf.branch, localBranch: wf.localBranch, base: wf.base, prs: wf.prs, state: wf.state }
+  const carriers = [{ record: wf, pr: previous.prs[0] }, ...shared.filter(prior => !held || prior.pr === previous.prs[0]).map(prior => ({ record: prior, pr: prior.pr }))]
+  let rounds = 0
+  for (const { record, pr: earlier } of carriers) {
+    mergeReviews(wf, record)
+    const used = reviewRounds(record)
+    if (used > rounds && !(earlier && earlier !== number && mergedEarlier(wf, earlier))) rounds = used
+  }
   wf.branch = pr.head.ref
   wf.localBranch = localBranch
   if (wf.base !== pr.base.ref) delete wf.baseCheck
@@ -1894,6 +1916,7 @@ function repairFlow(root: string, config: Config, args: Args) {
     delete wf.baseCheck
   }
   for (const key of ['exportReview', 'deadcode', 'hooks', 'reviewRounds', 'prTitle', 'prBody', 'doneWaitsFor', 'reviewAuthorisation']) delete wf[key]
+  if (rounds) wf.reviewRounds = rounds
   const phase = wf.state === 'blocked' ? wf.previous : wf.state
   if (!['setup', 'interviewing', 'planning', 'developing', 'hardening'].includes(phase || '')) {
     if (wf.state === 'blocked') wf.previous = 'developing'

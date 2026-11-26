@@ -27,7 +27,7 @@ Use the entrypoint's stage table for the normal sequence. These commands handle 
 | `ndev flow guide` | Read the full workflow instructions. |
 | `ndev flow start <issue> --short-name <slug>` | Claim or resume work on an existing issue. Use its returned worktree. |
 | `ndev flow create <slug> --description-file <file>` | File an issue and start work when the request has no issue yet. |
-| `ndev flow repair --issue <issue> --pr <pr>` | Bind an isolated checkout to an existing open PR after satisfying the printed Git checks. |
+| `ndev flow repair --issue <issue> --pr <pr>` | Bind an isolated checkout to an existing open PR after satisfying the printed Git checks. It keeps the used review rounds, unless the earlier PR is a different one that is merged. |
 | `ndev flow hotfix <slug> --issue <issue>` | Enter the urgent-fix route only when the task authorizes that route. |
 | `ndev flow interview --round-file <json>` | Publish an interview round. Record answers with `--answers-file` or finish with `--finish`. |
 | `ndev flow comment --issue <issue> --message-file <file>` | Record an issue or PR comment through the workflow interface. |
