@@ -532,28 +532,32 @@ function subOf(epic: Epic, args: Args): SubIssue {
 }
 
 type ClosingRef = { number?: unknown; repository?: { name?: unknown; owner?: { login?: unknown } } }
-type OpenClosingPr = { repo: string; number: number; created: number }
+type ClosingPr = { repo: string; number: number; created: number; open: boolean; merged: boolean }
 const isRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
 // Model: models/workflow/epic_workflow.qnt#otherOwnerOpensPr
-async function refuseOpenClosingPr($: EngineInterface, epic: Epic, sub: SubIssue, unchanged: string, since?: number): Promise<void> {
+async function refuseClosingPr($: EngineInterface, epic: Epic, sub: SubIssue, unchanged: string, since?: number): Promise<void> {
   const shown = `gh issue view ${sub.issue} --repo ${epic.repo} --json closedByPullRequestsReferences`
   const { closedByPullRequestsReferences: refs } = await ghOne<{ closedByPullRequestsReferences?: unknown }>($, epic.root, epic.repo, ['view-json', 'issue', String(sub.issue), '--fields', 'closedByPullRequestsReferences'])
   if (!Array.isArray(refs) || refs.length >= 100) throw new Refuse(`Refused: the closing PR evidence of #${sub.issue} is missing or may be truncated: ${JSON.stringify(refs)}. ${unchanged} Repair: run \`${shown}\`, then try again.`)
-  const open: OpenClosingPr[] = []
+  const pulls: ClosingPr[] = []
   for (const ref of refs as ClosingRef[]) {
     const owner = ref?.repository?.owner?.login
     const name = ref?.repository?.name
     if (typeof owner !== 'string' || typeof name !== 'string' || !isCount(ref.number)) throw new Refuse(`Refused: the closing PR ${JSON.stringify(ref)} of #${sub.issue} names no repository or number. ${unchanged} Repair: run \`${shown}\`, then try again.`)
     const repo = `${owner}/${name}`
     const pr = await readPr($, epic.root, repo, Number(ref.number))
-    if (pr.state === 'open') open.push({ repo, number: Number(ref.number), created: Date.parse(pr.created_at) })
+    pulls.push({ repo, number: Number(ref.number), created: Date.parse(pr.created_at), open: pr.state === 'open', merged: pr.merged === true })
   }
-  const own = (pr: OpenClosingPr) => isRepo(pr.repo, epic.repo) && pr.created > (sub.briefedAt ?? Infinity)
+  const named = (pr: ClosingPr) => (isRepo(pr.repo, epic.repo) ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`)
+  const merged = pulls.filter(pr => pr.merged && isRepo(pr.repo, epic.repo))
+  if (merged.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${merged.map(named).join(', ')} has merged, so its work is already done. ${unchanged} Repair: ${merged.length === 1 ? `call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "merged", pr ${merged[0].number} and override (your reason), which records the merge and its review debt.` : `read each with ${merged.map(pr => `\`gh pr view ${pr.number} --repo ${epic.repo}\``).join(', ')}, then call mcp__ndev__epicIssue with issue ${epic.epic}, sub ${sub.issue}, state "merged", the pr that closes #${sub.issue} and override (your reason).`}`)
+  const open = pulls.filter(pr => pr.open)
+  const own = (pr: ClosingPr) => isRepo(pr.repo, epic.repo) && pr.created > (sub.briefedAt ?? Infinity)
   const others = since ? open.filter(pr => !own(pr)) : open
-  if (others.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${others.map(pr => (isRepo(pr.repo, epic.repo) ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`)).join(', ')} is open, so another owner works on it. ${unchanged} Repair: ${closingPrRepair(epic, sub, others, own)}`)
+  if (others.length) throw new Refuse(`Refused: #${sub.issue} is waiting, and GitHub says its closing ${others.map(named).join(', ')} is open, so another owner works on it. ${unchanged} Repair: ${closingPrRepair(epic, sub, others, own)}`)
 }
 
-function closingPrRepair(epic: Epic, sub: SubIssue, open: OpenClosingPr[], own: (pr: OpenClosingPr) => boolean): string {
+function closingPrRepair(epic: Epic, sub: SubIssue, open: ClosingPr[], own: (pr: ClosingPr) => boolean): string {
   const foreign = open.filter(pr => !isRepo(pr.repo, epic.repo))
   if (foreign.length) return `${foreign.map(pr => `read it with \`gh pr view ${pr.number} --repo ${pr.repo}\`.`).join(' ')} Close it, or remove its closing reference to ${epic.repo}#${sub.issue}, then try again.`
   const imports = `run \`ndev epic import ${epic.epic} --issues-file <json> --evidence <text>\`, which records #${sub.issue} as external. If it still records #${sub.issue} as waiting, remove ${open.map(pr => `PR #${pr.number}`).join(', ')} from the Development section of #${sub.issue}.`
@@ -583,7 +587,7 @@ async function epicBrief($: EngineInterface, c: Ctx): Promise<string> {
     const main = await defaultBranch($, epic.root, epic.repo)
     const plan = stackPlan(epic, sub)
     if (plan && 'why' in plan) throw new Refuse(`Refused: #${sub.issue} cannot start yet: ${plan.why}. Nothing was written. Repair: call mcp__ndev__epicNext with issue ${epic.epic} for what can start now.`)
-    await refuseOpenClosingPr($, epic, sub, 'Nothing was written.')
+    await refuseClosingPr($, epic, sub, 'Nothing was written.')
     if (plan) {
       const on = plan.on
       const again = `then call epicBrief again`
@@ -703,7 +707,7 @@ async function epicIssue($: EngineInterface, c: Ctx): Promise<string> {
         const inFlight = Object.values(epic.issues).filter(i => IN_FLIGHT.includes(i.state))
         if (inFlight.length >= epic.parallel) throw new Refuse(`Refused: all ${epic.parallel} parallel places are taken by ${tags(inFlight.map(i => i.issue))}. Nothing changed. Repair: wait for one to merge, or ask the human to raise parallel (epicStarted with parallel).`)
         if (!worker) throw new Refuse(`Refused: "implementing" needs worker, the dispatch id of the implementer. Nothing changed.`)
-        await refuseOpenClosingPr($, epic, sub, 'Nothing changed.', sub.briefedAt)
+        await refuseClosingPr($, epic, sub, 'Nothing changed.', sub.briefedAt)
         sub.implementer = worker
         if (workspace) sub.workspace = workspace
         break

@@ -171,7 +171,7 @@ module epic_workflow {
     all {
       phase == "coordinating",
       s.state == "waiting",
-      prs.get(i).life != "open",
+      Set("none", "closed").contains(prs.get(i).life),
       not(stackRefused(i)),
       val t = stackTop(i)
       all {
@@ -191,6 +191,7 @@ module epic_workflow {
       not(stackRefused(i)),
       stackTop(i) == MAIN or s.stackedOn == stackTop(i),
       inFlight.size() < PARALLEL,
+      prs.get(i).life != "merged",
       prs.get(i).life == "open" implies prs.get(i).afterBrief,
       setSub(i, { ...s, state: "implementing", startBase: s.stackedOn, briefed: false }, "start"),
     }

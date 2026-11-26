@@ -1634,6 +1634,30 @@ test('issue 279: brief and start refuse a waiting sub-issue whose closing PR is 
   assert.equal(f.ok('issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root).epic.issues[41].state, 'implementing')
 })
 
+test('issue 283: brief and start refuse a waiting sub-issue whose closing PR has merged, and name the merged move', t => {
+  const f = waitingClosers(t)
+  f.close(70, 'example/repo', new Date(Date.now() + 60_000).toISOString())
+  Object.assign(f.answers['repos/example/repo/pulls/70'], { state: 'closed', merged: true, merge_commit_sha: 'm'.repeat(40) })
+  f.save()
+  const before = readFileSync(f.record, 'utf8')
+  for (const args of [['brief', '40', '41', 'implementer'], ['issue', '40', '41', 'implementing', '--worker', 'worker-1', '--workspace', f.root]]) {
+    const refused = f.call(...args)
+    assert.equal(refused.status, 1, JSON.stringify(refused))
+    assert.match(refused.error.message, /#41 is waiting, but GitHub says its closing PR #70 has merged/)
+    assert.equal(refused.error.repair, 'Run ndev epic issue 40 41 merged --pr 70 --override <reason>, which records the merge and its review debt.')
+    assert.equal(readFileSync(f.record, 'utf8'), before)
+  }
+})
+
+test('issue 283: a merged closing PR of another repository does not hold the brief or the start', t => {
+  const f = waitingClosers(t)
+  f.close(12, 'acme/other', '2020-01-01T00:00:00Z')
+  Object.assign(f.answers['repos/acme/other/pulls/12'], { state: 'closed', merged: true, merge_commit_sha: 'm'.repeat(40) })
+  f.save()
+  f.ok('brief', '40', '41', 'implementer')
+  assert.equal(f.start().status, 0)
+})
+
 test('issue 280: a verified sub-issue goes back to reviewing only after its PR head moved, and the refusal names both heads', t => {
   const f = fixture(t)
   const e = f.ok('start', '40').epic

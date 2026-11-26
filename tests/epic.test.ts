@@ -1770,6 +1770,35 @@ test('issue 279: epicBrief and the start of a waiting sub-issue refuse while Git
   expect(w.epic()?.issues['41']?.state).toBe('implementing')
 })
 
+test('issue 283: epicBrief and the start of a waiting sub-issue refuse while GitHub says its closing PR has merged', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41))
+  w.s.closers[41] = [{ number: 70, repository: { name: 'w', owner: { login: 'acme' } } }]
+  w.s.prs[70] = { state: 'closed', merged: true, created_at: new Date(w.s.now + 60_000).toISOString() }
+  const before = w.files.get(EPIC_FILE(40))
+  for (const [name, args] of [['epicBrief', { issue: 40, sub: 41, role: 'implementer' }], ['epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/wt/41' }]] as const) {
+    const r = await tool($, name, args)
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('#41 is waiting, and GitHub says its closing PR #70 has merged')
+    expect(r.text).toContain('Repair: call mcp__ndev__epicIssue with issue 40, sub 41, state "merged", pr 70 and override (your reason), which records the merge and its review debt.')
+    expect(w.files.get(EPIC_FILE(40))).toBe(before)
+  }
+})
+
+test('issue 283: a merged closing PR of another repository does not hold epicBrief or the start', { timeoutMs: 30_000 }, async ($, on) => {
+  const w = engine(on)
+  await start($)
+  await planned($)
+  setIssues(w, sub(41))
+  w.s.closers[41] = [{ number: 12, repository: { name: 'other', owner: { login: 'acme' } } }]
+  w.s.prs[12] = { state: 'closed', merged: true }
+  expect((await tool($, 'epicBrief', { issue: 40, sub: 41, role: 'implementer' })).isError).toBe(false)
+  expect((await tool($, 'epicIssue', { issue: 40, sub: 41, state: 'implementing', worker: 'd1', workspace: '/wt/41' })).isError).toBe(false)
+  expect(w.epic()?.issues['41']?.state).toBe('implementing')
+})
+
 test('issue 280: a verified sub-issue goes back to reviewing only after its PR head moved, and the refusal names both heads', { timeoutMs: 30_000 }, async ($, on) => {
   const w = engine(on)
   await start($)

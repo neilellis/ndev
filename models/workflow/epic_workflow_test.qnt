@@ -74,6 +74,20 @@ module chain_test {
       .expect(subs.get(0).state == "waiting" and prs.get(0).life == "merged" and prs.get(0).landed)
       .then(reimport(0).fail())
 
+  run mergedPrBeforeTheStartRefusesStartTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(humanMergesPr(0))
+      .then(start(0).fail())
+
+  run mergedPrBeforeTheStartRefusesBriefTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(humanMergesPr(0))
+      .then(brief(0).fail())
+
   run importStillWaitingLeavesAMergedPrTest =
     coordinating
       .then(brief(0))

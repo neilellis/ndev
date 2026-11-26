@@ -450,19 +450,22 @@ function branchFor(e) {
 const isRepo = (a, b) => a.toLowerCase() === b.toLowerCase()
 
 // Model: models/workflow/epic_workflow.qnt#otherOwnerOpensPr
-function refuseOpenClosingPr(e, sub, since) {
+function refuseClosingPr(e, sub, since) {
   const shown = `gh issue view ${sub.issue} --repo ${e.repo} --json closedByPullRequestsReferences`
   const script = process.env.NDEV_FLOW_GH || join(releaseRoot, 'scripts/github/gh.sh')
   const out = checked('bash', [script, 'view-json', 'issue', String(sub.issue), '--fields', 'closedByPullRequestsReferences'], { cwd: e.root, env: { ...process.env, GH_REPO: e.repo }, repair: `Run ${shown}, then retry.` })
   let refs
   try { refs = JSON.parse(out).closedByPullRequestsReferences } catch (error) { refuse(`Closing PR evidence of #${sub.issue} is invalid JSON: ${error.message}.`, `Run ${shown}, then retry.`) }
   if (!Array.isArray(refs) || refs.length >= 100) refuse(`Closing PR evidence of #${sub.issue} is missing or may be truncated: ${JSON.stringify(refs)}.`, `Run ${shown}, then retry.`)
-  const open = refs.flatMap(ref => {
+  const pulls = refs.flatMap(ref => {
     const repo = `${ref?.repository?.owner?.login}/${ref?.repository?.name}`
     if (!ref?.repository?.owner?.login || !ref.repository.name) refuse(`Closing PR ${JSON.stringify(ref)} of #${sub.issue} names no repository.`, `Run ${shown}, then retry.`)
     const pull = github(e.root, repo, `/pulls/${number(ref.number, 'closing PR')}`)
-    return pull.state === 'open' ? [{ repo, number: ref.number, created: Date.parse(pull.created_at) }] : []
+    return [{ repo, number: ref.number, created: Date.parse(pull.created_at), open: pull.state === 'open', merged: pull.merged === true }]
   })
+  const merged = pulls.filter(pr => pr.merged && isRepo(pr.repo, e.repo))
+  if (merged.length) refuse(`Sub-issue #${sub.issue} is waiting, but GitHub says its closing ${merged.map(pr => `PR #${pr.number}`).join(', ')} has merged, so its work is already done.`, merged.length === 1 ? `Run ndev epic issue ${e.epic} ${sub.issue} merged --pr ${merged[0].number} --override <reason>, which records the merge and its review debt.` : `Read each with ${merged.map(pr => `gh pr view ${pr.number} --repo ${e.repo}`).join(', ')}, then record the one that closes #${sub.issue} with ndev epic issue ${e.epic} ${sub.issue} merged --pr <n> --override <reason>.`)
+  const open = pulls.filter(pr => pr.open)
   const own = pr => isRepo(pr.repo, e.repo) && pr.created > sub.briefedAt
   const others = since ? open.filter(pr => !own(pr)) : open
   if (others.length) refuse(`Sub-issue #${sub.issue} is waiting, but GitHub says its closing ${others.map(pr => isRepo(pr.repo, e.repo) ? `PR #${pr.number}` : `PR ${pr.repo}#${pr.number}`).join(', ')} is open, so another owner works on it.`, closingPrRepair(e, sub, others, own))
@@ -495,7 +498,7 @@ function brief(workspace, e, before, sub, role, pr) {
   if (role === 'implementer') {
     const f = frontier(e)
     if (![...f.ready, ...f.stacked.map(s => s.sub)].includes(sub)) refuse(`Sub-issue #${sub.issue} is outside the current frontier.`)
-    refuseOpenClosingPr(e, sub)
+    refuseClosingPr(e, sub)
     const base = branchFor(e)
     const plan = stackPlan(e, sub)
     if (plan?.why) refuse(plan.why)
@@ -667,7 +670,7 @@ function move(workspace, e, before, sub, to, v) {
     if (stack && sub.stackedOn !== stack.on.issue) refuse(`Issue #${sub.issue} needs a brief stacked on #${stack.on.issue}.`)
     if (e.remote && !sub.remote) refuse(`Generate the remote implementer brief for #${sub.issue} first.`)
     if (!v.worker) bad('Implementing requires --worker.')
-    refuseOpenClosingPr(e, sub, sub.briefedAt)
+    refuseClosingPr(e, sub, sub.briefedAt)
     sub.implementer = v.worker
   // Model: models/workflow/epic_workflow.qnt#toReviewing
   } else if (from === 'implementing' && to === 'reviewing') {
