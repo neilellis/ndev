@@ -1077,6 +1077,14 @@ function requireApprovals(wf: Workflow, sha: string): string {
   return `verdict: ${runs.map(run => `reviewer ${reviewerName(run)}`).join(' and ')} approved ${sha} in the authorised review`
 }
 
+function requireSucceeded(dispatch: string, receipt: Record<string, any>) {
+  const state: unknown = receipt.worker?.state
+  if (typeof state !== 'string') throw new Fail(1, `Orca returned no worker.state of ${dispatch} from worker-show --full: ${JSON.stringify(receipt)}. Repair: run orca orchestration worker-show --dispatch ${dispatch} --full --json and check the installed Orca version.`)
+  if (state === 'succeeded') return
+  if (RUNNING_WORKER.includes(state)) throw new Fail(1, `Reviewer ${dispatch} is ${state}. Repair: wait with ndev wait agent dispatch:${dispatch}, then run ndev flow finished-review again.`)
+  throw new Fail(1, `Reviewer ${dispatch} is ${state}: ${sentence(receipt.worker.lastError || 'Orca gives no error')}. Repair: read orca orchestration worker-show --dispatch ${dispatch}, then start a new review with a new commit through ndev flow checkpoint, while review rounds remain.`)
+}
+
 function finishedReview(wf: Workflow, config: Config, args: Args) {
   const waived = args['waive-review'] !== undefined
   if (waived && args.review !== undefined) throw new Fail(2, 'Choose either --review or --waive-review.')
@@ -1095,7 +1103,7 @@ function finishedReview(wf: Workflow, config: Config, args: Args) {
     ensureReviewWorkers(wf)
     for (const reviewer of wf.exportReview.runs) {
       const receipt = orca(wf.root, reviewer.environment, ['orchestration', 'worker-show', '--dispatch', reviewer.dispatchId, '--full'])
-      if (!['completed', 'done', 'settled', 'succeeded', 'finished'].includes(receipt.state)) throw new Fail(1, `Reviewer ${reviewer.dispatchId} is ${receipt.state}: ${receipt.lastError || receipt.recovery || 'wait with ndev wait agent dispatch:' + reviewer.dispatchId}.`)
+      requireSucceeded(reviewer.dispatchId, receipt)
     }
   }
   const alive = waived ? [] : reviewAlive(wf)

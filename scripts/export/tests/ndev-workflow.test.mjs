@@ -144,6 +144,8 @@ test('confirmation and incompatible hack/auto settings leave the revision untouc
   assert.equal(readFileSync(p.file, 'utf8'), original)
 })
 
+const SHOWN_AS = { succeeded: ['completed', 'succeeded'], failed: ['failed', 'failed'], ready: ['dispatched', 'in_progress'] }
+const workerShown = (state, lastError = null) => ({ ok: true, result: { dispatch: { id: 'dispatch-1', status: SHOWN_AS[state][0], lastFailure: lastError }, worker: { dispatchId: 'dispatch-1', state, lastError }, projection: { dispatchId: 'dispatch-1', outcome: SHOWN_AS[state][1] }, terminal: null } })
 function services(p) {
   const fakeGh = join(p.dir, 'gh.sh')
   const bin = join(p.dir, 'fake-bin')
@@ -183,7 +185,11 @@ case "$1 $2" in
   echo "{\\"ok\\":true,\\"result\\":{\\"worktree\\":{\\"path\\":\\"$FAKE_BASE_DIR/$name\\"}}}" ;;
 'worktree set') echo '{"ok":true,"result":{"updated":true}}' ;;
 'orchestration worker-start') echo '{"ok":true,"result":{"state":"ready","runId":"run-1","dispatchId":"dispatch-1"}}' ;;
-'orchestration worker-show') echo '{"ok":true,"result":{"state":"completed"}}' ;;
+'orchestration worker-show')
+  case " $* " in
+  *' --full '*) if [ -n "$WORKER_FULL" ]; then printf '%s\\n' "$WORKER_FULL"; else echo '${JSON.stringify(workerShown('succeeded'))}'; fi ;;
+  *) echo '{"ok":true,"result":{"dispatchId":"dispatch-1","state":"succeeded"}}' ;;
+  esac ;;
 'agent show') cat "$REPAIR_OWNER" ;;
 *) echo "Unsupported Orca command $*" >&2; exit 23 ;;
 esac
@@ -1677,6 +1683,23 @@ test('a review stays on its original issue after the owner turns to another issu
   assert.equal(held.state, 'blocked')
   assert.equal(held.evidence.review, undefined)
   assert.equal(held.exportReview, undefined)
+})
+
+test('finished-review refuses a reviewer worker that still runs, failed or has no worker state, with the repair', () => {
+  const p = project()
+  const fake = services(p)
+  assert.equal(JSON.parse(output(flow(p, ['finished-development'], fake))).state, 'reviewing')
+  const cases = [
+    [workerShown('ready'), /Reviewer dispatch-1 is ready\. Repair: wait with ndev wait agent dispatch:dispatch-1, then run ndev flow finished-review again/],
+    [workerShown('failed', 'The agent process exited.'), /Reviewer dispatch-1 is failed: The agent process exited\. Repair: read orca orchestration worker-show --dispatch dispatch-1.*ndev flow checkpoint/s],
+    [{ ok: true, result: { state: 'succeeded' } }, /Orca returned no worker\.state of dispatch-1 from worker-show --full: \{"state":"succeeded"\}/],
+  ]
+  for (const [shown, pattern] of cases) {
+    const refused = flow(p, ['finished-review', '--review', 'None', '--deadcode', 'None', '--remembered', 'None'], { ...fake, WORKER_FULL: JSON.stringify(shown) })
+    assert.equal(refused.status, 1, refused.stdout + refused.stderr)
+    assert.match(refused.stderr, pattern)
+    assert.equal(recordOf(p).state, 'reviewing')
+  }
 })
 
 function reviewServices(p) {
