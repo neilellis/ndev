@@ -52,7 +52,7 @@ const groups = {
       'finished-development': '[--issue <n>]... [--pr <n>]... [--message <text>] [--file <path>]... [--change-type <type>]... [--body-file <file>] [--hardening <text>] [--human-confirmation <text>]',
       'push-draft': '[--issue <n>|--pr <n>] --sha <full-reviewed-sha> --review <text>',
       'finished-review': '(--review <text> | --waive-review <reason>) --deadcode <text> --remembered <text>',
-      'authorise-review': '--head <full HEAD commit id> --reason <text>, after the review limit; a human confirms in a terminal',
+      'authorise-review': '--head <full HEAD commit id> --reason <text>, after the review limit, in a clean worktree; asks for a phrase typed in a terminal',
       'finished-checks': '', 'finished-smoke': '--report-file <file>|--skipped <reason>',
       'finished-revision': '', revisit: '', done: '--message <text> [--remembered <text>]',
       blocked: '--message <text>', unblock: '[<answer>]',

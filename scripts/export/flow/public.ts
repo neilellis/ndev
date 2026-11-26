@@ -149,9 +149,9 @@ function terminalLine() {
     closeSync(fd)
   }
 }
-export function confirm(action: string, target: string, revision: string | number, root: string, json: boolean) {
+export function confirm(action: string, target: string, revision: string | number, root: string, json: boolean, warning = '') {
   const phrase = `confirm ${action} ${target} ${revision}`
-  const text = `In ${root}, confirm ${action} for ${target} at revision ${revision}. A human runs the same command in a terminal in that folder, from any session, and types "${phrase}".`
+  const text = `In ${root}, confirm ${action} for ${target} at revision ${revision}. A human runs the same command in a terminal in that folder, from any session, and types "${phrase}".${warning ? `\nWarning: ${warning}` : ''}`
   if (json || !process.stdin.isTTY || !process.stderr.isTTY) return { nextAction: { action, target, revision, root, confirmation: 'terminal' }, text }
   process.stderr.write(text + '\n> ')
   if (terminalLine().trim() !== phrase) throw new CliError(1, `Confirmation did not match ${action} for ${target} at revision ${revision}.`)
