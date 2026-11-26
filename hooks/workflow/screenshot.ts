@@ -10,13 +10,14 @@ import { Refuse, head, must, paths, run, said } from './effects'
 const REPAIR = 'Repair: start Orca with `orca open`, then call screenshot again. Without Orca, use the matrix script of the ndev:responsive-check skill.'
 const VIEWPORT = /^(\d{2,5})x(\d{2,5})$/
 const WAIT_LIMIT_SECONDS = 60
-// Each scrolled image overlaps the last, so that a pinned header or footer hides no content at the join.
 const PAGE_STEP = 0.8
-const PAGE_IMAGE_LIMIT = 40
+const PAGE_STEP_LIMIT = 40
+const FULL_PAGE_ORCA = '1.4.274'
+const LOADING_IMAGES = `(async () => { const loading = () => [...document.images].filter(image => !image.complete && image.getClientRects().length).length; const end = Date.now() + 10000; while (loading() && Date.now() < end) await new Promise(done => setTimeout(done, 100)); return JSON.stringify(loading()) })()`
 const LOGIN_PAGE = /^https?:\/\/(?:[^/?#]*\.)?(?:login|signin|accounts|auth|sso)\.|\/(?:login|log-in|signin|sign-in|sso|auth)(?=[/?#]|$)/i
 
 type Args = Record<string, unknown>
-type Shot = { view: string; scheme: string; part: number; file: string }
+type Shot = { view: string; scheme: string; file: string }
 type Asked = { url: string; viewports: string[]; schemes: string[]; fullPage: boolean; waitMs: number }
 class LoginPage extends Refuse {}
 
@@ -67,24 +68,22 @@ async function pageValue($: EngineInterface, root: string, page: string, express
   return String((await browser($, root, ['eval', '--expression', expression, '--page', page])).result)
 }
 
-// Orca's full-screenshot, and a viewport taller than the surface that Orca really has, repeat the top of the
-// page and never reach its end. A viewport image of a scrolled page is true, so a full page is a set of those.
 async function scrollPage($: EngineInterface, root: string, page: string, top: number): Promise<{ y: number; height: number; total: number }> {
-  const answer = await pageValue($, root, page, `(() => { scrollTo({ top: ${top}, behavior: 'instant' }); return JSON.stringify([scrollY, innerHeight, document.documentElement.scrollHeight]) })()`)
+  const answer = await pageValue($, root, page, `(async () => { scrollTo({ top: ${top}, behavior: 'instant' }); await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))); return JSON.stringify([scrollY, innerHeight, document.documentElement.scrollHeight]) })()`)
   let measured: unknown
   try {
     measured = JSON.parse(answer)
   } catch {
     measured = undefined
   }
-  if (!Array.isArray(measured) || measured.length !== 3 || !measured.every(n => typeof n === 'number')) throw new Refuse(`The page did not give its scroll position: it answered ${answer.slice(0, 200)}. No more images of it were saved. ${REPAIR}`)
+  if (!Array.isArray(measured) || measured.length !== 3 || !measured.every(n => typeof n === 'number')) throw new Refuse(`The page did not give its scroll position: it answered ${answer.slice(0, 200)}. No image of it was saved. ${REPAIR}`)
   const [y, height, total] = measured as [number, number, number]
   return { y, height, total }
 }
 
 async function innerScroller($: EngineInterface, root: string, page: string): Promise<{ element: string; height: number; total: number } | undefined> {
   const answer = await pageValue($, root, page, INNER_SCROLL_PROBE)
-  const invalid = () => new Refuse(`Orca returned invalid inner-scroll measurements for page ${page}: ${answer.slice(0, 200)}. No more images were saved.`)
+  const invalid = () => new Refuse(`Orca returned invalid inner-scroll measurements for page ${page}: ${answer.slice(0, 200)}. No image of it was saved.`)
   let measured: unknown
   try {
     measured = JSON.parse(answer)
@@ -99,31 +98,45 @@ async function innerScroller($: EngineInterface, root: string, page: string): Pr
 }
 
 async function copyShot($: EngineInterface, root: string, shot: Record<string, unknown>, url: string, view: string, file: string): Promise<void> {
-  if (typeof shot.path !== 'string') throw new Refuse(`orca screenshot gave no file path for ${url} at ${view}: ${JSON.stringify(shot).slice(0, 200)}. The Orca version may differ from what this tool expects.`)
+  if (typeof shot.path !== 'string') throw new Refuse(`The Orca capture gave no file path for ${url} at ${view}: ${JSON.stringify(shot).slice(0, 200)}. The Orca version may differ from what this tool expects.`)
   const copied = await run($, ['cp', shot.path, file], { cwd: root })
   if (copied.exitCode !== 0) throw new Refuse(`cp ${shot.path} ${file} exited ${copied.exitCode}: ${said(copied)}`)
 }
 
-async function shootFullPage($: EngineInterface, root: string, page: string, asked: Asked, view: string, base: string): Promise<{ files: string[]; warnings: string[] }> {
-  const files: string[] = []
+// Orca's full-screenshot does not scroll, so content that loads on scroll stays unloaded without this pass (issue #31).
+async function walkPage($: EngineInterface, root: string, page: string, base: string): Promise<string[]> {
   const warnings = new Set<string>()
-  const result = (warning?: string) => ({ files, warnings: [...(warning ? [warning] : []), ...warnings] })
   let top = 0
   let last = -1
-  for (let part = 1; ; part++) {
+  for (let step = 1; ; step++) {
     const { y, height, total } = await scrollPage($, root, page, top)
     const inner = await innerScroller($, root, page)
-    if (inner) warnings.add(`${base}: ${inner.element} scrolls inside the page (${inner.height} px pane, ${inner.total} px content). Only its visible portion was captured, so these images are not the whole page.`)
-    const atEnd = y + height >= total - 1
-    if (y <= last && !atEnd) return result(`${base}: the page stopped at ${y + height} px of ${total} px and would not scroll on, so the images are not the whole page. Its content may scroll inside an element and not in the page.`)
-    const file = part === 1 && atEnd ? `${base}.png` : `${base}-part${part}.png`
-    await copyShot($, root, await browser($, root, ['screenshot', '--page', page, '--format', 'png']), asked.url, view, file)
-    files.push(file)
-    if (atEnd) return result()
-    if (part === PAGE_IMAGE_LIMIT) return result(`${base}: the limit of ${PAGE_IMAGE_LIMIT} images ended at ${y + height} px of ${total} px, so these images are not the whole page.`)
+    if (inner) warnings.add(`${base}: ${inner.element} scrolls inside the page (${inner.height} px pane, ${inner.total} px content). Only its visible portion was captured, so this image is not the whole page.`)
+    if (y + height >= total - 1) break
+    if (y <= last) {
+      warnings.add(`${base}: the page stopped at ${y + height} px of ${total} px and would not scroll on, so content below may not have loaded and the image may not be the whole page. Its content may scroll inside an element and not in the page.`)
+      break
+    }
+    if (step === PAGE_STEP_LIMIT) {
+      warnings.add(`${base}: the scroll pass ended at its limit of ${PAGE_STEP_LIMIT} steps, at ${y + height} px of ${total} px, so content below may not have loaded and inner panes there were not checked.`)
+      break
+    }
     last = y
     top = y + Math.floor(height * PAGE_STEP)
   }
+  await scrollPage($, root, page, 0)
+  return [...warnings]
+}
+
+async function settleImages($: EngineInterface, root: string, page: string, base: string): Promise<string[]> {
+  const answer = await pageValue($, root, page, LOADING_IMAGES)
+  if (!/^\d+$/.test(answer)) throw new Refuse(`The page did not say how many images are still loading: it answered ${answer.slice(0, 200)}. No image of it was saved. ${REPAIR}`)
+  return answer === '0' ? [] : [`${base}: ${answer} image(s) were still loading after 10 s, so the image may show them blank.`]
+}
+
+function refuseWrappingOrca(version: unknown): void {
+  if (typeof version === 'string' && /^\d+\.\d+\.\d+/.test(version) && version.localeCompare(FULL_PAGE_ORCA, 'en', { numeric: true }) >= 0) return
+  throw new Refuse(`Refused: fullPage needs Orca ${FULL_PAGE_ORCA} or later, and orca status says ${JSON.stringify(version)}. An earlier Orca can repeat the top of the page in a full-page image of the right size. No tab was opened. Repair: update Orca, or call screenshot without fullPage.`)
 }
 
 // Files that are the same to the byte mean that the scheme changed nothing on the page.
@@ -131,28 +144,23 @@ async function sameInBothSchemes($: EngineInterface, root: string, shots: Shot[]
   const same: string[] = []
   const dark = shots.filter(shot => shot.scheme === 'dark')
   const light = shots.filter(shot => shot.scheme === 'light')
-  for (const view of new Set(dark.map(shot => shot.view))) {
-    const darkHere = dark.filter(shot => shot.view === view)
-    const lightHere = light.filter(shot => shot.view === view)
-    if (darkHere.length !== lightHere.length) continue
-    let identical = true
-    for (const shot of darkHere) {
-      const other = lightHere.find(l => l.part === shot.part)!
-      const compared = await run($, ['cmp', '-s', other.file, shot.file], { cwd: root })
-      if (compared.exitCode > 1) throw new Refuse(`cmp ${other.file} ${shot.file} exited ${compared.exitCode}: ${said(compared)}`)
-      if (compared.exitCode === 1) {
-        identical = false
-        break
-      }
-    }
-    if (identical) same.push(...darkHere.map(shot => shot.file))
+  for (const shot of dark) {
+    const other = light.find(l => l.view === shot.view)
+    if (!other) continue
+    const compared = await run($, ['cmp', '-s', other.file, shot.file], { cwd: root })
+    if (compared.exitCode > 1) throw new Refuse(`cmp ${other.file} ${shot.file} exited ${compared.exitCode}: ${said(compared)}`)
+    if (compared.exitCode === 0) same.push(shot.file)
   }
   return same
 }
 
+async function pause($: EngineInterface, root: string, page: string, ms: number): Promise<void> {
+  if (ms) await browser($, root, ['wait', '--timeout', String(ms), '--page', page])
+}
+
 async function shootEach($: EngineInterface, root: string, page: string, asked: Asked, folder: string): Promise<{ shots: Shot[]; warnings: string[] }> {
   await browser($, root, ['wait', '--load', 'load', '--page', page])
-  if (asked.waitMs) await browser($, root, ['wait', '--timeout', String(asked.waitMs), '--page', page])
+  await pause($, root, page, asked.waitMs)
   const landed = await pageValue($, root, page, 'location.href')
   if (isLoginPage(landed) && !isLoginPage(asked.url)) throw new LoginPage(`${asked.url} went to the login page ${landed}, so no image was saved. The tab stays open in Orca for the human, page ${page}. Repair: ask the human to sign in once in that tab (call blocked if nothing else can go on), then call screenshot again and close that tab with orca tab close --page ${page}.`)
   const shots: Shot[] = []
@@ -168,13 +176,12 @@ async function shootEach($: EngineInterface, root: string, page: string, asked: 
       if (seen !== width) throw new Refuse(`Orca did not apply the viewport ${view} to ${asked.url}: the page is ${seen} wide, not ${width}. No image of it was saved. ${REPAIR}`)
       const base = `${folder}/${slugOf(asked.url)}-${view}-${scheme}`
       if (asked.fullPage) {
-        const { files, warnings: partial } = await shootFullPage($, root, page, asked, view, base)
-        files.forEach((file, index) => shots.push({ view, scheme, part: index + 1, file }))
-        warnings.push(...partial)
-        continue
+        warnings.push(...(await walkPage($, root, page, base)))
+        await pause($, root, page, asked.waitMs)
+        warnings.push(...(await settleImages($, root, page, base)))
       }
-      await copyShot($, root, await browser($, root, ['screenshot', '--page', page, '--format', 'png']), asked.url, view, `${base}.png`)
-      shots.push({ view, scheme, part: 1, file: `${base}.png` })
+      await copyShot($, root, await browser($, root, [asked.fullPage ? 'full-screenshot' : 'screenshot', '--page', page, '--format', 'png']), asked.url, view, `${base}.png`)
+      shots.push({ view, scheme, file: `${base}.png` })
     }
   }
   const same = await sameInBothSchemes($, root, shots)
@@ -196,6 +203,7 @@ export async function takeScreenshots($: EngineInterface, root: string, args: Ar
   const asked = parseArgs(args)
   const status = await browser($, root, ['status'])
   if ((status.runtime as { reachable?: boolean } | undefined)?.reachable !== true) throw new Refuse(`Orca is not running: orca status says that its runtime is not reachable (${JSON.stringify(status).slice(0, 200)}). ${REPAIR}`)
+  if (asked.fullPage) refuseWrappingOrca((status.runtime as { appVersion?: unknown }).appVersion)
   const sha = (await head(root, $)).slice(0, 8)
   const folder = `${(await paths($, root)).gitDir}/ndev-screenshots/${sha}`
   await must($, ['mkdir', '-p', folder], { cwd: root })

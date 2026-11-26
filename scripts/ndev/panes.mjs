@@ -21,6 +21,8 @@ const PANEL_NAMES = {
 }
 const MODES = ['light', 'heavy', 'hack']
 const STEERING = ['interactive', 'auto']
+const FULL_PAGE_ORCA = '1.4.274'
+const LOADING_IMAGES = `(async () => { const loading = () => [...document.images].filter(image => !image.complete && image.getClientRects().length).length; const end = Date.now() + 10000; while (loading() && Date.now() < end) await new Promise(done => setTimeout(done, 100)); return JSON.stringify(loading()) })()`
 const SCHEMES = ['light', 'dark']
 const VIEWPORTS = ['390x844', '820x1180', '1440x900']
 const LOGIN = /^https?:\/\/(?:[^/?#]*\.)?(?:login|signin|accounts|auth|sso)\.|\/(?:login|log-in|signin|sign-in|sso|auth)(?=[/?#]|$)/i
@@ -693,9 +695,50 @@ function screenshotOptions(args) {
   return result
 }
 
+async function walkPage(evaluate, page, view, scheme, warnings) {
+  const move = async top => {
+    const dimensions = JSON.parse(await evaluate(`(async () => { scrollTo({ top: ${top}, behavior: 'instant' }); await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))); return JSON.stringify([scrollY, innerHeight, document.documentElement.scrollHeight]) })()`))
+    if (!Array.isArray(dimensions) || dimensions.length !== 3 || !dimensions.every(Number.isFinite)) {
+      throw paneError(`Page ${page} did not return valid scroll measurements for ${view}.`)
+    }
+    return dimensions
+  }
+  let top = 0
+  let previous = -1
+  for (let step = 1; ; step += 1) {
+    const [y, visible, total] = await move(top)
+    if (y + visible >= total - 1) break
+    if (y <= previous) {
+      warnings.push(`${view} ${scheme} stopped scrolling at ${y + visible} of ${total} pixels, so content below may not have loaded and the image may not be the whole page.`)
+      break
+    }
+    if (step === 40) {
+      warnings.push(`${view} ${scheme} ended the scroll pass at its limit of 40 steps, at ${y + visible} of ${total} pixels, so content below may not have loaded.`)
+      break
+    }
+    previous = y
+    top = y + Math.floor(visible * 0.8)
+  }
+  await move(0)
+}
+
 async function screenshot(scope, args, options) {
   const settings = screenshotOptions(args)
   const call = (args, page) => orcaCommand(scope, page ? [...args, '--page', page] : args, options)
+  if (settings.fullPage) {
+    const runtime = (await call(['status']))?.runtime
+    if (runtime?.reachable !== true) {
+      throw paneError(`Orca is not running: orca status says that its runtime is not reachable (${JSON.stringify(runtime)}).`, {
+        repair: 'Start Orca with orca open, then run ndev pane screenshot again.',
+      })
+    }
+    const version = runtime.appVersion
+    if (!/^\d+\.\d+\.\d+/.test(version) || version.localeCompare(FULL_PAGE_ORCA, 'en', { numeric: true }) < 0) {
+      throw paneError(`--full-page needs Orca ${FULL_PAGE_ORCA} or later, and orca status says ${JSON.stringify(version)}. An earlier Orca can repeat the top of the page in a full-page image of the right size.`, {
+        repair: 'Update Orca, or run ndev pane screenshot without --full-page.',
+      })
+    }
+  }
   const sha = (await command('git', ['rev-parse', '--short=8', 'HEAD'], { cwd: scope.root, env: scope.env })).stdout.trim()
   const folder = join(scope.gitDir, 'ndev-screenshots', sha, randomUUID())
   await mkdir(folder, { recursive: true, mode: 0o700 })
@@ -707,9 +750,10 @@ async function screenshot(scope, args, options) {
   const files = []
   const warnings = []
   const evaluate = async expression => (await call(['eval', '--expression', expression], page))?.result
+  const pause = async target => { if (settings.wait) await call(['wait', '--timeout', String(settings.wait)], target) }
   try {
     await call(['wait', '--load', 'load'], page)
-    if (settings.wait) await call(['wait', '--timeout', String(settings.wait)], page)
+    await pause(page)
     const landed = await evaluate('location.href')
     if (!nonempty(landed)) throw paneError(`Orca could not read the URL of browser page ${page}.`)
     if (LOGIN.test(landed.split(/[?#]/)[0]) && !LOGIN.test(settings.url.split(/[?#]/)[0])) {
@@ -728,47 +772,26 @@ async function screenshot(scope, args, options) {
         const [width, height] = view.split('x')
         await call(['viewport', '--width', width, '--height', height], page)
         if (String(await evaluate('window.innerWidth')) !== width) throw paneError(`Orca did not apply viewport ${view} to page ${page}.`)
-        const image = async suffix => {
-          const response = await call(['screenshot', '--format', 'png'], page)
-          if (!nonempty(response?.path)) throw paneError(`Orca screenshot did not return a file for ${page}, ${view} ${scheme}.`, { details: response })
-          const file = join(folder, `${view}-${scheme}${suffix}.png`)
-          await copyFile(response.path, file)
-          files.push({ view, scheme, file })
+        if (settings.fullPage) {
+          await walkPage(evaluate, page, view, scheme, warnings)
+          await pause(page)
+          const loading = String(await evaluate(LOADING_IMAGES))
+          if (!/^\d+$/.test(loading)) throw paneError(`Page ${page} did not say how many images are still loading for ${view}: ${loading}`)
+          if (loading !== '0') warnings.push(`${view} ${scheme}: ${loading} image(s) were still loading after 10 s, so the image may show them blank.`)
         }
-        if (!settings.fullPage) {
-          await image('')
-          continue
-        }
-        let top = 0
-        let previous = -1
-        for (let index = 1; index <= 40; index += 1) {
-          const dimensions = JSON.parse(await evaluate(`(() => { scrollTo({ top: ${top}, behavior: 'instant' }); return JSON.stringify([scrollY, innerHeight, document.documentElement.scrollHeight]) })()`))
-          if (!Array.isArray(dimensions) || dimensions.length !== 3 || !dimensions.every(Number.isFinite)) {
-            throw paneError(`Page ${page} did not return valid scroll measurements for ${view}.`)
-          }
-          const [y, visible, total] = dimensions
-          const end = y + visible >= total - 1
-          if (y <= previous && !end) {
-            warnings.push(`${view} ${scheme} stopped scrolling at ${y + visible} of ${total} pixels.`)
-            break
-          }
-          await image(index === 1 && end ? '' : `-part${index}`)
-          if (end) break
-          if (index === 40) warnings.push(`${view} ${scheme} reached the 40-image limit at ${y + visible} of ${total} pixels.`)
-          previous = y
-          top = y + Math.floor(visible * 0.8)
-        }
+        const response = await call([settings.fullPage ? 'full-screenshot' : 'screenshot', '--format', 'png'], page)
+        if (!nonempty(response?.path)) throw paneError(`Orca screenshot did not return a file for ${page}, ${view} ${scheme}.`, { details: response })
+        const file = join(folder, `${view}-${scheme}.png`)
+        await copyFile(response.path, file)
+        files.push({ view, scheme, file })
       }
     }
     for (const view of settings.viewports) {
       const light = files.filter(file => file.view === view && file.scheme === 'light')
       const dark = files.filter(file => file.view === view && file.scheme === 'dark')
       if (light.length && light.length === dark.length) {
-        const equal = await Promise.all(light.map(async ({ file }, index) => {
-          const [a, b] = await Promise.all([readFile(file), readFile(dark[index].file)])
-          return a.equals(b)
-        }))
-        if (equal.every(Boolean)) warnings.push(`${view} has identical light and dark screenshots.`)
+        const [a, b] = await Promise.all([readFile(light[0].file), readFile(dark[0].file)])
+        if (a.equals(b)) warnings.push(`${view} has identical light and dark screenshots.`)
       }
     }
   } catch (error) {

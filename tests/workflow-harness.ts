@@ -74,7 +74,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     prReadsFor: undefined as Record<number, unknown[]> | undefined, issueReadsFor: undefined as Record<number, unknown[]> | undefined,
     main: opts.main ?? false, claims: [] as string[], names: opts.names ?? ['a.ts'], copyDiffFails: '', draft: '', ghFails: '', orcaOn: false, env: {} as Record<string, string>, orcaFails: '', issueAnswer: undefined as string | undefined, modelFails: false, spawnDeny: '', sleepHold: undefined as Promise<void> | undefined, resumed: false, orcaLinked: null as number | null, branch: undefined as string | undefined, pr: pull(opts.pr), checks: (opts.checks ?? CHECKS({ name: 'ci', conclusion: 'success' })) as unknown,
     probeLimits: [] as (number | undefined)[], issueReadMs: 0, editFails: '', rmFails: '', failRead: undefined as ((path: string) => boolean) | undefined, onRead: undefined as ((path: string) => void | Promise<void>) | undefined, sleepYields: false, onSleep: undefined as ((seconds: number) => void) | undefined, clockSleeps: 0, staleSaves: 0, staleSaveMs: 0, saves: 0, failWrite: undefined as ((path: string) => boolean) | undefined, sleepAdvances: false, sleepDrift: [] as number[], sleepAborts: 0, sleepFails: '', immediate: [] as string[], probe: undefined as ((argv: string[]) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> | { exitCode: number; stdout?: string; stderr?: string }) | undefined, probes: [] as string[],
-    duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, innerScroller: undefined as { element: string; height: number; total: number } | undefined, stuckAt: undefined as number | undefined, scrollY: 0, shotsAt: [] as number[], sameImages: false, cmpFails: '', dark: false, cpFails: '',
+    duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, innerScroller: undefined as { element: string; height: number; total: number } | undefined, stuckAt: undefined as number | undefined, scrollY: 0, scrolls: [] as number[], shotsAt: [] as number[], orcaVersion: '1.4.274', loadingImages: 0, sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, unchanged: [] as string[], removed: [] as string[], renamedFrom: [] as string[], committedGone: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
     ops: new Set<string>(), pushFails: '', leaseOk: false, remoteOnly: ['cccc9'] as string[], replaced: [] as string[], leases: [] as string[], noOpenPr: false, prNewFails: '', prBodies: [] as string[], diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[], duringSpawn: undefined as (() => void) | undefined,
@@ -419,16 +419,18 @@ export const engine = (on: On, opts: Opts = {}) => {
       orcaCalls.push(a.slice(1) as string[])
       // The answers of the browser commands, as Orca 1.4.247 gives them.
       const answer = (result: unknown) => ok(JSON.stringify({ ok: true, result }))
-      if (a[1] === 'status') return answer({ runtime: { reachable: s.orcaReachable } })
+      if (a[1] === 'status') return answer({ runtime: { reachable: s.orcaReachable, appVersion: s.orcaVersion } })
       if (a[1] === 'tab' && a[2] === 'create') { if (s.orcaFails) return ok(JSON.stringify({ ok: false, error: { code: 'browser_host_unavailable', message: s.orcaFails } }), 1); s.pageUrl ??= a[a.indexOf('--url') + 1]; return answer({ browserPageId: 'page-1' }) }
       if (a[1] === 'viewport') { s.viewportWidth = Number(a[a.indexOf('--width') + 1]); s.viewportHeight = Number(a[a.indexOf('--height') + 1]); return answer({}) }
       if (a[1] === 'exec') { s.dark = a.join(' ').includes('set media dark'); return answer({ set: true }) }
       if (a[1] === 'eval') {
         const expression = a[a.indexOf('--expression') + 1] as string
         if (expression.includes('.querySelectorAll')) return answer({ result: JSON.stringify(s.innerScroller ?? null) })
+        if (expression.includes('document.images')) return answer({ result: JSON.stringify(s.loadingImages) })
         if (expression.includes('scrollTo')) {
           const total = s.pageHeight ?? s.viewportHeight
           s.scrollY = Math.min(Number(/top:\s*(\d+)/.exec(expression)![1]), total - s.viewportHeight, s.stuckAt ?? Infinity)
+          s.scrolls.push(s.scrollY)
           return answer({ result: JSON.stringify([s.scrollY, s.viewportHeight, total]) })
         }
         return answer({ result: expression.includes('innerWidth') ? String(s.pageWidth ?? s.viewportWidth) : expression.includes('location') ? s.pageUrl : String(s.dark) })

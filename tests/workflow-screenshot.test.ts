@@ -8,35 +8,33 @@ test('screenshot follows the viewports, schemes, fullPage and waitSeconds that i
   const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['dark'], fullPage: true, waitSeconds: 2 })
   expect(r.isError).toBe(false)
   expect(w.copies).toEqual([`${SHOTS}/x-test-home-320x640-dark.png`])
-  expect(orcaVerbs(w)).toContain('screenshot')
+  expect(orcaVerbs(w)).toContain('full-screenshot')
   expect(w.orcaCalls.some(c => c[0] === 'wait' && c.includes('2000'))).toBe(true)
 })
 
-// Orca's full-screenshot and a viewport taller than its real surface both wrap and repeat the top of the page.
-test('a full page taller than the viewport is taken in scrolled images that reach its end, and never with full-screenshot', async ($, on) => {
+test('a full page is one full-screenshot image, taken after a scroll pass reaches the end and returns to the top', async ($, on) => {
   const w = engine(on)
   await start($, w)
   w.s.pageHeight = 2000
   const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
   expect(r.isError).toBe(false)
-  expect(orcaVerbs(w)).not.toContain('full-screenshot')
-  expect(w.orcaCalls.filter(c => c[0] === 'viewport')).toHaveLength(1)
-  // Each step overlaps the one before, so that a pinned header hides nothing, and the last reaches the end.
-  expect(w.s.shotsAt).toEqual([0, 512, 1024, 1360])
-  expect(w.copies).toEqual([1, 2, 3, 4].map(n => `${SHOTS}/x-test-home-320x640-light-part${n}.png`))
-  expect(r.text).toContain('Saved 4 images')
-  expect(r.text).toContain('-part4.png')
+  expect(w.s.scrolls).toEqual([0, 512, 1024, 1360, 0])
+  expect(orcaVerbs(w).filter(v => v === 'screenshot' || v === 'full-screenshot')).toEqual(['full-screenshot'])
+  expect(w.s.shotsAt).toEqual([0])
+  expect(w.copies).toEqual([`${SHOTS}/x-test-home-320x640-light.png`])
+  expect(r.text).toContain('Saved 1 image')
   expect(r.text).not.toContain('WARNING')
 })
 
-test('a full page with no end stops at the limit and says how much it did not take', async ($, on) => {
+test('a full page with no end stops the scroll pass at its limit and says what may not have loaded', async ($, on) => {
   const w = engine(on)
   await start($, w)
   w.s.pageHeight = 1_000_000
   const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
   expect(r.isError).toBe(false)
-  expect(w.copies).toHaveLength(40)
-  expect(r.text).toContain('not the whole page')
+  expect(w.s.scrolls).toHaveLength(41)
+  expect(w.copies).toHaveLength(1)
+  expect(r.text).toContain('may not have loaded')
   expect(r.text).toContain('1000000')
 })
 
@@ -48,7 +46,49 @@ test('a full page that will not scroll to its end says so', async ($, on) => {
   const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
   expect(r.isError).toBe(false)
   expect(w.s.shotsAt).toEqual([0])
-  expect(r.text).toContain('not the whole page')
+  expect(r.text).toContain('would not scroll on')
+})
+
+test('a full page waits again after the scroll pass and before the capture', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.pageHeight = 2000
+  await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true, waitSeconds: 2 })
+  const steps = w.orcaCalls.flatMap(c => (c[0] === 'wait' && c.includes('2000') ? ['pause'] : c[0] === 'full-screenshot' ? ['capture'] : c.join(' ').includes('scrollTo') ? ['scroll'] : c.join(' ').includes('document.images') ? ['images'] : []))
+  expect(steps).toEqual(['pause', 'scroll', 'scroll', 'scroll', 'scroll', 'scroll', 'pause', 'images', 'capture'])
+})
+
+test('a full page warns when images are still loading at the capture', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.loadingImages = 3
+  const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
+  expect(r.isError).toBe(false)
+  expect(r.text).toContain('WARNING')
+  expect(r.text).toContain('3 image(s) were still loading')
+  expect(w.copies).toHaveLength(1)
+})
+
+test('a full page is refused when orca status gives no version number', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.orcaVersion = 'unknown'
+  const r = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
+  expect(r.isError).toBe(true)
+  expect(r.text).toContain('"unknown"')
+  expect(orcaVerbs(w)).toEqual(['status'])
+})
+
+test('a full page is refused on an Orca that can wrap the image, before a tab opens, and a viewport image is not', async ($, on) => {
+  const w = engine(on)
+  await start($, w)
+  w.s.orcaVersion = '1.4.266'
+  const refused = await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'], fullPage: true })
+  expect(refused.isError).toBe(true)
+  expect(refused.text).toContain('1.4.274')
+  expect(refused.text).toContain('1.4.266')
+  expect(orcaVerbs(w)).toEqual(['status'])
+  expect((await tool($, 'screenshot', { url: 'https://x.test/', viewports: ['320x640'], schemes: ['light'] })).isError).toBe(false)
 })
 
 test('a page that looks the same in light and dark gets a warning that names the images and the repair', async ($, on) => {

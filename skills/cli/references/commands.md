@@ -122,7 +122,7 @@ Inspect existing workers before starting or resuming a queue. CLI state and Orca
 | --- | --- |
 | `ndev pane view --open` | Open the worktree's view in Orca. Omit `--open` for text data. |
 | `ndev pane responsive-matrix --open` | Inspect the responsive comparison. |
-| `ndev pane screenshot <url> --viewport 390x844 --full-page` | Capture a requested page and viewport. Add supported schemes or viewports as needed. |
+| `ndev pane screenshot <url> --viewport 390x844 --full-page` | Capture a requested page and viewport. Add supported schemes or viewports as needed. With `--full-page`: one image of the whole page, after a scroll pass. `--wait-seconds` pauses after the load and again after the pass. Read the warnings. Needs Orca 1.4.274 or later. |
 | `ndev pane files create <name>` / `copy-from-main <name>` | Create or copy a worktree file through the guarded file action. |
 | `ndev pane resources <action> <args>` | Stop or forget recorded resources. Check help for `stop-server`, `stop-stack`, `stop-all`, and `forget`. |
 

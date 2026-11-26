@@ -267,6 +267,75 @@ test('screenshot pins its tab for each viewport and scheme, closes on success an
   assert.equal(calls.some(([type, action]) => type === 'tab' && action === 'close'), false)
 })
 
+test('a full-page screenshot is one full-screenshot image after a scroll pass, and needs an Orca that does not wrap it', async t => {
+  const options = await fixture(t)
+  const temporaryImage = join(options.home, 'full.png')
+  await writeFile(temporaryImage, 'whole page')
+  const calls = []
+  const scrolls = []
+  let appVersion = '1.4.274'
+  let reachable = true
+  let loading = 0
+  let total = 2000
+  let stuckAt = Infinity
+  let width
+  options.orca = async (args) => {
+    calls.push(args)
+    if (args[0] === 'status') return { runtime: { reachable, appVersion: reachable ? appVersion : undefined } }
+    if (args[0] === 'tab' && args[1] === 'create') return { browserPageId: 'full-tab' }
+    if (args[0] === 'viewport') width = args[2]
+    if (args[0] === 'eval') {
+      if (args[2] === 'location.href') return { result: 'https://example.test/long' }
+      if (args[2] === 'window.innerWidth') return { result: width }
+      if (args[2].includes('querySelectorAll')) return { result: 'null' }
+      if (args[2].includes('document.images')) return { result: JSON.stringify(loading) }
+      if (args[2].includes('scrollTo')) {
+        const y = Math.min(Number(/top:\s*(\d+)/.exec(args[2])[1]), total - 640, stuckAt)
+        scrolls.push(y)
+        return { result: JSON.stringify([y, 640, total]) }
+      }
+      return { result: false }
+    }
+    if (args[0] === 'screenshot' || args[0] === 'full-screenshot') return { path: temporaryImage }
+    return {}
+  }
+  const args = ['screenshot', 'https://example.test/long', '--viewport', '320x640', '--scheme', 'light', '--full-page']
+  const result = await runPane(args, options)
+  assert.deepEqual(scrolls, [0, 512, 1024, 1360, 0])
+  assert.deepEqual(calls.filter(call => call[0].endsWith('screenshot')).map(call => call[0]), ['full-screenshot'])
+  assert.equal(result.files.length, 1)
+  assert.match(result.files[0].file, /320x640-light\.png$/)
+  assert.deepEqual(result.warnings, [])
+
+  calls.length = 0
+  loading = 3
+  const paused = await runPane([...args, '--wait-seconds', '2'], options)
+  assert.deepEqual(paused.warnings, ['320x640 light: 3 image(s) were still loading after 10 s, so the image may show them blank.'])
+  const steps = calls.flatMap(call => (call[0] === 'wait' && call.includes('2000') ? ['pause'] : call[0] === 'full-screenshot' ? ['capture'] : call[2]?.includes?.('scrollTo') ? ['scroll'] : call[2]?.includes?.('document.images') ? ['images'] : []))
+  assert.deepEqual(steps, ['pause', 'scroll', 'scroll', 'scroll', 'scroll', 'scroll', 'pause', 'images', 'capture'])
+  loading = 0
+
+  total = 1_000_000
+  scrolls.length = 0
+  assert.match((await runPane(args, options)).warnings.join('\n'), /limit of 40 steps.*of 1000000 pixels.*may not have loaded/)
+  assert.equal(scrolls.length, 41)
+  total = 2000
+  stuckAt = 0
+  assert.match((await runPane(args, options)).warnings.join('\n'), /stopped scrolling at 640 of 2000 pixels.*may not have loaded/)
+  stuckAt = Infinity
+
+  for (const [version, said] of [['1.4.266', /1\.4\.274.*1\.4\.266/], ['unknown', /1\.4\.274.*"unknown"/]]) {
+    calls.length = 0
+    appVersion = version
+    await assert.rejects(runPane(args, options), error => said.test(error.message) && /update Orca/i.test(error.repair))
+    assert.equal(calls.some(call => call[0] === 'tab'), false)
+  }
+  calls.length = 0
+  reachable = false
+  await assert.rejects(runPane(args, options), error => /not reachable/.test(error.message) && /orca open/.test(error.repair))
+  assert.equal(calls.some(call => call[0] === 'tab'), false)
+})
+
 test('confirmation expires if the resource target changes while the dialog is open', async t => {
   const options = await fixture(t)
   const file = join(options.cwd, '.neil-dev.worktree.json')
