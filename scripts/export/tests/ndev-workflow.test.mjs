@@ -352,6 +352,26 @@ test('two issues on one PR wait for the last developer and share one PR review r
   assert.equal(status.state, 'reviewing')
 })
 
+for (const [name, spent] of [
+  ['the counter', { reviewRounds: 3 }],
+  ['a record from before the counter', { exportReview: { sha: 'b'.repeat(40), runs: [] }, history: [{ tool: 'checkpoint', from: 'reviewing', to: 'reviewing' }, { tool: 'checkpoint', from: 'reviewing', to: 'reviewing' }] }],
+]) {
+  test(`a shared PR review keeps the used rounds and verdicts of each issue, from ${name}`, () => {
+    const p = project()
+    const raw = JSON.parse(readFileSync(p.file, 'utf8'))
+    const reviewHistory = { ['a'.repeat(40)]: { dispatches: [{ axis: 'standards', environment: 'local', dispatchId: 'd-1' }], objection: { axis: 'standards', environment: 'local', dispatchId: 'd-1', lines: ['changes'], at: 1 } } }
+    writeFileSync(p.file, JSON.stringify({ ...raw, workflow: { ...raw.workflow, ...spent, reviewHistory } }))
+    writeFileSync(join(p.work, '.neil-dev.issue-8.json'), JSON.stringify({ ...raw, issue: 8, workflow: { ...raw.workflow, issue: 8 } }))
+    const fake = services(p)
+    const result = JSON.parse(output(flow(p, ['finished-development', '--issue', '8', '--issue', '7'], fake)))
+    assert.deepEqual(result.workflow.issues, [7, 8])
+    assert.equal(result.workflow.reviewRounds, 3)
+    assert.deepEqual(result.workflow.reviewHistory, reviewHistory)
+    assert.match(result.next, /No more reviews will start/)
+    assert.doesNotMatch(existsSync(fake.ORCA_LOG) ? readFileSync(fake.ORCA_LOG, 'utf8') : '', /worker-start/)
+  })
+}
+
 test('the code review checks the base North Star without copying it into reviewer briefs', () => {
   for (const mode of ['light', 'heavy']) {
     const p = project()

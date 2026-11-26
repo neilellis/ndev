@@ -2313,7 +2313,8 @@ function developMembers(root: string, config: Config, args: Args, numbers: Recor
   const existing = records.find(record => record.pr === pr)
   if (existing) return report(existing, config, notes)
   const issues = members.map(record => record.issue).sort((a, b) => a - b)
-  const carrier = { ...lead, issue: issues[0]!, pr, issues, prs: [pr!], rev: undefined, state: lead.state, history: [], evidence: {}, changeTypes: [...new Set(members.flatMap(record => record.changeTypes || []))], migrations: [...new Map(members.flatMap(record => record.migrations || []).map(entry => [entry.path, entry])).values()], followUps: [...new Map(members.flatMap(record => record.followUps || []).map(entry => [entry.hash, entry])).values()] } as Workflow
+  const carrier = { ...lead, issue: issues[0]!, pr, issues, prs: [pr!], rev: undefined, state: lead.state, history: [], evidence: {}, reviewRounds: Math.max(...members.map(reviewRounds)), reviewHistory: undefined, changeTypes: [...new Set(members.flatMap(record => record.changeTypes || []))], migrations: [...new Map(members.flatMap(record => record.migrations || []).map(entry => [entry.path, entry])).values()], followUps: [...new Map(members.flatMap(record => record.followUps || []).map(entry => [entry.hash, entry])).values()] } as Workflow
+  for (const member of members) mergeReviews(carrier, member)
   apply(carrier, { state: 'reviewing' }, 'finishedDevelopment', notes)
   save(carrier)
   return report(carrier, config, [...notes, `PR #${pr} carries ${issues.map(n => '#' + n).join(', ')} through review.`])
