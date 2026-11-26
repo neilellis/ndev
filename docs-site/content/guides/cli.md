@@ -142,6 +142,7 @@ ndev flow checkpoint --message <text> --file <path>... [--change-type <type>]...
 ndev flow finished-development [--issue <n>]... [--pr <n>]... [--message <text>] [--file <path>]... [--change-type <type>]... [--body-file <file>] [--hardening <text>] [--human-confirmation <text>]
 ndev flow push-draft [--issue <n>|--pr <n>] --sha <full-reviewed-sha> --review <text>
 ndev flow finished-review (--review <text> | --waive-review <reason>) --deadcode <text> --remembered <text>
+ndev flow authorise-review --head <full HEAD commit id> --reason <text>
 ndev flow finished-checks
 ndev flow finished-smoke --report-file <file>|--skipped <reason>
 ndev flow finished-revision

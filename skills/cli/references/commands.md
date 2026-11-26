@@ -35,6 +35,7 @@ Use the entrypoint's stage table for the normal sequence. These commands handle 
 | `ndev flow follow-up --mode issue_only --message-file <file>` | File separate work without starting another worker. Other modes can start work. |
 | `ndev flow add-migration <name>` | Create and record a migration before it needs to run after merge. |
 | `ndev flow request-secret <name>` | Locate or request a missing project secret through the supported path. |
+| `ndev flow authorise-review --head <full HEAD commit id> --reason "<why>"` | After the third review round, review one fixed commit again. A human confirms it in a terminal in Orca. Ask the human to run it. |
 | `ndev flow blocked --message "<blocker>"` / `unblock` | Record a blocker and resume when it is resolved. |
 | `ndev flow mode` / `steering` | Inspect or intentionally change this workflow's mode or steering. |
 | `ndev flow skip`, `goto`, `off`, `on` | Apply an authorized workflow-control decision. They are not routine failure recovery. |
@@ -42,6 +43,8 @@ Use the entrypoint's stage table for the normal sequence. These commands handle 
 `interview --finish` ends an active interview. `finished-interview` runs a base check in developing, planning, or hardening. It does not end an active interview.
 
 `finished-development` starts review and the dead-code sweep. Do not launch duplicate reviewers. `finished-review` needs the review, sweep rulings, and remember result. `finished-smoke --skipped` and `finished-review --waive-review` apply only where the workflow permits the specific omission. Never invent confirmation or evidence.
+
+After three review rounds no more reviews start. For a substantive finding, commit the fix and ask the human to run `ndev flow authorise-review`. Then wait with `ndev wait agent dispatch:<id>` and run `finished-review`. It passes only when each of those reviewers succeeded and wrote `ndev-review-verdict: approve <full HEAD commit id>` in its own chat. A later commit needs a new authorisation.
 
 ## GitHub reads and edits
 

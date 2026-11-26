@@ -705,8 +705,9 @@ test('repair adopts the canonical PR without moving refs or losing dirty work, a
   const refs = git(p.work, 'show-ref')
   const before = git(p.work, 'rev-parse', 'HEAD')
   writeFileSync(join(p.work, 'unknown.txt'), 'preserve unknown work')
-  p.setRecord({ state: 'ci', evidence: { checks: { sha: before } }, migrations: [{ path: 'keep.sql' }] })
+  p.setRecord({ state: 'ci', evidence: { checks: { sha: before } }, migrations: [{ path: 'keep.sql' }], reviewAuthorisation: { sha: before, reason: 'old PR', at: 1, audited: true } })
   const repaired = JSON.parse(output(p.repair())).workflow
+  assert.equal(repaired.reviewAuthorisation, undefined)
   assert.deepEqual(repaired.prs, [10])
   assert.equal(repaired.branch, 'canonical')
   assert.equal(repaired.localBranch, 'feature')
@@ -1673,4 +1674,348 @@ test('a review stays on its original issue after the owner turns to another issu
   assert.equal(held.state, 'blocked')
   assert.equal(held.evidence.review, undefined)
   assert.equal(held.exportReview, undefined)
+})
+
+function reviewServices(p) {
+  const base = services(p)
+  const state = join(p.dir, 'orca-state')
+  mkdirSync(state)
+  const script = join(p.dir, 'review-orca.mjs')
+  writeFileSync(script, `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+const argv = process.argv.slice(2)
+const state = process.env.ORCA_STATE
+const flag = name => argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined
+appendFileSync(process.env.ORCA_LOG, argv.map(arg => arg.includes('\\n') ? '<spec>' : arg).join(' ') + '\\n')
+const reply = result => console.log(JSON.stringify({ id: 'reply', ok: true, result, _meta: { runtimeId: 'runtime' } }))
+const fail = error => { console.log(JSON.stringify({ ok: false, error })); process.exit(1) }
+const command = argv.slice(0, 2).join(' ')
+const dispatch = flag('--dispatch')
+const file = state + '/' + dispatch + '.json'
+const worker = () => existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : fail({ code: 'dispatch_not_found', message: 'Worker Dispatch ' + dispatch + ' was not found.' })
+if (command === 'worktree set') reply({ updated: true })
+else if (command === 'orchestration request-show') reply({ state: 'completed' })
+else if (command === 'orchestration worker-start') {
+  const counter = state + '/starts'
+  const attempt = (existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0) + 1
+  writeFileSync(counter, String(attempt))
+  if (process.env.FAIL_START === String(attempt)) fail({ code: 'operation_unknown', message: 'The start was not confirmed.', data: { requestId: 'request-' + attempt } })
+  const id = 'dispatch-' + attempt
+  writeFileSync(state + '/' + id + '.json', JSON.stringify({ state: 'ready', spec: flag('--spec'), messages: [] }))
+  reply({ state: 'ready', runId: 'run-1', dispatchId: id })
+} else if (command === 'orchestration worker-show') {
+  reply({ dispatchId: worker().showAs ?? dispatch, taskId: 'task-' + dispatch, runId: 'run-1', state: worker().state, stage: 'settled', liveness: 'exited' })
+} else if (command === 'orchestration worker-read') {
+  const held = worker()
+  if (held.stuck) {
+    appendFileSync(state + '/stuck-reads', '.')
+    if (readFileSync(state + '/stuck-reads', 'utf8').length > 20) fail({ code: 'test_read_limit', message: 'The reader did not stop at a stalled cursor.' })
+  }
+  const start = Number((flag('--cursor') ?? 'owr1_0').slice(5))
+  const messages = held.messages.slice(start, start + 40)
+  const nextCursor = 'owr1_' + (held.stuck ? 0 : start + messages.length)
+  const source = held.source ?? 'transcript'
+  reply({ dispatchId: held.readAs ?? dispatch, source, provider: 'claude', ...(source === 'transcript' ? { transcript: { messages, nextCursor, limited: messages.length > 0, returnedMessageCount: messages.length } } : { terminal: { tail: ['ndev-review-verdict: approve ' + process.env.TAIL_SHA] } }), cursor: nextCursor, status: { worker: held.state }, fallbackReason: null, warnings: [] })
+} else { console.error('Unsupported Orca command ' + argv.join(' ')); process.exit(23) }
+`)
+  writeFileSync(join(p.dir, 'fake-bin', 'orca'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)} "$@"\n`)
+  const gh = join(p.dir, 'review-gh.sh')
+  writeFileSync(gh, `#!/bin/sh\nif [ "$1" = comment ] && [ -n "$FAIL_COMMENT" ]; then echo 'comment refused' >&2; exit 41; fi\nexec bash ${JSON.stringify(base.NDEV_FLOW_GH)} "$@"\n`)
+  return { ...base, NDEV_FLOW_GH: gh, ORCA_STATE: state }
+}
+const said = (role, ...blocks) => ({ id: `orca:${role}`, timestamp: 1, source: 'transcript', role, blocks })
+const text = value => ({ type: 'text', text: value })
+const verdict = (word, sha) => `ndev-review-verdict: ${word} ${sha}`
+function report(fake, dispatch, patch) {
+  const file = join(fake.ORCA_STATE, dispatch + '.json')
+  const held = JSON.parse(readFileSync(file, 'utf8'))
+  writeFileSync(file, JSON.stringify({ ...held, state: 'succeeded', source: undefined, showAs: undefined, readAs: undefined, stuck: undefined, ...patch }))
+}
+const answers = (fake, dispatch, ...lines) => report(fake, dispatch, { messages: lines.map(line => said('assistant', text(line))) })
+const headOf = p => git(p.work, 'rev-parse', 'HEAD')
+function atTheLimit(patch = {}) {
+  const p = project()
+  const fake = reviewServices(p)
+  setRecord(p, { state: 'reviewing', reviewRounds: 3, exportReview: { sha: 'a'.repeat(40), at: 1, runs: [{ axis: 'review', dispatchId: 'old-review' }] }, ...patch })
+  git(p.work, 'add', 'next.txt')
+  git(p.work, 'commit', '-qm', 'Fix the substantive finding of round three')
+  return { p, fake, sha: headOf(p) }
+}
+const authoriseArgs = (sha, reason = 'Round 3 found a data loss defect') => ['flow', 'authorise-review', '--head', sha, '--reason', reason]
+const authorise = (p, fake, sha, reason) => confirmed(p.work, fake, authoriseArgs(sha, reason))
+function authorised(p, fake, sha, reason) {
+  const human = authorise(p, fake, sha, reason)
+  assert.equal(human.status, 0, human.stdout)
+}
+const finishArgs = ['finished-review', '--review', 'The authorised reviewer approved the fix', '--deadcode', 'None', '--remembered', 'None']
+const starts = fake => (readFileSync(fake.ORCA_LOG, 'utf8').match(/orchestration worker-start/g) || []).length
+function refusedFinish(p, fake, pattern, extra = {}) {
+  const origin = git(p.origin, 'rev-parse', 'feature')
+  const result = flow(p, finishArgs, { ...fake, ...extra })
+  assert.equal(result.status, 1, result.stdout + result.stderr)
+  assert.match(result.stderr, pattern)
+  assert.equal(recordOf(p).state, 'reviewing')
+  assert.equal(recordOf(p).evidence.review, undefined)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), origin)
+  assert.equal(logged(fake.GH_LOG, 'pr-ready').length, 0)
+  return result.stderr
+}
+
+test('after three real rounds a human authorises one review of HEAD, and finished-review accepts its approval of that commit', () => {
+  const p = project()
+  const fake = reviewServices(p)
+  setRecord(p, { noChecks: false })
+  const checks = join(p.work, 'scripts/ndev/workflow')
+  mkdirSync(checks, { recursive: true })
+  const ready = join(p.dir, 'ready.log')
+  for (const name of ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh']) writeFileSync(join(checks, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  writeFileSync(join(checks, 'pre-ready-check.sh'), `#!/bin/sh\ngit rev-parse HEAD >> ${JSON.stringify(ready)}\n`, { mode: 0o755 })
+  writeFileSync(join(p.work, '.git/info/exclude'), 'scripts/\n.neil-dev.*\n')
+  output(flow(p, ['finished-development', '--issue', '7'], fake))
+  for (const round of [2, 3, 4]) {
+    writeFileSync(join(p.work, 'next.txt'), `round ${round}\n`)
+    output(flow(p, ['checkpoint', '--file', 'next.txt', '--message', `Fix for round ${round}`], fake))
+  }
+  const sha = headOf(p)
+  const origin = git(p.origin, 'rev-parse', 'feature')
+  assert.match(JSON.parse(output(flow(p, ['status'], fake))).next, /3 review rounds.*ndev flow authorise-review --head <full HEAD commit id> --reason.*--waive-review/)
+  assert.equal(starts(fake), 3)
+  authorised(p, fake, sha)
+  const held = recordOf(p)
+  assert.equal(held.state, 'reviewing')
+  assert.equal(held.reviewRounds, 3)
+  assert.equal(held.reviewAuthorisation.sha, sha)
+  assert.equal(held.reviewAuthorisation.reason, 'Round 3 found a data loss defect')
+  assert.ok(Number.isFinite(held.reviewAuthorisation.at))
+  assert.equal(held.exportReview.sha, sha)
+  assert.deepEqual(held.exportReview.runs.map(run => [run.axis, run.dispatchId]), [['review', 'dispatch-4']])
+  assert.equal(starts(fake), 4)
+  const spec = JSON.parse(readFileSync(join(fake.ORCA_STATE, 'dispatch-4.json'), 'utf8')).spec
+  assert.ok(spec.includes(verdict('approve', sha)) && spec.includes(verdict('changes', sha)), spec)
+  assert.ok(spec.includes(`HEAD is ${sha}`), spec)
+  const audits = logged(fake.GH_LOG, 'comment')
+  assert.equal(audits.length, 1)
+  assert.match(audits[0], /^comment 9 /)
+  assert.ok(audits[0].includes(sha) && audits[0].includes('Round 3 found a data loss defect') && audits[0].includes('dispatch-4'), audits[0])
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), origin)
+  report(fake, 'dispatch-4', { messages: [said('user', text('brief')), ...Array.from({ length: 44 }, (_, i) => said('assistant', text(`Reading file ${i}`))), said('assistant', text(verdict('approve', sha)))] })
+  const finished = JSON.parse(output(flow(p, finishArgs, fake)))
+  assert.equal(finished.state, 'ci')
+  assert.equal(finished.workflow.reviewRounds, 3)
+  assert.equal(finished.workflow.evidence.review.sha, sha)
+  assert.match(finished.workflow.evidence.review.text, /dispatch-4/)
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), sha)
+  assert.equal(readFileSync(ready, 'utf8').trim().split('\n').at(-1), sha)
+  assert.equal(logged(fake.GH_LOG, 'pr-ready').length, 1)
+  assert.match(readFileSync(fake.ORCA_LOG, 'utf8'), /orchestration worker-read --dispatch dispatch-4 --source transcript --cursor owr1_40/)
+})
+
+test('authorise-review changes nothing without the confirmation of a human in a terminal', () => {
+  const { p, fake, sha } = atTheLimit({ owner: { session: 'orca-worker', at: Date.now() } })
+  const worker = { ...fake, ORCA_AGENT_SESSION_ID: 'orca-worker' }
+  const before = readFileSync(p.file, 'utf8')
+  const request = answer(cli(p, authoriseArgs(sha).slice(1), worker)).nextAction
+  assert.deepEqual([request.action, request.confirmation], ['authorise-review', 'terminal'])
+  const piped = JSON.parse(output(flow(p, authoriseArgs(sha).slice(1), worker)))
+  assert.equal(piped.nextAction.confirmation, 'terminal')
+  const terminal = { cwd: p.work, env: { ...env, ...fake, ORCA_AGENT_SESSION_ID: '' } }
+  const mistyped = confirmInTerminal({ ...request, revision: request.revision + 1 }, [ndevBin, ...authoriseArgs(sha)], terminal)
+  assert.equal(mistyped.status, 1, mistyped.stdout)
+  assert.match(mistyped.stdout, /Confirmation did not match authorise-review for #7/)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  assert.equal(starts(fake), 0)
+  assert.equal(logged(fake.GH_LOG, 'comment').length, 0)
+  const human = confirmInTerminal(request, [ndevBin, ...authoriseArgs(sha)], terminal)
+  assert.equal(human.status, 0, human.stdout)
+  assert.equal(recordOf(p).reviewAuthorisation.sha, sha)
+  assert.equal(recordOf(p).owner.session, 'orca-worker')
+  assert.equal(starts(fake), 1)
+})
+
+test('authorise-review refuses, before it asks the human, anything but the unreviewed full HEAD at the round limit in Orca', () => {
+  const { p, fake, sha } = atTheLimit()
+  const original = readFileSync(p.file, 'utf8')
+  const cases = [
+    [{ state: 'developing' }, sha, {}, /#7 is developing.*only in state reviewing.*ndev flow status --issue 7/],
+    [{ reviewRounds: 2 }, sha, {}, /#7 has used 2 of 3 review rounds.*checkpoint/],
+    [{}, sha.slice(0, 12), {}, new RegExp(`--head "${sha.slice(0, 12)}" is not a full commit id.*git rev-parse HEAD`)],
+    [{}, 'b'.repeat(40), {}, new RegExp(`--head ${'b'.repeat(40)} is not HEAD ${sha}`)],
+    [{ exportReview: { sha, at: 1, runs: [{ axis: 'review', dispatchId: 'third-round' }] } }, sha, {}, new RegExp(`${sha} already has its review \\(third-round\\).*finished-review --review`)],
+    [{}, sha, { ORCA_ENVIRONMENT: '' }, /needs a reviewer worker that Orca reports on.*ORCA_TERMINAL_HANDLE.*Orca terminal/],
+  ]
+  for (const [patch, head, extra, pattern] of cases) {
+    writeFileSync(p.file, original)
+    setRecord(p, patch)
+    const before = readFileSync(p.file, 'utf8')
+    const refused = refusal(cli(p, authoriseArgs(head).slice(1), { ...fake, ...extra }), 1)
+    assert.match(`${refused.message} ${refused.repair}`, pattern)
+    assert.equal(readFileSync(p.file, 'utf8'), before)
+  }
+  writeFileSync(p.file, original)
+  for (const args of [['authorise-review', '--head', sha], ['authorise-review', '--reason', 'Because']]) {
+    assert.match(refusal(cli(p, args, fake), 2).message, /--(reason|head) is required/)
+  }
+  assert.equal(readFileSync(p.file, 'utf8'), original)
+  assert.equal(starts(fake), 0)
+  assert.equal(logged(fake.GH_LOG, 'comment').length, 0)
+})
+
+test('finished-review refuses every authorised review that does not approve HEAD in the transcript of its worker', () => {
+  const { p, fake, sha } = atTheLimit()
+  authorised(p, fake, sha)
+  const other = 'b'.repeat(40)
+  const fresh = /human runs ndev flow authorise-review --head [0-9a-f]{40}/
+  const refix = /fix the findings.*ndev flow checkpoint.*authorise-review/i
+  const unreadable = /check orca orchestration worker-show --dispatch dispatch-1/
+  const cases = [
+    [() => report(fake, 'dispatch-1', { state: 'ready' }), /dispatch-1 \(review\).*is ready/s, /ndev wait agent dispatch:dispatch-1/],
+    [() => report(fake, 'dispatch-1', { state: 'failed', messages: [said('assistant', text(verdict('approve', sha)))] }), /dispatch-1 \(review\).*is failed/s],
+    [() => answers(fake, 'dispatch-1', 'No findings. I approve this commit.'), /dispatch-1 \(review\).*no ndev-review-verdict line/s],
+    [() => report(fake, 'dispatch-1', { messages: [said('user', text(verdict('approve', sha))), said('assistant', { type: 'tool-call', name: 'Bash', input: { command: `orca orchestration send --body "${verdict('approve', sha)}"` } }, { type: 'tool-result', output: verdict('approve', sha) }), said('reasoning', text(verdict('approve', sha)))] }), /dispatch-1 \(review\).*no ndev-review-verdict line/s],
+    [() => answers(fake, 'dispatch-1', `ndev-review-verdict: approve ${sha.slice(0, 12)}`), new RegExp(`dispatch-1 \\(review\\).*malformed.*approve ${sha.slice(0, 12)}`, 's')],
+    [() => answers(fake, 'dispatch-1', `\`${verdict('approve', sha)}\``), /dispatch-1 \(review\).*malformed/s],
+    [() => answers(fake, 'dispatch-1', verdict('approve', sha), `${verdict('approve', sha)} with one reservation`), /dispatch-1 \(review\).*malformed.*reservation/s],
+    [() => answers(fake, 'dispatch-1', verdict('approve', other)), new RegExp(`dispatch-1 \\(review\\).*another commit.*${other}`, 's')],
+    [() => answers(fake, 'dispatch-1', `Two findings.\n${verdict('changes', sha)}`), /dispatch-1 \(review\).*reports changes/s, refix],
+    [() => answers(fake, 'dispatch-1', verdict('changes', sha), verdict('approve', sha)), /dispatch-1 \(review\).*conflicting verdicts.*changes.*approve/s, refix],
+    [() => report(fake, 'dispatch-1', { source: 'terminal' }), /dispatch-1 \(review\).*source "terminal".*transcript/s, unreadable],
+    [() => report(fake, 'dispatch-1', { showAs: 'dispatch-9', messages: [said('assistant', text(verdict('approve', sha)))] }), /dispatch-1 \(review\).*no state of dispatch-1.*dispatch-9/s, unreadable],
+    [() => report(fake, 'dispatch-1', { readAs: 'dispatch-9', messages: [said('assistant', text(verdict('approve', sha)))] }), /dispatch-1 \(review\).*dispatch "dispatch-9".*not with the chat transcript of dispatch-1/s, unreadable],
+    [() => report(fake, 'dispatch-1', { stuck: true, messages: [said('assistant', text(verdict('approve', sha)))] }), /dispatch-1 \(review\).*cursor "owr1_0" again/s, unreadable],
+  ]
+  for (const [arrange, pattern, repair = fresh] of cases) {
+    arrange()
+    const stderr = refusedFinish(p, fake, pattern, { TAIL_SHA: sha })
+    assert.match(stderr, repair)
+  }
+  rmSync(join(fake.ORCA_STATE, 'dispatch-1.json'))
+  refusedFinish(p, fake, /worker-show --dispatch dispatch-1.*dispatch_not_found/s)
+  writeFileSync(join(fake.ORCA_STATE, 'dispatch-1.json'), '{}')
+  answers(fake, 'dispatch-1', 'Findings: none.', `Done.\n  ${verdict('approve', sha)}  \n`, verdict('approve', sha))
+  assert.equal(JSON.parse(output(flow(p, finishArgs, fake))).state, 'ci')
+})
+
+test('a heavy authorised review starts both axes and needs the approval of each one', () => {
+  const { p, fake, sha } = atTheLimit({ mode: 'heavy' })
+  authorised(p, fake, sha)
+  const held = recordOf(p)
+  assert.deepEqual(held.exportReview.runs.map(run => [run.axis, run.dispatchId]), [['standards', 'dispatch-1'], ['specification', 'dispatch-2']])
+  answers(fake, 'dispatch-1', verdict('approve', sha))
+  answers(fake, 'dispatch-2', verdict('changes', sha))
+  const stderr = refusedFinish(p, fake, /dispatch-2 \(specification\).*reports changes/s)
+  assert.doesNotMatch(stderr, /dispatch-1 \(standards\)/)
+  answers(fake, 'dispatch-2', verdict('approve', sha))
+  const whole = readFileSync(p.file, 'utf8')
+  setRecord(p, { exportReview: { ...held.exportReview, runs: held.exportReview.runs.slice(0, 1) } })
+  refusedFinish(p, fake, /mode heavy needs a specification reviewer.*authorise-review/s)
+  setRecord(p, { exportReview: { ...held.exportReview, runs: [] } })
+  refusedFinish(p, fake, /needs a standards reviewer.*needs a specification reviewer/s)
+  writeFileSync(p.file, whole)
+  assert.equal(JSON.parse(output(flow(p, finishArgs, fake))).state, 'ci')
+})
+
+test('an authorisation covers one commit, so a later commit needs a new one', () => {
+  const { p, fake, sha } = atTheLimit()
+  authorised(p, fake, sha)
+  answers(fake, 'dispatch-1', verdict('approve', sha))
+  writeFileSync(join(p.work, 'next.txt'), 'one more change\n')
+  output(flow(p, ['checkpoint', '--file', 'next.txt', '--message', 'One more change'], fake))
+  const later = headOf(p)
+  assert.equal(starts(fake), 1)
+  assert.equal(recordOf(p).reviewRounds, 3)
+  refusedFinish(p, fake, new RegExp(`authorisation covers ${sha}, but HEAD is ${later}.*authorise-review --head ${later}`, 's'))
+  authorised(p, fake, later, 'The fix needed a second commit')
+  assert.equal(starts(fake), 2)
+  answers(fake, 'dispatch-2', verdict('approve', sha))
+  refusedFinish(p, fake, /dispatch-2 \(review\).*another commit/s)
+  answers(fake, 'dispatch-2', verdict('approve', later))
+  assert.equal(JSON.parse(output(flow(p, finishArgs, fake))).state, 'ci')
+  assert.equal(git(p.origin, 'rev-parse', 'feature'), later)
+})
+
+test('a second authorisation of one commit replaces only a review that ended without a verdict', () => {
+  const { p, fake, sha } = atTheLimit()
+  authorised(p, fake, sha)
+  const stands = pattern => {
+    const before = readFileSync(p.file, 'utf8')
+    const refused = refusal(cli(p, authoriseArgs(sha).slice(1), fake), 1)
+    assert.match(`${refused.message} ${refused.repair}`, pattern)
+    assert.equal(readFileSync(p.file, 'utf8'), before)
+    assert.equal(starts(fake), 1)
+  }
+  stands(/dispatch-1 \(review\) is ready.*ndev wait agent dispatch:dispatch-1/s)
+  answers(fake, 'dispatch-1', verdict('changes', sha))
+  stands(/dispatch-1 \(review\) reported changes.*stands.*checkpoint/s)
+  answers(fake, 'dispatch-1', verdict('changes', sha), verdict('approve', sha))
+  stands(/dispatch-1 \(review\) reported changes.*stands/s)
+  answers(fake, 'dispatch-1', verdict('approve', sha))
+  stands(/already approve.*finished-review/s)
+  answers(fake, 'dispatch-1', 'I forgot the verdict line.')
+  authorised(p, fake, sha, 'The first reviewer gave no verdict')
+  assert.equal(starts(fake), 2)
+  assert.deepEqual(recordOf(p).exportReview.runs.map(run => run.dispatchId), ['dispatch-2'])
+  assert.match(logged(fake.GH_LOG, 'comment').at(-1), /dispatch-2[\s\S]*Replaced.*dispatch-1/)
+  report(fake, 'dispatch-2', { state: 'stopped' })
+  authorised(p, fake, sha, 'The second reviewer was stopped')
+  assert.deepEqual(recordOf(p).exportReview.runs.map(run => run.dispatchId), ['dispatch-3'])
+  assert.match(logged(fake.GH_LOG, 'comment').at(-1), /Replaced.*dispatch-1, dispatch-2/)
+})
+
+test('an interrupted authorisation resumes its own workers and posts its audit comment before finished-review can pass', () => {
+  const { p, fake, sha } = atTheLimit({ mode: 'heavy' })
+  const half = authorise(p, { ...fake, FAIL_START: '2' }, sha)
+  assert.equal(half.status, 1, half.stdout)
+  assert.match(half.stdout, /The start was not confirmed/)
+  assert.equal(recordOf(p).reviewAuthorisation.sha, sha)
+  answers(fake, 'dispatch-1', verdict('approve', sha))
+  refusedFinish(p, fake, /authorisation of .*did not finish.*authorise-review --head/s)
+  assert.equal(starts(fake), 2)
+  writeFileSync(recordOf(p).exportReview.runs[1].brief, `Reply ${verdict('approve', sha)}`)
+  const unposted = authorise(p, { ...fake, FAIL_COMMENT: '1' }, sha)
+  assert.equal(unposted.status, 1, unposted.stdout)
+  assert.match(unposted.stdout, /comment refused/)
+  assert.equal(starts(fake), 3)
+  assert.match(readFileSync(fake.ORCA_LOG, 'utf8'), /worker-start.*--retry-request request-2/)
+  assert.match(JSON.parse(readFileSync(join(fake.ORCA_STATE, 'dispatch-3.json'), 'utf8')).spec, /independent reviewer/)
+  answers(fake, 'dispatch-3', verdict('approve', sha))
+  refusedFinish(p, fake, /authorisation of .*did not finish/s)
+  authorised(p, fake, sha)
+  assert.equal(starts(fake), 3)
+  assert.equal(logged(fake.GH_LOG, 'comment').filter(line => line.includes(sha)).length, 1)
+  assert.equal(JSON.parse(output(flow(p, finishArgs, fake))).state, 'ci')
+})
+
+test('an unfinished authorisation that cannot be resumed does not drop an objection', () => {
+  const { p, fake, sha } = atTheLimit()
+  assert.equal(authorise(p, { ...fake, FAIL_COMMENT: '1' }, sha).status, 1)
+  answers(fake, 'dispatch-1', verdict('changes', sha))
+  setRecord(p, { mode: 'heavy' })
+  const before = readFileSync(p.file, 'utf8')
+  const refused = refusal(cli(p, authoriseArgs(sha).slice(1), fake), 1)
+  assert.match(refused.message, /dispatch-1 \(review\) reported changes.*stands/s)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  assert.equal(starts(fake), 1)
+})
+
+test('without a PR the authorisation is recorded on the issue', () => {
+  const { p, fake, sha } = atTheLimit({ prs: [], direct: true, branch: 'feature', base: 'main' })
+  authorised(p, fake, sha)
+  assert.match(logged(fake.GH_LOG, 'comment')[0], /^comment 7 /)
+})
+
+test('the standalone export refuses to authorise, and to finish an authorised review, because it cannot get Orca evidence', () => {
+  const { p, fake, sha } = atTheLimit()
+  const standalone = args => run(p.work, process.execPath, [source, ...args, '--issue', '7'], { ...fake, ORCA_AGENT_SESSION_ID: '' })
+  setRecord(p, { owner: undefined })
+  const before = readFileSync(p.file, 'utf8')
+  const refused = standalone(['authoriseReview', '--head', sha, '--reason', 'Because'])
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr)
+  assert.match(refused.stderr, /authoriseReview needs the full ndev CLI.*standalone export.*Orca.*Repair:/s)
+  assert.equal(readFileSync(p.file, 'utf8'), before)
+  authorised(p, fake, sha)
+  setRecord(p, { owner: undefined })
+  const finished = standalone(['finishedReview', '--review', 'Approved', '--deadcode', 'None', '--remembered', 'None'])
+  assert.equal(finished.status, 1, finished.stdout + finished.stderr)
+  assert.match(finished.stderr, /standalone export.*cannot read the verdict.*Orca/s)
+  assert.equal(recordOf(p).state, 'reviewing')
+  assert.equal(logged(fake.GH_LOG, 'pr-ready').length, 0)
 })

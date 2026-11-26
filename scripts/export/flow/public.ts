@@ -63,6 +63,7 @@ const commands: Record<string, [string, string]> = {
   'finished-development': ['', 'issue pr message file change-type body-file hardening human-confirmation'],
   'push-draft': ['', 'issue pr sha review'],
   'finished-review': ['', 'issue pr review waive-review deadcode remembered'],
+  'authorise-review': ['', 'issue pr head reason'],
   'finished-checks': ['', 'issue pr'],
   'finished-smoke': ['', 'issue pr report-file skipped'],
   'finished-revision': ['', 'issue pr'],

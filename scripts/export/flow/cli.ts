@@ -434,7 +434,8 @@ function reviewRounds(wf: Workflow): number {
   if (!wf.exportReview) return 0
   return 1 + wf.history.filter(({ tool, from, to }) => tool === 'checkpoint' && from === 'reviewing' && to === 'reviewing').length
 }
-const reviewLimitNotice = `The limit of ${MAX_REVIEW_ROUNDS} review rounds has been reached. No more reviews will start. Use ndev-flow finishedReview --waive-review "<reason>" for nitpicks after checking the current diff, or report any substantive blocker.`
+const authorisedRoute = standalone ? '' : ' For substantive findings, commit the fix, then a human runs ndev flow authorise-review --head <full HEAD commit id> --reason "<why>" in a terminal for one independent review of that commit.'
+const reviewLimitNotice = `The limit of ${MAX_REVIEW_ROUNDS} review rounds has been reached. No more reviews will start.${authorisedRoute} Use ndev-flow finishedReview --waive-review "<reason>" for nitpicks after checking the current diff, or report any substantive blocker.`
 function readBranchTypes(wf: Workflow): { types: string[]; note?: string } {
   const range = wf.direct ? 'HEAD~1..HEAD' : `origin/${wf.base}...HEAD`
   const r = git(wf.root, 'diff', '--name-only', range)
@@ -442,22 +443,12 @@ function readBranchTypes(wf: Workflow): { types: string[]; note?: string } {
   addTypes(wf, r.stdout.split('\n').filter(Boolean), [])
   return { types: wf.changeTypes ?? [] }
 }
-function startReview(wf: Workflow): string[] {
-  const sha = headSha(wf.root)
-  if (wf.exportReview?.sha === sha) return []
-  const rounds = reviewRounds(wf)
-  if (rounds >= MAX_REVIEW_ROUNDS) {
-    wf.reviewRounds = rounds
-    wf.deadcode = { sha, results: sweepDeadCode(wf) }
-    return [reviewLimitNotice, sweepText(wf.deadcode.results), scanLoweredBar(wf)]
-  }
-  const lowered = scanLoweredBar(wf)
-  const branchTypes = readBranchTypes(wf)
+const reviewAxes = (wf: Workflow) => MACHINES[wf.mode as 'light'].twoAxisReview ? ['standards', 'specification'] : ['review']
+function writeReviewBriefs(wf: Workflow, sha: string, lowered: string, changeTypes: string[], closing: string[] = []) {
   const issue = ghJson<{ title: string; body: string | null }>(wf.root, wf.repo, ['issue-read', String(wf.issue)])
-  const axes = MACHINES[wf.mode as 'light'].twoAxisReview ? ['standards', 'specification'] : ['review']
   const dir = gitDir(wf.root)
   const reviewer = reviewerFile()
-  const runs = axes.map(axis => {
+  return reviewAxes(wf).map(axis => {
     const brief = join(dir, `ndev-review-${wf.issue}-${axis}.md`)
     const out = join(dir, `ndev-review-${wf.issue}-${axis}.out.md`)
     const log = join(dir, `ndev-review-${wf.issue}-${axis}.log`)
@@ -474,19 +465,35 @@ function startReview(wf: Workflow): string[] {
         'If the diff adds, edits, or removes the file, check that change against owner approval. Use the base rules for the rest of the diff unless the owner approved a change to those rules.',
         'For a conflict, cite the section and the changed file and line. Record the sections you checked, no applicable sections, file absent, or an access failure. When the file is absent, use the remaining project guidance.',
       ]),
-      ...reviewerBrief(branchTypes.types as any),
+      ...reviewerBrief(changeTypes as any),
       MACHINES[wf.mode as 'light'].reviewBrief ?? '',
       reviewer ? `Your instructions as reviewer are in ${reviewer}: follow them.` : '',
       `## Issue #${wf.issue}: ${issue.title}`,
       issue.body ?? '(no body)',
+      ...closing,
     ].filter(Boolean).join('\n\n'))
-    if (!PROFILE.reviewCommand) return { axis, brief, out, log }
-    const cmd = PROFILE.reviewCommand.replaceAll('{brief}', quote(brief)).replaceAll('{out}', quote(out))
-    const fd = openSync(log, 'w')
+    return { axis, brief, out, log }
+  })
+}
+function startReview(wf: Workflow): string[] {
+  const sha = headSha(wf.root)
+  if (wf.exportReview?.sha === sha) return []
+  const rounds = reviewRounds(wf)
+  if (rounds >= MAX_REVIEW_ROUNDS) {
+    wf.reviewRounds = rounds
+    wf.deadcode = { sha, results: sweepDeadCode(wf) }
+    return [reviewLimitNotice, sweepText(wf.deadcode.results), scanLoweredBar(wf)]
+  }
+  const lowered = scanLoweredBar(wf)
+  const branchTypes = readBranchTypes(wf)
+  const runs = writeReviewBriefs(wf, sha, lowered, branchTypes.types).map(entry => {
+    if (!PROFILE.reviewCommand) return entry
+    const cmd = PROFILE.reviewCommand.replaceAll('{brief}', quote(entry.brief)).replaceAll('{out}', quote(entry.out))
+    const fd = openSync(entry.log, 'w')
     const child = spawn('sh', ['-c', cmd], { cwd: wf.root, detached: true, stdio: ['ignore', fd, fd] })
     if (!child.pid) throw new Fail(1, `ndev-flow: the review command did not start: ${cmd}`)
     child.unref()
-    return { axis, brief, out, log, pid: child.pid }
+    return { ...entry, pid: child.pid }
   })
   wf.reviewRounds = rounds + 1
   wf.exportReview = { sha, at: now(), runs }
@@ -858,6 +865,142 @@ function pushDraft(wf: Workflow, config: Config, args: Args) {
   ])
 }
 
+const VERDICT_MARK = 'ndev-review-verdict:'
+const VERDICT_CANDIDATE = new RegExp(`^[\\s>*_\`#-]*${VERDICT_MARK}`)
+const VERDICT_LINE = new RegExp(`^${VERDICT_MARK} (approve|changes) ([0-9a-f]{40}(?:[0-9a-f]{24})?)$`)
+const RUNNING_WORKER = ['starting', 'start_unknown', 'ready', 'stopping', 'stop_unknown']
+type ReviewRun = { axis: string; environment: string; dispatchId: string }
+type Verdict = { run: ReviewRun; running?: boolean; objects?: boolean; problem?: string; repair?: string }
+const reviewerName = (run: ReviewRun) => `${run.dispatchId} (${run.axis})`
+const authoriseCommand = (wf: Workflow, sha: string) => `ndev flow authorise-review --head ${sha} --reason "<why>" --issue ${wf.issue}`
+
+function verdictBrief(sha: string): string[] {
+  return [
+    '## Verdict',
+    `A human authorised this one review of ${sha} after the review limit. Before you send worker_done, write one chat message that holds only your verdict line, which is one of these two:`,
+    `${VERDICT_MARK} approve ${sha}\n${VERDICT_MARK} changes ${sha}`,
+    `Write approve only when you have no Critical or Important finding on this commit. ndev reads this line in your chat transcript through Orca, not in worker_done, a file or a commit. Orca cuts a long text after 1200 characters, so keep the line in its own message. Write no other line that starts with ${VERDICT_MARK.slice(0, -1)}. Report worker_done with --outcome succeeded for either verdict.`,
+  ]
+}
+
+function assistantVerdictLines(wf: Workflow, run: ReviewRun): string[] {
+  const lines: string[] = []
+  let cursor: string | undefined
+  for (;;) {
+    const read = orca(wf.root, run.environment, ['orchestration', 'worker-read', '--dispatch', run.dispatchId, '--source', 'transcript', ...(cursor ? ['--cursor', cursor] : [])])
+    const messages = read.transcript?.messages
+    if (read.dispatchId !== run.dispatchId || read.source !== 'transcript' || !Array.isArray(messages)) throw new Fail(1, `Orca answered worker-read for dispatch "${read.dispatchId}" with source "${read.source}", not with the chat transcript of ${run.dispatchId}: ${read.fallbackReason ?? 'no reason given'}.`)
+    if (!messages.length) return lines
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue
+      for (const block of message.blocks) {
+        if (block.type === 'text') lines.push(...String(block.text).split('\n').filter(line => VERDICT_CANDIDATE.test(line)).map(line => line.trim()))
+      }
+    }
+    const next = read.transcript.nextCursor
+    if (!next || next === cursor) throw new Fail(1, `Orca returned the transcript cursor "${next}" again, so the transcript of ${run.dispatchId} cannot be read to its end.`)
+    cursor = next
+  }
+}
+
+function readVerdict(wf: Workflow, run: ReviewRun, sha: string): Verdict {
+  const fresh = `a human runs ${authoriseCommand(wf, sha)} in a terminal in Orca, which starts fresh reviewers`
+  try {
+    const shown = orca(wf.root, run.environment, ['orchestration', 'worker-show', '--dispatch', run.dispatchId])
+    if (shown.dispatchId !== run.dispatchId || typeof shown.state !== 'string') throw new Fail(1, `Orca returned no state of ${run.dispatchId} from worker-show: ${JSON.stringify(shown)}`)
+    if (RUNNING_WORKER.includes(shown.state)) return { run, running: true, problem: `is ${shown.state}`, repair: `wait with ndev wait agent dispatch:${run.dispatchId}, then run the command again` }
+    const lines = assistantVerdictLines(wf, run)
+    const objects = lines.includes(`${VERDICT_MARK} changes ${sha}`)
+    const parsed = lines.map(line => ({ line, match: VERDICT_LINE.exec(line) }))
+    const malformed = parsed.filter(entry => !entry.match).map(entry => entry.line)
+    const stale = parsed.filter(entry => entry.match && entry.match[2] !== sha).map(entry => entry.line)
+    const words = new Set(parsed.map(entry => entry.match?.[1]))
+    const problem = shown.state !== 'succeeded' ? `is ${shown.state}, not succeeded`
+      : !lines.length ? `has no ndev-review-verdict line in the assistant messages of its chat transcript (Orca cuts a text after 1200 characters)`
+        : malformed.length ? `has a malformed verdict line: ${malformed.join(' | ')}`
+          : stale.length ? `has a verdict on another commit than HEAD ${sha}: ${stale.join(' | ')}`
+            : words.size > 1 ? `has conflicting verdicts: ${lines.join(' | ')}`
+              : objects ? `reports changes for ${sha}`
+                : undefined
+    const repair = objects ? `fix the findings of ${run.dispatchId} (${run.axis}), commit them with ndev flow checkpoint, then a human runs authorise-review for the new HEAD` : fresh
+    return { run, objects, ...(problem ? { problem, repair } : {}) }
+  } catch (error) {
+    if (!(error instanceof Fail)) throw error
+    throw new Fail(1, `Cannot read the verdict of reviewer ${reviewerName(run)}: ${error.message} Repair: check orca orchestration worker-show --dispatch ${run.dispatchId}, then run the command again.`)
+  }
+}
+
+function heldDispatches(wf: Workflow): ReviewRun[] {
+  return (wf.exportReview?.runs ?? []).filter((run: Partial<ReviewRun>) => run.dispatchId)
+}
+
+function checkAuthorisation(wf: Workflow, args: Args) {
+  if (standalone) throw new Fail(1, `ndev-flow: authoriseReview needs the full ndev CLI inside Orca. The standalone export has no terminal confirmation gate and starts no Orca reviewer worker, so it cannot get a verdict that Orca returns for a worker. Repair: install ndev, then a human runs ${authoriseCommand(wf, '<full HEAD commit id>')} in a terminal in Orca.`)
+  if (wf.state !== 'reviewing') throw new Fail(1, `Issue #${wf.issue} is ${wf.state}, and authorise-review works only in state reviewing. Repair: run ndev flow status --issue ${wf.issue} and follow its next step.`)
+  const sha = need(args, 'head')
+  const reason = need(args, 'reason')
+  const head = headSha(wf.root)
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(sha)) throw new Fail(1, `--head "${sha}" is not a full commit id. Repair: pass the whole id that git rev-parse HEAD prints in ${wf.root}.`)
+  if (sha !== head) throw new Fail(1, `--head ${sha} is not HEAD ${head} of ${wf.root}. Repair: check out the commit to review, or pass --head ${head}.`)
+  const rounds = reviewRounds(wf)
+  if (rounds < MAX_REVIEW_ROUNDS) throw new Fail(1, `Issue #${wf.issue} has used ${rounds} of ${MAX_REVIEW_ROUNDS} review rounds, so normal reviews still start. Repair: commit the change with ndev flow checkpoint --issue ${wf.issue}, which starts the next review.`)
+  const held = wf.reviewAuthorisation?.sha === sha && wf.exportReview?.sha === sha ? wf.reviewAuthorisation : undefined
+  if (!held && wf.exportReview?.sha === sha) throw new Fail(1, `${sha} already has its review (${heldDispatches(wf).map(run => run.dispatchId).join(', ') || 'no Orca worker'}), from a counted round. Repair: read that report, then run ndev flow finished-review --review "<result>". For a substantive finding, commit the fix with ndev flow checkpoint, then authorise the new HEAD.`)
+  if (!inOrca()) throw new Fail(1, `authorise-review needs a reviewer worker that Orca reports on, and this process is not in Orca: ORCA_ENVIRONMENT, ORCA_TERMINAL_HANDLE and ORCA_PAIRING_CODE are all unset. Repair: run ${authoriseCommand(wf, sha)} in an Orca terminal of ${wf.root}.`)
+  const runs = heldDispatches(wf)
+  const resume = !!held && !held.audited && (wf.exportReview.runs as ReviewRun[]).map(run => run.axis).join() === reviewAxes(wf).join()
+  if (held && !resume) {
+    const complete = reviewAxes(wf).every(axis => runs.some(run => run.axis === axis))
+    const verdicts = runs.map(run => readVerdict(wf, run, sha))
+    const objection = verdicts.find(verdict => verdict.objects)
+    if (objection) throw new Fail(1, `Reviewer ${reviewerName(objection.run)} reported changes for ${sha}. That verdict stands, and no other review of this commit starts. Repair: fix its findings, commit them with ndev flow checkpoint, then authorise the new HEAD.`)
+    const running = verdicts.find(verdict => verdict.running)
+    if (running) throw new Fail(1, `Reviewer ${reviewerName(running.run)} ${running.problem}, so the authorised review of ${sha} still runs. Repair: ${running.repair}.`)
+    if (complete && verdicts.every(verdict => !verdict.problem)) throw new Fail(1, `The reviewers of ${sha} already approve it (${runs.map(reviewerName).join(', ')}). Repair: run ndev flow finished-review --review "<result>" --deadcode "<d>" --remembered "<w>" --issue ${wf.issue}.`)
+  }
+  const replaced: string[] = held ? [...held.replaced ?? [], ...(resume ? [] : runs.map(run => run.dispatchId))] : []
+  return { sha, reason, resume, replaced }
+}
+
+function authoriseReview(wf: Workflow, config: Config, args: Args) {
+  const { sha, reason, resume, replaced } = checkAuthorisation(wf, args)
+  const lowered = scanLoweredBar(wf)
+  const branchTypes = readBranchTypes(wf)
+  const briefs = writeReviewBriefs(wf, sha, lowered, branchTypes.types, verdictBrief(sha))
+  wf.reviewRounds = reviewRounds(wf)
+  if (!resume) wf.exportReview = { sha, at: now(), runs: briefs }
+  const at = now()
+  wf.reviewAuthorisation = { sha, reason, at, replaced }
+  wf.history.push({ at, tool: 'authoriseReview', from: wf.state, to: wf.state })
+  save(wf)
+  ensureReviewWorkers(wf)
+  const target = wf.prs[0] || wf.issue
+  comment(wf, target, [
+    `A human authorised one independent review after the limit of ${MAX_REVIEW_ROUNDS} review rounds.`,
+    `Commit: ${sha}`,
+    `Reason: ${reason}`,
+    `Time: ${new Date(at).toISOString()}`,
+    `Reviewer workers: ${heldDispatches(wf).map(reviewerName).join(', ')}`,
+    replaced.length ? `Replaced, because they gave no usable verdict: ${replaced.join(', ')}` : '',
+    `The round count stays at ${wf.reviewRounds}. The authorisation covers this commit only, and a later commit needs a new one.`,
+  ].filter(Boolean).join('\n'))
+  wf.reviewAuthorisation.audited = true
+  save(wf)
+  return report(wf, config, [`Authorised one review of ${sha} and recorded it on #${target}.`, branchTypes.note ?? '', lowered])
+}
+
+function requireApprovals(wf: Workflow, sha: string): string {
+  const repair = `a human runs ${authoriseCommand(wf, sha)} in a terminal in Orca`
+  if (standalone) throw new Fail(1, `ndev-flow: #${wf.issue} waits for the authorised review of ${sha}, and the standalone export cannot read the verdict that Orca returns for its reviewer. Repair: run ndev flow finished-review with the full ndev CLI in Orca.`)
+  if (wf.exportReview?.sha !== sha || !wf.reviewAuthorisation.audited) throw new Fail(1, `The authorisation of ${sha} did not finish: ${wf.exportReview?.sha !== sha ? `the review record covers ${wf.exportReview?.sha}` : 'its audit comment is not recorded as posted'}. Repair: ${repair}.`)
+  const runs = heldDispatches(wf)
+  const missing = reviewAxes(wf).filter(axis => !runs.some(run => run.axis === axis)).map(axis => `mode ${wf.mode} needs a ${axis} reviewer`)
+  if (missing.length) throw new Fail(1, `The authorised review of ${sha} is incomplete: ${missing.join(', and ')}, and the record holds none. Repair: ${repair}.`)
+  const refused = runs.map(run => readVerdict(wf, run, sha)).filter(verdict => verdict.problem)
+  if (refused.length) throw new Fail(1, `The authorised review does not approve ${sha}. ${refused.map(verdict => `Reviewer ${reviewerName(verdict.run)} ${verdict.problem}.`).join(' ')} Repair: ${[...new Set(refused.map(verdict => verdict.repair))].join('; ')}.`)
+  return `verdict: ${runs.map(run => `reviewer ${reviewerName(run)}`).join(' and ')} approved ${sha} in the review that a human authorised`
+}
+
 function finishedReview(wf: Workflow, config: Config, args: Args) {
   const waived = args['waive-review'] !== undefined
   if (waived && args.review !== undefined) throw new Fail(2, 'Choose either --review or --waive-review.')
@@ -865,11 +1008,14 @@ function finishedReview(wf: Workflow, config: Config, args: Args) {
   const fields = { review, deadcode: need(args, 'deadcode'), remembered: need(args, 'remembered') }
   const to = moveFor(wf, config, 'finishedReview')
   const reviewed = headSha(wf.root)
-  if (!waived && wf.exportReview?.sha && wf.exportReview.sha !== reviewed) {
+  const authorised = !waived && wf.reviewAuthorisation?.sha === reviewed
+  const approval = authorised ? requireApprovals(wf, reviewed) : ''
+  if (!waived && !authorised && wf.exportReview?.sha && wf.exportReview.sha !== reviewed) {
+    if (!standalone && wf.reviewAuthorisation) throw new Fail(1, `The limit of ${MAX_REVIEW_ROUNDS} review rounds has been reached. The authorisation covers ${wf.reviewAuthorisation.sha}, but HEAD is ${reviewed}, and it covers one commit only. Repair: a human runs ${authoriseCommand(wf, reviewed)} in a terminal in Orca, or use ndev-flow finishedReview --waive-review "<reason>" for nitpicks.`)
     if (reviewRounds(wf) >= MAX_REVIEW_ROUNDS) throw new Fail(1, reviewLimitNotice)
     if (!standalone) throw new Fail(1, `Review covers ${wf.exportReview.sha}, but HEAD is ${reviewed}. Review the current commit before recording evidence or give a reason with --waive-review.`)
   }
-  if (!waived && !standalone && wf.exportReview?.runs?.some((r: Record<string, unknown>) => r.dispatchId || r.starting)) {
+  if (!waived && !authorised && !standalone && wf.exportReview?.runs?.some((r: Record<string, unknown>) => r.dispatchId || r.starting)) {
     ensureReviewWorkers(wf)
     for (const reviewer of wf.exportReview.runs) {
       const receipt = orca(wf.root, reviewer.environment, ['orchestration', 'worker-show', '--dispatch', reviewer.dispatchId, '--full'])
@@ -899,7 +1045,7 @@ function finishedReview(wf: Workflow, config: Config, args: Args) {
     if (!standalone) awaitPrHead(wf, sha)
     gh(wf, ['pr-ready', String(prOf(wf))])
   }
-  const text = `review: ${fields.review}\ndeadcode: ${fields.deadcode}\nremembered: ${fields.remembered}`
+  const text = [`review: ${fields.review}`, approval, `deadcode: ${fields.deadcode}`, `remembered: ${fields.remembered}`].filter(Boolean).join('\n')
   if (!wf.direct) comment(wf, prOf(wf), `Review of ${sha.slice(0, 8)}\n\n${text}`)
   if (!standalone) {
     assertHead(wf, reviewed)
@@ -1463,6 +1609,7 @@ const ISSUE_COMMANDS: Record<string, (wf: Workflow, config: Config, args: Args) 
   finishedHacking: simpleMove('finishedHacking'),
   finishedDevelopment,
   finishedReview,
+  authoriseReview,
   pushDraft,
   finishedChecks,
   finishedSmoke,
@@ -1653,7 +1800,7 @@ function repairFlow(root: string, config: Config, args: Args) {
     delete wf.noChecks
     delete wf.baseCheck
   }
-  for (const key of ['exportReview', 'deadcode', 'hooks', 'reviewRounds', 'prTitle', 'prBody', 'doneWaitsFor']) delete wf[key]
+  for (const key of ['exportReview', 'deadcode', 'hooks', 'reviewRounds', 'prTitle', 'prBody', 'doneWaitsFor', 'reviewAuthorisation']) delete wf[key]
   const phase = wf.state === 'blocked' ? wf.previous : wf.state
   if (!['setup', 'interviewing', 'planning', 'developing', 'hardening'].includes(phase || '')) {
     if (wf.state === 'blocked') wf.previous = 'developing'
@@ -1834,10 +1981,11 @@ function dispatchFlow(argv: string[], options: { json?: boolean }) {
   if (config.workflow === false && command !== 'on') throw new Fail(1, `Workflow is off in ${root}. Run ndev flow on --project.`)
   if (wf.off && command !== 'on' && command !== 'off') throw new Fail(1, `Workflow of #${wf.issue} is off: ${wf.off.reason}. Run ndev flow on.`)
   const elsewhere = ownedElsewhere(wf)
-  const human = command === 'skip' || command === 'goto' || command === 'on' || command === 'mode' || command === 'steering' && !args.reason
+  const human = command === 'skip' || command === 'goto' || command === 'on' || command === 'mode' || command === 'authorise-review' || command === 'steering' && !args.reason
   if (elsewhere && command !== 'unblock' && !human) throw new Fail(1, elsewhere)
   if ((args.mode || wf.mode) === 'hack' && (args.steering || wf.steering) === 'auto') throw new Fail(2, 'Hack mode cannot use auto steering.')
   if (command === 'goto') refuseUnchanged(wf, 'state', gotoState(args))
+  if (command === 'authorise-review') checkAuthorisation(wf, args)
   if (command === 'mode') refuseUnchanged(wf, 'mode', args.mode)
   if (command === 'steering' && !args.reason) refuseUnchanged(wf, 'steering', args.steering)
   if (human) {
