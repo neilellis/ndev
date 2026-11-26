@@ -20,6 +20,8 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 | `docs/formal/requirements/extra/sources/` | The frozen copies of the retired documents, at their old paths. Do not edit them. | `ndev requirements retire` |
 | `docs/formal/requirements/extra/publish.json` | Where and how `ndev requirements publish` writes the pages for the documentation app | Humans |
 | `docs/formal/requirements/generated/narrative/` | The prose of each section, with a hash of the records it describes | An agent, through `ndev requirements narrate` |
+| `docs/formal/models/<name>.qnt` and `<name>_test.qnt` | A Quint model and its tests (see [Models](#models)) | An agent |
+| `docs/formal/models/<name>.json` | The manifest of the model (see [Model manifests](#model-manifests)) | An agent; the pins only by `ndev requirements model-pin` |
 
 ## Template
 
@@ -298,7 +300,7 @@ Write the model with the `quint-modeling` skill (https://github.com/quint-co/qui
 
 `ndev requirements model <REQ-NNNN> <path.qnt[#name]>...` adds models to the `model` list of a record, and keeps the models it already lists. It refuses an entry that `check` fails. Each source file that cites the record also holds the path of its model, for example `// REQ-0007 models/migrations.qnt`. Then an agent that reads the code finds the specification.
 
-`check` does not run Quint. Run `quint typecheck` and `quint test` on the models in the project's own checks.
+`check` does not run Quint. `ndev requirements model-check` runs it for each model that has a [manifest](#model-manifests). Run `quint typecheck` and `quint test` on all the models in the project's own checks.
 
 ### Install the Quint skills
 
@@ -325,6 +327,67 @@ Traps:
 - `next` is a reserved word. Do not use it as a name.
 - Write `x' = (a or b)` with the parentheses.
 - An invariant that fails by design records a known bug. Keep it out of the formal check, and link the issue that fixes the bug.
+
+### Model manifests
+
+A manifest says what a model proves. It also ties each action of the model to the code. It is beside the model: `docs/formal/models/<name>.json` for `<name>.qnt`. The `requirements-model` skill writes it.
+
+```json
+{
+  "model": "<name>.qnt",
+  "requirements": ["REQ-NNNN"],
+  "assumptions": ["<what the model takes as given>"],
+  "bounds": { "steps": 20, "samples": 10000, "seed": "0x1", "limits": ["<what the model does not cover>"] },
+  "invariants": ["<val name>"],
+  "witnesses": ["<val name>"],
+  "mutants": [{ "invariant": "<val name>", "find": "<exact model text>", "replace": "<broken text>", "why": "<the fault it copies>" }],
+  "actions": {
+    "<action name>": { "code": [{ "file": "src/x.ts", "lines": "L10-L25", "pin": "<written by model-pin>" }] },
+    "<another action>": { "none": "<why no code stands behind it>" }
+  }
+}
+```
+
+- Each key above is necessary. `module` is the only optional key. Use it when Quint does not take the main module of the file by default. No other key is allowed.
+- Give at least one requirement, one assumption and one invariant. `witnesses` and `limits` can be empty lists.
+- `model` is the file name of the model. It has the name of the manifest.
+- `actions` names each `action` that `<name>.qnt` declares, with `init` and `step`. Give each one `code` or `none`, not both. An action of an imported file does not count.
+- Each name in `invariants` and `witnesses` is a `val` or `pure val` of the main module. The main module declares it itself. A literal such as `true` fails.
+- `file` is a path from the project root. It stays inside the project and is not a link or behind one. `lines` is `L<first>-L<last>`. The model and each cited file are UTF-8.
+- A pin is a hash of the cited lines, then `@` and the commit. The hash ignores spaces at the end of a line. Only `model-pin` writes a pin.
+
+`ndev requirements model-check [<manifest>...]` checks the named manifests. With no name, it checks each `.json` file directly in `docs/formal/models`. It runs the project's own `node_modules/.bin/quint`. When that file is missing, the command fails and shows the install command. It fails on each of these:
+
+1. A manifest that is not complete, or that has an unknown key.
+2. A requirement that is not a record in force, or whose `model` list does not name this model.
+3. An action that the model declares and `actions` does not name, and a name in `actions` that the model does not declare.
+4. Drift: a code reference with no pin, or cited lines that do not match the pin. When the same lines are now at another place in the file, the message gives the new line numbers.
+5. A model that does not typecheck. A test file `<name>_test.qnt`, when it exists, in which a test fails or no test runs. As in the formal check, each module of that file must run a test.
+6. An invariant that the model violates.
+7. An invariant with no mutant. A mutant whose `find` text does not occur exactly once in the model. A mutant that does not typecheck, or that does not violate its invariant. Quint also exits 1 for a type error, an unknown name and a run-time error. Thus only `error: Invariant violated` counts.
+8. A witness that the model does not reach: `--invariant 'not(<witness>)'` must be violated.
+
+A run passes only when Quint exits 0 and prints `[ok] No violation found`.
+
+**The model must move.** An invariant holds only when the longest trace has 2 states or more. Quint prints this as `Trace length statistics: max=<states>`. With a smaller number, or no such line, the invariant is not checked. This happens when `init` is false, or when `step` can never fire.
+
+**A mutant breaks the system, not what checks it.** `model-check` compares Quint's parse of the model and of the mutant, so comments and layout do not count. It refuses a mutant unless all of these are true:
+
+- It changes one or more definitions that `init` or `step` reaches, directly or through other definitions. The main module declares `init` and `step`.
+- It changes no listed invariant or witness.
+- It changes no definition that only an invariant or a witness uses. This is true in the model and in the mutant. So a mutant cannot stop an action from using a definition and then change it.
+- It does not add, remove or rename a definition.
+- It changes no other declaration: an `import`, `instance`, `export`, `type`, `var`, `const` or `assume`.
+
+It also refuses a change in a module that has an instance, and a change to a value that an instance takes. There it cannot tell what the change reaches. A mutant can change a definition that both an action and an invariant use. Make sure that such a mutant copies a fault of the system.
+
+Each mutant runs in a temporary copy of `docs/formal/models`, so that its imports of other models work. For a model in another folder, the copy is of that folder. The command does not change the files of the project.
+
+A Quint that cannot start, or that does not finish, stops the command with its own error. It is not a pass, and it does not catch a mutant. Each Quint run has 10 minutes. `NDEV_QUINT_TIMEOUT_MS` sets another limit, in milliseconds.
+
+With no manifest, the command fails, because it checked nothing. It lists each model that it did not check. These are models with no manifest, and models in a subfolder whose manifest you did not name. A pass gives the numbers of invariants, mutants, witnesses and tests, and the bounds. **A pass is a bounded random search. It is not an exhaustive proof.**
+
+`ndev requirements model-pin <manifest>...` writes the pin of each code reference, with the commit. **Run it only after you read the cited code against each action.** It reads each cited file from the last commit itself. Each cited line must be in that file and must match the line in the working folder. Spaces at the end of a line do not count. So it refuses a change that is not committed, also one that `git status` does not show. It refuses a file that the last commit does not hold. When it refuses one reference, it writes no pin. It writes each manifest again as JSON with an indent of two spaces. It does not run Quint.
 
 ### Add a formal check to a project
 

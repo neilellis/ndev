@@ -15,7 +15,7 @@ Work skills carry the brief project-guidance reminder. Specialist skills do not 
 | A diagram | `archify` validates five technical diagram types from a typed specification; `diagram-design` covers custom layouts and other chart types; `infographic` makes raster artwork. |
 | Check a website | `responsive-check` owns the viewport/theme matrix and quick mobile screenshots. `site-check` checks links and runtime errors. `browser-arrows` annotates screenshots. |
 | Documentation | `docs` is the entry point; `doc-coverage` finds gaps; `docs-sync` reconciles source changes; `docs-legibility` checks comprehension; `docs-team` coordinates a whole site. |
-| Knowledge | `requirements` searches, writes and checks the requirement records (what the system must do); `requirements-find` finds the requirements in the project's documents and accounts for each line; `requirements-retrospective` traces each merged pull request to a record; `requirements-document` writes the prose of the generated document; `requirements-publish` publishes the records to the documentation app; `requirements-retire` retires a prose document that the records replace; `requirements-deprecate` deprecates a record that is obsolete or replaced; `adr-pdr` searches and writes the decision records (ADRs for design, PDRs for requirement amendments); `remember` records project facts; `dev-wiki` records reusable lessons; `forget` removes false claims; `wiki-lint` checks structure and evidence. |
+| Knowledge | `requirements` searches, writes and checks the requirement records (what the system must do); `requirements-find` finds the requirements in the project's documents and accounts for each line; `requirements-model` writes a Quint model with its manifest and checks it against the code; `requirements-retrospective` traces each merged pull request to a record; `requirements-document` writes the prose of the generated document; `requirements-publish` publishes the records to the documentation app; `requirements-retire` retires a prose document that the records replace; `requirements-deprecate` deprecates a record that is obsolete or replaced; `adr-pdr` searches and writes the decision records (ADRs for design, PDRs for requirement amendments); `remember` records project facts; `dev-wiki` records reusable lessons; `forget` removes false claims; `wiki-lint` checks structure and evidence. |
 
 ## Consolidated entry points
 
@@ -94,6 +94,7 @@ The sections below cover every source skill once. Keep this index current when a
 - [adr-pdr](adr-pdr/SKILL.md)
 - [requirements](requirements/SKILL.md)
 - [requirements-find](requirements-find/SKILL.md)
+- [requirements-model](requirements-model/SKILL.md)
 - [requirements-retrospective](requirements-retrospective/SKILL.md)
 - [requirements-document](requirements-document/SKILL.md)
 - [requirements-publish](requirements-publish/SKILL.md)

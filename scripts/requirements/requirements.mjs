@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { CliError } from "../ndev/common.mjs";
+import { modelCheck, modelPin } from "./models.mjs";
 
 const DIR = "docs/formal/requirements";
 const DEPRECATED = "docs/formal/deprecated";
@@ -25,7 +26,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check", "clear", "flagged", "all"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, type, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, types, cites, for, narrate, narrative, publish, references, retire, deprecate, fixed";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, type, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, types, cites, for, narrate, narrative, publish, references, retire, deprecate, fixed, model-check, model-pin";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta", "groupBy"];
 const TYPE_PAGES = {
@@ -1297,6 +1298,7 @@ function author(root, id, names) {
 
 const modelEntries = (record) => [record.data.model ?? []].flat().map(String);
 const modelFiles = (record) => [...new Set(modelEntries(record).map((model) => model.split("#")[0]))];
+const modelRecords = (root) => entries(root).filter((e) => NAME.test(e.file)).map(read).map((r) => ({ id: r.id, status: r.status, inForce: IN_FORCE.includes(r.status), models: modelFiles(r) }));
 
 function modelForm(root, model) {
   const match = model.match(MODEL_ENTRY);
@@ -2159,6 +2161,8 @@ export function runRequirements(argv, { json } = {}) {
       retire: () => retire(root(), rest, options),
       deprecate: () => deprecate(root(), rest[0], options),
       fixed: () => fixed(root(), options),
+      "model-check": () => modelCheck(root(), rest, options, modelRecords),
+      "model-pin": () => modelPin(root(), rest, options),
     };
     if (!commands[command]) throw new Usage(`Unknown requirements command "${command ?? ""}": use ${COMMANDS}`);
     const result = commands[command]();

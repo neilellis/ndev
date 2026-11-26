@@ -170,6 +170,7 @@ const groups = {
       narrate: '"<section>" [--from <file>]', narrative: '', publish: '[--check]',
       references: '<path>', retire: '<path>... --pdr <file> [--keep <file>,<file>]',
       deprecate: '<REQ-NNNN> --reason "<why>" --decided-by "<name>" [--by <REQ-NNNN>]', fixed: '--base <git ref>',
+      'model-check': '[<manifest>...]', 'model-pin': '<manifest>...',
     },
   },
   watch: {

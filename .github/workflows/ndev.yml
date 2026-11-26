@@ -22,6 +22,7 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: node scripts/ndev/workflow/check-plugin-version.mjs
+      - run: npm ci --no-audit --no-fund
       - run: npm test
 
   sdk:
