@@ -534,6 +534,7 @@ function subOf(epic: Epic, args: Args): SubIssue {
 type ClosingRef = { number?: unknown; repository?: { name?: unknown; owner?: { login?: unknown } } }
 type OpenClosingPr = { repo: string; number: number; created: number }
 const isRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+// Model: models/workflow/epic_workflow.qnt#otherOwnerOpensPr
 async function refuseOpenClosingPr($: EngineInterface, epic: Epic, sub: SubIssue, unchanged: string, since?: number): Promise<void> {
   const shown = `gh issue view ${sub.issue} --repo ${epic.repo} --json closedByPullRequestsReferences`
   const { closedByPullRequestsReferences: refs } = await ghOne<{ closedByPullRequestsReferences?: unknown }>($, epic.root, epic.repo, ['view-json', 'issue', String(sub.issue), '--fields', 'closedByPullRequestsReferences'])

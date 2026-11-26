@@ -20,6 +20,7 @@ module epic_workflow {
     reviewed: bool,
     verifiedBase: int,
     headVerified: bool,
+    briefed: bool,
   }
 
   type Pr = {
@@ -31,6 +32,7 @@ module epic_workflow {
     ridesOn: int,
     landed: bool,
     lost: bool,
+    afterBrief: bool,
   }
 
   type Debts = { open: int, ruled: int, override: bool }
@@ -48,8 +50,8 @@ module epic_workflow {
     val i = PHASES.indices().filter(k => PHASES[k] == p).fold(0, (a, k) => k)
     if (i + 1 < PHASES.length()) PHASES[i + 1] else p
 
-  val UNSLICED: Sub = { state: "unsliced", previous: "", rounds: 0, stackedOn: MAIN, startBase: MAIN, reviewed: false, verifiedBase: MAIN, headVerified: false }
-  val NO_PR: Pr = { life: "none", draft: true, base: MAIN, checks: "none", mergeable: "unknown", ridesOn: MAIN, landed: false, lost: false }
+  val UNSLICED: Sub = { state: "unsliced", previous: "", rounds: 0, stackedOn: MAIN, startBase: MAIN, reviewed: false, verifiedBase: MAIN, headVerified: false, briefed: false }
+  val NO_PR: Pr = { life: "none", draft: true, base: MAIN, checks: "none", mergeable: "unknown", ridesOn: MAIN, landed: false, lost: false, afterBrief: false }
 
   def merged(j: int): bool = subs.get(j).state == "merged"
   def openBlockers(i: int): Set[int] = DEPS.get(i).filter(j => not(merged(j)))
@@ -169,11 +171,15 @@ module epic_workflow {
     all {
       phase == "coordinating",
       s.state == "waiting",
+      prs.get(i).life != "open",
       not(stackRefused(i)),
       val t = stackTop(i)
       all {
         t == MAIN or prs.get(t).life == "open",
-        setSub(i, { ...s, stackedOn: t }, "brief"),
+        subs' = subs.set(i, { ...s, stackedOn: t, briefed: true }),
+        prs' = prs.set(i, { ...prs.get(i), afterBrief: false }),
+        issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
+        last' = "brief", closedBy' = closedBy,
       },
     }
 
@@ -185,7 +191,8 @@ module epic_workflow {
       not(stackRefused(i)),
       stackTop(i) == MAIN or s.stackedOn == stackTop(i),
       inFlight.size() < PARALLEL,
-      setSub(i, { ...s, state: "implementing", startBase: s.stackedOn }, "start"),
+      prs.get(i).life == "open" implies prs.get(i).afterBrief,
+      setSub(i, { ...s, state: "implementing", startBase: s.stackedOn, briefed: false }, "start"),
     }
 
   action toReviewing(i: int): bool =
@@ -256,19 +263,29 @@ module epic_workflow {
       phase == "coordinating",
       if (s.state == "external") all {
         p.life == "closed",
-        subs' = subs.set(i, { ...s, state: "waiting" }),
+        subs' = subs.set(i, { ...s, state: "waiting", briefed: false }),
         prs' = prs.set(i, NO_PR),
         issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
         last' = "reimport", closedBy' = closedBy,
       } else all {
         s.state == "waiting",
-        Set("none", "closed").contains(p.life),
-        subs' = subs.set(i, { ...s, state: "external", stackedOn: MAIN }),
-        prs' = prs.set(i, { ...NO_PR, life: "open", checks: "pending", mergeable: "clean" }),
+        p.life != "merged",
+        subs' = subs.set(i, { ...s, state: "external", stackedOn: MAIN, briefed: false }),
+        prs' = prs.set(i, if (p.life == "open") { ...p, afterBrief: false } else { ...NO_PR, life: "open", checks: "pending", mergeable: "clean" }),
         issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
         last' = "reimport", closedBy' = closedBy,
       },
     }
+
+  action reimportStillWaiting(i: int): bool = all {
+    phase == "coordinating",
+    subs.get(i).state == "waiting",
+    Set("none", "closed").contains(prs.get(i).life),
+    subs' = subs.set(i, { ...subs.get(i), briefed: false }),
+    prs' = prs.set(i, { ...prs.get(i), afterBrief: false }),
+    issues' = issues, phase' = phase, sliced' = sliced, debts' = debts,
+    last' = "reimport", closedBy' = closedBy,
+  }
 
   def lostNow(i: int): bool =
     val p = prs.get(i)
@@ -310,10 +327,19 @@ module epic_workflow {
     last' = name, closedBy' = closedBy,
   }
 
-  action workerOpensPr(i: int): bool = all {
-    subs.get(i).state == "implementing",
-    Set("none", "closed").contains(prs.get(i).life),
-    setPr(i, { ...NO_PR, life: "open", base: subs.get(i).startBase, checks: "pending", mergeable: "clean" }, "openPr"),
+  action workerOpensPr(i: int): bool =
+    val s = subs.get(i)
+    all {
+      s.state == "implementing" or (s.state == "waiting" and s.briefed),
+      Set("none", "closed").contains(prs.get(i).life),
+      setPr(i, { ...NO_PR, life: "open", base: if (s.state == "waiting") s.stackedOn else s.startBase, checks: "pending", mergeable: "clean", afterBrief: true }, "openPr"),
+    }
+
+  action otherOwnerOpensPr(i: int, after: bool): bool = all {
+    phase == "coordinating",
+    subs.get(i).state == "waiting",
+    prs.get(i).life == "none",
+    setPr(i, { ...NO_PR, life: "open", checks: "pending", mergeable: "clean", afterBrief: subs.get(i).briefed and after }, "otherOpensPr"),
   }
 
   action reverify(i: int): bool =
@@ -386,7 +412,7 @@ module epic_workflow {
 
   action humanClosesPr(i: int): bool = all {
     prs.get(i).life == "open",
-    setPr(i, { ...prs.get(i), life: "closed" }, "closePr"),
+    setPr(i, if (prs.get(i).afterBrief or subs.get(i).state == "external") { ...prs.get(i), life: "closed" } else NO_PR, "closePr"),
   }
 
   action humanReopensPr(i: int): bool = all {
@@ -401,14 +427,14 @@ module epic_workflow {
     ruleDebt,
     recordDebt,
     nondet i = SUBS.oneOf()
-    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), reverify(i), recordMerged(i), recordLost(i), block(i), unblock(i), reimport(i) },
+    any { brief(i), start(i), toReviewing(i), toFixing(i), fixedToReviewing(i), verify(i), reverify(i), recordMerged(i), recordLost(i), block(i), unblock(i), reimport(i), reimportStillWaiting(i) },
   }
 
   action workerStep = nondet i = SUBS.oneOf()
     any { workerOpensPr(i), workerPushes(i), workerMarksReady(i), retarget(i) }
 
   action githubStep = nondet i = SUBS.oneOf()
-    any { ciEnds(i), baseMoves(i), humanMergesPr(i), humanClosesPr(i), humanReopensPr(i) }
+    any { ciEnds(i), baseMoves(i), humanMergesPr(i), humanClosesPr(i), humanReopensPr(i), nondet after = Set(true, false).oneOf() otherOwnerOpensPr(i, after) }
 
   action humanStep = any { humanSkip, humanGoto }
 
@@ -441,7 +467,8 @@ module epic_workflow {
     parallelRespected,
     mainStartsOnLandedBlockers,
     mergedWorkIsNotLost,
-    reslicingKeepsOpenPrs,
+    aPrAfterTheBriefKeepsTheBrief,
+    coordinatorWorksOnlyOnPrsAfterTheBrief,
   }
 
   val parallelRespected =
@@ -451,7 +478,10 @@ module epic_workflow {
     (IN_FLIGHT.contains(subs.get(i).state) and subs.get(i).state != "external" and subs.get(i).startBase == MAIN) implies
       DEPS.get(i).forall(j => prs.get(j).landed))
   val mergedWorkIsNotLost = SUBS.forall(i => merged(i) implies not(prs.get(i).lost))
-  val reslicingKeepsOpenPrs = SUBS.forall(i => not(subs.get(i).state == "waiting" and prs.get(i).life == "open"))
+  val aPrAfterTheBriefKeepsTheBrief = SUBS.forall(i =>
+    (subs.get(i).state == "waiting" and prs.get(i).life == "open" and prs.get(i).afterBrief) implies subs.get(i).briefed)
+  val coordinatorWorksOnlyOnPrsAfterTheBrief = SUBS.forall(i =>
+    (Set("implementing", "reviewing", "fixing", "verified").contains(subs.get(i).state) and prs.get(i).life == "open") implies prs.get(i).afterBrief)
 
   val wSliced = phase == "coordinating"
   val wStarted = SUBS.exists(i => subs.get(i).state == "implementing")
@@ -466,6 +496,9 @@ module epic_workflow {
   val wMerged = SUBS.exists(i => merged(i))
   val wRetargeted = SUBS.exists(i => subs.get(i).startBase != MAIN and prs.get(i).base == MAIN)
   val wRiding = SUBS.exists(i => prs.get(i).ridesOn != MAIN and prs.get(i).landed)
+  val wPrAfterBriefBeforeStart = SUBS.exists(i => subs.get(i).state == "waiting" and prs.get(i).life == "open" and prs.get(i).afterBrief)
+  val wStartedOnOwnPr = last == "start" and SUBS.exists(i => subs.get(i).state == "implementing" and prs.get(i).life == "open")
+  val wPrBeforeBriefOnWaiting = SUBS.exists(i => subs.get(i).state == "waiting" and subs.get(i).briefed and prs.get(i).life == "open" and not(prs.get(i).afterBrief))
   val wExternal = SUBS.exists(i => subs.get(i).state == "external")
   val wBlocked = SUBS.exists(i => subs.get(i).state == "blocked")
   val wAllMerged = SUBS.forall(i => merged(i))

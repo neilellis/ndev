@@ -291,6 +291,7 @@ function importEpic(workspace, e, before, v) {
     const managed = old && !['waiting', 'external', 'merged', 'human-pending'].includes(old.state)
     if (old && (old.kind && old.kind !== entry.kind || old.state === 'merged' && imported.state !== 'merged' || managed && (entry.kind === 'human' || !isDeepStrictEqual(old.blockedBy, blockedBy) || old.pr !== undefined && imported.pr !== old.pr))) refuse(`Import of #${n} conflicts with its saved ${old.state} workflow.`, `Run ndev epic status ${e.epic} and reconcile #${n} with its existing owner.`)
     issues[n] = { ...(old ?? { rounds: 0 }), issue: n, key: entry.key, title: child.title, kind: entry.kind, blockedBy, ...(managed && imported.state !== 'merged' ? {} : imported) }
+    // Model: models/workflow/epic_workflow.qnt#reimportStillWaiting
     if (!managed) delete issues[n].briefedAt
   }
   const externalBlockers = {}
@@ -448,6 +449,7 @@ function branchFor(e) {
 
 const isRepo = (a, b) => a.toLowerCase() === b.toLowerCase()
 
+// Model: models/workflow/epic_workflow.qnt#otherOwnerOpensPr
 function refuseOpenClosingPr(e, sub, since) {
   const shown = `gh issue view ${sub.issue} --repo ${e.repo} --json closedByPullRequestsReferences`
   const script = process.env.NDEV_FLOW_GH || join(releaseRoot, 'scripts/github/gh.sh')

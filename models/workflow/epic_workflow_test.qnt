@@ -17,6 +17,89 @@ module chain_test {
 
   run blockedSubCannotStartTest = coordinating.then(start(1).fail())
 
+  run briefedWorkerPrBeforeStartIsTakenTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(start(0))
+      .then(toReviewing(0))
+      .expect(subs.get(0).state == "reviewing" and prs.get(0).afterBrief and safety)
+
+  run unbriefedWorkerOpensNoPrTest = coordinating.then(workerOpensPr(0).fail())
+
+  run prBeforeTheBriefRefusesBriefTest = coordinating.then(otherOwnerOpensPr(0, false)).then(brief(0).fail())
+
+  run prBeforeTheBriefRefusesStartTest = coordinating.then(otherOwnerOpensPr(0, false)).then(start(0).fail())
+
+  run oldPrReopenedAfterTheBriefRefusesStartTest =
+    coordinating
+      .then(brief(0))
+      .then(otherOwnerOpensPr(0, false))
+      .expect(not(prs.get(0).afterBrief))
+      .then(start(0).fail())
+
+  run secondBriefMovesTheBriefTimeTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(humanClosesPr(0))
+      .then(brief(0))
+      .then(humanReopensPr(0))
+      .expect(not(prs.get(0).afterBrief))
+      .then(start(0).fail())
+
+  run importOfAWaitingSubClearsTheBriefTest =
+    coordinating
+      .then(brief(0))
+      .then(reimportStillWaiting(0))
+      .then(otherOwnerOpensPr(0, true))
+      .expect(subs.get(0).state == "waiting" and not(prs.get(0).afterBrief))
+      .then(start(0).fail())
+
+  run closedPrReopenedAfterAnImportRefusesStartTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(humanClosesPr(0))
+      .then(reimportStillWaiting(0))
+      .then(humanReopensPr(0))
+      .expect(subs.get(0).state == "waiting" and not(prs.get(0).afterBrief) and aPrAfterTheBriefKeepsTheBrief)
+      .then(start(0).fail())
+
+  run importOfAWaitingSubLeavesItsMergedPrTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(humanMergesPr(0))
+      .expect(subs.get(0).state == "waiting" and prs.get(0).life == "merged" and prs.get(0).landed)
+      .then(reimport(0).fail())
+
+  run importStillWaitingLeavesAMergedPrTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(humanMergesPr(0))
+      .then(reimportStillWaiting(0).fail())
+
+  run startClearsTheBriefTest =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(workerOpensPr(0))
+      .expect(not(subs.get(0).briefed) and prs.get(0).afterBrief and safety)
+
+  run importClearsTheBriefTest =
+    coordinating
+      .then(brief(0))
+      .then(workerOpensPr(0))
+      .then(reimport(0))
+      .expect(subs.get(0).state == "external" and not(subs.get(0).briefed) and not(prs.get(0).afterBrief))
+      .then(humanClosesPr(0))
+      .then(reimport(0))
+      .then(otherOwnerOpensPr(0, true))
+      .expect(subs.get(0).state == "waiting" and not(prs.get(0).afterBrief) and safety)
+      .then(start(0).fail())
+
   run stackedStartNeedsTheBriefTest = firstInReview.then(start(1).fail())
 
   action secondStacked =
@@ -314,7 +397,16 @@ module steered_test {
       .then(workerOpensPr(0))
       .then(humanMove("slicing"))
       .then(finishPhase)
-      .expect(subs.get(0).state == "implementing" and prs.get(0).life == "open" and subs.get(1).state == "waiting" and reslicingKeepsOpenPrs)
+      .expect(subs.get(0).state == "implementing" and prs.get(0).life == "open" and subs.get(1).state == "waiting" and aPrAfterTheBriefKeepsTheBrief)
+
+  run slicingAgainKeepsABriefedStartedSubTest =
+    coordinating
+      .then(brief(0))
+      .then(start(0))
+      .then(workerOpensPr(0))
+      .then(humanMove("slicing"))
+      .then(finishSlicing(Set()))
+      .expect(subs.get(0).state == "implementing" and prs.get(0).afterBrief and aPrAfterTheBriefKeepsTheBrief and safety)
 
   run reslicingKeepsAClosedPrOwnedTest =
     coordinating
@@ -325,7 +417,7 @@ module steered_test {
       .then(humanMove("slicing"))
       .then(finishPhase)
       .then(humanReopensPr(0))
-      .expect(subs.get(0).state == "implementing" and prs.get(0).life == "open" and reslicingKeepsOpenPrs)
+      .expect(subs.get(0).state == "implementing" and prs.get(0).life == "open" and aPrAfterTheBriefKeepsTheBrief)
 
   run reslicingRefusedAfterAMergeTest =
     coordinating
