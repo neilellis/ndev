@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run } from './common.mjs'
@@ -203,6 +203,15 @@ function deliver(root, session, address, file, state, reason, message, hash, abo
   }
 }
 
+function checkRunsFor(root, issue) {
+  const { gitDir } = gitWorkspace(root)
+  return readdirSync(gitDir).filter(name => /^ndev-.+\.run$/.test(name)).some(name => {
+    const progress = readObject(join(gitDir, name, 'progress.json'), { missing: {} })
+    return progress.issue === issue && Number.isInteger(progress.pid) && Number.isInteger(progress.flowPid) && now() < progress.startedAt + progress.limitMs
+      && !existsSync(join(gitDir, name, 'exit')) && isAlive(progress.pid) && isAlive(progress.flowPid)
+  })
+}
+
 function cycle(root, session, address, file, state) {
   const binding = readObject(hookSessionFile(root, session), { missing: {} })
   if (binding.endedAt || !isAddressed(root, address)) return { state, ended: true, notices: [] }
@@ -212,7 +221,7 @@ function cycle(root, session, address, file, state) {
   if (config.workflow === false || binding.running || activeEpic(root, session)) return { state, notices: [], recovered }
   const wf = currentWorkflow(root, [session])
   if (!wf) return revisitDone(root, session, address, file, state, binding, recovered)
-  if ((wf.owner && wf.owner.session !== session) || ['wait', 'blocked'].includes(wf.state)) return { state, notices: [], recovered }
+  if ((wf.owner && wf.owner.session !== session) || ['wait', 'blocked'].includes(wf.state) || checkRunsFor(root, wf.issue)) return { state, notices: [], recovered }
   const pr = wf.pr ?? wf.prs?.at(-1)
   const stamp = now()
   const notices = []
