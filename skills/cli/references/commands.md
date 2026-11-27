@@ -55,6 +55,16 @@ A model has a manifest beside it: `docs/formal/models/<name>.json`. The `require
 | `ndev requirements model-check [<manifest>...]` | Check a model against its manifest, its records and the cited code. With no name, it checks each manifest in `docs/formal/models`. A pass is a bounded random search, not a proof. |
 | `ndev requirements model-pin <manifest>...` | Write the pin of each code reference. Run it only after you read the cited code against each action. The cited lines must match the last commit. |
 
+## Requirement verification
+
+A verification file, `docs/formal/verification/REQ-NNNN.json`, holds the linked tests of a record. The `requirements-verify` skill has the procedure. `kb/requirements.md` describes the file and the states.
+
+| Command | When to use it |
+| --- | --- |
+| `ndev requirements verify-brief <REQ-NNNN>` | Print what a fresh judge gets: the Statement, the commit, the linked files and the checks. Commit the covered files and the verification file first. |
+| `ndev requirements verify-judge <REQ-NNNN> --commit <sha> --verdict <v> --by "<who>" --evidence <file>` | Record the verdict, `no-counter-example` or `counter-example`. Only after a fresh agent judged the brief. Then commit the verification file. `--overrule "<reason>"` records that a human rejects a current counter-example. `--base <ref>` also reads the counter-example at the merge base. |
+| `ndev requirements verify (<REQ-NNNN>... \| --all \| --base <git ref>) [--report <file>]` | Give each requirement its state at the last commit. It needs a clean worktree. It exits 0 only when each one is `verified`. A judgement is an opinion, not a proof. |
+
 ## GitHub reads and edits
 
 These commands go through the internal GitHub layer. It runs the `gh` command first and uses REST when that fails. Each command prints one JSON object on each line. `--json` gives them as `lines`. Run `ndev github --help` for the full list.

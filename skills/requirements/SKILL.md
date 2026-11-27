@@ -25,6 +25,9 @@ The commands are `ndev requirements <command>`; `ndev requirements --help` lists
 | `ndev requirements model <REQ-NNNN> <path.qnt[#name]>...` | Adds Quint models that specify a record, and keeps the models it already lists. Refuses a model that does not exist, does not cite the record, or does not declare the name. |
 | `ndev requirements model-check [<manifest>...]` | Runs Quint on each model that has a manifest. Fails drift between a model and the cited code, a violated invariant, a mutant that survives and a witness that is not reached. The `requirements-model` skill has the procedure. |
 | `ndev requirements model-pin <manifest>...` | Writes the pin of each code reference in a manifest. Only after you read the cited code against each action. |
+| `ndev requirements verify-brief <REQ-NNNN>` | Prints what a fresh judge gets: the Statement, the commit, the linked files and the checks. The `requirements-verify` skill has the procedure. |
+| `ndev requirements verify-judge <REQ-NNNN> --commit <sha> --verdict <v> --by "<who>" --evidence <file>` | Records the verdict of the judge in the verification file. Never judge your own work with it. |
+| `ndev requirements verify (<REQ-NNNN>... \| --all \| --base <git ref>) [--report <file>]` | Runs the linked checks and models, and gives each requirement one state at the last commit: `violated`, `stale`, `unverified` or `verified`. |
 | `ndev requirements sync [<REQ-NNNN>...]` | Writes the `source`, `issues` and `prs` fields from the Source text and the Trace. Run it after you change a citation, or a PR or Issue line of the Trace by hand. |
 | `ndev requirements log <REQ-NNNN> "<what changed>"` | Adds an entry with the date of today to the `## Log`. Run it each time the title, the status, the level, the type, the Statement or the Source text changes. |
 | `ndev requirements quote <path> <first line> <last line>` | Prints a citation and the lines as a quote, ready for the Source text. |

@@ -171,6 +171,8 @@ const groups = {
       references: '<path>', retire: '<path>... --pdr <file> [--keep <file>,<file>]',
       deprecate: '<REQ-NNNN> --reason "<why>" --decided-by "<name>" [--by <REQ-NNNN>]', fixed: '--base <git ref>',
       'model-check': '[<manifest>...]', 'model-pin': '<manifest>...',
+      'verify-brief': '<REQ-NNNN>', 'verify-judge': '<REQ-NNNN> --commit <sha> --verdict no-counter-example|counter-example --by "<who>" --evidence <file> [--base <ref>] [--overrule "<reason>"]',
+      verify: '(<REQ-NNNN>... | --all | --base <git ref>) [--report <file>]',
     },
   },
   watch: {

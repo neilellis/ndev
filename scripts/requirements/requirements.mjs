@@ -4,6 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import path from "node:path";
 import { CliError } from "../ndev/common.mjs";
 import { modelCheck, modelPin } from "./models.mjs";
+import { discardReport, verify, verifyBrief, verifyJudge } from "./verify.mjs";
 
 const DIR = "docs/formal/requirements";
 const DEPRECATED = "docs/formal/deprecated";
@@ -26,7 +27,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check", "clear", "flagged", "all"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, type, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, types, cites, for, narrate, narrative, publish, references, retire, deprecate, fixed, model-check, model-pin";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, type, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, types, cites, for, narrate, narrative, publish, references, retire, deprecate, fixed, model-check, model-pin, verify, verify-brief, verify-judge";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta", "groupBy"];
 const TYPE_PAGES = {
@@ -79,6 +80,7 @@ class Failure extends Error {}
 function parseArguments(argv) {
   const positional = [];
   const options = {};
+  let unread;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--") {
       positional.push(...argv.slice(i + 1));
@@ -87,12 +89,16 @@ function parseArguments(argv) {
     if (!argv[i].startsWith("--")) positional.push(argv[i]);
     else if (FLAGS.has(argv[i].slice(2))) options[argv[i].slice(2)] = true;
     else {
-      const value = argv[++i];
-      if (value === undefined) throw new Usage(`${argv[i - 1]} needs a value`);
-      options[argv[i - 1].slice(2)] = value;
+      const name = argv[i];
+      const value = argv[i + 1];
+      if (value === undefined || (positional[0] === "verify" && value.startsWith("--"))) unread ??= `${name} needs a value`;
+      else {
+        options[name.slice(2)] = value;
+        i++;
+      }
     }
   }
-  return { positional, options };
+  return { positional, options, unread };
 }
 
 function findRoot(options) {
@@ -2119,11 +2125,28 @@ function forTargets(root, targets, options) {
   return { text, targets: results };
 }
 
+const project = {
+  folders: [DIR, DEPRECATED],
+  name: NAME,
+  status: STATUS,
+  gone: GONE,
+  parse: parseRecord,
+  inForce: (record) => IN_FORCE.includes(record.status),
+  filePattern,
+  filePatterns: (record) => [...traces(record).files].map((raw) => ({ raw, regex: filePattern(raw) })),
+  modelEntries,
+  modelRecords,
+};
+
 export function runRequirements(argv, { json } = {}) {
   try {
-    const { positional, options } = parseArguments(argv);
+    const { positional, options, unread } = parseArguments(argv);
     const [command, ...rest] = positional;
     const root = () => findRoot(options);
+    if (unread) {
+      if (command === "verify" && options.report !== undefined) discardReport(root(), options.report);
+      throw new Usage(unread);
+    }
     const commands = {
       new: () => create(root(), rest[0], options),
       list: () => list(root(), options),
@@ -2163,6 +2186,9 @@ export function runRequirements(argv, { json } = {}) {
       fixed: () => fixed(root(), options),
       "model-check": () => modelCheck(root(), rest, options, modelRecords),
       "model-pin": () => modelPin(root(), rest, options),
+      "verify-brief": () => verifyBrief(root(), rest, options, project),
+      "verify-judge": () => verifyJudge(root(), rest, options, project),
+      verify: () => verify(root(), rest, options, project),
     };
     if (!commands[command]) throw new Usage(`Unknown requirements command "${command ?? ""}": use ${COMMANDS}`);
     const result = commands[command]();

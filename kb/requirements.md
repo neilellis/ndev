@@ -22,6 +22,7 @@ A [PDR](pdr.md) records a change to a requirement: who decided, and why. An [ADR
 | `docs/formal/requirements/generated/narrative/` | The prose of each section, with a hash of the records it describes | An agent, through `ndev requirements narrate` |
 | `docs/formal/models/<name>.qnt` and `<name>_test.qnt` | A Quint model and its tests (see [Models](#models)) | An agent |
 | `docs/formal/models/<name>.json` | The manifest of the model (see [Model manifests](#model-manifests)) | An agent; the pins only by `ndev requirements model-pin` |
+| `docs/formal/verification/REQ-NNNN.json` | The linked tests of a record, and the judgement of a fresh agent (see [Verification](#verification)) | An agent; the judgement only by `ndev requirements verify-judge` |
 
 ## Template
 
@@ -405,6 +406,149 @@ When a project has models and no formal check, add `scripts/ci/formal-check.sh`,
 
 The workflow runs the base version of each check script, so a branch cannot remove its own formal check.
 
+## Verification
+
+A record links code and models. That does not show that the code meets the requirement at a given commit. `ndev requirements verify` gives each requirement one state for one commit. The record keeps its links, and no result goes in the record.
+
+### The verification file
+
+`docs/formal/verification/REQ-NNNN.json` is beside the records, and you commit it.
+
+```json
+{
+  "requirement": "REQ-NNNN",
+  "checks": [
+    { "name": "<short name>", "run": ["node", "--test", "tests/x.test.mjs"], "files": ["tests/x.test.mjs"], "proof": "pass [1-9]" }
+  ],
+  "judgement": "<written by verify-judge>"
+}
+```
+
+- `requirement` is the identifier. It matches the file name.
+- `checks` are the linked tests. The list can be empty when a model is linked. Each check has a `name` that no other check has.
+- `run` is the program, then its arguments. No shell reads it. It runs from the project root.
+- `files` are the test files, by their paths from the project root. Git tracks them. A folder in `files` lists each tracked file in it. The brief shows `files`.
+- `verify` also reads `run`. It reads each argument as a path. When an argument has `=`, it reads only the text after each `=`, and not the whole argument. A relative path starts at the project root. An absolute path counts only when it starts with the project root. `verify` removes the root and walks the rest of the path, with its `..`. `.` is the project root, so `.` covers each tracked file, and any change makes the requirement `stale`. `X/...` is the folder `X`, and `./...` is the root. A `::` suffix, such as a pytest test name, and a `:N` or `:N:M` line suffix are removed before the walk.
+- A path with glob syntax is a pattern. Its fixed start is the segments before the first segment with glob syntax. `verify` reads a pattern only when its fixed start is a tracked folder, or when it has no fixed start and has a `/`. It skips other patterns, such as `TestBound/case_.*`. A pattern uses only `*`, `?` and a `**` that is a whole segment. Each tracked file that a path or a pattern names is a run target. So is each tracked file in a tracked folder that a path names. A symlink in such a folder, or one that a pattern matches, is a run target too: the judgement covers its link text. The judgement covers each run target, the brief lists it, and a change to it selects the requirement. A run target does not have to be in `files`.
+- These are refused:
+  - a pattern with other glob syntax, such as `[`, `{`, `!(`, `+(` or `@(`, a `**` that is not a whole segment, or an empty, `.` or `..` segment
+  - a pattern that matches no tracked file
+  - a path or the fixed start of a pattern that goes through a symlink of the commit, also when `..` leaves the link again
+  - a path to a submodule, and a folder or the fixed start of a pattern that holds a submodule
+  - a check whose `run` names no tracked file or folder, such as `node --test` with no path
+- When `run` starts with `npm`, `npx`, `yarn`, `pnpm`, `bun`, `make`, `just` or `env`, or with `sh -c` or `bash -c`, only an argument with a `/` or a file extension counts. So `npm test` is refused, also when a `test` folder is tracked. A runner that finds its own tests is not seen, so name the test files or folders in `run`. `--base` selects such a requirement for each change. In these cases the requirement is `unverified`, and the brief and the judgement stop.
+- `proof` is a regular expression, read with the `m` flag. The output of the check (standard output, then standard error) must match it, to show that a test ran. Make it match a count above zero. A `proof` that matches empty output is refused.
+- `judgement` is written only by `verify-judge`. It holds the verdict (`no-counter-example` or `counter-example`), who made it, the evidence text, the commit, and a digest of each thing that it covers. After an overrule, it also holds `overrules` (see [Judge a requirement](#judge-a-requirement)). Do not write it or edit it.
+
+No other key is allowed. A requirement with a bad verification file is never `verified`, and the message names the repair.
+
+A judgement covers:
+
+- the Statement;
+- each tracked file that a `- File:` line matches;
+- the `model` list, and each model in it with its manifest, its test file and the code that the manifest cites;
+- each file that a linked model or its test file imports, also through other imports;
+- the `checks` list and each test file.
+
+The record of the requirement and the files in `docs/formal/verification/` are not covered code, also when a `- File:` pattern matches them.
+
+`verify` reads the imports from the files in the commit. An imported file can be outside `docs/formal/models`, and an import in a comment does not count. A model with a mutant must keep its imports inside that folder (see [Model manifests](#model-manifests)).
+
+Sometimes the imports cannot be known. An imported file is not a regular file in the commit, or it is outside the project. A comment or a string does not end. A file is not UTF-8, or it has a carriage return with no line feed after it. Then the requirement is never `verified`, and `verify-brief` and `verify-judge` stop. A file on disk that a model imports, and that the commit does not hold, stops each of the three commands.
+
+### Judge a requirement
+
+The `requirements-verify` skill does these steps with a fresh agent.
+
+1. Write the verification file with `requirement` and `checks`. **Commit it with the record and each file that the judgement covers.** Both commands below refuse content that the last commit does not hold.
+2. `ndev requirements verify-brief REQ-NNNN` prints what a fresh agent gets: the Statement, the commit, the linked files, and the `run` and `proof` of each check. It prints nothing else about the implementation. A record with no Statement, or with an empty one, cannot be judged. `verify` gives it `unverified`.
+3. `ndev requirements verify-judge REQ-NNNN --commit <sha> --verdict no-counter-example|counter-example --by "<who>" --evidence <file>` records the verdict. `<sha>` is the commit that the brief gave. It writes only the `judgement` key. It refuses an empty evidence file. It also refuses covered content that differs between that commit, `HEAD` and the working folder, also a file that was added or removed.
+
+A current `counter-example` stands while the bytes that it covers do not change. `verify-judge` then refuses `no-counter-example`. It reads the judgement in `HEAD` and the judgement on disk. With `--base <ref>`, it also reads the judgement at the merge base, as `verify --base` does. A counter-example at the merge base stands only when it was committed there. A change to any byte that it covers starts the judging again. So does a counter-example that never reached the merge base. So a reviewer must read the diff of the verification file. Change the code, or ask the human about the requirement. A new judgement can replace a stale one.
+
+Only a human rejects a current counter-example. Then record the judgement of a new judge with `verify-judge REQ-NNNN ... --verdict no-counter-example --base <ref> --overrule "<reason>"`. It writes `overrules` into the judgement: the reason, and the `by`, `evidence` and `commit` of the counter-example, copied exactly. `--overrule` is refused when there is no current counter-example. The overrule shows in the diff of the pull request, so the reviewer sees it.
+4. Commit the verification file, then run `verify`. Keep the evidence file outside the project, or remove it.
+
+### Verify
+
+`ndev requirements verify (<REQ-NNNN>... | --all | --base <git ref>) [--report <file>]` takes exactly one of the three selections. For each requirement, it runs each linked check and the model check of each linked model, with the drift check. It gives the requirement the first state that applies:
+
+| State | When |
+|---|---|
+| `violated` | A linked check exits with a failure, a linked model violates an invariant, or a current judgement is `counter-example`. |
+| `stale` | Something that the judgement covers has changed, or cited code has drifted from its pin. |
+| `unverified` | There is no verification file, no judgement or no linked code. There is no check and no model. The output of a check does not match its `proof`. A listed model has no manifest. A manifest does not list the property that the `model` list names, or does not list the requirement. A pin is missing or is not valid, or a cited file cannot be used. A model check fails for another reason. A link names a file that Git does not track. |
+| `verified` | A current `no-counter-example` judgement, at least one check or model, and each of them passes. |
+
+A `judgement` that is not valid does not hide the checks. They run, so a check that fails still gives `violated`. With no other failure, the state is `unverified`.
+
+Each state other than `verified` comes with all its reasons and their repairs. A failing check shows its full output. `verify` exits 0 only when each selected requirement is `verified`. An identifier with no record, or a record that is not in force, is an error. So is `--all` with no record in force. A missing records folder and a record with a status that it cannot read are errors too. Nothing is left out in silence.
+
+**A judgement is an opinion of an agent with its evidence. It is not a proof.** A check proves only what its test does. A model check is a bounded search.
+
+### Results belong to a commit
+
+- `verify` refuses a worktree with changes, also with untracked files. It accepts ignored files.
+- It compares the bytes of each covered file on disk with the same file in `HEAD`. It also compares the record and the verification file. When it runs a model, it compares each record and each file in `docs/formal/models`. This finds changes that `git status` does not show: `assume-unchanged`, `skip-worktree`, a clean filter with no smudge filter, and a retargeted link. A file on disk can also be the file as checkout writes it (`git cat-file --filters`), so line-end settings and Git LFS do not cause a refusal. So a local clean and smudge filter pair that rebuilds the bytes is not found. The digests of the judgement are of the files as Git stores them. It does not compare the other files that a test reads.
+- It refuses a covered file that is a symlink or is behind one. A symlink that a run-target folder or pattern holds is covered by its link text, and its link text on disk must be the text of the commit. A `- File:` pattern that matches a symlink in the commit gives only its requirement `unverified`.
+- Each `.md` file in a records folder must have the name of a record, `NNNN-words.md`. `README.md` is the only other name. Any other file stops the command, so that no record is left out.
+- It fails when `HEAD` or covered content differs after the run.
+- A check that cannot start, that does not finish or that ends on a signal stops the command. It is not a pass, and no state is given. Each check has 10 minutes. `NDEV_CHECK_TIMEOUT_MS` sets another limit, in milliseconds. Quint has its own limit (see [Model manifests](#model-manifests)).
+
+`--report <file>` writes the results as JSON, also for a failing result. It holds the commit and the base. For each requirement, it holds the identifier, state and reasons. It also holds each check with its exit status, and each model result. With `--base`, it also lists the requirements that are not verified. A relative path starts at the project root. `verify` first removes the report of an earlier run, so a run that stops early leaves no report. This is also true for an option with no value, such as `--base` at the end. It refuses a tracked file, a link, a folder and a file that is not a report of `verify`. A report in the project that Git does not track does not make the worktree dirty for the next run with the same `--report`. To commit other work, ignore it or remove it.
+
+### Verify only what a change touches
+
+`--base <git ref>` selects the requirements that the change touches, from the merge base of the ref and `HEAD` to `HEAD`. A change to a linked file, a record, a verification file, a model, a manifest, cited code or a test file selects its requirement. So does a change to a file that a model imports. So does a change to the record of another requirement that a linked manifest names. `verify` reads the links at the merge base and at `HEAD`, so a link that the change removes still selects its requirement. A renamed file counts as one removed file and one new file. When it cannot read the manifest, the verification file or the imports of a requirement, it selects the requirement. When it cannot read a record at the merge base, it selects the requirement with the same number at `HEAD`. So a change that repairs the record is not blocked.
+
+When the change touches no requirement, the command says so, gives the number of records that it searched, and exits 0. A requirement that was in force at the base and is not in force at `HEAD` is listed as `Not verified`, with the reason. Only a deprecated record is not a failure. It is in `docs/formal/deprecated`, with the status `Retired` or `Superseded by NNNN`. Its `decided_by` names the human who decided it. When it is superseded, its `superseded_by` names a record at `HEAD` with that number. All other cases are failures. Examples are a record that changes to `Rejected`, a `Retired` record that did not move, and a record that the change deletes. Put the record back in force, or deprecate it with `ndev requirements deprecate`. For a deleted record, restore it first. A human decides to deprecate a record.
+
+A record that cannot be read at the merge base is treated as one that was in force. The change fails when its number is not in force or deprecated at `HEAD`.
+
+A current counter-example at the merge base stands for the change too. Sometimes the merge base has a `counter-example`, and nothing that it covers is different at `HEAD`. Then the requirement is selected and `violated`. The only exception is a `HEAD` judgement that overrules it with `--overrule`, with the `by`, `evidence` and `commit` of that counter-example. So a change cannot remove the counter-example or edit its verdict to pass.
+
+### Limits
+
+- A judgement is plain JSON. Anyone who can push can write one by hand. A reviewer makes a judgement trustworthy. Make the owners of the requirements review each change to `docs/formal/verification/**`, for example with CODEOWNERS. Read each `overrules` in the diff.
+- `proof` is a regular expression, and it runs with no time limit.
+- `--base` and the judgement do not see helpers, fixtures, `package.json`, the configuration of the test runner or the Quint version. Only the files that the judgement covers select a requirement.
+- The checks run with the environment of the job. A CI job that runs them must hold no secret.
+- Some programs read their arguments in their own way, for example `sh -c`, `env`, npm or make scripts, `NODE_OPTIONS` and the configuration of a test runner. `verify` does not fully see what they run, so a reviewer reads `run` in the diff. After `npm`, `npx`, `yarn`, `pnpm`, `bun`, `make`, `just`, `env`, `sh -c` and `bash -c`, a word with no `/` and no file extension is not a run target.
+- `verify` does not read a pattern whose fixed start is not a tracked folder, such as a test name regex. `*.mjs` with no `/` is not read either. A runner that follows a symlink inside a run-target folder is not seen: the judgement covers the link text, not the file that the link points to. A word with no glob that names a tracked file or folder is a run target, also when the program reads it as something else, such as `--test-reporter=spec` and a tracked `spec` folder.
+- The path walk reads the text of a path. It does not handle the `\` separator of Windows or a file system that ignores case.
+- A change to the `.gitattributes` in the root makes each requirement `stale`.
+- The judgement covers each tracked `.gitattributes` in the root and in each folder above a covered file, and a change to one selects the requirement. It does not see `.git/info/attributes`, `core.attributesFile` or other local Git configuration, such as filters, `core.autocrlf` and `core.eol`.
+
+### Add verification to CI
+
+Add a job that runs on each pull request. It needs the full history, the tools that the checks use, and the project's own Quint when a model is linked. Get ndev outside the project, so that the worktree stays clean. Pin it to a commit that you read.
+
+```yaml
+on: pull_request
+jobs:
+  requirements:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: |
+          git clone https://github.com/neilellis/ndev "$RUNNER_TEMP/ndev"
+          git -C "$RUNNER_TEMP/ndev" checkout --detach "<ndev commit>"
+      - run: '"$RUNNER_TEMP/ndev/bin/ndev" requirements verify --base "origin/${{ github.base_ref }}" --report "$RUNNER_TEMP/verification.json"'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: requirement-verification
+          path: ${{ runner.temp }}/verification.json
+```
+
+The checks of a pull request are code from that pull request, and they run with the environment of the job. Give this job no secret. A requirement that the change touches needs a new judgement before the job can pass. Commit the judgement in the same pull request.
+
 ## In the workflow
 
 The records and the models enter the work at each stage. The agent:
@@ -416,7 +560,7 @@ The records and the models enter the work at each stage. The agent:
 | Plan (heavy) | Write a `Requirements:` line, and one `REQ-NNNN: <test, check or model>` line for each record on it. | Write a `Model:` line. Model a heavy change, or a change to state, concurrency, money, permissions or a protocol, in Quint first, and run `quint typecheck`, before `finished-plan`. Link the model with `ndev requirements model`. |
 | Development | Add the `- File:` lines and the citations in the source. Propose a record for new behaviour. | Keep the model in step with the code. Prove the model (above). Cite the model in the source. |
 | Review (heavy) | The specification reviewer compares the diff with the records in the plan. | The specification reviewer reads the mutants and the witnesses in the PR body. |
-| Pull request | Add the `- PR:` and `- Issue:` lines with `ndev requirements link`, then run `check` and `guard`. `finished-development` and `done` refuse a record in force on the `Requirements:` line whose Trace does not link the PR. They do not run `ndev requirements links`: the agent hook runs it on the changed records. | Add to the `model` list with `ndev requirements model`. |
+| Pull request | Add the `- PR:` and `- Issue:` lines with `ndev requirements link`, then run `check` and `guard`. In a project with verification files, judge each requirement that the change touches (the `requirements-verify` skill), and run `verify --base`. `finished-development` and `done` refuse a record in force on the `Requirements:` line whose Trace does not link the PR. They do not run `ndev requirements links`: the agent hook runs it on the changed records. | Add to the `model` list with `ndev requirements model`. |
 
 The plan lines have this form:
 

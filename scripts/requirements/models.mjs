@@ -45,7 +45,7 @@ function projectFile(root, given) {
   return { real, full: within(root, full) ? full : real };
 }
 
-function utf8(bytes) {
+export function utf8(bytes) {
   try {
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch (error) {
@@ -70,7 +70,7 @@ function codeFile(root, ref) {
   return { ...found, lines: linesOf(text) };
 }
 
-function shapeProblems(manifest, stem) {
+export function shapeProblems(manifest, stem) {
   const problems = [];
   const keys = (object, where, required, optional = []) => {
     for (const key of required) if (!Object.hasOwn(object, key)) problems.push(`${where}the key "${key}" is missing.`);
@@ -249,17 +249,18 @@ function driftProblems(root, manifest, manifestRel) {
   return references(manifest).flatMap(({ action, ref }) => {
     const item = `action "${action}", ${ref.file} ${ref.lines}`;
     const repair = `read the cited lines against the action "${action}", then run ndev requirements model-pin ${manifestRel}.`;
+    const unproven = (message) => [{ kind: "other", message }];
     const found = codeFile(root, ref);
-    if (found.error) return [`${item}: ${found.error} Repair: correct "file", ${repair}`];
+    if (found.error) return unproven(`${item}: ${found.error} Repair: correct "file", ${repair}`);
     const outOfRange = rangeProblem(ref, found.lines);
-    if (ref.pin === undefined) return [`${item}: ${outOfRange ?? "the reference has no pin."} Repair: ${outOfRange ? `correct "lines", ${repair}` : repair}`];
+    if (ref.pin === undefined) return unproven(`${item}: ${outOfRange ?? "the reference has no pin."} Repair: ${outOfRange ? `correct "lines", ${repair}` : repair}`);
     const wanted = typeof ref.pin === "string" ? ref.pin.match(PIN)?.[1] : undefined;
-    if (!wanted) return [`${item}: pin ${JSON.stringify(ref.pin)} is not a pin that model-pin wrote. Repair: ${repair}`];
+    if (!wanted) return unproven(`${item}: pin ${JSON.stringify(ref.pin)} is not a pin that model-pin wrote. Repair: ${repair}`);
     const [first, last] = range(ref);
     if (!outOfRange && hash(found.lines.slice(first - 1, last)) === wanted) return [];
     const places = movedTo(found.lines, wanted, last - first + 1);
     const moved = places.length ? ` The same lines are now at ${places.join(" and ")}. Repair: set "lines" to the new place, ${repair}` : ` Repair: correct "lines" if the code moved, ${repair} If the code no longer does what the action says, change the model first.`;
-    return [`${item}: drift: ${outOfRange ?? "the cited lines do not match the pin."}${moved}`];
+    return [{ kind: "drift", message: `${item}: drift: ${outOfRange ?? "the cited lines do not match the pin."}${moved}` }];
   });
 }
 
@@ -292,15 +293,16 @@ function mutantCopy(root, folder, name, mutate) {
   }
 }
 
-function checkModel(root, { rel, full, manifest }, records, quint, problems) {
-  const fail = (message) => problems.push(`${rel}: ${message}`);
+function checkModel(root, { rel, full, manifest }, records, quint, report) {
+  const fail = (message, kind = "other") => report(`${rel}: ${message}`, kind);
   const folder = path.dirname(full);
   const modelRel = path.posix.join(path.posix.dirname(rel), manifest.model);
   const model = projectFile(root, modelRel);
   if (model.error) return fail(`model: ${model.error} Repair: write the model beside the manifest.`);
   const text = utf8(readFileSync(model.real));
   if (text === undefined) return fail(`model: ${modelRel} is not valid UTF-8, so a change in it can be hidden. Repair: save the model as UTF-8.`);
-  for (const problem of [...requirementProblems(manifest, modelRel, records), ...actionProblems(manifest, modelRel, text), ...driftProblems(root, manifest, rel)]) fail(problem);
+  for (const problem of [...requirementProblems(manifest, modelRel, records), ...actionProblems(manifest, modelRel, text)]) fail(problem);
+  for (const { message, kind } of driftProblems(root, manifest, rel)) fail(message, kind);
 
   const mutants = manifest.mutants.map((mutant, index) => ({ ...mutant, item: `mutants[${index}] for invariant "${mutant.invariant}"`, count: occurrences(text, mutant.find) }));
   for (const name of manifest.invariants) if (!mutants.some((mutant) => mutant.invariant === name)) fail(`invariant "${name}" has no mutant, so nothing shows that it can fail. Repair: add a mutant that breaks the property of "${name}".`);
@@ -374,7 +376,7 @@ function checkModel(root, { rel, full, manifest }, records, quint, problems) {
     const out = simulate(`invariant "${name}"`, name);
     const found = verdict(out);
     const still = found === "holds" ? unmoved(out.stdout) : undefined;
-    if (found === "violated") fail(`invariant "${name}" is violated on ${modelRel}, so its mutants were not run. Repair: read the trace. Correct the model or the invariant. If the code has the same fault, report it as a bug.${quoted(out.output)}`);
+    if (found === "violated") fail(`invariant "${name}" is violated on ${modelRel}, so its mutants were not run. Repair: read the trace. Correct the model or the invariant. If the code has the same fault, report it as a bug.${quoted(out.output)}`, "violated");
     if (found === "unknown") fail(`invariant "${name}" was not checked, so its mutants were not run: Quint reported neither "[ok] No violation found" nor a violation. Repair: read Quint's output, and correct the model or the manifest.${quoted(out.output)}`);
     if (still) fail(`invariant "${name}" was not checked, so its mutants were not run: ${still}${quoted(out.output)}`);
     if (found !== "holds" || still) continue;
@@ -389,6 +391,24 @@ function checkModel(root, { rel, full, manifest }, records, quint, problems) {
   }
 
   return { manifest: rel, invariants: manifest.invariants.length, mutants: manifest.mutants.length, witnesses: manifest.witnesses.length, tests, bounds: { steps, samples, seed, limits } };
+}
+
+export function modelRunner(from, recordsOf) {
+  const root = realpathSync(from);
+  const quint = quintRunner(root);
+  const records = recordsOf(root);
+  return (manifestRel) => {
+    const entry = load(root, manifestRel);
+    if (entry.problems.length) return entry.problems.map((message) => ({ kind: "other", message }));
+    const found = [];
+    try {
+      checkModel(root, entry, records, quint, (message, kind) => found.push({ kind, message }));
+    } catch (error) {
+      if (!(error instanceof Stopped)) throw error;
+      throw new CliError(1, [...found.map((problem) => problem.message), error.message].join("\n"));
+    }
+    return found;
+  };
 }
 
 export function modelCheck(from, named, options, recordsOf) {
@@ -406,7 +426,7 @@ export function modelCheck(from, named, options, recordsOf) {
   try {
     for (const entry of loaded) {
       if (entry.problems.length) problems.push(...entry.problems);
-      else results.push(checkModel(root, entry, records, quint, problems));
+      else results.push(checkModel(root, entry, records, quint, (message) => problems.push(message)));
     }
   } catch (error) {
     if (!(error instanceof Stopped)) throw error;
@@ -427,13 +447,13 @@ export function modelCheck(from, named, options, recordsOf) {
   return { text: `${text}\n`, invariants: total("invariants"), mutants: total("mutants"), witnesses: total("witnesses"), tests: total("tests"), manifests: results, unchecked };
 }
 
-function runGit(root, args) {
+export function runGit(root, args) {
   const out = spawnSync("git", ["-C", root, "--no-replace-objects", ...args], { maxBuffer: 64 * 1024 * 1024 });
   const failure = out.status === 0 ? undefined : `git ${args.join(" ")} in ${root} exited ${out.status}: ${out.stderr?.toString().trim() || out.error?.message}`;
   return { bytes: out.stdout, failure };
 }
 
-function git(root, args, repair) {
+export function git(root, args, repair) {
   const { bytes, failure } = runGit(root, args);
   if (failure) throw new CliError(1, `${failure}. Repair: ${repair}`);
   return bytes.toString();
