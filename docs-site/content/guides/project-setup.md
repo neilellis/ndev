@@ -65,6 +65,44 @@ Open the project worktree in Orca and give Claude Code, Codex or opencode this p
 
 The project file was `.neil-dev.json` before. `ndev` still reads `.neil-dev.json` when `.ndev.json` does not exist, and the next write moves it to `.ndev.json`. To move it now, run `ndev project migrate-config` and commit the rename. When both files exist and their settings differ, `ndev` reads neither and stops with an error. Keep the settings you want in `.ndev.json` and delete `.neil-dev.json`.
 
+## Dev servers and Proof
+
+`devServers` names the servers that boot the app. Agents and Proof start them to look at the app:
+
+```json
+{
+  "devServers": {
+    "web": { "command": "npm run dev", "cwd": "apps/web", "port": 3000, "ready": "http://localhost:3000/", "routes": ["/", "/settings"] }
+  }
+}
+```
+
+- `command` runs in `cwd` (relative to the project root), with `env` added to the environment.
+- `ready` is a URL or a path. The server is ready when the URL answers or the path exists. `timeout` is the seconds to wait for it, 60 by default.
+- `routes` are the pages to look at.
+
+`ndev project dev-servers` lists them. `ndev project dev-servers start web` starts one and waits until it is ready.
+
+`proof` sets the Proof check of pull requests. Proof is on unless you turn it off:
+
+```json
+{
+  "proof": {
+    "enabled": true,
+    "checks": { "requirements": true, "code": true, "visual": true, "tests": true, "model": true, "docs": true, "lessons": true },
+    "viewports": [{ "name": "phone", "width": 390, "height": 844 }],
+    "schemes": ["light", "dark"],
+    "label": "no-proof",
+    "tiers": { "small": 50, "large": 400 }
+  }
+}
+```
+
+- Set `"enabled": false` to turn Proof off for the project, or set one check to `false`.
+- Add the label (`no-proof` by default) to one pull request to skip Proof for it.
+- `tiers` are the changed-line counts at which Proof does more checks.
+- Proof reads these settings from the base branch, not from the pull request, so a pull request cannot turn off its own checks.
+
 ## Project defaults and credentials
 
 Set the default workflow mode (`light`, `heavy` or `hack`) and steering (`interactive` or `auto`):
