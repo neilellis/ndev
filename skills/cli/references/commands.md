@@ -174,6 +174,12 @@ Start with `ndev walk-doc start <path-or-url>`, then inspect `status`. Use `ask`
 
 Reader-side `report`, `enhance`, `record`, `reply`, and `escalate` take JSON files. `done <summary>` reports the reader's completion. Follow the walk's role and attempt boundaries instead of submitting a report as another reader.
 
+## Proof
+
+| Command | When to use it |
+| --- | --- |
+| `ndev proof plan --base <ref> [--pr <n> \| --event <file>] [--proven <sha>]` | Show what Proof checks for this branch: the tier and its reasons, `run` or `skip` for each check, and whether the whole run is skipped. It reads the settings from the base ref and runs no agent. |
+
 ## Installation and harness integration
 
 | Command | When to use it |

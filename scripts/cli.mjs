@@ -154,6 +154,13 @@ const groups = {
       'post-tool-use': '', 'turn-start': '', 'turn-complete': '', 'session-end': '', compact: '',
     },
   },
+  proof: {
+    description: 'Plan and run Proof, the check of a pull request before merge',
+    module: './ndev/proof.mjs', run: 'runProof',
+    commands: {
+      plan: '--base <ref> [--pr <n> | --event <file>] [--proven <sha>]',
+    },
+  },
   requirements: {
     description: 'Keep requirement records, their sources and their trace',
     module: './requirements/requirements.mjs', run: 'runRequirements',
