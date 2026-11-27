@@ -92,13 +92,13 @@ const add = (p, id, ...extra) =>
 
 test('add-stack records the stack in the worktree root file, also when run from a subfolder', () => {
   const p = project()
-  const r = add(p, 'fcc-211')
+  const r = add(p, 'app-211')
   assert.equal(r.status, 0, r.out)
   const stacks = docker(p)
   assert.equal(stacks.length, 1)
   assert.deepEqual(
     { kind: stacks[0].kind, projectId: stacks[0].projectId, workdir: stacks[0].workdir, cliVersion: stacks[0].cliVersion },
-    { kind: 'supabase', projectId: 'fcc-211', workdir: p.app, cliVersion: '2.122.0' },
+    { kind: 'supabase', projectId: 'app-211', workdir: p.app, cliVersion: '2.122.0' },
   )
   assert.match(stacks[0].addedAt, /^\d{4}-\d\d-\d\dT/)
   assert.ok(!existsSync(join(p.main, FILE)), 'the main checkout got the file')
@@ -106,8 +106,8 @@ test('add-stack records the stack in the worktree root file, also when run from 
 
 test('add-stack twice for one id keeps one entry with the latest values', () => {
   const p = project()
-  assert.equal(add(p, 'fcc-211').status, 0)
-  assert.equal(run(p, p.app, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-211', '--workdir', p.app, '--cli-version', '2.130.1').status, 0)
+  assert.equal(add(p, 'app-211').status, 0)
+  assert.equal(run(p, p.app, 'add-stack', '--kind', 'supabase', '--project-id', 'app-211', '--workdir', p.app, '--cli-version', '2.130.1').status, 0)
   const stacks = docker(p)
   assert.equal(stacks.length, 1)
   assert.equal(stacks[0].cliVersion, '2.130.1')
@@ -115,7 +115,7 @@ test('add-stack twice for one id keeps one entry with the latest values', () => 
 
 test('add-stack refuses when git does not ignore the file, and names the repair', () => {
   const p = project({ ignored: false })
-  const r = add(p, 'fcc-211')
+  const r = add(p, 'app-211')
   assert.equal(r.status, 3, r.out)
   assert.match(r.out, /not git-ignored/)
   assert.match(r.out, /\.neil-dev\.worktree\.json/)
@@ -125,7 +125,7 @@ test('add-stack refuses when git does not ignore the file, and names the repair'
 
 test('add-stack refuses in the main checkout', () => {
   const p = project()
-  const r = run(p, p.main, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-main', '--workdir', p.main, '--cli-version', '2.122.0')
+  const r = run(p, p.main, 'add-stack', '--kind', 'supabase', '--project-id', 'app-main', '--workdir', p.main, '--cli-version', '2.122.0')
   assert.equal(r.status, 3, r.out)
   assert.match(r.out, /main checkout/)
   assert.ok(!existsSync(join(p.main, FILE)))
@@ -133,14 +133,14 @@ test('add-stack refuses in the main checkout', () => {
 
 test('add-stack without --cli-version names the missing option', () => {
   const p = project()
-  const r = run(p, p.app, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-211', '--workdir', p.app)
+  const r = run(p, p.app, 'add-stack', '--kind', 'supabase', '--project-id', 'app-211', '--workdir', p.app)
   assert.equal(r.status, 2, r.out)
   assert.match(r.out, /--cli-version/)
 })
 
 test('add-stack refuses a workdir that is not a folder', () => {
   const p = project()
-  const r = run(p, p.app, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-211', '--workdir', join(p.worktree, 'gone'), '--cli-version', '2.122.0')
+  const r = run(p, p.app, 'add-stack', '--kind', 'supabase', '--project-id', 'app-211', '--workdir', join(p.worktree, 'gone'), '--cli-version', '2.122.0')
   assert.equal(r.status, 2, r.out)
   assert.match(r.out, /--workdir/)
   assert.ok(!existsSync(join(p.worktree, FILE)))
@@ -155,50 +155,50 @@ test('add-stack refuses a kind it cannot stop', () => {
 
 test('remove-stack removes the entry and stops nothing; an unlisted id exits 4', () => {
   const p = project()
-  add(p, 'fcc-211')
-  add(p, 'fcc-212')
-  const r = run(p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'fcc-211')
+  add(p, 'app-211')
+  add(p, 'app-212')
+  const r = run(p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'app-211')
   assert.equal(r.status, 0, r.out)
-  assert.deepEqual(docker(p).map(s => s.projectId), ['fcc-212'])
+  assert.deepEqual(docker(p).map(s => s.projectId), ['app-212'])
   assert.deepEqual(calls(p), [])
-  const again = run(p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'fcc-211')
+  const again = run(p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'app-211')
   assert.equal(again.status, 4, again.out)
-  assert.match(again.out, /fcc-211/)
+  assert.match(again.out, /app-211/)
 })
 
 test('list --json prints the record', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.app, 'list', '--json')
   assert.equal(r.status, 0, r.out)
-  assert.equal(JSON.parse(r.stdout).resources.docker[0].projectId, 'fcc-211')
+  assert.equal(JSON.parse(r.stdout).resources.docker[0].projectId, 'app-211')
 })
 
 test('stop-all by default stops each stack and deletes its data, in its workdir, then removes the entries', () => {
   const p = project()
-  add(p, 'fcc-211')
-  add(p, 'fcc-212')
+  add(p, 'app-211')
+  add(p, 'app-212')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
   assert.equal(r.status, 0, r.out)
   assert.deepEqual(calls(p), [
-    `${p.app}|-y supabase@2.122.0 stop --project-id fcc-211 --no-backup`,
-    `${p.app}|-y supabase@2.122.0 stop --project-id fcc-212 --no-backup`,
+    `${p.app}|-y supabase@2.122.0 stop --project-id app-211 --no-backup`,
+    `${p.app}|-y supabase@2.122.0 stop --project-id app-212 --no-backup`,
   ])
   assert.deepEqual(docker(p), [])
 })
 
 test('stop-all --on-end stop-keep-data stops without deleting the data', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--on-end', 'stop-keep-data')
   assert.equal(r.status, 0, r.out)
-  assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id fcc-211`])
+  assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id app-211`])
   assert.deepEqual(docker(p), [])
 })
 
 test('stop-all --on-end keep-running stops nothing and keeps the entries', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--on-end', 'keep-running')
   assert.equal(r.status, 0, r.out)
   assert.deepEqual(calls(p), [])
@@ -208,7 +208,7 @@ test('stop-all --on-end keep-running stops nothing and keeps the entries', () =>
 
 test('stop-all refuses an unknown --on-end value', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--on-end', 'nuke')
   assert.equal(r.status, 2, r.out)
   assert.match(r.out, /stop-and-delete/)
@@ -217,19 +217,19 @@ test('stop-all refuses an unknown --on-end value', () => {
 
 test('a stop that fails: the id, command, exit code, output and repair are printed, and only that entry stays', () => {
   const p = project()
-  add(p, 'fcc-211')
-  add(p, 'fcc-212')
-  writeFileSync(join(p.bin, 'fail.txt'), 'fcc-211\n')
+  add(p, 'app-211')
+  add(p, 'app-212')
+  writeFileSync(join(p.bin, 'fail.txt'), 'app-211\n')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
   assert.equal(r.status, 1, r.out)
-  assert.match(r.stderr, /fcc-211/)
-  assert.match(r.stderr, /npx -y supabase@2\.122\.0 stop --project-id fcc-211 --no-backup/)
+  assert.match(r.stderr, /app-211/)
+  assert.match(r.stderr, /npx -y supabase@2\.122\.0 stop --project-id app-211 --no-backup/)
   assert.match(r.stderr, /exit code 1/)
-  assert.match(r.stderr, /cannot stop container supabase_db_fcc-211/)
+  assert.match(r.stderr, /cannot stop container supabase_db_app-211/)
   assert.match(r.stderr, /[Rr]epair/)
-  assert.match(r.stderr, /remove-stack --kind supabase --project-id fcc-211/)
+  assert.match(r.stderr, /remove-stack --kind supabase --project-id app-211/)
   const stacks = docker(p)
-  assert.deepEqual(stacks.map(s => s.projectId), ['fcc-211'])
+  assert.deepEqual(stacks.map(s => s.projectId), ['app-211'])
   assert.equal(stacks[0].lastStop.exitCode, 1)
   assert.match(stacks[0].lastStop.command, /--no-backup/)
   assert.match(stacks[0].lastStop.output, /cannot stop container/)
@@ -254,16 +254,16 @@ test('stop-all names a file that is not valid JSON and stops nothing', () => {
 
 test('stop-all whose workdir is gone runs the stop from the worktree root', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   rmSync(p.app, { recursive: true })
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
   assert.equal(r.status, 0, r.out)
-  assert.deepEqual(calls(p), [`${p.worktree}|-y supabase@2.122.0 stop --project-id fcc-211 --no-backup`])
+  assert.deepEqual(calls(p), [`${p.worktree}|-y supabase@2.122.0 stop --project-id app-211 --no-backup`])
 })
 
 test('stop-all --background returns at once and the detached run stops the stacks and logs the result', async () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const log = join(p.base, 'stop.log')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--background', '--log', log)
   assert.equal(r.status, 0, r.out)
@@ -279,29 +279,29 @@ test('stop-all --background returns at once and the detached run stops the stack
     }
     await new Promise(resolve => setTimeout(resolve, 50))
   }
-  assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id fcc-211 --no-backup`])
+  assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id app-211 --no-backup`])
   assert.deepEqual(docker(p), [])
-  assert.match(readFileSync(log, 'utf8'), /fcc-211/)
+  assert.match(readFileSync(log, 'utf8'), /app-211/)
 })
 
 test('stop-all keeps a newer entry for the same stack that was added while the stop ran', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   // While the old stack stops, a new session starts the stack again and records it.
-  writeFileSync(join(p.bin, 'during.sh'), `#!/usr/bin/env bash\nrm -f "$0"\nbash ${SCRIPT} add-stack --kind supabase --project-id fcc-211 --workdir ${p.app} --cli-version 2.130.1\n`)
+  writeFileSync(join(p.bin, 'during.sh'), `#!/usr/bin/env bash\nrm -f "$0"\nbash ${SCRIPT} add-stack --kind supabase --project-id app-211 --workdir ${p.app} --cli-version 2.130.1\n`)
   chmodSync(join(p.bin, 'during.sh'), 0o755)
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
   assert.equal(r.status, 0, r.out)
   const stacks = docker(p)
-  assert.deepEqual(stacks.map(s => `${s.projectId}@${s.cliVersion}`), ['fcc-211@2.130.1'], 'the stop removed the entry added after it read the file')
+  assert.deepEqual(stacks.map(s => `${s.projectId}@${s.cliVersion}`), ['app-211@2.130.1'], 'the stop removed the entry added after it read the file')
 })
 
 test('a record change waits for the lock; a lock that a live process holds too long exits 2 and names the repair', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const lock = join(p.main, '.git', 'worktrees', 'wt', 'ndev-worktree.lock')
   writeFileSync(lock, String(process.pid))
-  const r = runWith({ NDEV_WORKTREE_LOCK_WAIT_MS: '300' }, p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'fcc-211')
+  const r = runWith({ NDEV_WORKTREE_LOCK_WAIT_MS: '300' }, p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'app-211')
   assert.equal(r.status, 2, r.out)
   assert.match(r.out, new RegExp(`held by pid ${process.pid}`))
   assert.match(r.out, new RegExp(`rm ${lock.replace(/[.]/g, '\\.')}`))
@@ -311,11 +311,11 @@ test('a record change waits for the lock; a lock that a live process holds too l
 
 test('a lock whose holder is gone is taken over', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const gone = spawnSync('true')
   const lock = join(p.main, '.git', 'worktrees', 'wt', 'ndev-worktree.lock')
   writeFileSync(lock, String(gone.pid))
-  const r = runWith({ NDEV_WORKTREE_LOCK_WAIT_MS: '300' }, p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'fcc-211')
+  const r = runWith({ NDEV_WORKTREE_LOCK_WAIT_MS: '300' }, p, p.app, 'remove-stack', '--kind', 'supabase', '--project-id', 'app-211')
   assert.equal(r.status, 0, r.out)
   assert.deepEqual(docker(p), [])
   assert.ok(!existsSync(lock))
@@ -323,41 +323,41 @@ test('a lock whose holder is gone is taken over', () => {
 
 test('add-stack refuses a project id that another worktree lists, and names that worktree and the repair', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const other = join(p.base, 'wt2')
   sh(p.main, 'git', 'worktree', 'add', '-q', '-b', 'task2', other)
-  const r = run(p, other, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-211', '--workdir', other, '--cli-version', '2.122.0')
+  const r = run(p, other, 'add-stack', '--kind', 'supabase', '--project-id', 'app-211', '--workdir', other, '--cli-version', '2.122.0')
   assert.equal(r.status, 3, r.out)
   assert.match(r.out, new RegExp(p.worktree.replace(/[.]/g, '\\.')))
   assert.match(r.out, /project_id/)
-  assert.match(r.out, /remove-stack --kind supabase --project-id fcc-211/)
+  assert.match(r.out, /remove-stack --kind supabase --project-id app-211/)
   assert.ok(!existsSync(join(other, FILE)))
-  assert.equal(run(p, other, 'add-stack', '--kind', 'supabase', '--project-id', 'fcc-211b', '--workdir', other, '--cli-version', '2.122.0').status, 0)
+  assert.equal(run(p, other, 'add-stack', '--kind', 'supabase', '--project-id', 'app-211b', '--workdir', other, '--cli-version', '2.122.0').status, 0)
 })
 
 test('stop-all --worktree with a subfolder stops the stacks of its worktree', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop-all', '--worktree', p.app)
   assert.equal(r.status, 0, r.out)
-  assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id fcc-211 --no-backup`])
+  assert.deepEqual(calls(p), [`${p.app}|-y supabase@2.122.0 stop --project-id app-211 --no-backup`])
   assert.deepEqual(docker(p), [])
 })
 
 test('stop-all --background logs by default in the common git dir, which outlives the worktree', async () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--background')
   assert.equal(r.status, 0, r.out)
   const log = join(p.main, '.git', 'ndev-worktree-stop', 'wt.log')
   assert.match(r.out, new RegExp(`log ${log.replace(/[.]/g, '\\.')}`))
   await exited(Number(/pid (\d+)/.exec(r.out)?.[1]))
-  assert.match(readFileSync(log, 'utf8'), /stopped supabase stack fcc-211/)
+  assert.match(readFileSync(log, 'utf8'), /stopped supabase stack app-211/)
 })
 
 test('the background stop survives a kill of the caller\'s process group', async () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   writeFileSync(join(p.bin, 'slow.txt'), '')
   const log = join(p.base, 'stop.log')
   // The caller runs in its own process group, as a hook command does; the group is killed at once.
@@ -374,27 +374,27 @@ test('the background stop survives a kill of the caller\'s process group', async
   assert.ok(pid > 0, r.stdout)
   await exited(pid)
   assert.deepEqual(docker(p), [])
-  assert.match(readFileSync(log, 'utf8'), /stopped supabase stack fcc-211/)
+  assert.match(readFileSync(log, 'utf8'), /stopped supabase stack app-211/)
 })
 
 test('the file keeps every resource under "resources": docker stacks and dev servers', () => {
   const p = project()
-  assert.equal(add(p, 'fcc-211').status, 0)
+  assert.equal(add(p, 'app-211').status, 0)
   const r = record(p)
   assert.deepEqual(Object.keys(r).sort(), ['resources', 'version'])
   assert.equal(r.version, 2)
   assert.deepEqual(Object.keys(r.resources).sort(), ['dev-servers', 'docker'])
   assert.deepEqual(r.resources['dev-servers'], {})
-  assert.deepEqual(r.resources.docker.map(s => s.projectId), ['fcc-211'])
+  assert.deepEqual(r.resources.docker.map(s => s.projectId), ['app-211'])
 })
 
 // The version 1 layout: the stacks at the top level.
-const V1 = wt => ({ version: 1, stacks: [{ kind: 'supabase', projectId: 'fcc-old', workdir: wt, cliVersion: '2.122.0', addedAt: '2026-10-30T10:00:00.000Z' }] })
+const V1 = wt => ({ version: 1, stacks: [{ kind: 'supabase', projectId: 'app-old', workdir: wt, cliVersion: '2.122.0', addedAt: '2026-10-30T10:00:00.000Z' }] })
 
 test('a version 1 file is refused, stops nothing, and the message names the migrate command', () => {
   const p = project()
   writeRecord(p, V1(p.worktree))
-  for (const args of [['stop-all', '--worktree', p.worktree], ['list', '--worktree', p.worktree], ['remove-stack', '--kind', 'supabase', '--project-id', 'fcc-old', '--worktree', p.worktree]]) {
+  for (const args of [['stop-all', '--worktree', p.worktree], ['list', '--worktree', p.worktree], ['remove-stack', '--kind', 'supabase', '--project-id', 'app-old', '--worktree', p.worktree]]) {
     const r = run(p, p.base, ...args)
     assert.equal(r.status, 2, `${args[0]}: ${r.out}`)
     assert.match(r.out, /version 1/)
@@ -609,7 +609,7 @@ test('stop-all stops every dev server with its process group, removes the entrie
   const ui = server()
   assert.equal(addServer(p, 'docs', docs).status, 0)
   assert.equal(addServer(p, 'ui', ui).status, 0)
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree)
   assert.equal(r.status, 0, r.out)
   for (const pid of [docs.pid, docs.child, ui.pid]) assert.ok(!isRunning(pid) || isZombie(pid), `pid ${pid} still runs`)
@@ -624,7 +624,7 @@ test('stop-all --on-end keep-running still stops the dev servers and leaves the 
   const p = project()
   const s = server()
   addServer(p, 'docs', s)
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop-all', '--worktree', p.worktree, '--on-end', 'keep-running')
   assert.equal(r.status, 0, r.out)
   assert.ok(!isRunning(s.pid) || isZombie(s.pid), 'the dev server still runs')
@@ -755,13 +755,13 @@ test('stop --name stops that dev server only, removes its entry, and leaves the 
   const ui = server()
   assert.equal(addServer(p, 'docs', docs).status, 0)
   assert.equal(addServer(p, 'ui', ui).status, 0)
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'stop', '--name', 'docs', '--worktree', p.worktree)
   assert.equal(r.status, 0, r.out)
   for (const pid of [docs.pid, docs.child]) assert.ok(!isRunning(pid) || isZombie(pid), `pid ${pid} still runs`)
   assert.ok(isRunning(ui.pid) && !isZombie(ui.pid), 'the other server was stopped')
   assert.deepEqual(Object.keys(servers(p)), ['ui'])
-  assert.deepEqual(docker(p).map(s => s.projectId), ['fcc-211'])
+  assert.deepEqual(docker(p).map(s => s.projectId), ['app-211'])
   assert.deepEqual(calls(p), [])
 })
 
@@ -769,17 +769,17 @@ test('stop --kind --project-id stops that stack by --on-end, and no other resour
   const p = project()
   const ui = server()
   assert.equal(addServer(p, 'ui', ui).status, 0)
-  add(p, 'fcc-211')
-  add(p, 'fcc-212')
-  const keep = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-211', '--on-end', 'stop-keep-data', '--worktree', p.worktree)
+  add(p, 'app-211')
+  add(p, 'app-212')
+  const keep = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'app-211', '--on-end', 'stop-keep-data', '--worktree', p.worktree)
   assert.equal(keep.status, 0, keep.out)
-  assert.deepEqual(docker(p).map(s => s.projectId), ['fcc-212'])
+  assert.deepEqual(docker(p).map(s => s.projectId), ['app-212'])
   assert.equal(calls(p).length, 1)
-  assert.match(calls(p)[0], /--project-id fcc-211/)
+  assert.match(calls(p)[0], /--project-id app-211/)
   assert.doesNotMatch(calls(p)[0], /--no-backup/)
-  const wipe = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-212', '--on-end', 'stop-and-delete', '--worktree', p.worktree)
+  const wipe = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'app-212', '--on-end', 'stop-and-delete', '--worktree', p.worktree)
   assert.equal(wipe.status, 0, wipe.out)
-  assert.match(calls(p)[1], /--project-id fcc-212 --no-backup/)
+  assert.match(calls(p)[1], /--project-id app-212 --no-backup/)
   assert.deepEqual(docker(p), [])
   assert.ok(isRunning(ui.pid) && !isZombie(ui.pid), 'the dev server was stopped')
 })
@@ -798,22 +798,22 @@ test('stop names the listed resources when the one asked for is not listed, and 
 
 test('stop refuses a call that names no resource, or a stack with the keep-running policy', () => {
   const p = project()
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const none = run(p, p.base, 'stop', '--worktree', p.worktree)
   assert.equal(none.status, 2, none.out)
   assert.match(none.out, /stop needs --name <dev server> or --kind <kind> --project-id <id>/)
-  const keep = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-211', '--on-end', 'keep-running', '--worktree', p.worktree)
+  const keep = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'app-211', '--on-end', 'keep-running', '--worktree', p.worktree)
   assert.equal(keep.status, 2, keep.out)
   assert.match(keep.out, /stop does not take --on-end keep-running/)
-  assert.deepEqual(docker(p).map(s => s.projectId), ['fcc-211'])
+  assert.deepEqual(docker(p).map(s => s.projectId), ['app-211'])
   assert.deepEqual(calls(p), [])
 })
 
 test('a stack that fails to stop keeps its entry with lastStop, and stop exits 1 with the repair', () => {
   const p = project()
-  add(p, 'fcc-211')
-  writeFileSync(join(p.bin, 'fail.txt'), 'fcc-211\n')
-  const r = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'fcc-211', '--worktree', p.worktree)
+  add(p, 'app-211')
+  writeFileSync(join(p.bin, 'fail.txt'), 'app-211\n')
+  const r = run(p, p.base, 'stop', '--kind', 'supabase', '--project-id', 'app-211', '--worktree', p.worktree)
   assert.equal(r.status, 1, r.out)
   assert.match(r.out, /Repair:/)
   assert.equal(docker(p)[0].lastStop.exitCode, 1)
@@ -852,18 +852,18 @@ test('list --json --live marks a running dev server live and an ended one not li
 
 test('list --json --live marks a docker stack live when one of its containers runs', () => {
   const p = project()
-  withDocker(p, ['supabase_db_fcc-211', 'supabase_auth_fcc-211', 'supabase_db_other'])
-  add(p, 'fcc-211')
-  add(p, 'fcc-212')
+  withDocker(p, ['supabase_db_app-211', 'supabase_auth_app-211', 'supabase_db_other'])
+  add(p, 'app-211')
+  add(p, 'app-212')
   const out = JSON.parse(run(p, p.base, 'list', '--json', '--live', '--worktree', p.worktree).stdout)
-  assert.deepEqual(out.resources.docker.map(s => [s.projectId, s.live]), [['fcc-211', true], ['fcc-212', false]])
+  assert.deepEqual(out.resources.docker.map(s => [s.projectId, s.live]), [['app-211', true], ['app-212', false]])
 })
 
 test('list --json --live says live is unknown, with the docker error, when docker does not answer', () => {
   const p = project()
   withDocker(p)
   writeFileSync(join(p.bin, 'docker-down.txt'), '')
-  add(p, 'fcc-211')
+  add(p, 'app-211')
   const r = run(p, p.base, 'list', '--json', '--live', '--worktree', p.worktree)
   assert.equal(r.status, 0, r.out)
   const [s] = JSON.parse(r.stdout).resources.docker
@@ -915,7 +915,7 @@ test('set-setting writes mode and steering under "settings", creates the file, a
   const a = run(p, p.app, 'set-setting', '--key', 'mode', '--value', 'heavy')
   assert.equal(a.status, 0, a.out)
   assert.deepEqual(record(p), { version: 2, settings: { mode: 'heavy' }, resources: { docker: [], 'dev-servers': {} } })
-  const added = add(p, 'fcc-1')
+  const added = add(p, 'app-1')
   assert.equal(added.status, 0, added.out)
   const b = run(p, p.worktree, 'set-setting', '--key', 'steering', '--value', 'auto')
   assert.equal(b.status, 0, b.out)
@@ -928,7 +928,7 @@ test('set-setting writes mode and steering under "settings", creates the file, a
 test('a stack added to a record with settings keeps the settings', () => {
   const p = project()
   writeRecord(p, { version: 2, settings: { mode: 'heavy' }, resources: { docker: [], 'dev-servers': {} } })
-  const r = add(p, 'fcc-2')
+  const r = add(p, 'app-2')
   assert.equal(r.status, 0, r.out)
   assert.deepEqual(record(p).settings, { mode: 'heavy' })
 })

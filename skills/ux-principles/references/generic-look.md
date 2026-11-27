@@ -45,4 +45,4 @@ If the project has no brand, write five lines before you change the palette, and
 4. **Moments**: the one or two places that get rich colour and detail.
 5. **Signature**: the one detail that only this product has.
 
-Adapted from [unslop](https://github.com/heydamir/unslop) by Damir Sokolovsky, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Adapted from [unslop](https://github.com/heydamir/unslop) by Damir Sokolovsky, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes: condensed into a reference table and five-line brief aligned with `ndev` copy and design rules.

@@ -2,8 +2,8 @@
  "version": 1,
  "description": "Words, phrases and constructions to keep out of {{name}} copy. Level 'ban' is for words with no place in plain English and fails the copy check. Level 'flag' is for ordinary words that are often misused: a person decides. Entries with 'registers' apply only to those registers. Entries with 'allow' do not apply in those registers.",
  "sources": {
-  "banned-guide": "BANNED: The Definitive Guide, a personal writing style guide. Only the parts that apply to business documentation are used.",
-  "simple-english": "The simple-english skill (MIT licence), a paraphrase of ASD-STE100 Simplified Technical English.",
+  "banned-guide": "Common plain-English style guidance (informed by BANNED: The Definitive Guide), written in original wording for business documentation.",
+  "simple-english": "The simple-english skill from https://github.com/AminBlg/SimpleEnglish (MIT licence), a paraphrase of ASD-STE100 Simplified Technical English.",
   "house": "{{name}} house rules and reviews."
  },
  "groups": [

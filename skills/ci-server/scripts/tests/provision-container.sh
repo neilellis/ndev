@@ -9,10 +9,10 @@ fail() { echo "FAIL $1"; fails=$((fails + 1)); }
 
 work=/work
 mkdir -p "$work"
-cp /skill/examples/fcc-ci-images.txt "$work/"
-sed -e '/^runner = [346]:/d' -e 's/^swap_size = .*/swap_size = 1M/' /skill/examples/fcc-analytics.conf >"$work/server.conf"
+cp /skill/examples/ci-images.txt "$work/"
+sed -e '/^runner = [346]:/d' -e 's/^swap_size = .*/swap_size = 1M/' /skill/examples/multi-repo.conf >"$work/server.conf"
 grep -v '^runner = ' "$work/server.conf" >"$work/one.conf"
-echo 'runner = 1:TathataSystems/fcc:fcc,supabase:12G:3G' >>"$work/one.conf"
+echo 'runner = 1:acme/app:app,supabase:12G:3G' >>"$work/one.conf"
 conf=$work/server.conf
 
 state=/fake-state
@@ -91,13 +91,13 @@ all_enabled() { local t; for t in "$@"; do grep -qx "$t" "$state/enabled" || ret
 prov() { bash "$scripts/provision.sh" "$@" 2>&1; }
 digest() { find /etc /home /opt /usr/local -type f -not -path '*/.cache/*' -exec /usr/bin/sha256sum {} + 2>/dev/null | sort | /usr/bin/sha256sum; }
 size="--cpus 16 --mem-gb 64"
-token=ghs_SECRETTOKENVALUE0123456789
-tokens() { printf 'TathataSystems/fcc %s\nTathataSystems/analytics %s\n' "$token" "$token"; }
-fcc_unit=actions.runner.TathataSystems-fcc.ssd-build-1.service
+token=TEST_FAKE_RUNNER_REG_TOKEN_0123456789
+tokens() { printf 'acme/app %s\nacme/analytics %s\n' "$token" "$token"; }
+app_unit=actions.runner.acme-app.ci-host-1.service
 
 before=$(digest); passwd_before=$(cat /etc/passwd)
 out=$(prov --config "$conf" --plan); rc=$?
-[ "$rc" = 0 ] && grep -q 'ssd-build-5: user ci5, repository TathataSystems/analytics, labels tathata-build,supabase, ports 21500-21599, _work tmpfs 16G, tmp tmpfs 4G' <<<"$out" \
+[ "$rc" = 0 ] && grep -q 'ci-host-5: user ci5, repository acme/analytics, labels analytics,supabase, ports 21500-21599, _work tmpfs 16G, tmp tmpfs 4G' <<<"$out" \
   && [ "$before" = "$(digest)" ] && [ "$passwd_before" = "$(cat /etc/passwd)" ] \
   && ok "--plan prints each runner's values and changes nothing" || fail "--plan: rc=$rc out=$out"
 
@@ -109,11 +109,11 @@ out=$(prov --config "$conf" --dry-run $size </dev/null); rc=$?
 
 mkdir -p /opt
 out=$(prov --config "$conf" $size --register </dev/null); rc=$?
-[ "$rc" = 1 ] && grep -q "no registration token for TathataSystems/fcc on standard input" <<<"$out" && grep -q "registration-token -q .token" <<<"$out" && grep -q "Nothing was changed" <<<"$out" && ! id ci1 >/dev/null 2>&1 \
+[ "$rc" = 1 ] && grep -q "no registration token for acme/app on standard input" <<<"$out" && grep -q "registration-token -q .token" <<<"$out" && grep -q "Nothing was changed" <<<"$out" && ! id ci1 >/dev/null 2>&1 \
   && ok "--register with no token stops before any change and names the command that makes one" || fail "missing token: rc=$rc out=$out"
 
-out=$(prov --config "$conf" $size --register < <(tokens; echo "TathataSystems/fcx $token")); rc=$?
-[ "$rc" = 1 ] && grep -q "standard input has a token for TathataSystems/fcx, which no runner line of $conf has" <<<"$out" && grep -q "Nothing was changed" <<<"$out" && ! id ci1 >/dev/null 2>&1 \
+out=$(prov --config "$conf" $size --register < <(tokens; echo "acme/other $token")); rc=$?
+[ "$rc" = 1 ] && grep -q "standard input has a token for acme/other, which no runner line of $conf has" <<<"$out" && grep -q "Nothing was changed" <<<"$out" && ! id ci1 >/dev/null 2>&1 \
   && ok "--register refuses a token line for a repository the config does not have, before any change" || fail "unknown token repository: rc=$rc out=$out"
 
 out=$(prov --config "$conf" $size --register < <(tokens)); rc=$?
@@ -132,21 +132,21 @@ grep -qx 'tmpfs /home/ci1/runner/_work tmpfs size=10G,mode=0755,uid=1000,gid=100
   && ok "the time zone, docker log caps, sysctl and sudoers are written" || fail "config files"
 grep -qx redis-server "$state/installed" && grep -qx google-chrome-stable "$state/installed" && grep -qx docker-ce "$state/installed" && grep -qx redis-server "$state/enabled" && [ -f /etc/apt/sources.list.d/nodesource.list ] && [ ! -f /etc/apt/sources.list.d/yarn.list ] \
   && ok "the config's sources, packages and services are installed and enabled" || fail "packages: $(tr '\n' ' ' <"$state/installed")"
-for u in "$fcc_unit" actions.runner.TathataSystems-fcc.ssd-build-2.service actions.runner.TathataSystems-analytics.ssd-build-5.service; do
+for u in "$app_unit" actions.runner.acme-app.ci-host-2.service actions.runner.acme-analytics.ci-host-5.service; do
   [ -f "/etc/systemd/system/$u" ] && grep -qx "$u" "$state/active" || fail "unit $u"
 done
-grep -q '"agentName": "ssd-build-5"' /home/ci5/runner/.runner && grep -q 'github.com/TathataSystems/analytics' /home/ci5/runner/.runner \
+grep -q '"agentName": "ci-host-5"' /home/ci5/runner/.runner && grep -q 'github.com/acme/analytics' /home/ci5/runner/.runner \
   && ok "each runner is registered to its own repository and has its service" || fail "registration"
 grep -qx 'ENABLED="true"' /etc/default/sysstat && grep -qx sysstat "$state/enabled" && grep -qx sysstat-collect.timer "$state/enabled" \
   && ok "sysstat is enabled and collects, so sar keeps history" || fail "sysstat"
-[ -f /etc/systemd/system/fcc-runner-sweep.timer ] && [ -f "/etc/systemd/system/$fcc_unit.d/10-fcc-recovery.conf" ] && [ ! -e /etc/systemd/system/actions.runner.TathataSystems-analytics.ssd-build-5.service.d ] \
-  && grep -qF "ExecStart=/usr/local/libexec/ci-server/runner-sweep.sh --units 'actions.runner.TathataSystems-fcc.ssd-build-*.service'" /etc/systemd/system/fcc-runner-sweep.service \
-  && ok "the runner sweep and the recovery drop-in go to the sweep_repos runners only" || fail "runner sweep: $(cat /etc/systemd/system/fcc-runner-sweep.service 2>&1)"
-grep -qF 'ExecStart=/usr/local/libexec/ci-server/docker-sweep.sh --config /usr/local/share/ci-server/ci-server.conf' /etc/systemd/system/fcc-docker-sweep.service \
-  && cmp -s "$conf" /usr/local/share/ci-server/ci-server.conf && cmp -s "$work/fcc-ci-images.txt" /usr/local/share/ci-server/fcc-ci-images.txt \
-  && grep -qF 'ExecStart=/usr/local/libexec/ci-server/docker-prepull.sh /usr/local/share/ci-server/fcc-ci-images.txt' /etc/systemd/system/fcc-docker-prepull.service \
+[ -f /etc/systemd/system/ci-runner-sweep.timer ] && [ -f "/etc/systemd/system/$app_unit.d/10-ci-recovery.conf" ] && [ ! -e /etc/systemd/system/actions.runner.acme-analytics.ci-host-5.service.d ] \
+  && grep -qF "ExecStart=/usr/local/libexec/ci-server/runner-sweep.sh --units 'actions.runner.acme-app.ci-host-*.service'" /etc/systemd/system/ci-runner-sweep.service \
+  && ok "the runner sweep and the recovery drop-in go to the sweep_repos runners only" || fail "runner sweep: $(cat /etc/systemd/system/ci-runner-sweep.service 2>&1)"
+grep -qF 'ExecStart=/usr/local/libexec/ci-server/docker-sweep.sh --config /usr/local/share/ci-server/ci-server.conf' /etc/systemd/system/ci-docker-sweep.service \
+  && cmp -s "$conf" /usr/local/share/ci-server/ci-server.conf && cmp -s "$work/ci-images.txt" /usr/local/share/ci-server/ci-images.txt \
+  && grep -qF 'ExecStart=/usr/local/libexec/ci-server/docker-prepull.sh /usr/local/share/ci-server/ci-images.txt' /etc/systemd/system/ci-docker-prepull.service \
   && cmp -s "$scripts/config.sh" /usr/local/libexec/ci-server/config.sh \
-  && all_enabled fcc-runner-sweep.timer fcc-docker-sweep.timer fcc-docker-prepull.timer \
+  && all_enabled ci-runner-sweep.timer ci-docker-sweep.timer ci-docker-prepull.timer \
   && ok "the docker sweep and the pre-pull read the installed config and image list, and their timers are on" || fail "docker sweep and pre-pull"
 bash /usr/local/libexec/ci-server/docker-sweep.sh --config /usr/local/share/ci-server/ci-server.conf --dry-run >/dev/null 2>&1 \
   && ok "the installed docker sweep loads the installed config" || fail "installed docker sweep: $(bash /usr/local/libexec/ci-server/docker-sweep.sh --config /usr/local/share/ci-server/ci-server.conf --dry-run 2>&1)"
@@ -157,16 +157,16 @@ after=$(digest)
 out=$(prov --config "$conf" $size --register </dev/null); rc=$?
 [ "$rc" = 0 ] && grep -q 'done, 0 change(s)' <<<"$out" && [ "$after" = "$(digest)" ] && ! grep -qE 'wrote |added to|would' <<<"$out" && ! grep -qE '^systemctl (enable|restart)' "$state/calls" \
   && ok "a second run changes nothing, starts nothing and says 0 changes" || fail "idempotence: rc=$rc out=$out calls=$(cat "$state/calls")"
-echo changed >/etc/systemd/system/fcc-runner-sweep.timer
+echo changed >/etc/systemd/system/ci-runner-sweep.timer
 out=$(prov --config "$conf" $size </dev/null); rc=$?
-[ "$rc" = 0 ] && grep -q 'wrote /etc/systemd/system/fcc-runner-sweep.timer' <<<"$out" && grep -q 'done, 2 change(s)' <<<"$out" \
+[ "$rc" = 0 ] && grep -q 'wrote /etc/systemd/system/ci-runner-sweep.timer' <<<"$out" && grep -q 'done, 2 change(s)' <<<"$out" \
   && ok "the sweeps step rewrites a changed unit, reloads systemd and counts both" || fail "sweeps change: rc=$rc out=$out"
 out=$(prov --config "$conf" --dry-run $size </dev/null)
 grep -q 'done, 0 change(s)' <<<"$out" && ok "--dry-run on a provisioned host finds nothing to change" || fail "dry-run after: $out"
 
 verify() { bash "$scripts/verify-server.sh" --config "$1" --only host $size 2>&1; }
 out=$(verify "$conf"); rc=$?
-[ "$rc" = 0 ] && grep -q '^PASS docker works' <<<"$out" && grep -q '^PASS docker publishes container ports on 127.0.0.1 only' <<<"$out" && grep -q '^PASS ci5 _work is tmpfs' <<<"$out" && grep -q '^PASS fcc-docker-prepull.timer is active' <<<"$out" && grep -q '^PASS ci1 ports 21100-21199 are free' <<<"$out" && grep -q ', 0 failed$' <<<"$out" \
+[ "$rc" = 0 ] && grep -q '^PASS docker works' <<<"$out" && grep -q '^PASS docker publishes container ports on 127.0.0.1 only' <<<"$out" && grep -q '^PASS ci5 _work is tmpfs' <<<"$out" && grep -q '^PASS ci-docker-prepull.timer is active' <<<"$out" && grep -q '^PASS ci1 ports 21100-21199 are free' <<<"$out" && grep -q ', 0 failed$' <<<"$out" \
   && ok "verify-server.sh passes on the provisioned host" || fail "verify host pass: rc=$rc out=$out"
 
 echo "LISTEN 0 4096 0.0.0.0:21101 0.0.0.0:*" >"$state/listeners"; touch "$state/docker-down"; grep -v ci2/tmp "$state/mounted" >"$state/mounted.new"; mv "$state/mounted.new" "$state/mounted"
@@ -182,14 +182,14 @@ out=$(verify "$conf"); rc=$?
   && ok "verify-server.sh compares the whole .env" || fail "verify env: rc=$rc out=$out"
 cp "$state/env.saved" /home/ci1/runner/.env
 
-out=$(bash "$scripts/verify-server.sh" --config /skill/examples/fcc-analytics.conf --only host --cpus 16 --mem-gb 62 2>&1)
+out=$(bash "$scripts/verify-server.sh" --config /skill/examples/multi-repo.conf --only host --cpus 16 --mem-gb 62 2>&1)
 grep -q '^FAIL sizing rule: 6 runners carry the supabase label, but 16 CPUs carry at most 4' <<<"$out" && grep -q 'load average of 58' <<<"$out" \
   && ok "verify-server.sh fails the six-supabase-runner layout that ran at load 58 on 16 CPUs" || fail "sizing verify: $out"
 
-out=$(prov --config /skill/examples/fcc-analytics.conf --dry-run --cpus 16 --mem-gb 62 </dev/null); rc=$?
+out=$(prov --config /skill/examples/multi-repo.conf --dry-run --cpus 16 --mem-gb 62 </dev/null); rc=$?
 [ "$rc" = 1 ] && grep -q 'step sizing: the plan does not fit the host (16 CPUs, 62 GB)' <<<"$out" && grep -q 'allow-oversubscribed' <<<"$out" \
   && ok "provision.sh refuses six supabase runners on 16 CPUs and names the override" || fail "sizing provision: rc=$rc out=$out"
-out=$(prov --config /skill/examples/fcc-analytics.conf --dry-run --allow-oversubscribed --cpus 16 --mem-gb 62 </dev/null); rc=$?
+out=$(prov --config /skill/examples/multi-repo.conf --dry-run --allow-oversubscribed --cpus 16 --mem-gb 62 </dev/null); rc=$?
 [ "$rc" = 0 ] && grep -q 'warning, the sizing rule is broken' <<<"$out" && ok "--allow-oversubscribed goes on and warns" || fail "oversubscribed: rc=$rc out=$out"
 
 fstab_before=$(cat /etc/fstab)
@@ -203,7 +203,7 @@ out=$(prov --config "$conf" $size </dev/null); rc=$?
   && ok "a host that is not x86_64 is refused before any change, naming its architecture" || fail "arch: rc=$rc out=$out"
 rm -f "$state/arm"
 
-sed 's/^runner = 2:.*/runner = 9:TathataSystems\/fcc:fcc/' "$conf" >"$work/nine.conf"
+sed 's/^runner = 2:.*/runner = 9:acme\/app:app/' "$conf" >"$work/nine.conf"
 touch "$state/mount-fails"
 out=$(prov --config "$work/nine.conf" $size </dev/null); rc=$?
 [ "$rc" = 1 ] && grep -q "step mounts: 'mount /home/ci9/runner/_work' exited with code 32: mount: /home/ci9/runner/_work: permission denied (fake)" <<<"$out" \
@@ -229,8 +229,8 @@ rm -f "$state/swapon-fails"
 grep -vE '^(sweep_repos|docker_sweep_[a-z_]+|prepull_images) = ' "$conf" >"$work/bare.conf"
 : >"$state/calls"
 out=$(prov --config "$work/bare.conf" $size </dev/null); rc=$?
-[ "$rc" = 0 ] && grep -qx 'systemctl disable --now fcc-docker-sweep.timer' "$state/calls" && ! all_enabled fcc-docker-sweep.timer \
-  && [ ! -e /etc/systemd/system/fcc-runner-sweep.timer ] && [ ! -e /etc/systemd/system/fcc-docker-sweep.service ] && [ ! -e /etc/systemd/system/fcc-docker-prepull.timer ] \
+[ "$rc" = 0 ] && grep -qx 'systemctl disable --now ci-docker-sweep.timer' "$state/calls" && ! all_enabled ci-docker-sweep.timer \
+  && [ ! -e /etc/systemd/system/ci-runner-sweep.timer ] && [ ! -e /etc/systemd/system/ci-docker-sweep.service ] && [ ! -e /etc/systemd/system/ci-docker-prepull.timer ] \
   && ok "a config without the sweeps turns their timers off and removes their units" || fail "retire timers: rc=$rc out=$out"
 
 [ "$fails" = 0 ] && echo "provision (in container): all passed" || { echo "provision (in container): $fails failed"; exit 1; }

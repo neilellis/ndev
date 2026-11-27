@@ -119,3 +119,7 @@ Show the breakdown to the human before any issue is filed: a table with one row 
 Keep to the cap of 30 sub-issues. Above it, split the epic into child epics, each with its own part of the spec. Each child epic is an epic issue of its own, planned and coordinated with its own `/flow epic`. Only the human can keep more than 30 in one epic: give the human's reason in `capOverride`, and the tool records it as gate-override debt for closing.
 
 `mcp__ndev__epicPhase(finished: "slicing", issues: […], approval)` checks the approval, the cap and the graph (no cycle, no unknown blocker, every issue open) and moves to `coordinating`. Then load `ndev:epic-coordinate`.
+
+## Credit
+
+Specification and vertical-slicing practices draw on [mattpocock/skills](https://github.com/mattpocock/skills) by Matt Pocock (MIT License) and [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) by Addy Osmani (MIT License).

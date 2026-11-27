@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Neil Ellis. All rights reserved.
+# Copyright (c) 2026 Neil Ellis. Licensed under the MIT License.
 """Merge the base branch (default origin/<default branch>) into open PR branches, one worktree each.
 
 Pushes through the repository's normal push (hooks run; never --no-verify) or --push-cmd.

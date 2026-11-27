@@ -307,7 +307,7 @@ test('run-check.sh stop ends the check and the processes it started', () => {
   assert.notEqual(spawnSync('pgrep', ['-f', marker]).status, 0)
 })
 
-// fcc-proto PR 905: checkpoint ran pre-push-check.sh on the default node (v26) though .nvmrc said 24, and the tests failed.
+// Regression: checkpoint ran pre-push-check.sh on the default node (v26) though .nvmrc said 24, and the tests failed.
 // A fake node on PATH stands for the default; a fake nvm, fnm or Homebrew node stands for the one the project asks for.
 const fakeNode = (bin, version) => {
   mkdirSync(bin, { recursive: true })

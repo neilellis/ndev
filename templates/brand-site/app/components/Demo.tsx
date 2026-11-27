@@ -2,12 +2,12 @@ import type { ReactNode } from "react";
 
 type Surface = "paper" | "white" | "mist" | "navy";
 
-/** A framed live example rendered with the real component classes inside .nv. */
+/** A framed live example rendered with the real component classes inside .ds. */
 export function Demo({ surface = "paper", label, children }: { surface?: Surface; label?: string; children: ReactNode }) {
   return (
     <figure className="demo-figure">
       {label ? <figcaption className="demo-label">{label}</figcaption> : null}
-      <div className={`demo-frame nv surface-${surface}${surface === "navy" ? " on-inverse" : ""}`}>{children}</div>
+      <div className={`demo-frame ds surface-${surface}${surface === "navy" ? " on-inverse" : ""}`}>{children}</div>
     </figure>
   );
 }

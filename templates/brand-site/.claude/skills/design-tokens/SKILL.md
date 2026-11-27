@@ -20,7 +20,7 @@ The design system in `public/ds/` is used by other projects through `/ds/styles.
 
 - Component classes live in `public/ds/components.css`. Keep class names and markup the same as `{{sourceRepo}}`, so markup moves between the website and the guide unchanged.
 - Use tokens, not raw values, unless the source uses a one-off value. The structure test fails on any `var(--…)` that is not defined.
-- Element resets inside `.nv` use `:where()` so they never outrank a component class. Keep it that way.
+- Element resets inside `.ds` use `:where()` so they never outrank a component class. Keep it that way.
 - Give every component a navy variant under `.on-inverse` when it can appear on a dark band.
 
 ## Show and check it

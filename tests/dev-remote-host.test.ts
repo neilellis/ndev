@@ -9,7 +9,7 @@ type On = Parameters<Parameters<typeof test>[1]>[1]
 type Engine = Parameters<Parameters<typeof test>[1]>[0]
 
 const ROOT = '/proj'
-const HOME = '/home/neil'
+const HOME = '/home/user'
 const STORE = `${HOME}/.config/ndev/remote.json`
 const KNOWN = `${HOME}/.ssh/known_hosts`
 const TMP = '/tmp/ndev-remote-1'
@@ -32,7 +32,7 @@ const TYPES = [
 ]
 const PRICING = { pricing: { currency: 'EUR', image: { price_per_gb_month: { gross: '0.0172' } }, floating_ips: [{ type: 'ipv4', prices: [price('fsn1', '3.6000'), price('hel1', '3.6000')] }] } }
 const ZONES: Record<string, string> = { fsn1: 'eu-central', hel1: 'eu-central', ash: 'us-east' }
-const PUBLIC = 'ssh-ed25519 AAAAC3desktop neil@desk'
+const PUBLIC = 'ssh-ed25519 AAAAC3desktop dev@workstation'
 const LABELS = (name: string) => ({ 'managed-by': 'ndev', 'ndev-name': name })
 const NEW_KEY = 'ssh-ed25519 AAAAnewhostkey'
 // The host key that a server presents to ssh-keyscan, and the fingerprint the fake ssh-keygen prints for a key.
@@ -326,16 +326,16 @@ test('create and remove need a named hcloud context: no flag and none kept is re
 })
 
 // A server made by hand: with its project's own labels, with managed-by=ndev but no name label, and with another name.
-for (const labels of [{ project: 'fcc-proto', role: 'orca-host' }, { 'managed-by': 'ndev' }, { 'managed-by': 'ndev', 'ndev-name': 'other' }] as Labels[]) {
+for (const labels of [{ project: 'acme-app', role: 'orca-host' }, { 'managed-by': 'ndev' }, { 'managed-by': 'ndev', 'ndev-name': 'other' }] as Labels[]) {
   test(`remove and create refuse a server without both labels (it has ${JSON.stringify(labels)}), name the labels and /dev remote import, and change nothing`, async ($, on) => {
-    const w = world(on, { servers: [ours(176003111, 'orca-dev-2', { labels })] })
+    const w = world(on, { servers: [ours(400001, 'dev-host-2', { labels })] })
     await start($)
 
     for (const word of ['remove', 'create']) {
-      const text = await dev($, `${word} orca-dev-2 --context proj --yes`)
-      expect(text).toMatch(/the server orca-dev-2 \(176003111\) in the hcloud context proj does not carry the labels managed-by=ndev and ndev-name=orca-dev-2/)
+      const text = await dev($, `${word} dev-host-2 --context proj --yes`)
+      expect(text).toMatch(/the server dev-host-2 \(400001\) in the hcloud context proj does not carry the labels managed-by=ndev and ndev-name=dev-host-2/)
       expect(text).toMatch(/Nothing changed/)
-      expect(text).toContain('Repair: use another name. Or, if it is yours to hand to /dev remote: /dev remote import 176003111 --context proj')
+      expect(text).toContain('Repair: use another name. Or, if it is yours to hand to /dev remote: /dev remote import 400001 --context proj')
       expect(text).not.toContain('add-label')
     }
     expect(w.changes()).toEqual([])
@@ -477,33 +477,33 @@ test('create refuses a location outside the floating IP\'s network zone, a type 
 
   expect(await dev($, 'create box-1 --type cpx32 --location ash --yes')).toMatch(/network zone eu-central \(fsn1\), and ash is in us-east.*Nothing was created/s)
   expect(await dev($, 'create box-1 --location hel1 --type cpx32 --yes')).toMatch(/cpx32 is not sold in hel1; it is sold in fsn1, ash/)
-  expect(await dev($, 'create box-1 --ssh-key lost --yes')).toMatch(/SSH key lost \(8\).*matches no public key in \/home\/neil\/\.ssh/)
+  expect(await dev($, 'create box-1 --ssh-key lost --yes')).toMatch(/SSH key lost \(8\).*matches no public key in \/home\/user\/\.ssh/)
   expect(await dev($, 'create box-1 --ssh-key nope --yes')).toMatch(/there is no SSH key "nope".*desk \(7\), lost \(8\)/)
   expect(w.changes()).toEqual([])
 })
 
 test('create adopts a floating IP made by hand only once it carries the labels, and names the label command; it never labels it itself', async ($, on) => {
-  const handMade = ourFip(162501839, 'build-server', null, { ip: '88.99.125.86', labels: {} })
+  const handMade = ourFip(500001, 'ci-host', null, { ip: '198.51.100.86', labels: {} })
   const w = world(on, { fips: [handMade] })
   await start($)
 
-  const refused = await dev($, 'create box-1 --context proj --floating-ip build-server --yes')
-  expect(refused).toMatch(/the floating-ip build-server \(162501839\).*does not carry the labels managed-by=ndev and ndev-name=box-1/)
-  expect(refused).toContain('hcloud --context proj floating-ip add-label 162501839 managed-by=ndev ndev-name=box-1')
-  expect(await dev($, 'create box-1 --context proj --floating-ip nope --yes')).toMatch(/there is no floating IP "nope".*build-server \(162501839, 88\.99\.125\.86\)/)
+  const refused = await dev($, 'create box-1 --context proj --floating-ip ci-host --yes')
+  expect(refused).toMatch(/the floating-ip ci-host \(500001\).*does not carry the labels managed-by=ndev and ndev-name=box-1/)
+  expect(refused).toContain('hcloud --context proj floating-ip add-label 500001 managed-by=ndev ndev-name=box-1')
+  expect(await dev($, 'create box-1 --context proj --floating-ip nope --yes')).toMatch(/there is no floating IP "nope".*ci-host \(500001, 198\.51\.100\.86\)/)
   expect(w.changes()).toEqual([])
 
   // The owner runs the label command; then create takes it, by name or id, and makes no other.
   handMade.labels = LABELS('box-1')
-  const text = await dev($, 'create box-1 --context proj --floating-ip 162501839 --yes')
-  expect(w.changes().filter(c => c.startsWith('floating-ip'))).toEqual(['floating-ip assign 162501839 901'])
-  expect(text).toMatch(/floating IPv4 88\.99\.125\.86, SSH as orca@88\.99\.125\.86/)
-  expect(w.store()?.hosts?.['box-1']).toEqual(expect.objectContaining({ floatingIp: 162501839, ip: '88.99.125.86' }))
+  const text = await dev($, 'create box-1 --context proj --floating-ip 500001 --yes')
+  expect(w.changes().filter(c => c.startsWith('floating-ip'))).toEqual(['floating-ip assign 500001 901'])
+  expect(text).toMatch(/floating IPv4 198\.51\.100\.86, SSH as orca@198\.51\.100\.86/)
+  expect(w.store()?.hosts?.['box-1']).toEqual(expect.objectContaining({ floatingIp: 500001, ip: '198.51.100.86' }))
 
   // remove finds it again from this machine's record, with no option, and keeps it.
   await dev($, 'remove box-1 --yes')
-  expect(w.changes()).toContain('floating-ip unassign 162501839')
-  expect(w.fips).toEqual([expect.objectContaining({ id: 162501839, server: null })])
+  expect(w.changes()).toContain('floating-ip unassign 500001')
+  expect(w.fips).toEqual([expect.objectContaining({ id: 500001, server: null })])
 })
 
 test('when the floating address cannot be set on the server, the failure names the address, the interface, the output and the ip addr add repair', async ($, on) => {
@@ -570,7 +570,7 @@ test('create refuses, before any spend, a snapshot or a server whose host key th
   await start($)
 
   const text = await dev($, 'create box-1 --yes')
-  expect(text).toMatch(/box-1 has the snapshot 40, and \/home\/neil\/\.config\/ndev\/remote\.json on this machine holds no host key for box-1.*Nothing changed/)
+  expect(text).toMatch(/box-1 has the snapshot 40, and \/home\/user\/\.config\/ndev\/remote\.json on this machine holds no host key for box-1.*Nothing changed/)
   expect(text).toMatch(/copy hosts\.box-1 from that machine's ~\/\.config\/ndev\/remote\.json/)
   w.servers.push(ours(901, 'box-1'))
   const half = await dev($, 'create box-1 --yes')
@@ -615,7 +615,7 @@ test('a floating IP that this machine kept for the name and that is gone is refu
 
   for (const command of ['create box-1 --yes', 'remove box-1 --forget --yes']) {
     const text = await dev($, command)
-    expect(text).toMatch(/the floating IP 60 that \/home\/neil\/\.config\/ndev\/remote\.json keeps for box-1 is no longer in the hcloud context proj.*box-1 \(61, 198\.51\.100\.9\)/)
+    expect(text).toMatch(/the floating IP 60 that \/home\/user\/\.config\/ndev\/remote\.json keeps for box-1 is no longer in the hcloud context proj.*box-1 \(61, 198\.51\.100\.9\)/)
     expect(text).toMatch(/delete "floatingIp" and "ip" from hosts\.box-1/)
   }
   expect(w.changes()).toEqual([])
@@ -791,15 +791,15 @@ test('create and remove refuse a floating IP that another server holds, and neit
 
 // --- import ----------------------------------------------------------------------------------------------------------
 
-// A server made by hand, as orca-dev-2 was: its own labels, a firewall applied to it alone, and a floating IPv4.
-const HAND = 176003111
-const OWN_LABELS = { project: 'fcc-proto', role: 'orca-host' }
-const handServer = (extra: Partial<Srv> = {}) => ours(HAND, 'orca-dev-2', { labels: { ...OWN_LABELS }, ...extra })
-const handFirewall = (extra: Partial<Fw> = {}): Fw => ({ id: 12048531, name: 'orca-dev-2-ssh', labels: { role: 'orca-host' }, rules: [{ direction: 'in', protocol: 'tcp', port: '22' }], applied_to: [{ type: 'server', server: { id: HAND } }], ...extra })
-const handFip = (extra: Partial<Fip> = {}) => ourFip(162501839, 'build-server', HAND, { ip: '88.99.125.86', labels: {}, ...extra })
+// A server made by hand, as dev-host-2 was: its own labels, a firewall applied to it alone, and a floating IPv4.
+const HAND = 400001
+const OWN_LABELS = { project: 'acme-app', role: 'orca-host' }
+const handServer = (extra: Partial<Srv> = {}) => ours(HAND, 'dev-host-2', { labels: { ...OWN_LABELS }, ...extra })
+const handFirewall = (extra: Partial<Fw> = {}): Fw => ({ id: 600001, name: 'dev-host-2-ssh', labels: { role: 'orca-host' }, rules: [{ direction: 'in', protocol: 'tcp', port: '22' }], applied_to: [{ type: 'server', server: { id: HAND } }], ...extra })
+const handFip = (extra: Partial<Fip> = {}) => ourFip(500001, 'ci-host', HAND, { ip: '198.51.100.86', labels: {}, ...extra })
 const byHand = (extra: Opts = {}): Opts => ({ servers: [handServer()], firewalls: [handFirewall()], fips: [handFip()], ...extra })
 const IMPORT = `import ${HAND} --context proj`
-const imported = { context: 'proj', floatingIp: 162501839, ip: '88.99.125.86', hostKey: PRESENTED, imported: true }
+const imported = { context: 'proj', floatingIp: 500001, ip: '198.51.100.86', hostKey: PRESENTED, imported: true }
 const adds = (w: ReturnType<typeof world>) => w.changes().filter(c => c.includes('add-label'))
 
 test('import shows each resource it labels with its id, name and labels, the record and the host key fingerprint, then labels the server, its firewall and its floating IP and records the remote', async ($, on) => {
@@ -809,38 +809,38 @@ test('import shows each resource it labels with its id, name and labels, the rec
   const text = await dev($, IMPORT)
   expect(w.asked).toHaveLength(1)
   const plan = w.asked[0]!.question
-  expect(plan).toMatch(/Import the server orca-dev-2 \(176003111\) in the Hetzner project of the hcloud context "proj" as the remote orca-dev-2\?/)
-  expect(plan).toMatch(/adds the labels managed-by=ndev and ndev-name=orca-dev-2 to:/)
-  expect(plan).toContain('- the server orca-dev-2 (176003111), which has the labels project=fcc-proto, role=orca-host')
-  expect(plan).toContain('- the firewall orca-dev-2-ssh (12048531), which has the labels role=orca-host')
-  expect(plan).toContain('- the floating IPv4 build-server (162501839, 88.99.125.86), which has the labels none')
-  expect(plan).toMatch(/records in \/home\/neil\/\.config\/ndev\/remote\.json, as hosts\.orca-dev-2: the hcloud context proj, the floating IPv4 88\.99\.125\.86 \(162501839\) and the host key/)
+  expect(plan).toMatch(/Import the server dev-host-2 \(400001\) in the Hetzner project of the hcloud context "proj" as the remote dev-host-2\?/)
+  expect(plan).toMatch(/adds the labels managed-by=ndev and ndev-name=dev-host-2 to:/)
+  expect(plan).toContain('- the server dev-host-2 (400001), which has the labels project=acme-app, role=orca-host')
+  expect(plan).toContain('- the firewall dev-host-2-ssh (600001), which has the labels role=orca-host')
+  expect(plan).toContain('- the floating IPv4 ci-host (500001, 198.51.100.86), which has the labels none')
+  expect(plan).toMatch(/records in \/home\/user\/\.config\/ndev\/remote\.json, as hosts\.dev-host-2: the hcloud context proj, the floating IPv4 198\.51\.100\.86 \(500001\) and the host key/)
   // The key is read from the floating address, and the question says that this is where trust is given.
-  expect(plan).toContain('The ed25519 host key that 88.99.125.86 presents now: SHA256:AAAApresented')
+  expect(plan).toContain('The ed25519 host key that 198.51.100.86 presents now: SHA256:AAAApresented')
   expect(plan).toMatch(/Nothing on this machine vouches for that key/)
   expect(plan).toMatch(/This is the one moment trust is given/)
   expect(plan).toMatch(/creates, deletes, resizes and reassigns nothing/)
   // The limit of a server that root-setup.sh did not build is in the question, before trust is given.
   expect(plan).toMatch(/was not built by scripts\/remote\/root-setup\.sh/)
   expect(plan).not.toMatch(/use only a firewall named/)
-  expect(w.asked[0]!.options).toEqual(['Import orca-dev-2', 'Cancel'])
-  expect(w.runs.find(r => r.argv[0] === 'ssh-keyscan')!.argv).toEqual(['ssh-keyscan', '-T', '15', '-p', '22', '-t', 'ed25519', '88.99.125.86'])
+  expect(w.asked[0]!.options).toEqual(['Import dev-host-2', 'Cancel'])
+  expect(w.runs.find(r => r.argv[0] === 'ssh-keyscan')!.argv).toEqual(['ssh-keyscan', '-T', '15', '-p', '22', '-t', 'ed25519', '198.51.100.86'])
 
   // Only labels are added, only the two, and the labels that were there stay.
   expect(w.changes()).toEqual([
-    'server add-label 176003111 managed-by=ndev ndev-name=orca-dev-2',
-    'firewall add-label 12048531 managed-by=ndev ndev-name=orca-dev-2',
-    'floating-ip add-label 162501839 managed-by=ndev ndev-name=orca-dev-2',
+    'server add-label 400001 managed-by=ndev ndev-name=dev-host-2',
+    'firewall add-label 600001 managed-by=ndev ndev-name=dev-host-2',
+    'floating-ip add-label 500001 managed-by=ndev ndev-name=dev-host-2',
   ])
-  expect(w.servers[0]!.labels).toEqual({ ...OWN_LABELS, ...LABELS('orca-dev-2') })
-  expect(w.firewalls[0]!.labels).toEqual({ role: 'orca-host', ...LABELS('orca-dev-2') })
-  expect(w.store()?.hosts?.['orca-dev-2']).toEqual(imported)
+  expect(w.servers[0]!.labels).toEqual({ ...OWN_LABELS, ...LABELS('dev-host-2') })
+  expect(w.firewalls[0]!.labels).toEqual({ role: 'orca-host', ...LABELS('dev-host-2') })
+  expect(w.store()?.hosts?.['dev-host-2']).toEqual(imported)
   // Import connects to nothing: it only reads the key. known_hosts is create's to write.
   expect(w.ssh()).toEqual([])
   expect(w.files.get(KNOWN)).toBe('10.0.0.9 ssh-ed25519 AAAAother\n')
   for (const r of w.runs.filter(x => x.argv.includes('hcloud'))) expect(r.argv.slice(0, 8).join(' ')).toMatch(/^env -u HCLOUD_TOKEN -u HCLOUD_CONTEXT hcloud (context list|--context proj)/)
-  expect(text).toMatch(/The server orca-dev-2 \(176003111\) is now the remote orca-dev-2 in the hcloud context "proj"/)
-  expect(text).toMatch(/\/dev remote remove orca-dev-2 and \/dev remote create orca-dev-2 now accept it/)
+  expect(text).toMatch(/The server dev-host-2 \(400001\) is now the remote dev-host-2 in the hcloud context "proj"/)
+  expect(text).toMatch(/\/dev remote remove dev-host-2 and \/dev remote create dev-host-2 now accept it/)
   // The limit of a server that root-setup.sh did not build.
   expect(text).toMatch(/was not built by scripts\/remote\/root-setup\.sh/)
   expect(text).toContain('/etc/cloud/cloud.cfg.d/99-ndev-keep-host-keys.cfg')
@@ -853,16 +853,16 @@ test('after import, remove and create accept the server with no hand labelling a
   await dev($, IMPORT)
 
   // create checks the server with the imported host key and no other, and trusts it for the floating address.
-  expect(await dev($, 'create orca-dev-2')).toMatch(/The remote orca-dev-2 is up in the hcloud context "proj": server 176003111, floating IPv4 88\.99\.125\.86/)
+  expect(await dev($, 'create dev-host-2')).toMatch(/The remote dev-host-2 is up in the hcloud context "proj": server 400001, floating IPv4 198\.51\.100\.86/)
   expect(w.ssh().find(r => r.stdin?.startsWith('# floating stage'))!.known).toBe(`203.0.113.7 ${PRESENTED}\n`)
-  expect(w.files.get(KNOWN)).toContain(`88.99.125.86 ${PRESENTED}\n`)
+  expect(w.files.get(KNOWN)).toContain(`198.51.100.86 ${PRESENTED}\n`)
   expect(w.changes()).toEqual(adds(w))
 
   // From here the fake ssh, like ssh, refuses a known_hosts file that does not hold the key the server proves.
   opts.proves = PRESENTED
-  expect(await dev($, 'remove orca-dev-2 --yes')).toMatch(/The remote orca-dev-2 is removed/)
+  expect(await dev($, 'remove dev-host-2 --yes')).toMatch(/The remote dev-host-2 is removed/)
   expect(w.servers).toEqual([])
-  expect(w.fips).toEqual([expect.objectContaining({ id: 162501839, server: null })])
+  expect(w.fips).toEqual([expect.objectContaining({ id: 500001, server: null })])
   // Before the shutdown, remove connected as root to the server's own address with the saved host key as the only
   // known key, and removed that temporary known_hosts file after.
   const order = w.runs.map(r => r.argv.join(' '))
@@ -881,7 +881,7 @@ test('after import, remove and create accept the server with no hand labelling a
 // prove over ssh that it holds that key, or the box under the name may not be the one imported. Showing the public
 // key is not enough: ssh-keyscan would read it from any machine that copied it.
 const SWAPPED = 'ssh-ed25519 AAAAswapped'
-const SAVED_AT = '/home/neil/.config/ndev/remote.json'
+const SAVED_AT = '/home/user/.config/ndev/remote.json'
 
 test('remove of an imported server refuses, before the question and before any shutdown, snapshot or delete, a server that does not prove it holds the host key import saved', async ($, on) => {
   const opts = byHand()
@@ -892,12 +892,12 @@ test('remove of an imported server refuses, before the question and before any s
   // The machine at the address still shows the saved public key to ssh-keyscan, but cannot prove it holds the key.
   opts.proves = SWAPPED
 
-  const text = await dev($, 'remove orca-dev-2')
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented, the one \/home\/neil\/\.config\/ndev\/remote\.json saved for orca-dev-2\. It did not: it may not be the server that was imported\./)
+  const text = await dev($, 'remove dev-host-2')
+  expect(text).toMatch(/the server dev-host-2 \(400001\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented, the one \/home\/user\/\.config\/ndev\/remote\.json saved for dev-host-2\. It did not: it may not be the server that was imported\./)
   expect(text).toMatch(/ssh root@203\.0\.113\.7 true exited 255: .*Host key verification failed/s)
   expect(text).toMatch(/No snapshot was taken and nothing was deleted\. Nothing changed/)
   expect(text).toMatch(/Repair: .*ssh-keygen -lf \/etc\/ssh\/ssh_host_ed25519_key\.pub/)
-  expect(text).toContain('/dev remote import 176003111 --context proj')
+  expect(text).toContain('/dev remote import 400001 --context proj')
   const check = w.ssh().at(-1)!
   expect(check.argv.slice(-2)).toEqual(['root@203.0.113.7', 'true'])
   expect(check.known).toBe(`203.0.113.7 ${PRESENTED}\n`)
@@ -907,7 +907,7 @@ test('remove of an imported server refuses, before the question and before any s
   expect(w.asked).toHaveLength(asked)
   expect(w.changes()).toEqual(adds(w))
   expect(w.servers).toHaveLength(1)
-  expect(w.store()?.hosts?.['orca-dev-2']?.hostKey).toBe(PRESENTED)
+  expect(w.store()?.hosts?.['dev-host-2']?.hostKey).toBe(PRESENTED)
 })
 
 test('remove of an imported server that SSH cannot reach refuses with ssh\'s exit code and output, the saved fingerprint and the repair, and changes nothing', async ($, on) => {
@@ -917,23 +917,23 @@ test('remove of an imported server that SSH cannot reach refuses with ssh\'s exi
   await dev($, IMPORT)
   opts.fail = a => (a[0] === 'ssh' ? out('', 255, 'ssh: connect to host 203.0.113.7 port 22: Operation timed out') : undefined)
 
-  const text = await dev($, 'remove orca-dev-2 --yes')
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented/)
+  const text = await dev($, 'remove dev-host-2 --yes')
+  expect(text).toMatch(/the server dev-host-2 \(400001\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented/)
   expect(text).toMatch(/The check did not finish\. ssh root@203\.0\.113\.7 true exited 255: ssh: connect to host 203\.0\.113\.7 port 22: Operation timed out\./)
   expect(text).toMatch(/No snapshot was taken and nothing was deleted\. Nothing changed/)
-  expect(text).toMatch(/Repair: check that SSH answers there with ssh -p 22 root@203\.0\.113\.7 \(if ssh asks about a host key, its fingerprint must be SHA256:AAAApresented; never accept another\), then run \/dev remote remove orca-dev-2 again/)
+  expect(text).toMatch(/Repair: check that SSH answers there with ssh -p 22 root@203\.0\.113\.7 \(if ssh asks about a host key, its fingerprint must be SHA256:AAAApresented; never accept another\), then run \/dev remote remove dev-host-2 again/)
   expect(w.files.has(`${TMP}/known_hosts`)).toBe(false)
   expect(w.changes()).toEqual(adds(w))
   expect(w.servers).toHaveLength(1)
 })
 
 test('a record that import wrote before it marked imports, with no SSH key of create, gets the same check', async ($, on) => {
-  const name = 'orca-dev-2'
+  const name = 'dev-host-2'
   const w = world(on, {
     servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS(name) } })],
     firewalls: [handFirewall({ labels: { role: 'orca-host', ...LABELS(name) } })],
     fips: [handFip({ labels: LABELS(name) })],
-    store: { projects: {}, hosts: { [name]: { context: 'proj', floatingIp: 162501839, ip: '88.99.125.86', hostKey: PRESENTED } } },
+    store: { projects: {}, hosts: { [name]: { context: 'proj', floatingIp: 500001, ip: '198.51.100.86', hostKey: PRESENTED } } },
     proves: SWAPPED,
   })
   await start($)
@@ -948,10 +948,10 @@ test('remove of an imported server that refuses the root sign-in says so with th
   await dev($, IMPORT)
   opts.fail = a => (a[0] === 'ssh' ? out('', 255, 'root@203.0.113.7: Permission denied (publickey).') : undefined)
 
-  const text = await dev($, 'remove orca-dev-2 --yes')
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented.*The check did not finish: the server refused the sign-in as root\. ssh root@203\.0\.113\.7 true exited 255: root@203\.0\.113\.7: Permission denied \(publickey\)\./)
+  const text = await dev($, 'remove dev-host-2 --yes')
+  expect(text).toMatch(/the server dev-host-2 \(400001\) was imported, so remove first checks over SSH that the server at 203\.0\.113\.7 proves it holds the host key SHA256:AAAApresented.*The check did not finish: the server refused the sign-in as root\. ssh root@203\.0\.113\.7 true exited 255: root@203\.0\.113\.7: Permission denied \(publickey\)\./)
   expect(text).toMatch(/No snapshot was taken and nothing was deleted\. Nothing changed/)
-  expect(text).toMatch(/Repair: the check needs a key sign-in as root: put your public SSH key in \/root\/.ssh\/authorized_keys on the server \(Hetzner console\), check it with ssh -p 22 root@203\.0\.113\.7 .*then run \/dev remote remove orca-dev-2 again/)
+  expect(text).toMatch(/Repair: the check needs a key sign-in as root: put your public SSH key in \/root\/.ssh\/authorized_keys on the server \(Hetzner console\), check it with ssh -p 22 root@203\.0\.113\.7 .*then run \/dev remote remove dev-host-2 again/)
   expect(w.files.has(`${TMP}/known_hosts`)).toBe(false)
   expect(w.changes()).toEqual(adds(w))
   expect(w.servers).toHaveLength(1)
@@ -959,15 +959,15 @@ test('remove of an imported server that refuses the root sign-in says so with th
 
 test('remove of an imported server refuses an address from Hetzner that is not an IPv4 address before it writes it to a known_hosts file', async ($, on) => {
   const w = world(on, {
-    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') }, public_net: { ipv4: { ip: '203.0.113.7 ssh-ed25519 AAAAother\n*' } } })],
-    firewalls: [handFirewall({ labels: { role: 'orca-host', ...LABELS('orca-dev-2') } })],
-    fips: [handFip({ labels: LABELS('orca-dev-2') })],
-    store: { projects: {}, hosts: { 'orca-dev-2': imported } },
+    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('dev-host-2') }, public_net: { ipv4: { ip: '203.0.113.7 ssh-ed25519 AAAAother\n*' } } })],
+    firewalls: [handFirewall({ labels: { role: 'orca-host', ...LABELS('dev-host-2') } })],
+    fips: [handFip({ labels: LABELS('dev-host-2') })],
+    store: { projects: {}, hosts: { 'dev-host-2': imported } },
   })
   await start($)
-  const text = await dev($, 'remove orca-dev-2 --yes')
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, but its address reads "203\.0\.113\.7 ssh-ed25519 AAAAother\n\*", which is not an IPv4 address, so remove cannot check its host key there\. No snapshot was taken and nothing was deleted\. Nothing changed/)
-  expect(text).toContain('Repair: look at the server with hcloud --context proj server describe 176003111, then run /dev remote remove orca-dev-2 again.')
+  const text = await dev($, 'remove dev-host-2 --yes')
+  expect(text).toMatch(/the server dev-host-2 \(400001\) was imported, but its address reads "203\.0\.113\.7 ssh-ed25519 AAAAother\n\*", which is not an IPv4 address, so remove cannot check its host key there\. No snapshot was taken and nothing was deleted\. Nothing changed/)
+  expect(text).toContain('Repair: look at the server with hcloud --context proj server describe 400001, then run /dev remote remove dev-host-2 again.')
   expect(w.ssh()).toEqual([])
   expect(w.files.has(`${TMP}/known_hosts`)).toBe(false)
   expect(w.changes()).toEqual([])
@@ -982,7 +982,7 @@ for (const [what, store] of [['no record', undefined], ['a record with no host k
     const w = world(on, { ...noRecord(), ...(store ? { store } : {}) })
     await start($)
     const text = await dev($, 'remove box-1 --context proj --yes')
-    expect(text).toMatch(/the server box-1 \(901\) in the hcloud context proj has no host key saved on this machine \(\/home\/neil\/\.config\/ndev\/remote\.json holds no hosts\.box-1\.hostKey\), so remove cannot check that it is the server you mean\. No snapshot was taken and nothing was deleted\. Nothing changed/)
+    expect(text).toMatch(/the server box-1 \(901\) in the hcloud context proj has no host key saved on this machine \(\/home\/user\/\.config\/ndev\/remote\.json holds no hosts\.box-1\.hostKey\), so remove cannot check that it is the server you mean\. No snapshot was taken and nothing was deleted\. Nothing changed/)
     expect(text).toContain('Repair: run /dev remote remove box-1 on the machine that created or imported the server. Or, to remove it with no host key check: /dev remote remove box-1 --context proj --unverified-host')
     expect(w.ssh()).toEqual([])
     expect(w.changes()).toEqual([])
@@ -1012,16 +1012,16 @@ test('remove refuses a server in another hcloud context than the one the saved r
   const w = world(on, up())
   await start($)
   const text = await dev($, 'remove box-1 --context other --yes')
-  expect(text).toMatch(/the server box-1 \(901\) in the hcloud context other has no host key saved on this machine \(\/home\/neil\/\.config\/ndev\/remote\.json holds hosts\.box-1 for the hcloud context proj, not other\), so remove cannot check that it is the server you mean\. No snapshot was taken and nothing was deleted\. Nothing changed/)
+  expect(text).toMatch(/the server box-1 \(901\) in the hcloud context other has no host key saved on this machine \(\/home\/user\/\.config\/ndev\/remote\.json holds hosts\.box-1 for the hcloud context proj, not other\), so remove cannot check that it is the server you mean\. No snapshot was taken and nothing was deleted\. Nothing changed/)
   expect(text).toContain('/dev remote remove box-1 --context other --unverified-host')
   expect(w.changes()).toEqual([])
   expect(w.servers).toHaveLength(1)
 })
 
 test('--unverified-host skips no check that a saved host key allows, warns of nothing then, and is an option of remove only', async ($, on) => {
-  const w = world(on, { ...noIpv4({ server: HAND }), servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })], proves: SWAPPED })
+  const w = world(on, { ...noIpv4({ server: HAND }), servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('dev-host-2') } })], proves: SWAPPED })
   await start($)
-  const text = await dev($, 'remove orca-dev-2 --unverified-host --yes')
+  const text = await dev($, 'remove dev-host-2 --unverified-host --yes')
   expect(text).toMatch(/proves it holds the host key SHA256:AAAApresented.*It did not/)
   expect(w.changes()).toEqual([])
   expect(await dev($, 'create box-1 --context proj --unverified-host')).toMatch(/--unverified-host is not an option of \/dev remote create/)
@@ -1038,18 +1038,18 @@ test('--unverified-host on a server that create made, with its saved host key, r
 // With no public IPv4 on the server, the only address left is the record's floating IP, and only while that floating
 // IP is assigned to this server. An address that nothing ties to the server would check another machine.
 const noIpv4 = (fip: Partial<Fip>): Opts => ({
-  servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') }, public_net: { ipv4: null } })],
-  firewalls: [handFirewall({ labels: { role: 'orca-host', ...LABELS('orca-dev-2') } })],
-  fips: [handFip({ labels: LABELS('orca-dev-2'), ...fip })],
-  store: { projects: {}, hosts: { 'orca-dev-2': imported } },
+  servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('dev-host-2') }, public_net: { ipv4: null } })],
+  firewalls: [handFirewall({ labels: { role: 'orca-host', ...LABELS('dev-host-2') } })],
+  fips: [handFip({ labels: LABELS('dev-host-2'), ...fip })],
+  store: { projects: {}, hosts: { 'dev-host-2': imported } },
 })
 
 test('remove of an imported server with no public IPv4 checks at the record\'s floating IP only while it is assigned to that server', async ($, on) => {
   const w = world(on, noIpv4({ server: null }))
   await start($)
-  const text = await dev($, 'remove orca-dev-2 --yes')
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) was imported, so remove first checks over SSH that it still proves it holds the host key SHA256:AAAApresented.*But the server has no public IPv4 and no floating IP of orca-dev-2 that \/home\/neil\/\.config\/ndev\/remote\.json saved is assigned to it, so there is nowhere to check\. No snapshot was taken and nothing was deleted\. Nothing changed/s)
-  expect(text).toMatch(/Repair: give the server a public IPv4 or a floating IP that SSH answers on, then run \/dev remote remove orca-dev-2 again/)
+  const text = await dev($, 'remove dev-host-2 --yes')
+  expect(text).toMatch(/the server dev-host-2 \(400001\) was imported, so remove first checks over SSH that it still proves it holds the host key SHA256:AAAApresented.*But the server has no public IPv4 and no floating IP of dev-host-2 that \/home\/user\/\.config\/ndev\/remote\.json saved is assigned to it, so there is nowhere to check\. No snapshot was taken and nothing was deleted\. Nothing changed/s)
+  expect(text).toMatch(/Repair: give the server a public IPv4 or a floating IP that SSH answers on, then run \/dev remote remove dev-host-2 again/)
   expect(w.ssh()).toEqual([])
   expect(w.changes()).toEqual([])
   expect(w.servers).toHaveLength(1)
@@ -1058,23 +1058,23 @@ test('remove of an imported server with no public IPv4 checks at the record\'s f
 test('remove of an imported server with no public IPv4 checks the host key at its assigned floating IP', async ($, on) => {
   const w = world(on, { ...noIpv4({ server: HAND }), proves: PRESENTED })
   await start($)
-  expect(await dev($, 'remove orca-dev-2 --yes')).toMatch(/The remote orca-dev-2 is removed/)
+  expect(await dev($, 'remove dev-host-2 --yes')).toMatch(/The remote dev-host-2 is removed/)
   const check = w.ssh().find(r => r.argv.at(-1) === 'true')!
-  expect(check.argv.at(-2)).toBe('root@88.99.125.86')
-  expect(check.known).toBe(`88.99.125.86 ${PRESENTED}\n`)
+  expect(check.argv.at(-2)).toBe('root@198.51.100.86')
+  expect(check.known).toBe(`198.51.100.86 ${PRESENTED}\n`)
 })
 
 test('remove of an imported server whose saved host key is malformed names the server, the record and the import repair, and changes nothing', async ($, on) => {
   const broken = world(on, {
     ...noIpv4({ server: HAND }),
-    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })],
+    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('dev-host-2') } })],
     fail: a => (a[0] === 'ssh-keygen' && a.includes('-lf') ? out('', 255, '(stdin) is not a public key file.') : undefined),
   })
   await start($)
-  const text = await dev($, 'remove orca-dev-2 --yes')
-  expect(text).toMatch(new RegExp(`the server orca-dev-2 \\(176003111\\) was imported, but the host key that ${SAVED_AT.replace(/\./g, '\\.')} saved as hosts\\.orca-dev-2\\.hostKey is not a well-formed ed25519 public key \\(ssh-keygen -lf - printed no SHA256 fingerprint for a host key \\(exit 255\\): \\(stdin\\) is not a public key file\\.\\)`))
+  const text = await dev($, 'remove dev-host-2 --yes')
+  expect(text).toMatch(new RegExp(`the server dev-host-2 \\(400001\\) was imported, but the host key that ${SAVED_AT.replace(/\./g, '\\.')} saved as hosts\\.dev-host-2\\.hostKey is not a well-formed ed25519 public key \\(ssh-keygen -lf - printed no SHA256 fingerprint for a host key \\(exit 255\\): \\(stdin\\) is not a public key file\\.\\)`))
   expect(text).toMatch(/No snapshot was taken and nothing was deleted\. Nothing changed/)
-  expect(text).toContain(`Repair: delete hosts.orca-dev-2 from ${SAVED_AT}, run /dev remote import 176003111 --context proj and confirm the key there, then run /dev remote remove orca-dev-2 again.`)
+  expect(text).toContain(`Repair: delete hosts.dev-host-2 from ${SAVED_AT}, run /dev remote import 400001 --context proj and confirm the key there, then run /dev remote remove dev-host-2 again.`)
   expect(broken.ssh()).toEqual([])
   expect(broken.changes()).toEqual([])
 })
@@ -1082,13 +1082,13 @@ test('remove of an imported server whose saved host key is malformed names the s
 test('remove of an imported server refuses a saved host key that is not one key on one line before it writes it to a known_hosts file', async ($, on) => {
   const w = world(on, {
     ...noIpv4({ server: HAND }),
-    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })],
-    store: { projects: {}, hosts: { 'orca-dev-2': { ...imported, hostKey: `${PRESENTED}\n10.0.0.1 ssh-ed25519 AAAAother` } } },
+    servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('dev-host-2') } })],
+    store: { projects: {}, hosts: { 'dev-host-2': { ...imported, hostKey: `${PRESENTED}\n10.0.0.1 ssh-ed25519 AAAAother` } } },
   })
   await start($)
-  const text = await dev($, 'remove orca-dev-2 --yes')
-  expect(text).toMatch(/saved as hosts\.orca-dev-2\.hostKey is not a well-formed ed25519 public key \(it reads "ssh-ed25519 AAAApresented\n10\.0\.0\.1/)
-  expect(text).toContain('/dev remote import 176003111 --context proj')
+  const text = await dev($, 'remove dev-host-2 --yes')
+  expect(text).toMatch(/saved as hosts\.dev-host-2\.hostKey is not a well-formed ed25519 public key \(it reads "ssh-ed25519 AAAApresented\n10\.0\.0\.1/)
+  expect(text).toContain('/dev remote import 400001 --context proj')
   expect(w.ssh()).toEqual([])
   expect(w.changes()).toEqual([])
 })
@@ -1116,47 +1116,47 @@ test('--yes does not give trust to a host key that nothing on this machine vouch
   await start($, false)
 
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/--yes cannot give trust to the host key SHA256:AAAApresented of 88\.99\.125\.86: nothing on this machine vouches for it/)
+  expect(text).toMatch(/--yes cannot give trust to the host key SHA256:AAAApresented of 198\.51\.100\.86: nothing on this machine vouches for it/)
   expect(text).toMatch(/Nothing changed/)
   expect(text).toMatch(/Repair: run it where you can answer the question/)
   expect(w.changes()).toEqual([])
   expect(w.store()).toBeUndefined()
 
-  w.files.set(KNOWN, `10.0.0.9 ssh-ed25519 AAAAother\n88.99.125.86 ${PRESENTED}\n`)
-  expect(await dev($, `${IMPORT} --yes`)).toMatch(/is now the remote orca-dev-2/)
+  w.files.set(KNOWN, `10.0.0.9 ssh-ed25519 AAAAother\n198.51.100.86 ${PRESENTED}\n`)
+  expect(await dev($, `${IMPORT} --yes`)).toMatch(/is now the remote dev-host-2/)
   expect(w.asked).toEqual([])
-  expect(w.store()?.hosts?.['orca-dev-2']).toEqual(imported)
+  expect(w.store()?.hosts?.['dev-host-2']).toEqual(imported)
 })
 
 test('import says in the question when known_hosts already holds the key for the address', async ($, on) => {
   const w = world(on, byHand())
-  w.files.set(KNOWN, `88.99.125.86 ssh-rsa AAAArsa\n88.99.125.86 ${PRESENTED}\n`)
+  w.files.set(KNOWN, `198.51.100.86 ssh-rsa AAAArsa\n198.51.100.86 ${PRESENTED}\n`)
   await start($)
   await dev($, IMPORT)
-  expect(w.asked[0]!.question).toMatch(/\/home\/neil\/\.ssh\/known_hosts on this machine already holds that key for 88\.99\.125\.86/)
-  expect(w.runs.find(r => r.argv[0] === 'ssh-keygen' && r.argv.includes('-F'))!.argv).toEqual(['ssh-keygen', '-F', '88.99.125.86', '-f', KNOWN])
+  expect(w.asked[0]!.question).toMatch(/\/home\/user\/\.ssh\/known_hosts on this machine already holds that key for 198\.51\.100\.86/)
+  expect(w.runs.find(r => r.argv[0] === 'ssh-keygen' && r.argv.includes('-F'))!.argv).toEqual(['ssh-keygen', '-F', '198.51.100.86', '-f', KNOWN])
 })
 
 test('import refuses a server whose host key differs from the one known_hosts holds for the address, and shows both fingerprints', async ($, on) => {
   const w = world(on, byHand())
-  w.files.set(KNOWN, '88.99.125.86 ssh-ed25519 AAAAearlier\n')
+  w.files.set(KNOWN, '198.51.100.86 ssh-ed25519 AAAAearlier\n')
   await start($)
 
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/\/home\/neil\/\.ssh\/known_hosts on this machine holds the ed25519 host key SHA256:AAAAearlier for 88\.99\.125\.86, and the server now presents SHA256:AAAApresented/)
+  expect(text).toMatch(/\/home\/user\/\.ssh\/known_hosts on this machine holds the ed25519 host key SHA256:AAAAearlier for 198\.51\.100\.86, and the server now presents SHA256:AAAApresented/)
   expect(text).toMatch(/Nothing changed/)
   expect(text).toContain('ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub')
-  expect(text).toContain(`ssh-keygen -R 88.99.125.86 -f ${KNOWN}`)
+  expect(text).toContain(`ssh-keygen -R 198.51.100.86 -f ${KNOWN}`)
   expect(w.asked).toEqual([])
   expect(w.changes()).toEqual([])
   expect(w.store()).toBeUndefined()
 })
 
 test('import refuses when no ed25519 host key can be read, with the address, the exit code and the output', async ($, on) => {
-  const w = world(on, byHand({ fail: a => (a[0] === 'ssh-keyscan' ? out('', 1, 'connect to 88.99.125.86 port 22: Connection refused') : undefined) }))
+  const w = world(on, byHand({ fail: a => (a[0] === 'ssh-keyscan' ? out('', 1, 'connect to 198.51.100.86 port 22: Connection refused') : undefined) }))
   await start($)
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/ssh-keyscan read no ed25519 host key from 88\.99\.125\.86 port 22 \(exit 1\): connect to 88\.99\.125\.86 port 22: Connection refused/)
+  expect(text).toMatch(/ssh-keyscan read no ed25519 host key from 198\.51\.100\.86 port 22 \(exit 1\): connect to 198\.51\.100\.86 port 22: Connection refused/)
   expect(text).toMatch(/Nothing changed/)
   expect(w.changes()).toEqual([])
 })
@@ -1166,11 +1166,11 @@ test('import needs a numeric id of a server in a named hcloud context', async ($
   await start($)
 
   expect(await dev($, 'import')).toMatch(/needs the Hetzner id of the server, as in \/dev remote import <hetzner-id> --context <context>/)
-  expect(await dev($, 'import orca-dev-2 --context proj')).toMatch(/"orca-dev-2" is not a Hetzner server id.*hcloud --context proj server list/s)
+  expect(await dev($, 'import dev-host-2 --context proj')).toMatch(/"dev-host-2" is not a Hetzner server id.*hcloud --context proj server list/s)
   expect(await dev($, 'import 1 2 --context proj')).toMatch(/takes one Hetzner server id/)
   const none = await dev($, `import ${HAND}`)
-  expect(none).toMatch(/no hcloud context is named for the server 176003111/)
-  expect(none).toMatch(/Repair: run \/dev remote import 176003111 --context <context>/)
+  expect(none).toMatch(/no hcloud context is named for the server 400001/)
+  expect(none).toMatch(/Repair: run \/dev remote import 400001 --context <context>/)
   expect(await dev($, `import ${HAND} --context nope`)).toMatch(/there is no hcloud context "nope"/)
   const missing = await dev($, 'import 999 --context proj --yes')
   expect(missing).toMatch(/999 is not the id of a server in the hcloud context proj: hcloud --context proj server describe 999 -o json exited 1: hcloud: Server not found: 999/)
@@ -1186,21 +1186,21 @@ test('the remote takes the server\'s Hetzner name: another --name, or a server n
   await start($)
 
   const other = await dev($, `${IMPORT} --name box-9 --yes`)
-  expect(other).toMatch(/the server 176003111 has the Hetzner name orca-dev-2, not box-9.*find a server by its Hetzner name/s)
-  expect(other).toContain('hcloud --context proj server update 176003111 --name box-9')
+  expect(other).toMatch(/the server 400001 has the Hetzner name dev-host-2, not box-9.*find a server by its Hetzner name/s)
+  expect(other).toContain('hcloud --context proj server update 400001 --name box-9')
   const bad = await dev($, 'import 55 --context proj --yes')
   expect(bad).toMatch(/the Hetzner name "Build_Server" of the server 55 cannot name a remote/)
   expect(bad).toContain('hcloud --context proj server update 55 --name <name>')
   expect(w.changes()).toEqual([])
   // The server's own name, given, is accepted.
-  expect(await dev($, `${IMPORT} --name orca-dev-2`)).toMatch(/is now the remote orca-dev-2/)
+  expect(await dev($, `${IMPORT} --name dev-host-2`)).toMatch(/is now the remote dev-host-2/)
 })
 
 for (const [what, opts, refusal, repair] of [
-  ['server', { servers: [handServer({ labels: { 'managed-by': 'ndev', 'ndev-name': 'box-7' } })] }, /the server orca-dev-2 \(176003111\) already carries ndev-name=box-7, so it belongs to the remote box-7/, 'hcloud --context proj server remove-label 176003111 ndev-name'],
-  ['firewall', { firewalls: [handFirewall({ labels: { 'ndev-name': 'box-7' } })] }, /the firewall orca-dev-2-ssh \(12048531\) already carries ndev-name=box-7/, 'hcloud --context proj firewall remove-label 12048531 ndev-name'],
-  ['floating IP', { fips: [handFip({ labels: { 'managed-by': 'ndev', 'ndev-name': 'box-7' } })] }, /the floating IPv4 build-server \(162501839, 88\.99\.125\.86\) already carries ndev-name=box-7/, 'hcloud --context proj floating-ip remove-label 162501839 ndev-name'],
-  ['firewall of another tool', { firewalls: [handFirewall({ labels: { 'managed-by': 'terraform' } })] }, /the firewall orca-dev-2-ssh \(12048531\) already carries managed-by=terraform, so another tool manages it/, 'hcloud --context proj firewall remove-label 12048531 managed-by'],
+  ['server', { servers: [handServer({ labels: { 'managed-by': 'ndev', 'ndev-name': 'box-7' } })] }, /the server dev-host-2 \(400001\) already carries ndev-name=box-7, so it belongs to the remote box-7/, 'hcloud --context proj server remove-label 400001 ndev-name'],
+  ['firewall', { firewalls: [handFirewall({ labels: { 'ndev-name': 'box-7' } })] }, /the firewall dev-host-2-ssh \(600001\) already carries ndev-name=box-7/, 'hcloud --context proj firewall remove-label 600001 ndev-name'],
+  ['floating IP', { fips: [handFip({ labels: { 'managed-by': 'ndev', 'ndev-name': 'box-7' } })] }, /the floating IPv4 ci-host \(500001, 198\.51\.100\.86\) already carries ndev-name=box-7/, 'hcloud --context proj floating-ip remove-label 500001 ndev-name'],
+  ['firewall of another tool', { firewalls: [handFirewall({ labels: { 'managed-by': 'terraform' } })] }, /the firewall dev-host-2-ssh \(600001\) already carries managed-by=terraform, so another tool manages it/, 'hcloud --context proj firewall remove-label 600001 managed-by'],
 ] as [string, Opts, RegExp, string][]) {
   test(`import refuses a ${what} that already carries the label of another owner, and labels nothing`, async ($, on) => {
     const w = world(on, byHand(opts))
@@ -1220,10 +1220,10 @@ test('import refuses a firewall that is also applied to another server or by a l
   await start($)
 
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/the firewall orca-dev-2-ssh \(12048531\) is applied to the server orca-dev-2 \(176003111\) and also to box-1 \(901\), the server 4242/)
-  expect(text).toMatch(/would hand a shared firewall to the remote orca-dev-2.*Nothing changed/s)
-  expect(text).toContain('hcloud --context proj firewall remove-from-resource 12048531 --type server --server <id>')
-  expect(text).toContain('hcloud --context proj firewall add-label 12048531 managed-by=ndev ndev-name=orca-dev-2')
+  expect(text).toMatch(/the firewall dev-host-2-ssh \(600001\) is applied to the server dev-host-2 \(400001\) and also to box-1 \(901\), the server 4242/)
+  expect(text).toMatch(/would hand a shared firewall to the remote dev-host-2.*Nothing changed/s)
+  expect(text).toContain('hcloud --context proj firewall remove-from-resource 600001 --type server --server <id>')
+  expect(text).toContain('hcloud --context proj firewall add-label 600001 managed-by=ndev ndev-name=dev-host-2')
   expect(w.changes()).toEqual([])
 
   shared.applied_to = [{ type: 'label_selector', label_selector: { selector: 'role=orca-host' }, applied_to_resources: [{ type: 'server', server: { id: HAND } }, { type: 'server', server: { id: 901 } }] }]
@@ -1232,8 +1232,8 @@ test('import refuses a firewall that is also applied to another server or by a l
   expect(w.store()).toBeUndefined()
 
   // The owner hands the shared firewall over by hand; import then takes the rest and never labels the firewall.
-  shared.labels = { ...shared.labels, ...LABELS('orca-dev-2') }
-  expect(await dev($, IMPORT)).toMatch(/is now the remote orca-dev-2/)
+  shared.labels = { ...shared.labels, ...LABELS('dev-host-2') }
+  expect(await dev($, IMPORT)).toMatch(/is now the remote dev-host-2/)
   expect(adds(w).some(c => c.startsWith('firewall'))).toBe(false)
 })
 
@@ -1241,8 +1241,8 @@ test('import refuses a firewall with the remote\'s firewall name that is not app
   const w = world(on, byHand({ firewalls: [handFirewall({ applied_to: [] })] }))
   await start($)
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/the firewall orca-dev-2-ssh \(12048531\) has the name of the remote's firewall, is not applied to the server orca-dev-2 \(176003111\), and does not carry the labels/)
-  expect(text).toContain('hcloud --context proj firewall apply-to-resource 12048531 --type server --server 176003111')
+  expect(text).toMatch(/the firewall dev-host-2-ssh \(600001\) has the name of the remote's firewall, is not applied to the server dev-host-2 \(400001\), and does not carry the labels/)
+  expect(text).toContain('hcloud --context proj firewall apply-to-resource 600001 --type server --server 400001')
   expect(w.changes()).toEqual([])
 })
 
@@ -1252,18 +1252,18 @@ test('with more than one floating IPv4 on the server, import asks which with --f
   await start($)
 
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) has 2 floating IPv4s assigned: build-server \(162501839, 88\.99\.125\.86\), spare \(77, 198\.51\.100\.77\).*one address/s)
+  expect(text).toMatch(/the server dev-host-2 \(400001\) has 2 floating IPv4s assigned: ci-host \(500001, 198\.51\.100\.86\), spare \(77, 198\.51\.100\.77\).*one address/s)
   expect(text).toContain(`Repair: run /dev remote import ${HAND} --context proj --floating-ip <name or id>`)
   expect(await dev($, `${IMPORT} --floating-ip nope --yes`)).toMatch(/there is no floating IP "nope" in the hcloud context proj/)
   const loose = await dev($, `${IMPORT} --floating-ip elsewhere --yes`)
-  expect(loose).toMatch(/the floating IP elsewhere \(78, 198\.51\.100\.78\) is not assigned to the server orca-dev-2 \(176003111\).*import assigns nothing/s)
-  expect(loose).toContain('hcloud --context proj floating-ip assign 78 176003111')
+  expect(loose).toMatch(/the floating IP elsewhere \(78, 198\.51\.100\.78\) is not assigned to the server dev-host-2 \(400001\).*import assigns nothing/s)
+  expect(loose).toContain('hcloud --context proj floating-ip assign 78 400001')
   expect(w.changes()).toEqual([])
 
-  expect(await dev($, `${IMPORT} --floating-ip spare`)).toMatch(/is now the remote orca-dev-2/)
-  expect(w.asked[0]!.question).toMatch(/It leaves the floating IPv4 build-server \(162501839, 88\.99\.125\.86\) as it is/)
-  expect(adds(w).filter(c => c.startsWith('floating-ip'))).toEqual(['floating-ip add-label 77 managed-by=ndev ndev-name=orca-dev-2'])
-  expect(w.store()?.hosts?.['orca-dev-2']).toEqual(expect.objectContaining({ floatingIp: 77, ip: '198.51.100.77' }))
+  expect(await dev($, `${IMPORT} --floating-ip spare`)).toMatch(/is now the remote dev-host-2/)
+  expect(w.asked[0]!.question).toMatch(/It leaves the floating IPv4 ci-host \(500001, 198\.51\.100\.86\) as it is/)
+  expect(adds(w).filter(c => c.startsWith('floating-ip'))).toEqual(['floating-ip add-label 77 managed-by=ndev ndev-name=dev-host-2'])
+  expect(w.store()?.hosts?.['dev-host-2']).toEqual(expect.objectContaining({ floatingIp: 77, ip: '198.51.100.77' }))
   expect(w.runs.filter(r => r.argv[0] === 'ssh-keyscan').at(-1)!.argv.at(-1)).toBe('198.51.100.77')
 })
 
@@ -1274,35 +1274,35 @@ test('with no floating IP, import reads the key from the server\'s own address, 
   const text = await dev($, IMPORT)
   const plan = w.asked[0]!.question
   expect(plan).toContain('The ed25519 host key that 203.0.113.7 presents now: SHA256:AAAApresented')
-  expect(plan).toMatch(/The server has no floating IPv4.*remove orca-dev-2 keeps no address.*create orca-dev-2 makes a new floating IPv4/s)
+  expect(plan).toMatch(/The server has no floating IPv4.*remove dev-host-2 keeps no address.*create dev-host-2 makes a new floating IPv4/s)
   expect(text).toMatch(/has no floating IPv4/)
-  expect(w.store()?.hosts?.['orca-dev-2']).toEqual({ context: 'proj', hostKey: PRESENTED, imported: true })
-  expect(w.changes()).toEqual(['server add-label 176003111 managed-by=ndev ndev-name=orca-dev-2', 'firewall add-label 12048531 managed-by=ndev ndev-name=orca-dev-2'])
+  expect(w.store()?.hosts?.['dev-host-2']).toEqual({ context: 'proj', hostKey: PRESENTED, imported: true })
+  expect(w.changes()).toEqual(['server add-label 400001 managed-by=ndev ndev-name=dev-host-2', 'firewall add-label 600001 managed-by=ndev ndev-name=dev-host-2'])
 })
 
 test('with no floating IP assigned, import refuses a hand-made floating IP that has the remote\'s name, which create would otherwise refuse', async ($, on) => {
-  const w = world(on, byHand({ fips: [ourFip(61, 'orca-dev-2', null, { labels: {} })] }))
+  const w = world(on, byHand({ fips: [ourFip(61, 'dev-host-2', null, { labels: {} })] }))
   await start($)
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/the floating IP orca-dev-2 \(61, 198\.51\.100\.9\) has the remote's name, is not assigned to the server orca-dev-2 \(176003111\), and does not carry the labels/)
-  expect(text).toContain('hcloud --context proj floating-ip assign 61 176003111')
+  expect(text).toMatch(/the floating IP dev-host-2 \(61, 198\.51\.100\.9\) has the remote's name, is not assigned to the server dev-host-2 \(400001\), and does not carry the labels/)
+  expect(text).toContain('hcloud --context proj floating-ip assign 61 400001')
   expect(w.changes()).toEqual([])
 })
 
 for (const [what, record, refusal] of [
-  ['another hcloud context', { context: 'other' }, /already holds a remote orca-dev-2 in the hcloud context other, not proj/],
-  ['another floating IP', { context: 'proj', floatingIp: 60, ip: FLOATING }, /already holds a remote orca-dev-2 with the floating IP 60 \(198\.51\.100\.9\), and the server 176003111 has the floating IP 162501839 \(88\.99\.125\.86\)/],
-  ['another host key', { context: 'proj', hostKey: NEW_KEY }, /already holds the host key SHA256:AAAAnewhostkey for the remote orca-dev-2, and the server 176003111 presents SHA256:AAAApresented at 88\.99\.125\.86/],
+  ['another hcloud context', { context: 'other' }, /already holds a remote dev-host-2 in the hcloud context other, not proj/],
+  ['another floating IP', { context: 'proj', floatingIp: 60, ip: FLOATING }, /already holds a remote dev-host-2 with the floating IP 60 \(198\.51\.100\.9\), and the server 400001 has the floating IP 500001 \(198\.51\.100\.86\)/],
+  ['another host key', { context: 'proj', hostKey: NEW_KEY }, /already holds the host key SHA256:AAAAnewhostkey for the remote dev-host-2, and the server 400001 presents SHA256:AAAApresented at 198\.51\.100\.86/],
 ] as [string, Record<string, unknown>, RegExp][]) {
   test(`import refuses when this machine already records a remote of that name with ${what}`, async ($, on) => {
-    const w = world(on, byHand({ store: { projects: {}, hosts: { 'orca-dev-2': record } } }))
+    const w = world(on, byHand({ store: { projects: {}, hosts: { 'dev-host-2': record } } }))
     await start($)
     const text = await dev($, `${IMPORT} --yes`)
     expect(text).toMatch(refusal)
     expect(text).toMatch(/Nothing changed/)
-    expect(text).toContain('delete hosts.orca-dev-2 from /home/neil/.config/ndev/remote.json')
+    expect(text).toContain('delete hosts.dev-host-2 from /home/user/.config/ndev/remote.json')
     expect(w.changes()).toEqual([])
-    expect(w.store()?.hosts?.['orca-dev-2']).toEqual(record)
+    expect(w.store()?.hosts?.['dev-host-2']).toEqual(record)
   })
 }
 
@@ -1313,25 +1313,25 @@ test('a second import of the same server changes nothing, asks nothing, and says
   const before = { changes: w.changes().length, store: w.files.get(STORE) }
 
   const again = await dev($, IMPORT)
-  expect(again).toMatch(/Nothing changed: the server orca-dev-2 \(176003111\) is already the remote orca-dev-2 in the hcloud context "proj"/)
+  expect(again).toMatch(/Nothing changed: the server dev-host-2 \(400001\) is already the remote dev-host-2 in the hcloud context "proj"/)
   expect(w.asked).toHaveLength(1)
   expect(w.changes()).toHaveLength(before.changes)
   expect(w.files.get(STORE)).toBe(before.store)
   // --yes too: this machine's record vouches for the key, and there is nothing to confirm.
-  expect(await dev($, `${IMPORT} --yes`)).toMatch(/Nothing changed: the server orca-dev-2/)
+  expect(await dev($, `${IMPORT} --yes`)).toMatch(/Nothing changed: the server dev-host-2/)
 })
 
 test('import of a server that is partly labelled adds only the missing labels, and names what already carries them', async ($, on) => {
-  const w = world(on, byHand({ servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('orca-dev-2') } })], fips: [handFip({ labels: { 'managed-by': 'ndev' } })] }))
+  const w = world(on, byHand({ servers: [handServer({ labels: { ...OWN_LABELS, ...LABELS('dev-host-2') } })], fips: [handFip({ labels: { 'managed-by': 'ndev' } })] }))
   await start($)
 
   await dev($, IMPORT)
   const plan = w.asked[0]!.question
-  expect(plan).toContain('It leaves the server orca-dev-2 (176003111) as it is: it carries both labels.')
-  expect(plan).not.toContain('- the server orca-dev-2')
+  expect(plan).toContain('It leaves the server dev-host-2 (400001) as it is: it carries both labels.')
+  expect(plan).not.toContain('- the server dev-host-2')
   expect(w.changes()).toEqual([
-    'firewall add-label 12048531 managed-by=ndev ndev-name=orca-dev-2',
-    'floating-ip add-label 162501839 ndev-name=orca-dev-2',
+    'firewall add-label 600001 managed-by=ndev ndev-name=dev-host-2',
+    'floating-ip add-label 500001 ndev-name=dev-host-2',
   ])
 })
 
@@ -1339,8 +1339,8 @@ test('import refuses a server that is not running, since its host key cannot be 
   const w = world(on, byHand({ servers: [handServer({ status: 'off' })] }))
   await start($)
   const text = await dev($, `${IMPORT} --yes`)
-  expect(text).toMatch(/the server orca-dev-2 \(176003111\) has the status "off", not "running", so its host key cannot be read\. Nothing changed/)
-  expect(text).toContain('hcloud --context proj server poweron 176003111')
+  expect(text).toMatch(/the server dev-host-2 \(400001\) has the status "off", not "running", so its host key cannot be read\. Nothing changed/)
+  expect(text).toContain('hcloud --context proj server poweron 400001')
   expect(w.runs.some(r => r.argv[0] === 'ssh-keyscan')).toBe(false)
 })
 
@@ -1350,14 +1350,14 @@ test('when a label command fails, import says which labels were added before it,
   await start($)
 
   const text = await dev($, IMPORT)
-  expect(text).toMatch(/hcloud --context proj firewall add-label 12048531 managed-by=ndev ndev-name=orca-dev-2 exited 1: hcloud: server error/)
-  expect(text).toMatch(/Done before this: labelled the server orca-dev-2 \(176003111\)/)
+  expect(text).toMatch(/hcloud --context proj firewall add-label 600001 managed-by=ndev ndev-name=dev-host-2 exited 1: hcloud: server error/)
+  expect(text).toMatch(/Done before this: labelled the server dev-host-2 \(400001\)/)
   expect(text).toContain(`Repair: run /dev remote import ${HAND} --context proj again`)
   expect(w.store()).toBeUndefined()
 
   isBroken = false
-  expect(await dev($, IMPORT)).toMatch(/is now the remote orca-dev-2/)
-  expect(w.store()?.hosts?.['orca-dev-2']).toEqual(imported)
+  expect(await dev($, IMPORT)).toMatch(/is now the remote dev-host-2/)
+  expect(w.store()?.hosts?.['dev-host-2']).toEqual(imported)
 })
 
 test('a firewall or floating IP without the labels beside a server of the name: the refusal of remove names import, and keeps the label command', async ($, on) => {
@@ -1371,17 +1371,17 @@ test('a firewall or floating IP without the labels beside a server of the name: 
 })
 
 test('import shows what an earlier remote of the name left, and a firewall with another name that create and remove will not use', async ($, on) => {
-  const w = world(on, byHand({ firewalls: [handFirewall({ name: 'web' })], fips: [ourFip(61, 'orca-dev-2', null)], images: [snapshot(40, 'orca-dev-2')] }))
+  const w = world(on, byHand({ firewalls: [handFirewall({ name: 'web' })], fips: [ourFip(61, 'dev-host-2', null)], images: [snapshot(40, 'dev-host-2')] }))
   await start($)
 
   const text = await dev($, IMPORT)
   const plan = w.asked[0]!.question
-  expect(plan).toMatch(/The floating IPv4 orca-dev-2 \(61, 198\.51\.100\.9\) already carries the labels of orca-dev-2: \/dev remote create orca-dev-2 assigns it to this server/)
+  expect(plan).toMatch(/The floating IPv4 dev-host-2 \(61, 198\.51\.100\.9\) already carries the labels of dev-host-2: \/dev remote create dev-host-2 assigns it to this server/)
   expect(plan).not.toMatch(/makes a new floating IPv4/)
-  expect(plan).toMatch(/The snapshot 40 already carries ndev-name=orca-dev-2.*remove deletes it once its new snapshot is available/)
+  expect(plan).toMatch(/The snapshot 40 already carries ndev-name=dev-host-2.*remove deletes it once its new snapshot is available/)
   for (const said of [plan, text]) {
-    expect(said).toMatch(/use only a firewall named orca-dev-2-ssh: web \(12048531\) is labelled and otherwise left alone, \/dev remote create orca-dev-2 makes orca-dev-2-ssh without applying it/)
-    expect(said).toContain('hcloud --context proj firewall update 12048531 --name orca-dev-2-ssh')
+    expect(said).toMatch(/use only a firewall named dev-host-2-ssh: web \(600001\) is labelled and otherwise left alone, \/dev remote create dev-host-2 makes dev-host-2-ssh without applying it/)
+    expect(said).toContain('hcloud --context proj firewall update 600001 --name dev-host-2-ssh')
   }
-  expect(w.changes()).toEqual(['server add-label 176003111 managed-by=ndev ndev-name=orca-dev-2', 'firewall add-label 12048531 managed-by=ndev ndev-name=orca-dev-2'])
+  expect(w.changes()).toEqual(['server add-label 400001 managed-by=ndev ndev-name=dev-host-2', 'firewall add-label 600001 managed-by=ndev ndev-name=dev-host-2'])
 })

@@ -85,3 +85,7 @@ The runner throws and names the missing arg. If the Workflow tool is not availab
 ## Report
 
 List the PRs, the parked questions, the blockers, and the cards that are finished or waiting. Human review and merge are outside this skill.
+
+## Credit
+
+TDD and planning conventions draw on [mattpocock/skills](https://github.com/mattpocock/skills) by Matt Pocock (MIT License).

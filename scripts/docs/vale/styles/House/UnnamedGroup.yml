@@ -6,8 +6,8 @@ message: "'%s' hides which ones. Name them — 'the two fields, `literals` and `
 # Promote it to error once it has fired on real writing and been right every time.
 level: warning
 ignorecase: true
-# A collective noun standing in for items the reader was never told. From #1363,
-# 2026-08-12: "the same attribute pair whose disappearance caused #1340". The maintainer asked what
+# A collective noun standing in for items the reader was never told. Example:
+# "the same attribute pair whose disappearance broke the run". The maintainer asked what
 # an attribute pair is. The answer was two named fields, `literals` and `regexes`, and
 # naming them is SHORTER than the phrase that hid them.
 #

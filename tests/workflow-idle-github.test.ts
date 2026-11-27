@@ -66,7 +66,7 @@ test('a read of GitHub that fails is said, not read as a clean PR, and the remin
   expect(w.prompts.length).toBe(1)
 })
 
-// #679 in fcc-proto: another writer saved the PR record while the idle check read GitHub, and the idle
+// Regression: another writer saved the PR record while the idle check read GitHub, and the idle
 // check's own save then failed with "set-workflow exited 5 ... at revision 6, and this writer expected 5".
 test('an idle check that loses the save to another writer tries again at the next tick, and reports no bug', async ($, on) => {
   const w = engine(on)

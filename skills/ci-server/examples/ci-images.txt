@@ -1,4 +1,4 @@
-falkordb/falkordb-server:6.0.4
+redis:7-alpine
 public.ecr.aws/supabase/postgres:17.11.0.006 supabase@2.122.0
 public.ecr.aws/supabase/gotrue:v2.197.0 supabase@2.122.0
 public.ecr.aws/supabase/postgrest:v16.5 supabase@2.122.0

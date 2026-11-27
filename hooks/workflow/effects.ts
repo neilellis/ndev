@@ -132,7 +132,7 @@ async function runLong($: EngineInterface, root: string, dir: string, script: st
 
 // The keys of the worktree's .neil-dev.env that checkEnv in .ndev.json names, such as the URL of a local
 // test database, as CI sets them. The other keys stay out, as they can be credentials for hosted services
-// (fcc-proto's FALKORDB_URL for kb:publish made its tests write to the hosted graph server); withheld names them.
+// (a hosted database URL intended for publish scripts would otherwise make tests write to the hosted server); withheld names them.
 async function projectEnv($: EngineInterface, root: string, path: string): Promise<{ env: Record<string, string>; withheld: string[] }> {
   const file = `${root}/.neil-dev.env`
   const named = (await loadConfigAt($, root)).config.checkEnv ?? []

@@ -91,3 +91,7 @@ Delight is motion that tells the reader something: their action landed, the work
 ## The workflow
 
 To get an animation idea for one function, call `mcp__ndev__iNeedA('animation', description)`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.
+
+## Credit
+
+Motion vocabulary and performance guidance draws on [emilkowalski/skills](https://github.com/emilkowalski/skills) by Emil Kowalski (MIT License).

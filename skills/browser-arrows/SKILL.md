@@ -74,7 +74,7 @@ Watch the recording before you publish it, or make a contact sheet of frames wit
 
 ## Credit
 
-`arrow.js` does in a web page what bigarrow (github.com/franzenzenhofer/big-arrow-on-the-screen, MIT) does on a screen. The code is written from bigarrow's documented behaviour, not copied from it. The source is the docs-walk-through plugin in Novus-i2/lens (`.claude/mods/docs-walk-through/browser/`). Copy a change there and here together. The video kit ships this file to projects as `scripts/video-kit/arrow.js` for its arrow cues (the `video-scenes` skill); raise the kit's version in `skills/video-setup/scripts/kit.json` when it changes.
+`arrow.js` does in a web page what bigarrow (github.com/franzenzenhofer/big-arrow-on-the-screen, MIT) does on a screen. The code is written from bigarrow's documented behaviour, not copied from it. The video kit ships this file to projects as `scripts/video-kit/arrow.js` for its arrow cues (the `video-scenes` skill); raise the kit's version in `skills/video-setup/scripts/kit.json` when it changes.
 
 ## The workflow
 

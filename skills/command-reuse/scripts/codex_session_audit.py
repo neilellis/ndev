@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Neil Ellis. All rights reserved.
+# Copyright (c) 2026 Neil Ellis. Licensed under the MIT License.
 """Audit Codex JSONL rollouts or JSON record arrays with the Python standard library.
 
 Read response_item records once. Ignore mirrored events, instructions, reasoning,

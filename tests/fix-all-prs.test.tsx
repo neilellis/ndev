@@ -102,8 +102,8 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   // The plugin's session start also reads ~/dev-wiki and the project file: both are in place,
   // so it runs no set-up and no wiki script, and every process call below is the loop's.
   // The loop's time between GitHub reads: none here, so each tick reads. A test of the budget clears it.
-  on('env.get', (_, e) => ({ value: e.name === 'NDEV_PR_CHECK_MS' ? fault.checkEvery : '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.ndev.json' }))
+  on('env.get', (_, e) => ({ value: e.name === 'NDEV_PR_CHECK_MS' ? fault.checkEvery : '/home/user' }))
+  on('fs.exists', (_, e) => ({ value: e.path === '/home/user/dev-wiki/wiki.md' || e.path === '/.ndev.json' }))
   on('fs.read', () => ({ value: JSON.stringify({ github: { repo: 'acme/widgets', board: null } }) }))
   on('clock.every', () => new Promise(resolve => {
     if (isFireDue) {
@@ -476,57 +476,57 @@ test('Refresh adds a pull request opened since the queue was read, and says it r
 })
 
 test('with no agent named after it, the owner is the listed session that signed its commits', async ($, on) => {
-  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
-  const w = world(on, prs, [{ name: 'lens-7d', status: 'idle' }, { name: 'lens-02', status: 'idle' }])
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-app-start')]
+  const w = world(on, prs, [{ name: 'app-7d', status: 'idle' }, { name: 'app-02', status: 'idle' }])
   w.signed[200] = [
-    'Add lens start\n\nClaude-Session: https://claude.ai/code/session_0162XPizdiouspPu3kTt3cpW',
-    'List lens start\n\nClaude-Session: https://claude.ai/code/session_0162XPizdiouspPu3kTt3cpW',
+    'Add app start\n\nClaude-Session: https://claude.ai/code/session_01EXAMPLE000000000000001',
+    'List app start\n\nClaude-Session: https://claude.ai/code/session_01EXAMPLE000000000000001',
   ]
   w.registry.push(
-    JSON.stringify({ pid: 1, name: 'lens-02', bridgeSessionId: 'session_01OTHER' }),
+    JSON.stringify({ pid: 1, name: 'app-02', bridgeSessionId: 'session_01OTHER' }),
     '{"pid":2,"name":"half-writ',
-    JSON.stringify({ pid: 3, name: 'lens-7d', sessionId: '11fdb9f1', cwd: '/Users/neil/dev/lens', bridgeSessionId: 'session_0162XPizdiouspPu3kTt3cpW' }),
+    JSON.stringify({ pid: 3, name: 'app-7d', sessionId: '11fdb9f1', cwd: '/home/user/dev/app', bridgeSessionId: 'session_01EXAMPLE000000000000001' }),
   )
-  w.titles['projects/-Users-neil-dev-lens/11fdb9f1.jsonl'] = 'Restarting "lens" after stop'
+  w.titles['projects/-home-user-dev-app/11fdb9f1.jsonl'] = 'Restarting "app" after stop'
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run(command('start'))
 
   await until(() => w.sent.length === 1, () => w.prompts)
-  expect(w.sent[0]!.to).toBe('lens-7d')
+  expect(w.sent[0]!.to).toBe('app-7d')
   expect(w.prompts).toEqual([])
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await ui.find({ type: 'Text', text: /signed its commits/ }))?.text).toMatch(/#200: owner lens-7d, the listed session that signed its commits/)
+  expect((await ui.find({ type: 'Text', text: /signed its commits/ }))?.text).toMatch(/#200: owner app-7d, the listed session that signed its commits/)
   // The owning session's title, beside its name.
-  await until(async () => (await ui.find({ type: 'Text', text: /Restarting "lens" after stop/ })) !== undefined)
+  await until(async () => (await ui.find({ type: 'Text', text: /Restarting "app" after stop/ })) !== undefined)
   await ui.unmount()
   await $.command.run(command('pause'))
 })
 
 test('an owner found by a refresh before the start is noted again when the queue starts', async ($, on) => {
-  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
-  const w = world(on, prs, [{ name: 'lens-7d', status: 'idle' }])
-  w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_7d']
-  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_7d' }))
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-app-start')]
+  const w = world(on, prs, [{ name: 'app-7d', status: 'idle' }])
+  w.signed[200] = ['Add app start\n\nClaude-Session: https://claude.ai/code/session_7d']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'app-7d', bridgeSessionId: 'session_7d' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   // Asking for the status finds the owner before /fix-prs start.
   await $.command.run(command('status'))
   const before = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await until(async () => (await before.find({ type: 'Text', text: /lens-7d/ })) !== undefined, () => 'the status refresh named no owner')
+  await until(async () => (await before.find({ type: 'Text', text: /app-7d/ })) !== undefined, () => 'the status refresh named no owner')
   await before.unmount()
   await $.command.run(command('start'))
 
   await until(() => w.sent.length === 1, () => w.prompts)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await until(async () => (await ui.find({ type: 'Text', text: /#200: owner lens-7d, the listed session that signed its commits/ })) !== undefined, () => 'the activity log does not say how the owner was found')
+  await until(async () => (await ui.find({ type: 'Text', text: /#200: owner app-7d, the listed session that signed its commits/ })) !== undefined, () => 'the activity log does not say how the owner was found')
   await ui.unmount()
   await $.command.run(command('pause'))
 })
 
 test('a message to the owner by its socket address keeps the owner by name, so it is not taken as gone', async ($, on) => {
-  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
-  const w = world(on, prs, [{ name: 'lens-7d', status: 'idle' }])
-  w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_7d']
-  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', messagingSocketPath: '/tmp/cc-socks/3.sock', bridgeSessionId: 'session_7d' }))
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-app-start')]
+  const w = world(on, prs, [{ name: 'app-7d', status: 'idle' }])
+  w.signed[200] = ['Add app start\n\nClaude-Session: https://claude.ai/code/session_7d']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'app-7d', messagingSocketPath: '/tmp/cc-socks/3.sock', bridgeSessionId: 'session_7d' }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run(command('start'))
   await until(() => w.sent.length === 1, () => w.prompts)
@@ -537,7 +537,7 @@ test('a message to the owner by its socket address keeps the owner by name, so i
   w.clock.now = 31 * 60_000
   w.timer()
   await until(() => w.prompts.length === 1, () => ({ prompts: w.prompts, created: w.orca.created }))
-  expect(w.prompts[0]).toMatch(/lens-7d has not pushed or answered for 30 minutes/)
+  expect(w.prompts[0]).toMatch(/app-7d has not pushed or answered for 30 minutes/)
   expect(w.orca.created).toEqual([])
   await $.command.run(command('pause'))
 })
@@ -548,7 +548,7 @@ test('a socket address whose session cannot be named is recorded as given, and t
   await $.command.run(command('start'))
   await until(() => w.sent.length === 1)
 
-  w.fault.registry = 'cat: /home/neil/.claude/sessions/9.json: Permission denied'
+  w.fault.registry = 'cat: /home/user/.claude/sessions/9.json: Permission denied'
   await $.session.send({ origin: { kind: 'model' }, to: 'uds:/tmp/cc-socks/9.sock', text: 'PR #182 failed again on the fresh run.' })
   w.fault.registry = ''
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 300 }, surface: 'terminal' })
@@ -579,7 +579,7 @@ test('a socket address with no named session in the registry is recorded as give
 })
 
 test('an owner found while the agent started in Orca is awaited is not asked: the started agent keeps the pull request', async ($, on) => {
-  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-app-start')]
   const agents: { name: string; status: string }[] = []
   const w = world(on, prs, agents)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -587,9 +587,9 @@ test('an owner found while the agent started in Orca is awaited is not asked: th
   await until(() => w.orca.created.length === 1, () => w.prompts)
 
   // The session that signed the commits signs in before the started agent is listed: two agents would fix one branch.
-  agents.push({ name: 'lens-7d', status: 'idle' })
-  w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_0162X']
-  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_0162X' }))
+  agents.push({ name: 'app-7d', status: 'idle' })
+  w.signed[200] = ['Add app start\n\nClaude-Session: https://claude.ai/code/session_01EX']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'app-7d', bridgeSessionId: 'session_01EX' }))
   w.clock.now = 60_000
   w.timer()
   await new Promise(resolve => setTimeout(resolve, 50))
@@ -609,7 +609,7 @@ test('an owner found while the agent started in Orca is awaited is not asked: th
 })
 
 test('once the agent started in Orca has pushed, the next round asks a listed owner, not a second agent', async ($, on) => {
-  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-app-start')]
   const agents: { name: string; status: string }[] = []
   const w = world(on, prs, agents)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -617,9 +617,9 @@ test('once the agent started in Orca has pushed, the next round asks a listed ow
   await until(() => w.orca.created.length === 1, () => w.prompts)
 
   // The session that signed the commits signs in while the started agent is awaited.
-  agents.push({ name: 'lens-7d', status: 'idle' })
-  w.signed[200] = ['Add lens start\n\nClaude-Session: https://claude.ai/code/session_0162X']
-  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_0162X' }))
+  agents.push({ name: 'app-7d', status: 'idle' })
+  w.signed[200] = ['Add app start\n\nClaude-Session: https://claude.ai/code/session_01EX']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'app-7d', bridgeSessionId: 'session_01EX' }))
 
   // The started agent pushes and leaves before it is listed; the checks of the new head then fail.
   Object.assign(prs[0]!, { headRefOid: 'head-200-2', statusCheckRollup: [{ name: 'tests', status: 'IN_PROGRESS', conclusion: '' }] })
@@ -630,14 +630,14 @@ test('once the agent started in Orca has pushed, the next round asks a listed ow
   w.clock.now = 2 * 60_000
   w.timer()
   await until(() => w.sent.length === 1, () => ({ sent: w.sent, launched: w.orca.launched, prompts: w.prompts }))
-  expect(w.sent[0]).toEqual({ to: 'lens-7d', text: expect.stringMatching(/PR #200 .* round 2 of 3/) })
+  expect(w.sent[0]).toEqual({ to: 'app-7d', text: expect.stringMatching(/PR #200 .* round 2 of 3/) })
   expect(w.orca.launched).toEqual([])
   expect(w.orca.created.length).toBe(1)
   await $.command.run(command('pause'))
 })
 
 test('an agent started in Orca that is never listed leaves the next round blocked, not with a second agent', async ($, on) => {
-  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-lens-start')]
+  const prs = [pr(200, '2026-10-26T11:00:00Z', 'FAILURE', 'claude/issue-app-start')]
   const w = world(on, prs, [])
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.command.run(command('start'))
@@ -817,13 +817,13 @@ test('an owner replaced while the loop waits on its answer is asked in turn, not
   await until(() => w.sent.length === 1)
 
   // The asked owner leaves, and by the same tick the session that signed the commits is listed.
-  agents.splice(0, 1, { name: 'lens-7d', status: 'idle' })
-  w.signed[182] = ['Fix it\n\nClaude-Session: https://claude.ai/code/session_0162X']
-  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_0162X' }))
+  agents.splice(0, 1, { name: 'app-7d', status: 'idle' })
+  w.signed[182] = ['Fix it\n\nClaude-Session: https://claude.ai/code/session_01EX']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'app-7d', bridgeSessionId: 'session_01EX' }))
   w.clock.now = 60_000
   w.timer()
   await until(() => w.sent.length === 2, () => w.sent)
-  expect(w.sent[1]).toEqual({ to: 'lens-7d', text: expect.stringMatching(/PR #182 .* round 1 of 3/) })
+  expect(w.sent[1]).toEqual({ to: 'app-7d', text: expect.stringMatching(/PR #182 .* round 1 of 3/) })
   expect(w.orca.created).toEqual([])
   expect(w.prompts).toEqual([])
   await $.command.run(command('pause'))
@@ -841,13 +841,13 @@ test('a pull request handed to the model after its owner went silent stays with 
   expect(w.prompts[0]).toMatch(/issue-176 has not pushed or answered for 30 minutes/)
 
   // The model is working on it when the owner leaves and the session that signed the commits is listed.
-  agents.splice(0, 1, { name: 'lens-7d', status: 'idle' })
-  w.signed[182] = ['Fix it\n\nClaude-Session: https://claude.ai/code/session_0162X']
-  w.registry.push(JSON.stringify({ pid: 3, name: 'lens-7d', bridgeSessionId: 'session_0162X' }))
+  agents.splice(0, 1, { name: 'app-7d', status: 'idle' })
+  w.signed[182] = ['Fix it\n\nClaude-Session: https://claude.ai/code/session_01EX']
+  w.registry.push(JSON.stringify({ pid: 3, name: 'app-7d', bridgeSessionId: 'session_01EX' }))
   w.clock.now = 32 * 60_000
   w.timer()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await until(async () => (await ui.find({ type: 'Text', text: /#182: owner lens-7d/ })) !== undefined)
+  await until(async () => (await ui.find({ type: 'Text', text: /#182: owner app-7d/ })) !== undefined)
   await ui.unmount()
   await new Promise(resolve => setTimeout(resolve, 50))
   expect(w.sent.length).toBe(1)

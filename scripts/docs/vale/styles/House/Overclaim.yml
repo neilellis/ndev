@@ -10,7 +10,7 @@ ignorecase: true
 # sentence that does not earn it is not rescued by it. "The opposite is true" is the worst of the
 # set, because it inverts a reader's prior with no measurement attached at all.
 #
-# 2026-08-05, the #1025 plan. A cold reader caught this sentence, which vale passed clean:
+# Example caught by a cold reader when vale passed clean:
 #
 #     "The issue read that as the matcher losing us credit. The opposite is true. It was refusing
 #      entries that were wrong, and a re-read of the key removed them."

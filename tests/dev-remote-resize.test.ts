@@ -9,11 +9,11 @@ type On = Parameters<Parameters<typeof test>[1]>[1]
 type Engine = Parameters<Parameters<typeof test>[1]>[0]
 
 const ROOT = '/proj'
-const HOME = '/home/neil'
+const HOME = '/home/user'
 const ORCA_DATA = '/orca-data'
 const RUNTIMES = `${ORCA_DATA}/orca-ephemeral-vm-runtimes.json`
 const ENV = 'env-1'
-const HOST = 'orca@88.99.125.86'
+const HOST = 'orca@198.51.100.86'
 const out = (stdout = '', exitCode = 0, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 const ok = (result: unknown) => out(JSON.stringify({ ok: true, result }))
 
@@ -35,20 +35,20 @@ type Box = { id: number; name: string; status: string; primary_disk_size: number
 type Worker = { dispatchId: string; runId: string; taskId: string; dispatchStatus: string; server?: { environmentId: string; name: string }; worktree?: string; liveness?: string; agent?: string; model?: string; effort?: string }
 
 const WORKERS: Worker[] = [
-  { dispatchId: 'd-a', runId: 'run-1', taskId: 't-a', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'orca-dev-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/fcc-proto/772-kg-docs', liveness: 'live', agent: 'claude', model: 'opus', effort: 'high' },
-  { dispatchId: 'd-b', runId: 'run-1', taskId: 't-b', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'orca-dev-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/fcc-proto/780-gone', liveness: 'exited', agent: 'claude' },
-  { dispatchId: 'd-c', runId: 'run-2', taskId: 't-c', dispatchStatus: 'completed', server: { environmentId: ENV, name: 'orca-dev-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/fcc-proto/790-done', liveness: 'exited', agent: 'claude' },
+  { dispatchId: 'd-a', runId: 'run-1', taskId: 't-a', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'dev-host-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/acme-app/772-api-docs', liveness: 'live', agent: 'claude', model: 'opus', effort: 'high' },
+  { dispatchId: 'd-b', runId: 'run-1', taskId: 't-b', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'dev-host-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/acme-app/780-gone', liveness: 'exited', agent: 'claude' },
+  { dispatchId: 'd-c', runId: 'run-2', taskId: 't-c', dispatchStatus: 'completed', server: { environmentId: ENV, name: 'dev-host-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/acme-app/790-done', liveness: 'exited', agent: 'claude' },
   { dispatchId: 'd-d', runId: 'run-2', taskId: 't-d', dispatchStatus: 'dispatched', server: { environmentId: 'env-other', name: 'other' }, worktree: 'repo-1::/srv/x', liveness: 'live', agent: 'claude' },
-  { dispatchId: 'd-e', runId: 'run-2', taskId: 't-e', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'orca-dev-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/fcc-proto/fix-login', liveness: 'live', agent: 'codex' },
+  { dispatchId: 'd-e', runId: 'run-2', taskId: 't-e', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'dev-host-2' }, worktree: 'repo-1::/home/orca/orca/workspaces/acme-app/fix-login', liveness: 'live', agent: 'codex' },
   { dispatchId: 'd-local', runId: 'run-2', taskId: 't-l', dispatchStatus: 'dispatched', liveness: 'live', agent: 'claude' },
 ]
 const TASKS: Record<string, { id: string; task_title: string; spec: string }[]> = {
-  'run-1': [{ id: 't-a', task_title: '#772 KG docs', spec: 'Write the KG docs for #772.' }, { id: 't-b', task_title: 'gone', spec: 'x' }],
+  'run-1': [{ id: 't-a', task_title: '#772 API docs', spec: 'Write the API docs for #772.' }, { id: 't-b', task_title: 'gone', spec: 'x' }],
   'run-2': [{ id: 't-e', task_title: 'Fix login', spec: 'Fix the login redirect.' }, { id: 't-c', task_title: 'done', spec: 'y' }],
 }
 
 // The brief of each live dispatch, to know which worker a worker-start is for.
-const TASKS_BY_DISPATCH: Record<string, string> = { 'd-a': 'Write the KG docs for #772.', 'd-e': 'Fix the login redirect.' }
+const TASKS_BY_DISPATCH: Record<string, string> = { 'd-a': 'Write the API docs for #772.', 'd-e': 'Fix the login redirect.' }
 
 const argOf = (argv: string[], name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined)
 
@@ -78,11 +78,11 @@ function world(on: On, opts: Opts = {}) {
     [`${ROOT}/.ndev.json`, JSON.stringify(opts.config ?? { github: { repo: 'acme/widgets', board: null }, remote: { hcloudContext: 'proj' } })],
     [RUNTIMES, JSON.stringify(opts.runtimes ?? { version: 1, runtimes: [
       { runtimeEnvironmentId: 'env-old', status: 'cleaned', recipeResult: { connection: { type: 'ssh', target: { host: '10.9.9.9', port: 22, username: 'orca' } } } },
-      { runtimeEnvironmentId: ENV, status: 'running', recipeResult: { connection: { type: 'ssh', target: { label: 'orca-dev-2', host: '88.99.125.86', port: 22, username: 'orca' } } } },
+      { runtimeEnvironmentId: ENV, status: 'running', recipeResult: { connection: { type: 'ssh', target: { label: 'dev-host-2', host: '198.51.100.86', port: 22, username: 'orca' } } } },
     ] })],
   ])
   const workers = opts.workers ?? WORKERS
-  const box: Box = { id: 901, name: 'orca-dev-2', status: 'running', primary_disk_size: 80, server_type: TYPES[1]!, datacenter: { location: { name: 'fsn1' } } }
+  const box: Box = { id: 901, name: 'dev-host-2', status: 'running', primary_disk_size: 80, server_type: TYPES[1]!, datacenter: { location: { name: 'fsn1' } } }
   const runs: { argv: string[] }[] = []
   const asked: { question: string; options: string[] }[] = []
   const sent = new Set<string>()
@@ -148,7 +148,7 @@ function world(on: On, opts: Opts = {}) {
   const flag = (a: string[], name: string) => (a.includes(name) ? a[a.indexOf(name) + 1] : undefined)
   const orca = (a: string[]) => {
     const sub = a.slice(1, 3).join(' ')
-    if (sub === 'environment list') return ok({ environments: [{ id: ENV, name: 'orca-dev-2' }] })
+    if (sub === 'environment list') return ok({ environments: [{ id: ENV, name: 'dev-host-2' }] })
     // This machine's records. With no --run the list holds only the Run the terminal is bound to (run-0, empty).
     if (sub === 'orchestration worker-list' && a.includes('--include-remote')) {
       const run = flag(a, '--run') ?? 'run-0'
@@ -244,7 +244,7 @@ test('with no type, resize lists the server types and recommends the next size u
   await start($)
 
   const text = await dev($, 'resize')
-  expect(text).toMatch(/orca-dev-2 \(901\) is cx33: 4 vCPU, 8 GB memory, 80 GB disk/)
+  expect(text).toMatch(/dev-host-2 \(901\) is cx33: 4 vCPU, 8 GB memory, 80 GB disk/)
   expect(text).toMatch(/Recommended: cx43 \(8 vCPU, 16 GB memory, 160 GB disk\), EUR 18\.56 a month/)
   expect(text).toMatch(/\/dev remote resize cx43/)
   expect(text).toMatch(/cpx42/)
@@ -266,13 +266,13 @@ test('resize pauses each live worker on the box, shuts it down, changes the type
   expect(w.asked).toHaveLength(1)
   const plan = w.asked[0]!.question
   expect(plan).toMatch(/hcloud context "proj"/)
-  expect(plan).toMatch(/orca-dev-2 \(901\)/)
+  expect(plan).toMatch(/dev-host-2 \(901\)/)
   expect(plan).toMatch(/from cx33 \(4 vCPU, 8 GB memory, 80 GB disk, EUR 10\.19 a month\)/)
   expect(plan).toMatch(/to cx43 \(8 vCPU, 16 GB memory, 160 GB disk, EUR 18\.56 a month\)/)
   expect(plan).toMatch(/restarts/)
   expect(plan).toMatch(/d-a/)
   expect(plan).toMatch(/d-e/)
-  expect(w.asked[0]!.options).toEqual(['Resize orca-dev-2 to cx43', 'Cancel'])
+  expect(w.asked[0]!.options).toEqual(['Resize dev-host-2 to cx43', 'Cancel'])
 
   // Only the live dispatches on this server are paused, each asked for a WIP commit, a short handoff and a reply.
   expect([...w.sent].sort()).toEqual(['d-a', 'd-e'])
@@ -296,7 +296,7 @@ test('resize pauses each live worker on the box, shuts it down, changes the type
   expect(starts).toHaveLength(2)
   const a = starts.find(s => argOf(s, '--run') === 'run-1')!
   expect(argOf(a, '--on')).toBe(ENV)
-  expect(argOf(a, '--worktree')).toBe('id:repo-1::/home/orca/orca/workspaces/fcc-proto/772-kg-docs')
+  expect(argOf(a, '--worktree')).toBe('id:repo-1::/home/orca/orca/workspaces/acme-app/772-api-docs')
   expect(argOf(a, '--agent')).toBe('claude')
   expect(argOf(a, '--model')).toBe('opus')
   expect(argOf(a, '--effort')).toBe('high')
@@ -314,7 +314,7 @@ test('resize pauses each live worker on the box, shuts it down, changes the type
   // Orca is checked again before any worker starts.
   const order = w.runs.map(r => r.argv.slice(0, 3).join(' '))
   expect(order.lastIndexOf('orca orchestration run-list')).toBeLessThan(order.indexOf('orca orchestration worker-start'))
-  expect(text).toMatch(/orca-dev-2 \(901\) is now cx43/)
+  expect(text).toMatch(/dev-host-2 \(901\) is now cx43/)
   expect(text).toMatch(/new-1/)
   expect(text).not.toMatch(/WARNING/)
 })
@@ -359,7 +359,7 @@ test('a shutdown that does not end in time falls back to poweroff and says so lo
 
   const text = await dev($, 'resize cx43')
   expect(w.changes()).toEqual(['server shutdown 901 --wait --wait-timeout 180s', 'server poweroff 901', 'server change-type --keep-disk 901 cx43', 'server poweron 901'])
-  expect(text).toMatch(/WARNING: orca-dev-2 \(901\) did not shut down/)
+  expect(text).toMatch(/WARNING: dev-host-2 \(901\) did not shut down/)
   expect(text).toMatch(/powered off/)
   expect(text).toMatch(/hcloud --context proj server shutdown 901 --wait --wait-timeout 180s exited 1: hcloud: timeout waiting for action/)
 })
@@ -424,7 +424,7 @@ test('resize takes no option of create, remove or import', async ($, on) => {
 })
 
 test('a worker on the box that no Run of this machine dispatched stops the resize before anything changes, and is named', async ($, on) => {
-  const w = world(on, { workers: [...WORKERS, { dispatchId: 'd-x', runId: 'run-9', taskId: 't-x', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'orca-dev-2' }, worktree: 'repo-1::/home/orca/x', liveness: 'live', agent: 'claude' }] })
+  const w = world(on, { workers: [...WORKERS, { dispatchId: 'd-x', runId: 'run-9', taskId: 't-x', dispatchStatus: 'dispatched', server: { environmentId: ENV, name: 'dev-host-2' }, worktree: 'repo-1::/home/orca/x', liveness: 'live', agent: 'claude' }] })
   await start($)
 
   const text = await dev($, 'resize cx43')
@@ -436,7 +436,7 @@ test('a worker on the box that no Run of this machine dispatched stops the resiz
 })
 
 test('a worker that is still starting on the box stops the resize, and is named', async ($, on) => {
-  const w = world(on, { workers: [...WORKERS, { dispatchId: 'd-p', runId: 'run-2', taskId: 't-e', dispatchStatus: 'pending', server: { environmentId: ENV, name: 'orca-dev-2' }, worktree: 'repo-1::/home/orca/p', liveness: 'unverifiable', agent: 'claude' }] })
+  const w = world(on, { workers: [...WORKERS, { dispatchId: 'd-p', runId: 'run-2', taskId: 't-e', dispatchStatus: 'pending', server: { environmentId: ENV, name: 'dev-host-2' }, worktree: 'repo-1::/home/orca/p', liveness: 'unverifiable', agent: 'claude' }] })
   await start($)
 
   const text = await dev($, 'resize cx43')
@@ -465,7 +465,7 @@ test('a restart whose receipt says it failed, with exit 1, is named with the rec
   const text = await dev($, 'resize cx43')
   expect(w.box.server_type.name).toBe('cx43')
   expect(w.orcaRuns('orchestration worker-start')).toHaveLength(2)
-  expect(text).toMatch(/step 5 \(start the workers again\) failed: orca-dev-2 is now cx43, but 1 of 2 workers did not start again/)
+  expect(text).toMatch(/step 5 \(start the workers again\) failed: dev-host-2 is now cx43, but 1 of 2 workers did not start again/)
   expect(text).toMatch(/d-e \(Fix login\): orca orchestration worker-start exited 1: the worker did not start: agent_launch_failed at launch \(dispatch new-\d\)\. Run orca orchestration worker-release/)
   expect(text).toMatch(/Repair: orca orchestration worker-start --spec/)
   expect(text).toMatch(/Started again:\n {2}d-a -> new-\d/)
@@ -477,7 +477,7 @@ test('a change of type that outruns its time reads the box again and says its re
 
   const text = await dev($, 'resize cx43')
   expect(text).toMatch(/step 4 \(change the type\) failed: hcloud --context proj server change-type --keep-disk 901 cx43 exited -1: it did not run to its end/)
-  expect(text).toMatch(/Hetzner gives orca-dev-2 the status "off" and the type cx33 now/)
+  expect(text).toMatch(/Hetzner gives dev-host-2 the status "off" and the type cx33 now/)
   expect(text).toMatch(/Repair: when the status is "off" and the type is cx33/)
   expect(text).toMatch(/start each again by hand/)
   expect(w.changes()).not.toContain('server poweron 901')
@@ -489,7 +489,7 @@ test('only a running runtime gives the SSH host; with none, resize stops and nam
   await start($)
 
   const text = await dev($, 'resize cx43')
-  expect(text).toMatch(/no running runtime for the Orca server orca-dev-2 \(env-1\), only "stopped"/)
+  expect(text).toMatch(/no running runtime for the Orca server dev-host-2 \(env-1\), only "stopped"/)
   expect(text).toMatch(/--ssh <user@host>/)
   expect(w.runs.filter(r => r.argv[0] === 'ssh')).toEqual([])
   expect(w.changes()).toEqual([])

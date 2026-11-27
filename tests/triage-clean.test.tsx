@@ -43,7 +43,7 @@ function world(on: On, issues: Issue[], nodes: Record<number, Record<string, unk
   const toasts: string[] = []
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
-  on('env.get', () => ({ value: '/home/neil' }))
+  on('env.get', () => ({ value: '/home/user' }))
   on('fs.exists', (_, e) => ({ value: e.path === '/.ndev.json' }))
   on('fs.read', () => ({ value: JSON.stringify({ github: { repo: 'acme/widgets', board: null } }) }))
   on('clock.every', () => new Promise(() => {}))

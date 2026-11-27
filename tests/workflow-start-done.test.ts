@@ -102,7 +102,7 @@ test('finishedDevelopment commits the named files and moves on', async ($, on) =
   expect(w.state()?.state).toBe('reviewing')
 })
 
-// #656 in fcc-proto: a turn-end reminder saved the issue record while the checks of finishedDevelopment ran,
+// Regression: a turn-end reminder saved the issue record while the checks of finishedDevelopment ran,
 // and the save after the checks failed with "set-workflow exited 5 ... at revision 58, and this writer expected 57".
 test('finishedDevelopment commits once and moves on when another writer saves the record while its checks run', async ($, on) => {
   const w = engine(on)
@@ -390,7 +390,7 @@ test('done in development refuses a branch that holds a change', async ($, on) =
   expect(w.state()?.state).toBe('developing')
 })
 
-// fcc-proto #465: PR #793 merged by hand with its issues closed, and done refused because the squashed branch
+// Regression: a PR merged by hand with its issues closed, and done refused because the squashed branch
 // still differs from main. A merged PR is the end of the work, whatever the branch holds.
 test('done in development ends an issue whose PR merged outside the workflow', async ($, on) => {
   const w = engine(on, { pr: { state: 'closed', merged: true }, names: ['a.ts'] })
@@ -492,7 +492,7 @@ test('a turn that starts while the turn-end reminder is built gets no stale remi
   expect(await command($, 'status')).toContain('a turn started before the reminder')
 })
 
-// The host holds a plugin's prompt until the session is idle. In analytics PR #2769 the reviews' answers started
+// The host holds a plugin's prompt until the session is idle. When review answers started
 // a turn just as the reminder went out, and that turn ran for two hours: blocked was called in it, and then
 // the model read "reviewing". Nothing can take the prompt back, so the turn that it starts is cancelled.
 test('a reminder that the host delivers after the state moved cancels its own turn before the model reads it', async ($, on) => {
@@ -516,7 +516,7 @@ test('a reminder that the host delivers after the state moved cancels its own tu
   expect(status).toContain('is now in the state "blocked"')
 })
 
-// In lens PR #315 a reminder for "reviewing" was queued on 11 Nov by a plugin process that kept no record of
+// Regression: a reminder for "reviewing" was queued by a plugin process that kept no record of
 // it, and the host delivered it 41 hours later, after a restart, when finishedReview had moved the PR to ci.
 // The record of sent reminders did not hold it, so the turn was not cancelled. The words of the reminder name the state.
 test('a reminder with no record of its sending is cancelled when the state it names no longer holds', async ($, on) => {

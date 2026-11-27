@@ -2,7 +2,7 @@
 
 One config file describes one server. Each line is `key = value`. Blank lines and lines that start with `#` are ignored. A field can appear once, except `runner`, `env.<NAME>` and `port.<NAME>`. The scripts refuse an unknown field, a bad value or a missing required field. The message names the file, the line, the field and the repair, and the exit code is 2.
 
-`examples/fcc-analytics.conf` is the layout of the fcc and analytics server `ssd-build`. Copy it and change the values for another project.
+`examples/multi-repo.conf` is a full multi-repository example. Copy it and change the values for another project.
 
 ## Runners
 

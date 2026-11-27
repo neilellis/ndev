@@ -2,10 +2,10 @@ export const metadata = { title: "Components" };
 
 # Components
 
-Live examples built with `/ds/components.css`. Class names match the website, so markup moves between them unchanged. Wrap examples in `.nv` for the base type.
+Live examples built with `/ds/components.css`. Class names match the website, so markup moves between them unchanged. Wrap examples in `.ds` for the base type.
 
 <Rule>
-The component list comes from `{{source}}/components/ui/` and `components/site/` on the branch in {{source}} pull request 37. That pull request is not yet published. If the website changes, update this page to match.
+The component list comes from `{{source}}/components/ui/` and `components/site/`. If the website changes, update this page to match.
 </Rule>
 
 ## Website components
@@ -85,13 +85,13 @@ Buttons are 53px tall, near-square (2px), semibold 16px. Use one dark button per
   <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.4fr)", gap: 48 }}>
     <article className="featured-article">
       <div className="article-meta"><span>Featured essay</span>8 min read</div>
-      <h3>The Sovereignty of Coordination</h3>
-      <p>Why coordination, not capability, decides what AI does to an organisation.</p>
+      <h3>How Teams Coordinate Work</h3>
+      <p>Why coordination, not capability, decides what new technology does to an organisation.</p>
       <a className="text-link" href="#articles">Read the essay</a>
     </article>
     <div>
-      <div className="series-article"><span className="series-number">01</span><div><h4>The Challenge of Change</h4><p>Where transformation stalls, and why.</p></div><a className="text-link" href="#articles">Read</a></div>
-      <div className="series-article"><span className="series-number">02</span><div><h4>Search, Remember, Map</h4><p>How organisations know what they know.</p></div><a className="text-link" href="#articles">Read</a></div>
+      <div className="series-article"><span className="series-number">01</span><div><h4>Building Reliable Systems</h4><p>Where transformation stalls, and why.</p></div><a className="text-link" href="#articles">Read</a></div>
+      <div className="series-article"><span className="series-number">02</span><div><h4>Finding Shared Context</h4><p>How organisations know what they know.</p></div><a className="text-link" href="#articles">Read</a></div>
     </div>
   </div>
 </Demo>
@@ -102,7 +102,7 @@ The service and article text above is placeholder copy for layout. Take real cop
 
 <Demo surface="navy" label="{{product}} tour tabs">
   <div className="tour-tabs" role="tablist" aria-label="{{product}} tour">
-    <button type="button" role="tab" aria-selected="true">The digital twin</button>
+    <button type="button" role="tab" aria-selected="true">Workspace overview</button>
     <button type="button" role="tab" aria-selected="false" tabIndex={-1}>Evidence & accountability</button>
     <button type="button" role="tab" aria-selected="false" tabIndex={-1}>AI in the organisation</button>
   </div>

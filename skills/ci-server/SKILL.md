@@ -15,7 +15,7 @@ While a workflow runs, this skill is one step of the current stage. Commit each 
 
 ## The scripts
 
-They are in this skill's `scripts/` folder. Each one reads the server's config file with `--config <file>`. [The config reference](references/config.md) lists every field. `examples/fcc-analytics.conf` is a full example.
+They are in this skill's `scripts/` folder. Each one reads the server's config file with `--config <file>`. [The config reference](references/config.md) lists every field. `examples/multi-repo.conf` is a full example.
 
 | Script | What it does |
 |---|---|
@@ -46,7 +46,7 @@ Run `sizing.sh --config <file> --cpus <n> --mem-gb <n>` before you order a serve
 | At most one runner for each 2 CPUs | A runner without the heavy label still builds and tests. |
 | At least 8 GB of memory for each runner | The runner units set no memory limit. |
 
-The lesson of 2026-11-24: `ssd-build` ran six runners with the `supabase` label on 16 CPUs. The load average reached 58. Test files that take 28 seconds alone hit their 120-second timeout. Under the rule, 16 CPUs carry four such runners.
+In practice, running six runners with the `supabase` label on 16 CPUs drove the load average to 58. Test files that take 28 seconds alone hit their 120-second timeout. Under the rule, 16 CPUs carry four such runners.
 
 `provision.sh` and `verify-server.sh` apply the same rule. `provision.sh` refuses a config that breaks it and changes nothing. `--allow-oversubscribed` goes on and prints a warning. Use that flag only when the owner chose the layout. The example config breaks the rule because the owner chose six runners on 16 CPUs.
 

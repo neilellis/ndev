@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (C) 2026 Neil Ellis. All rights reserved.
+# Copyright (c) 2026 Neil Ellis. Licensed under the MIT License.
 # One agent call for PR, branch, worktree, and ownership status. See --help.
 set -euo pipefail
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"

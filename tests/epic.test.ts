@@ -166,9 +166,9 @@ const engine = (on: On, opts: Opts = {}) => {
   on('prompt.compose', () => ({ sections: [] }))
   on('prompt.submit', (_, e) => { prompts.push(e.text); return { text: e.text } })
   on('agent.list', () => ({ value: [] }) as never)
-  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/neil' : undefined }) as never)
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/user' : undefined }) as never)
   const isFolder = (path: string) => [...files.keys()].some(k => k.startsWith(`${path}/`))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) || isFolder(e.path) }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/user/dev-wiki') || files.has(e.path) || isFolder(e.path) }))
   on('fs.list', (_, e) => ({ value: [...files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => ({ value: files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => { files.set(e.path, e.text); return { value: undefined } })
@@ -1053,7 +1053,7 @@ test('a relative workspace is refused, and the workspace can be set later with n
 // ---- workers on the saved remote Orca server ----
 
 const REMOTE = { id: 'bb22-y', name: 'dev-build VM 5e6f' }
-const REMOTE_STORE = '/home/neil/.config/ndev/remote.json'
+const REMOTE_STORE = '/home/user/.config/ndev/remote.json'
 
 test('with a remote on the epic, the implementer command names the server and a repository on it, and refuses without that repository', () => {
   const epic = epicOf({ state: 'coordinating', run: 'run-7', repoId: 'repo-1', remote: REMOTE, remoteRepo: 'name:w', issues: withIssues(sub(5, { key: 'schema' })) })

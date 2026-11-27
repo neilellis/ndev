@@ -2,7 +2,7 @@
 
 config_fields="name_prefix, runner, port_base, work_size, tmp_size, swap_size, timezone, unit_prefix, heavy_label, cpus_per_heavy_runner, cpus_per_runner, gb_per_runner, apt_sources, packages, services, env.<NAME>, port.<NAME>, sweep_repos, docker_sweep_projects, docker_sweep_keep, docker_sweep_containers, docker_sweep_service_images, docker_sweep_images, docker_sweep_min_age, prepull_images, runner_version, runner_sha256"
 config_reserved_env=" LANG TMPDIR CI_RUNNER_SLOT CI_PORT_BASE RUNNER_TOOL_CACHE "
-config_example="examples/fcc-analytics.conf in the ci-server skill shows every field"
+config_example="examples/multi-repo.conf in the ci-server skill shows every field"
 
 config_fail() { echo "ci-server: $1" >&2; exit 2; }
 line_fail() { config_fail "$config_file line $config_line: $1. Repair: $2."; }
@@ -112,7 +112,7 @@ load_config() {
     case "$key" in
       runner) config_runner "$value" ;;
       name_prefix|unit_prefix|heavy_label)
-        [[ "$value" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || line_fail "$key must be lowercase letters, digits and single hyphens; got \"$value\"" "use a name such as build-server"
+        [[ "$value" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || line_fail "$key must be lowercase letters, digits and single hyphens; got \"$value\"" "use a name such as ci-host"
         printf -v "$key" '%s' "$value" ;;
       port_base)
         [[ "$value" =~ ^[1-9][0-9]{3,4}$ ]] || line_fail "port_base must be a whole number from 1000 to 99999; got \"$value\"" "use a base such as 21000"
@@ -232,7 +232,7 @@ host_size() {
 sizing_problems() {
   local cpus=$1 mem_gb=$2
   if [ -n "$heavy_label" ] && [ "$heavy_count" -gt $((cpus / cpus_per_heavy_runner)) ]; then
-    echo "$heavy_count runners carry the $heavy_label label, but $cpus CPUs carry at most $((cpus / cpus_per_heavy_runner)) (one per $cpus_per_heavy_runner CPUs). On 2026-11-24 six supabase runners on 16 CPUs ran at a load average of 58 and test files that take 28 seconds alone hit their 120 second timeout."
+    echo "$heavy_count runners carry the $heavy_label label, but $cpus CPUs carry at most $((cpus / cpus_per_heavy_runner)) (one per $cpus_per_heavy_runner CPUs). Running six supabase runners on 16 CPUs produced a load average of 58 and test files that take 28 seconds alone hit their 120 second timeout."
   fi
   if [ "$runner_count" -gt $((cpus / cpus_per_runner)) ]; then
     echo "$runner_count runners on $cpus CPUs is more than one runner per $cpus_per_runner CPUs ($((cpus / cpus_per_runner)))."

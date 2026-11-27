@@ -38,7 +38,7 @@ const engine = async (
   on('clock.sleep', () => new Promise(() => {}))
   on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('env.get', () => ({ value: '/home/neil' }))
+  on('env.get', () => ({ value: '/home/user' }))
   on('session.cwd', () => ({ value: ROOT }))
   // The dev wiki exists, so register.ts's init runs nothing.
   on('fs.exists', (_, e) => ({ value: e.path.endsWith('/dev-wiki/wiki.md') || (config !== undefined && e.path === CONFIG) }))
@@ -175,7 +175,7 @@ test('a wrong setting type is refused, not defaulted', async ($, on) => {
 
 test('subscription warning: advisory context, never a deny', async ($, on) => {
   const warning = 'WARNING: this command can spend the subscription.'
-  const { runs } = await engine($, on, JSON.stringify({ quality: { subscriptionWarning: { gateVar: 'NEXTGEN_ALLOW_CLAUDE_CLI' } } }), {
+  const { runs } = await engine($, on, JSON.stringify({ quality: { subscriptionWarning: { gateVar: 'APP_ALLOW_CLAUDE_CLI' } } }), {
     exitCode: 0,
     stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: warning } }),
   })
@@ -184,7 +184,7 @@ test('subscription warning: advisory context, never a deny', async ($, on) => {
 
   expect(runs).toHaveLength(1)
   expect(runs[0]!.argv[1]).toMatch(/warn-subscription-cli\.sh$/)
-  expect(runs[0]!.env?.SUBSCRIPTION_GATE_VAR).toBe('NEXTGEN_ALLOW_CLAUDE_CLI')
+  expect(runs[0]!.env?.SUBSCRIPTION_GATE_VAR).toBe('APP_ALLOW_CLAUDE_CLI')
   expect(JSON.parse(runs[0]!.stdin ?? '{}').tool_input.command).toBe('claude -p "summarise"')
   expect(ran.deny).toBeUndefined()
   expect(ran.context).toEqual([warning])

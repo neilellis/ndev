@@ -4,7 +4,7 @@ import { ROOT, CONFIG, engine, settle, start, tool, command, finishing, QUALITY,
 
 // ---- requestSecret and addMigration ----
 test('requestSecret gives the first file in order and the line, never the value', async ($, on) => {
-  engine(on, { files: { [`${ROOT}/.env`]: '# c\nAPI_KEY=hunter2\n', '/home/neil/.zshrc': 'export API_KEY=other\n' } })
+  engine(on, { files: { [`${ROOT}/.env`]: '# c\nAPI_KEY=hunter2\n', '/home/user/.zshrc': 'export API_KEY=other\n' } })
   await start($)
   const r = await tool($, 'requestSecret', { name: 'API_KEY' })
   expect(r.isError).toBe(false)
@@ -59,42 +59,42 @@ test('a commit with no merge gives the checks the merge base of HEAD', async ($,
 })
 
 test('the checks get the keys of the worktree .neil-dev.env that checkEnv in .ndev.json names, and no other', async ($, on) => {
-  const w = engine(on, { files: { [CONFIG]: JSON.stringify({ checkEnv: ['TEST_DB_URL', 'QUOTED'] }), [`${ROOT}/.neil-dev.env`]: '# graph\nFALKORDB_URL=rediss://graph.example.com:6380\nTEST_DB_URL=redis://localhost:6379\nexport QUOTED="a b"\n' } })
+  const w = engine(on, { files: { [CONFIG]: JSON.stringify({ checkEnv: ['TEST_DB_URL', 'QUOTED'] }), [`${ROOT}/.neil-dev.env`]: '# graph\nHOSTED_DB_URL=rediss://graph.example.com:6380\nTEST_DB_URL=redis://localhost:6379\nexport QUOTED="a b"\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']
   await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
   expect(w.s.checkEnv['pre-commit-check.sh']?.TEST_DB_URL).toBe('redis://localhost:6379')
   expect(w.s.checkEnv['pre-commit-check.sh']?.QUOTED).toBe('a b')
-  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_URL).toBeUndefined()
+  expect(w.s.checkEnv['pre-commit-check.sh']?.HOSTED_DB_URL).toBeUndefined()
   expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
 })
 
-// fcc-proto PR #828: .neil-dev.env held FALKORDB_URL and FALKORDB_CA of the hosted graph server, for kb:publish. The
-// test scripts start a local server only when FALKORDB_URL is unset, so with that key the tests wrote to the hosted one.
+// Regression: .neil-dev.env held HOSTED_DB_URL and HOSTED_DB_CA of a hosted service for publish scripts. The
+// test scripts start a local server only when HOSTED_DB_URL is unset, so with that key the tests wrote to the hosted one.
 test('with no checkEnv in .ndev.json the checks get no key of .neil-dev.env, so the tests do not reach hosted services', async ($, on) => {
-  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=rediss://graph.example.com:6380\nFALKORDB_CA=/keys/ca.pem\n' } })
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'HOSTED_DB_URL=rediss://graph.example.com:6380\nHOSTED_DB_CA=/keys/ca.pem\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']
   await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
-  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_URL).toBeUndefined()
-  expect(w.s.checkEnv['pre-commit-check.sh']?.FALKORDB_CA).toBeUndefined()
+  expect(w.s.checkEnv['pre-commit-check.sh']?.HOSTED_DB_URL).toBeUndefined()
+  expect(w.s.checkEnv['pre-commit-check.sh']?.HOSTED_DB_CA).toBeUndefined()
   expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
 })
 
 test('a check that fails names the .neil-dev.env keys it did not get and how to give one', async ($, on) => {
-  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=rediss://graph.example.com:6380\nFALKORDB_CA=/keys/ca.pem\n' } })
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'HOSTED_DB_URL=rediss://graph.example.com:6380\nHOSTED_DB_CA=/keys/ca.pem\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']
   w.s.failCheck = 'pre-commit-check'
   const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
   expect(r.isError).toBe(true)
-  expect(r.text).toContain('did not get FALKORDB_URL, FALKORDB_CA')
+  expect(r.text).toContain('did not get HOSTED_DB_URL, HOSTED_DB_CA')
   expect(r.text).toContain('checkEnv')
   expect(r.text).not.toContain('graph.example.com')
 })
 
 test('a key that checkEnv names but .neil-dev.env does not set stops the check and names the key and the repair', async ($, on) => {
-  const w = engine(on, { files: { [CONFIG]: JSON.stringify({ checkEnv: ['TEST_DB_URL'] }), [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=rediss://graph.example.com:6380\n' } })
+  const w = engine(on, { files: { [CONFIG]: JSON.stringify({ checkEnv: ['TEST_DB_URL'] }), [`${ROOT}/.neil-dev.env`]: 'HOSTED_DB_URL=rediss://graph.example.com:6380\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']
   const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
@@ -105,7 +105,7 @@ test('a key that checkEnv names but .neil-dev.env does not set stops the check a
 })
 
 test('a .neil-dev.env line that is not KEY=VALUE stops the check and names the file and the line, not the value', async ($, on) => {
-  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=redis://localhost:6379\nsecret-without-key\n' } })
+  const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'HOSTED_DB_URL=redis://localhost:6379\nsecret-without-key\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']
   const r = await tool($, 'checkpoint', { message: 'm', files: ['a.ts'] })
@@ -332,7 +332,7 @@ test('a held commit can be pushed with an empty checkpoint after a human skips t
   expect(w.pushes.length).toBe(1)
 })
 
-// In fcc-proto PR #779 (state "reviewing", one held commit) the push hook named "checkpoint with no files"
+// Regression: in state "reviewing" with one held commit, the push hook named "checkpoint with no files"
 // as the way to push it, and checkpoint then refused for a missing file list. In review the commit is
 // held for finishedReview, so neither answer may name the empty checkpoint, and both name the real routes.
 test('in review the push hook does not offer an empty checkpoint, and names finishedReview', async ($, on) => {

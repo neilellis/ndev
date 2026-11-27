@@ -35,11 +35,11 @@ const seeded = (records = { "0001-the-report-names-each-source.md": record("0001
 describe("new", () => {
   it("creates the first record as REQ-0001, Proposed and explicit, with the template sections", () => {
     const root = project();
-    const out = run(root, "new", "The report names each source", "--author", "Suriya Khan, Carter Dillard", "--type", "product");
+    const out = run(root, "new", "The report names each source", "--author", "Alex Rivera, Jordan Lee", "--type", "product");
     assert.equal(out.status, 0, out.stderr);
     assert.deepEqual(readdirSync(path.join(root, DIR)), ["0001-the-report-names-each-source.md"]);
     const text = readFileSync(path.join(root, DIR, "0001-the-report-names-each-source.md"), "utf8");
-    assert.match(text, /^---\nid: REQ-0001\ntitle: The report names each source\nstatus: Proposed\norigin: explicit\nlevel: normal\ntype: product\nsection: ""\ndate: \d{4}-\d{2}-\d{2}\nsource: \[\]\nauthor:\n  - Suriya Khan\n  - Carter Dillard\ndecided_by: ""\nverification: unassigned\nissues: \[\]\nprs: \[\]\n---\n\n## Statement\n/);
+    assert.match(text, /^---\nid: REQ-0001\ntitle: The report names each source\nstatus: Proposed\norigin: explicit\nlevel: normal\ntype: product\nsection: ""\ndate: \d{4}-\d{2}-\d{2}\nsource: \[\]\nauthor:\n  - Alex Rivera\n  - Jordan Lee\ndecided_by: ""\nverification: unassigned\nissues: \[\]\nprs: \[\]\n---\n\n## Statement\n/);
     assert.doesNotMatch(text, /^# /m);
     for (const section of ["Statement", "Explanation", "Source text", "Trace", "Notes", "Log"]) assert.match(text, new RegExp(`^## ${section}$`, "m"));
     assert.match(text, /\n## Statement\n\n## Explanation\n\n## Source text\n/);
@@ -726,16 +726,16 @@ describe("model", () => {
 describe("author", () => {
   it("sets the authors of a record, and keeps the other fields and the body", () => {
     const root = seeded();
-    const out = run(root, "author", "REQ-0001", "Suriya Khan", "Carter Dillard");
+    const out = run(root, "author", "REQ-0001", "Alex Rivera", "Jordan Lee");
     assert.equal(out.status, 0, out.stderr);
-    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), record("0001", { author: ["Suriya Khan", "Carter Dillard"] }).replace('  - "Suriya Khan"\n  - "Carter Dillard"', "  - Suriya Khan\n  - Carter Dillard"));
-    assert.match(out.stdout, /0001-the-report-names-each-source\.md: author: Suriya Khan, Carter Dillard/);
+    assert.equal(readFileSync(path.join(root, DIR, FILE), "utf8"), record("0001", { author: ["Alex Rivera", "Jordan Lee"] }).replace('  - "Alex Rivera"\n  - "Jordan Lee"', "  - Alex Rivera\n  - Jordan Lee"));
+    assert.match(out.stdout, /0001-the-report-names-each-source\.md: author: Alex Rivera, Jordan Lee/);
   });
 
   it("refuses a name with a comma, as new --author splits names at commas", () => {
-    const out = run(seeded(), "author", "REQ-0001", "Suriya Khan, Carter Dillard");
+    const out = run(seeded(), "author", "REQ-0001", "Alex Rivera, Jordan Lee");
     assert.equal(out.status, 2);
-    assert.match(out.stderr, /"Suriya Khan, Carter Dillard" has a comma\. Give each name as its own argument/);
+    assert.match(out.stderr, /"Alex Rivera, Jordan Lee" has a comma\. Give each name as its own argument/);
   });
 
   it("needs a known record and at least one name", () => {
@@ -1443,13 +1443,13 @@ describe("narrative", () => {
 describe("render with the outline and the narrative", () => {
   it("orders the sections as the outline does, and puts each narrative under its heading with links", () => {
     const root = twoSections();
-    put(root, `${DIR}/extra/outline.md`, "# The FCC guide\n\n## Sources\n\n## Report\n");
+    put(root, `${DIR}/extra/outline.md`, "# The Acme guide\n\n## Sources\n\n## Report\n");
     put(root, "prose.md", "Each report must name its sources (REQ-0001).\n");
     assert.equal(run(root, "narrate", "Report", "--from", "prose.md").status, 0);
     const out = run(root, "render");
     assert.equal(out.status, 0, out.stderr);
     const html = readFileSync(path.join(root, HTML), "utf8");
-    assert.match(html, /<title>The FCC guide<\/title>/);
+    assert.match(html, /<title>The Acme guide<\/title>/);
     assert.ok(html.indexOf('id="section-sources"') < html.indexOf('id="section-report"'));
     assert.match(html, /<h2>Report<\/h2>\n<div class="narrative">\n<p>Each report must name its sources \(<a href="#REQ-0001">REQ-0001<\/a>\)\.<\/p>\n<\/div>/);
   });
@@ -1549,11 +1549,11 @@ describe("publish", () => {
 
   it("follows the outline for the title and the order of the sections", () => {
     const root = twoSections();
-    put(root, `${DIR}/extra/outline.md`, "# The FCC guide\n\n## Sources\n\n## Report\n");
+    put(root, `${DIR}/extra/outline.md`, "# The Acme guide\n\n## Sources\n\n## Report\n");
     configured(root);
     assert.equal(run(root, "publish").status, 0);
     const index = page(root, "index.md");
-    assert.match(index, /^---\ntitle: "The FCC guide"\ndescription: "2 requirement records in 2 sections\."\n---\n\n# The FCC guide\n/);
+    assert.match(index, /^---\ntitle: "The Acme guide"\ndescription: "2 requirement records in 2 sections\."\n---\n\n# The Acme guide\n/);
     assert.ok(index.indexOf("[Sources]") < index.indexOf("[Report]"));
     assert.deepEqual(JSON.parse(page(root, "requirements.json")).records.map((r) => r.id), ["REQ-0002", "REQ-0001"]);
   });

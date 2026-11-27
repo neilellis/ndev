@@ -230,3 +230,11 @@ scripts/ci/formal-check.sh
 ```
 
 The `sdk` job in [.github/workflows/ndev.yml](.github/workflows/ndev.yml) runs the retained `*.test.ts` and `*.test.tsx` suite with `node scripts/test/sdk.mjs` on the runtime pinned in `scripts/test/sdk-runtime.json`. See [CONTRIBUTING.md](CONTRIBUTING.md) for contributor setup and plugin version guard rules.
+
+## Companion plugins
+
+Some agent definitions in [agents/README.md](agents/README.md) optionally preload skills from [mattpocock/skills](https://github.com/mattpocock/skills) (`mattpocock-skills:tdd`, `mattpocock-skills:diagnosing-bugs`, `mattpocock-skills:code-review`). Install that plugin in your harness if you use those agents directly.
+
+## License and attributions
+
+`ndev` is released under the [MIT License](LICENSE). Third-party licenses, upstream credits, and acknowledgments are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

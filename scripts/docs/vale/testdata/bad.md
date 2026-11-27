@@ -4,11 +4,11 @@ Why I am not merging the de-flake. The guard is colour-blind. It removes the sam
 often in the condition CI actually runs; and a rate measured with a test in isolation does
 not transfer to the test in its file, because the rest of the file is the load.
 
-Split it — merge nothing here; fix fix(web): PosterDrawer intermittently SNAPS shut instead
-of playing its exit transition #1000 first, then re-measure. Going forward we should
+Split it — merge nothing here; fix fix(web): SideDrawer intermittently SNAPS shut instead
+of playing its exit transition #42 first, then re-measure. Going forward we should
 leverage this to move the needle for stakeholders with a robust, seamless deep dive.
 
-Blocked on fix(web): PosterDrawer intermittently SNAPS shut instead of playing its exit transition #1000 which has to land first.
+Blocked on fix(web): SideDrawer intermittently SNAPS shut instead of playing its exit transition #42 which has to land first.
 
 The instantiation of a comprehensive methodological infrastructure necessitates the systematic
 reconceptualisation of organisational epistemologies, notwithstanding the demonstrable
@@ -25,55 +25,49 @@ interpretative sufficiency remains constitutively unresolved within the methodol
 necessitating a correspondingly circumspect approach to the generalisation of experimental
 observations across heterogeneous institutional populations.
 
-## Real cases from PR #997 (2026-07-31)
+## Coined jargon cases
 
-The transparency trap had no merge gate, so nobody would have noticed.
-A wiki page had turned a corpus-wide role-accuracy figure into something else.
+The silent trap had no merge gate, so nobody would have noticed.
+A wiki page had turned a suite-wide pass-rate figure into something else.
 This PR does not deliver the headline ask, so it stays open.
 
-## Real cases from PR #1008 (2026-07-31)
+## Anthropomorphic code cases
 
-It selects the gap key-set and hands it to the ordinary PDF ingest, which grew one optional
+It selects the missing key-set and hands it to the ordinary PDF ingest, which grew one optional
 parameter for this. The function knows which store to read and decides to be called twice.
 Motion never noticed the panel was leaving. Base UI allowed the deletion.
 
-## Real cases from #956 (2026-08-02)
+## Corporate metaphor cases
 
 I measured the blast radius of the two new phrases before proposing them.
 
-## Real cases from #989 (2026-08-02)
+## Unread source cases
 
 This is the difference the issue reports. The issue says this side matches, but it does not.
-
-## Real cases from #1055 (2026-08-03)
 
 The issue names a column that is empty. The issue does not mention halves. The plan proposes
 matching on two columns instead.
 
-## Real cases from #1041 (2026-08-03)
-
 The reply on the issue chose option 1 and asked for the skill section. I am following the reply on
 the issue.
-
-## A convention sourced the same way (#1055, 2026-08-03)
 
 Skipping silently is ruled out by this repository's standing rule that a failure is always logged.
 The project's convention says the same thing.
 
-## Real cases from #937 (2026-08-03)
+## Artefact-as-actor cases
 
-Pull request #998 read the clock at the moment the group arrived. #937 assumed the first without
+Pull request #41 read the clock at the moment the group arrived. #40 assumed the first without
 testing it.
 
 The note says the second column is empty.
 
-## Overclaim markers, from the #1025 plan (2026-08-05)
+## Overclaim markers
 
 The refusals were read as lost recall. The opposite is true. It clearly shows the matcher was
 right, and the re-read conclusively settles it. Obviously the key was at fault, and the counts
 leave no doubt. Needless to say, this is beyond dispute.
 
-## STE fixtures — one case per rule added 2026-08-10
+## STE fixtures
 
 You should run the migration before the deploy.
 
@@ -85,7 +79,7 @@ Pass a limit (e.g. 50) to the command, i.e. the page size, and so on, etc.
 
 The survey reads every card on the board and returns one item for each of them, and the orchestrator then takes that list and works through it in dependency order without ever holding an issue body.
 
-## Project-term fixtures — added 2026-08-12
+## Project-term fixtures
 
 The tests are built on stand-ins.
 I typed the seam so the type checker covers it.
