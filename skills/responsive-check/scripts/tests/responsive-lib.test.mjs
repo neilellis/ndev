@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { UsageError, cellsFor, contrastRatio, findingsFor, parseArgs, viewportMetaFindings, viewportsFor } from '../responsive-lib.mjs'
+import { UsageError, cellsFor, contrastRatio, findingsFor, parseArgs, shotFor, viewportMetaFindings, viewportsFor } from '../responsive-lib.mjs'
 
 const DEVICES = {
   'iPhone SE': { viewport: { width: 320, height: 568 }, defaultBrowserType: 'webkit', isMobile: true, hasTouch: true },
@@ -73,4 +73,23 @@ test('a small target with room around it passes WCAG 2.5.8, and is still a warni
 test('desktop rows skip the phone-only checks', () => {
   const f = findingsFor({ ...RAW, viewportMeta: null, inputs: [{ selector: '#q', fontSize: 12 }], targets: [{ selector: '.b', width: 30, height: 30 }] }, { isMobile: false }, OPTS)
   assert.deepEqual(f, [])
+})
+
+test('--viewports replaces the default rows with named Chromium windows', () => {
+  const v = viewportsFor(parseArgs(['--base', 'http://x', '--viewports', 'phone:390x844,desktop:1440x900']), DEVICES)
+  assert.deepEqual(v.map((r) => [r.name, r.width, r.height, r.engine]), [['phone', 390, 844, 'chromium'], ['desktop', 1440, 900, 'chromium']])
+  assert.throws(() => parseArgs(['--base', 'http://x', '--viewports', 'phone:390']), /--viewports: phone:390 is not name:WIDTHxHEIGHT, such as phone:390x844/)
+})
+
+test('--scale sets the device scale of every row', () => {
+  const v = viewportsFor(parseArgs(['--base', 'http://x', '--scale', '1', '--only', 'iPhone SE,Laptop']), { ...DEVICES, 'iPhone SE': { ...DEVICES['iPhone SE'], deviceScaleFactor: 2 } })
+  assert.deepEqual(v.map((r) => r.options.deviceScaleFactor), [1, 1])
+  assert.throws(() => parseArgs(['--base', 'http://x', '--scale', '0']), /--scale 0 is not a device scale above 0/)
+})
+
+test('--jpeg writes compressed screenshots with a .jpg name', () => {
+  const o = parseArgs(['--base', 'http://x', '--jpeg', '60'])
+  assert.deepEqual(shotFor(o, '/out', '/a/b', { name: 'phone' }, 'dark'), { path: '/out/shots/a-b/phone-dark.jpg', options: { type: 'jpeg', quality: 60 } })
+  assert.deepEqual(shotFor(parseArgs(['--base', 'http://x']), '/out', '/', { name: 'iPhone SE' }, 'light'), { path: '/out/shots/root/iPhone-SE-light.png', options: { type: 'png' } })
+  assert.throws(() => parseArgs(['--base', 'http://x', '--jpeg', '101']), /--jpeg 101 is not a quality from 1 to 100/)
 })

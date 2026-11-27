@@ -10,7 +10,7 @@ import { readConfigObject } from './config-file.mjs'
 const DEFAULT_TIMEOUT = 60
 const LOG_TAIL = 20
 
-function devServers(root) {
+export function devServers(root) {
   const { path, config } = readConfigObject(root)
   const error = validate(config)
   if (error) throw new CliError(1, `${path}: ${error}`, { repair: `Fix ${path} and retry.` })
@@ -25,7 +25,7 @@ function logFile(root, name) {
   return resolve(root, result.stdout.trim())
 }
 
-function tail(file) {
+export function tail(file) {
   if (!existsSync(file)) return '(no log)'
   const lines = readFileSync(file, 'utf8').trimEnd().split('\n')
   return lines.slice(-LOG_TAIL).join('\n') || '(empty log)'
@@ -44,7 +44,21 @@ function stop(pid) {
   try { process.kill(-pid, 'SIGTERM') } catch { try { process.kill(pid, 'SIGTERM') } catch {} }
 }
 
-async function start(root, name) {
+export async function stopAndWait(pid, seconds = 10) {
+  stop(pid)
+  const deadline = Date.now() + seconds * 1000
+  while (isAlive(pid)) {
+    if (Date.now() >= deadline) {
+      try { process.kill(-pid, 'SIGKILL') } catch { try { process.kill(pid, 'SIGKILL') } catch {} }
+      await sleep(250)
+      if (isAlive(pid)) throw new CliError(1, `Process ${pid} is still alive after SIGTERM and SIGKILL.`, { repair: `kill -9 ${pid}` })
+      return
+    }
+    await sleep(100)
+  }
+}
+
+export async function start(root, name, { record = true } = {}) {
   const { path, servers } = devServers(root)
   const server = servers[name]
   if (!server) throw new CliError(2, `No dev server ${JSON.stringify(name)} in ${path}. Configured: ${Object.keys(servers).join(', ') || 'none'}.`, { repair: `Add "devServers.${name}" to ${path}, or run ndev project dev-servers to list the servers.` })
@@ -84,14 +98,14 @@ async function start(root, name) {
     }
     await sleep(250)
   }
-  try {
+  if (record) try {
     checked(worktreeScript, ['add-dev-server', '--name', name, '--pid', String(child.pid), '--port', String(server.port), '--cwd', cwd], { cwd: root, repair: `The server was stopped. Fix the fault above, then run ndev project dev-servers start ${name} again.` })
   } catch (error) {
     stop(child.pid)
     throw error
   }
   const url = isUrl(server.ready) ? server.ready : `http://localhost:${server.port}/`
-  return { name, pid: child.pid, port: server.port, url, log, routes: server.routes ?? [], text: `Dev server ${name} is ready at ${url} (pid ${child.pid}). Log: ${log}` }
+  return { name, pid: child.pid, port: server.port, url, cwd, log, routes: server.routes ?? [], text: `Dev server ${name} is ready at ${url} (pid ${child.pid}). Log: ${log}` }
 }
 
 export async function runDevServers(root, argv, repair) {

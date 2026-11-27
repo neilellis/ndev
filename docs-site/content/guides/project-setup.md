@@ -141,6 +141,20 @@ A check that the plan skips is `skipped`, with the reason. A collector that cann
 
 The body comes from `--body`, else from `gh` for the plan's pull request, else from `GITHUB_EVENT_PATH`.
 
+`ndev proof snapshots --out <dir> (--pr <n> | --local) [--routes <a,b>] [--base <ref>]` takes the screenshots for the `visual` check:
+
+1. It starts each dev server that has `routes`, and waits until it is ready.
+2. It takes a screenshot of each route at each of the Proof `viewports`, in each of the `schemes`, at device scale 1 as JPEG quality 60. It also checks each page for overflow, small touch targets and low contrast.
+3. It stops the server, also when a step fails.
+4. It writes `grid.md` in `--out`: for each route, a table of viewports by schemes, with the findings under each image.
+
+- With `--pr <n>`, it pushes the images to the `ndev-proof-assets` branch under `pr-<n>/<commit>/`, and the grid links them. Each push adds a commit and keeps the images of other pull requests. The worktree must be clean.
+- With `--local`, it pushes nothing, and the grid links the images in `--out`.
+- With `--base <ref>`, it also starts the servers at the base commit, in a temporary worktree, and takes a before image of each route that the base lists. The grid then shows before and after side by side.
+- `--routes /,/settings` takes only these routes.
+
+The command stops with an error when a route does not load, a server does not start, or the screenshot tool cannot run. The message names the server, the route and the end of the server log. The screenshots need Playwright where the server runs (`npm i -D playwright`, then `npx playwright install chromium`).
+
 ## Project defaults and credentials
 
 Set the default workflow mode (`light`, `heavy` or `hack`) and steering (`interactive` or `auto`):

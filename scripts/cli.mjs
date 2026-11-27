@@ -160,6 +160,7 @@ const groups = {
     commands: {
       plan: '--base <ref> [--pr <n> | --event <file>] [--proven <sha>]',
       evidence: '--plan <file> [--body <file>]',
+      snapshots: '--out <dir> (--pr <n> | --local) [--routes <list>] [--base <ref>]',
     },
   },
   requirements: {
