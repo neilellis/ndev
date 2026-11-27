@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Neil Ellis. All rights reserved.
+# Copyright (c) 2026 Neil Ellis. Licensed under the MIT License.
 """Run a command once on POSIX; save its log and result in a new private directory.
 
 Use -- before the command. No shell evaluation, live output, or model polling.

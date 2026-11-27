@@ -1,15 +1,15 @@
 /* {{name}} components. Class names match {{source}} so markup can move between
-   the website and this system unchanged. Wrap content in .nv to get the base
+   the website and this system unchanged. Wrap content in .ds to get the base
    type and element resets without touching the rest of a page. The resets use :where()
    so they never outrank a component class. */
 
-.nv { font: var(--fs-body)/var(--lh-body) var(--font-sans); color: var(--text-heading); -webkit-font-smoothing: antialiased; }
-:where(.nv) :is(h1, h2, h3, h4, p, figure, blockquote) { margin: 0; }
-:where(.nv) :is(h1, h2, h3, h4) { line-height: var(--lh-heading); font-weight: var(--fw-regular); }
-:where(.nv) a { color: inherit; text-decoration: none; }
-:where(.nv) em { font-family: var(--font-serif); font-weight: var(--fw-regular); }
-:where(.nv) img { max-width: 100%; display: block; }
-.nv :is(a, button, summary):focus-visible { outline: 3px solid var(--ring); outline-offset: 5px; }
+.ds { font: var(--fs-body)/var(--lh-body) var(--font-sans); color: var(--text-heading); -webkit-font-smoothing: antialiased; }
+:where(.ds) :is(h1, h2, h3, h4, p, figure, blockquote) { margin: 0; }
+:where(.ds) :is(h1, h2, h3, h4) { line-height: var(--lh-heading); font-weight: var(--fw-regular); }
+:where(.ds) a { color: inherit; text-decoration: none; }
+:where(.ds) em { font-family: var(--font-serif); font-weight: var(--fw-regular); }
+:where(.ds) img { max-width: 100%; display: block; }
+.ds :is(a, button, summary):focus-visible { outline: 3px solid var(--ring); outline-offset: 5px; }
 
 /* Eyebrow — numbered section kicker */
 .eyebrow { font-size: var(--fs-eyebrow); font-weight: var(--fw-semibold); line-height: 1.5; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; }

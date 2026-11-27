@@ -44,7 +44,7 @@ test('started names the incomprehensible label', async ($, on) => {
   expect(r.text).toContain('incomprehensible')
 })
 
-// fcc-proto PR #660: a human merged the PR while the workflow stood in ci, and the agent then pushed a merge of
+// Regression: a human merged the PR while the workflow stood in ci, and the agent then pushed a merge of
 // main through checkpoint. finishedChecks refused for the head that a merged PR can never take, and done refused
 // in ci, so the record could not end.
 test('in ci, a PR that a human merged ends through done, and finishedChecks names done', async ($, on) => {

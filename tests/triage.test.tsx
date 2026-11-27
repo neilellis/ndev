@@ -74,12 +74,12 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
   on('command.register', (_, e) => { registered.push({ name: e.name, argumentHint: e.argumentHint }); return { value: { command: e.name } } })
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))
   // env: what the session's environment holds besides HOME, such as the markers Orca's Chat UI sets.
-  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/neil' : opts.env?.[e.name] }))
+  on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/user' : opts.env?.[e.name] }))
   // The project's files a test gives, plus the files the mod writes, such as the /dev remote setting;
   // every other read is the project's .ndev.json.
   const files: Record<string, string> = { ...(opts.files ?? {}) }
   const inDir = (dir: string) => Object.keys(files).filter(k => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/'))
-  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.ndev.json' || e.path in files || inDir(e.path).length > 0 }))
+  on('fs.exists', (_, e) => ({ value: e.path === '/home/user/dev-wiki/wiki.md' || e.path === '/.ndev.json' || e.path in files || inDir(e.path).length > 0 }))
   on('fs.list', (_, e) => ({ value: inDir(e.path).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => e.path in files ? { value: files[e.path] } : ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null }, ...(opts.workflowOff ? { workflow: false } : {}) }) }))
   on('fs.write', (_, e) => { files[e.path] = e.text; return { value: undefined } })
@@ -134,7 +134,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
     if (a[0] === 'git') return ok('')
     if (a[0] === 'mkdir') return ok('')
     if (a[0] !== 'orca') return result(1, '', `unmocked: ${args}`)
-    if (args.startsWith('orca environment list')) return reply({ environments: opts.environments ?? [{ id: 'env-1', name: 'build-server' }] })
+    if (args.startsWith('orca environment list')) return reply({ environments: opts.environments ?? [{ id: 'env-1', name: 'ci-host' }] })
     // A paired server's workspaces are listed only with its --environment, and this machine's only without one.
     const environment = a.includes('--environment') ? a[a.indexOf('--environment') + 1] : undefined
     if (args.startsWith('orca worktree list')) {
@@ -213,7 +213,7 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
     if (args.startsWith('orca orchestration send')) {
       const to = a[a.indexOf('--to') + 1]!.replace(/^dispatch:/, '')
       if (finished.has(to)) {
-        return result(1, JSON.stringify({ id: 'x', ok: false, error: { code: 'dispatch_inactive', message: `Dispatch ${to} finished on build-server, which cannot take follow-ups for finished workers yet.`,
+        return result(1, JSON.stringify({ id: 'x', ok: false, error: { code: 'dispatch_inactive', message: `Dispatch ${to} finished on ci-host, which cannot take follow-ups for finished workers yet.`,
           data: { nextSteps: ['Start a new worker there with `orca orchestration worker-start --on env-1`.'] } } }))
       }
     }
@@ -870,7 +870,7 @@ test('/dev triage start --remote makes each workspace and starts each worker on 
   await $.command.run(command('refresh'))
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await until(async () => (await ui.find({ type: 'Text', text: /PR #41/ })) !== undefined)
-  expect((await ui.find({ type: 'Text', text: /build-server/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /ci-host/ }))?.text).toBeDefined()
   await ui.unmount()
 })
 

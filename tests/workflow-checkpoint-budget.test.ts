@@ -4,7 +4,7 @@ import { engine, settle, start, tool } from './workflow-harness'
 
 const realMs = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-// fcc-proto #876 (a large monorepo, where a check script runs for minutes): checkpoint ran past the ten seconds
+// Regression (a large monorepo where a check script runs for minutes): checkpoint ran past the ten seconds
 // of its hook's own time twice, before the commit. Workflow tool calls take turns, and a hook's time runs on
 // while it awaits the turn of another call, but not while a process of its own runs. So a call behind a long
 // check was dropped after ten seconds. The test kit counts that time and does not drop the hook, so the proof

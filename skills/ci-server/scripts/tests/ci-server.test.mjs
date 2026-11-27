@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 const scripts = new URL('..', import.meta.url).pathname
-const example = new URL('../../examples/fcc-analytics.conf', import.meta.url).pathname
+const example = new URL('../../examples/multi-repo.conf', import.meta.url).pathname
 const exampleText = readFileSync(example, 'utf8')
 
 function run(script, args, { input = '', env = {} } = {}) {
@@ -30,16 +30,16 @@ function config(t, text, extra = {}) {
 
 const steps = ['sizing', 'base', 'sources', 'packages', 'kernel', 'swap', 'docker', 'users', 'mounts', 'runner-download', 'cockpit', 'ssh', 'ports', 'register', 'sweeps']
 
-test('--plan prints every step and each runner of the fcc and analytics layout', () => {
+test('--plan prints every step and each runner of the multi-repo layout', () => {
   const r = run('provision.sh', ['--config', example, '--plan'])
   assert.equal(r.status, 0, r.all)
   steps.forEach((step, i) => assert.match(r.out, new RegExp(`^  step ${i + 1} ${step}: \\S`, 'm'), `step ${step} missing`))
-  assert.match(r.out, /^provision\.sh plan for .*fcc-analytics\.conf: 6 runners, name prefix ssd-build, port base 21000, swap file 16G if the host has no swap$/m)
-  assert.ok(r.out.includes('  runner ssd-build-1: user ci1, repository TathataSystems/fcc, labels fcc,supabase, ports 21100-21199, _work tmpfs 10G, tmp tmpfs 3G, unit actions.runner.TathataSystems-fcc.ssd-build-1.service\n'), r.out)
-  assert.ok(r.out.includes('  runner ssd-build-5: user ci5, repository TathataSystems/analytics, labels tathata-build,supabase, ports 21500-21599, _work tmpfs 16G, tmp tmpfs 4G, unit actions.runner.TathataSystems-analytics.ssd-build-5.service\n'), r.out)
+  assert.match(r.out, /^provision\.sh plan for .*multi-repo\.conf: 6 runners, name prefix ci-host, port base 21000, swap file 16G if the host has no swap$/m)
+  assert.ok(r.out.includes('  runner ci-host-1: user ci1, repository acme/app, labels app,supabase, ports 21100-21199, _work tmpfs 10G, tmp tmpfs 3G, unit actions.runner.acme-app.ci-host-1.service\n'), r.out)
+  assert.ok(r.out.includes('  runner ci-host-5: user ci5, repository acme/analytics, labels analytics,supabase, ports 21500-21599, _work tmpfs 16G, tmp tmpfs 4G, unit actions.runner.acme-analytics.ci-host-5.service\n'), r.out)
   assert.match(r.out, /step 1 sizing: .*one supabase runner per 4 CPUs, one runner per 2 CPUs, 8 GB per runner/)
-  assert.match(r.out, /step 15 sweeps: .*fcc-runner-sweep\.timer.*TathataSystems\/fcc/)
-  assert.match(r.out, /step 15 sweeps: .*fcc-docker-prepull\.timer/)
+  assert.match(r.out, /step 15 sweeps: .*ci-runner-sweep\.timer.*acme\/app/)
+  assert.match(r.out, /step 15 sweeps: .*ci-docker-prepull\.timer/)
   assert.match(r.out, /step 7 docker: .*publish container ports on 127\.0\.0\.1 only/)
 })
 
@@ -60,7 +60,7 @@ test('provision.sh without --config refuses and prints its usage', () => {
   assert.match(r.err, /^Usage: provision\.sh --config <file>/m)
 })
 
-test('runner-env.sh writes the fcc .env of a slot from the config', () => {
+test('runner-env.sh writes the .env of a slot from the config', () => {
   const r = run('runner-env.sh', ['--config', example, '1'])
   assert.equal(r.status, 0, r.all)
   assert.equal(r.out, [
@@ -72,7 +72,7 @@ test('runner-env.sh writes the fcc .env of a slot from the config', () => {
   ].join('\n'))
   const missing = run('runner-env.sh', ['--config', example, '7'])
   assert.equal(missing.status, 2)
-  assert.match(missing.err, /slot 7 has no runner line in .*fcc-analytics\.conf\. Repair: add "runner = 7:<owner>\/<repo>:<labels>"/)
+  assert.match(missing.err, /slot 7 has no runner line in .*multi-repo\.conf\. Repair: add "runner = 7:<owner>\/<repo>:<labels>"/)
 })
 
 const minimal = 'name_prefix = build\nrunner = 1:acme/app:app\n'
@@ -130,7 +130,7 @@ test('sizing.sh refuses six supabase runners on 16 CPUs, the layout that ran at 
   const r = run('sizing.sh', ['--config', example, '--cpus', '16', '--mem-gb', '62'])
   assert.equal(r.status, 1, r.all)
   assert.match(r.all, /6 runners carry the supabase label, but 16 CPUs carry at most 4 \(one per 4 CPUs\)/)
-  assert.match(r.all, /On 2026-11-24 six supabase runners on 16 CPUs ran at a load average of 58/)
+  assert.match(r.all, /Running six supabase runners on 16 CPUs produced a load average of 58/)
   const fits = run('sizing.sh', ['--config', example, '--cpus', '24', '--mem-gb', '64'])
   assert.equal(fits.status, 0, fits.all)
   assert.match(fits.out, /6 runners, 6 with supabase, fit 24 CPUs and 64 GB/)
@@ -183,24 +183,24 @@ test('docker-sweep.sh --dry-run lists the old leftovers the config owns and keep
   const young = new Date((now - 60) * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' +0000 UTC')
   const docker = fakeBin(t, 'docker', [
     'case "$1 $2" in',
-    `  "ps -a") if [[ "$*" == *--filter* ]]; then exit 0; fi; printf '%s\\t%s\\t%s\\t%s\\t%s\\n' c1 fcc-falkordb-check-7 falkordb/falkordb-server:6 "${old}" "" c2 graphdb-1-2 img "${young}" "" c3 0123456789abcdef0123456789abcdef_falkor falkordb/falkordb-server:6 "${old}" "" c4 web-1 nginx "${old}" fcc-proto-ci2 c5 db-1 postgres "${old}" fcc-test-pg-ci1 c6 other postgres "${old}" another ;;`,
-    `  "volume ls") printf '%s\\t%s\\n' v1 fcc-test-pg v2 fcc-test-pg-ci1 v3 another ;;`,
+    `  "ps -a") if [[ "$*" == *--filter* ]]; then exit 0; fi; printf '%s\\t%s\\t%s\\t%s\\t%s\\n' c1 app-cache-check-7 redis:7-alpine "${old}" "" c2 graphdb-1-2 img "${young}" "" c3 0123456789abcdef0123456789abcdef_redis redis:7-alpine "${old}" "" c4 web-1 nginx "${old}" app-dev-ci2 c5 db-1 postgres "${old}" app-test-pg-ci1 c6 other postgres "${old}" another ;;`,
+    `  "volume ls") printf '%s\\t%s\\n' v1 app-test-pg v2 app-test-pg-ci1 v3 another ;;`,
     `  "volume inspect") echo "${old}" ;;`,
-    `  "network ls") printf '%s\\t%s\\n' supabase_network_fcc-proto-ci3 "${old}" supabase_network_fcc-test-pg-ci1 "${old}" bridge "${old}" ;;`,
-    `  "image ls") printf '%s\\t%s\\t%s\\t%s\\n' i1 fcc-graphdb-1-2 latest "${old}" i2 postgres 16 "${old}" ;;`,
+    `  "network ls") printf '%s\\t%s\\n' supabase_network_app-dev-ci3 "${old}" supabase_network_app-test-pg-ci1 "${old}" bridge "${old}" ;;`,
+    `  "image ls") printf '%s\\t%s\\t%s\\t%s\\n' i1 app-graphdb-1-2 latest "${old}" i2 postgres 16 "${old}" ;;`,
     '  *) echo "fake docker: unexpected $*" >&2; exit 1 ;;',
     'esac',
   ].join('\n'))
-  const file = config(t, exampleText.replace('prepull_images = fcc-ci-images.txt\n', ''))
+  const file = config(t, exampleText.replace('prepull_images = ci-images.txt\n', ''))
   const r = run('docker-sweep.sh', ['--config', file, '--dry-run', '--now', String(now)], { env: { PATH: `${join(docker.dir, 'bin')}:${process.env.PATH}` } })
   assert.equal(r.status, 0, r.all)
-  assert.match(r.out, /would remove container fcc-falkordb-check-7 \(/)
-  assert.match(r.out, /would remove container 0123456789abcdef0123456789abcdef_falkor \(/)
-  assert.match(r.out, /would remove container web-1 \(container of the project fcc-proto-ci2/)
+  assert.match(r.out, /would remove container app-cache-check-7 \(/)
+  assert.match(r.out, /would remove container 0123456789abcdef0123456789abcdef_redis \(/)
+  assert.match(r.out, /would remove container web-1 \(container of the project app-dev-ci2/)
   assert.match(r.out, /would remove volume v1 \(/)
-  assert.match(r.out, /would remove network supabase_network_fcc-proto-ci3 \(/)
-  assert.match(r.out, /would remove image fcc-graphdb-1-2:latest \(/)
-  for (const kept of ['container graphdb-1-2 ', 'container db-1 ', 'container other ', 'volume v2 ', 'volume v3 ', 'network supabase_network_fcc-test-pg-ci1 ', 'network bridge ', 'image postgres:16 ']) {
+  assert.match(r.out, /would remove network supabase_network_app-dev-ci3 \(/)
+  assert.match(r.out, /would remove image app-graphdb-1-2:latest \(/)
+  for (const kept of ['container graphdb-1-2 ', 'container db-1 ', 'container other ', 'volume v2 ', 'volume v3 ', 'network supabase_network_app-test-pg-ci1 ', 'network bridge ', 'image postgres:16 ']) {
     assert.ok(!r.out.includes(`would remove ${kept}`), `${kept}must be kept: ${r.out}`)
   }
   assert.match(r.out, /docker-sweep: would remove 3 containers, 1 volumes, 1 networks, 1 images$/m)
@@ -212,17 +212,17 @@ test('docker-sweep.sh removes each tag of an old image by its own reference, and
     'case "$1 $2" in',
     '  "ps -a") if [[ "$*" == *"--filter ancestor="* ]]; then echo "$*" >>"$FAKE_LOG.ancestor"; fi; exit 0 ;;',
     '  "volume ls"|"network ls") exit 0 ;;',
-    `  "image ls") printf '%s\\t%s\\t%s\\t%s\\n' i1 fcc-graphdb-1-2 latest "${old}" i1 fcc-graphdb-1-2 old "${old}" i9 fcc-graphdb-3-4 "<none>" "${old}" ;;`,
+    `  "image ls") printf '%s\\t%s\\t%s\\t%s\\n' i1 app-graphdb-1-2 latest "${old}" i1 app-graphdb-1-2 old "${old}" i9 app-graphdb-3-4 "<none>" "${old}" ;;`,
     '  "image rm") case "$3" in *:*|i9) echo "$3" >>"$FAKE_LOG" ;; *) echo "Error: No such image: $3:latest" >&2; exit 1 ;; esac ;;',
     '  *) echo "fake docker: unexpected $*" >&2; exit 1 ;;',
     'esac',
   ].join('\n'))
   const log = join(docker.dir, 'removed')
-  const file = config(t, 'name_prefix = build\nrunner = 1:acme/app:app\ndocker_sweep_images = ^fcc-graphdb-\n')
+  const file = config(t, 'name_prefix = build\nrunner = 1:acme/app:app\ndocker_sweep_images = ^app-graphdb-\n')
   const r = run('docker-sweep.sh', ['--config', file, '--now', '1800000000'], { env: { PATH: `${join(docker.dir, 'bin')}:${process.env.PATH}`, FAKE_LOG: log } })
   assert.equal(r.status, 0, r.all)
-  assert.equal(readFileSync(log, 'utf8'), 'fcc-graphdb-1-2:latest\nfcc-graphdb-1-2:old\ni9\n')
-  assert.match(readFileSync(`${log}.ancestor`, 'utf8'), /ancestor=fcc-graphdb-1-2:old/)
+  assert.equal(readFileSync(log, 'utf8'), 'app-graphdb-1-2:latest\napp-graphdb-1-2:old\ni9\n')
+  assert.match(readFileSync(`${log}.ancestor`, 'utf8'), /ancestor=app-graphdb-1-2:old/)
   assert.match(r.out, /docker-sweep: removed 0 containers, 0 volumes, 0 networks, 3 images$/m)
 })
 

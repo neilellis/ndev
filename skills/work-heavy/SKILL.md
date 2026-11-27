@@ -173,4 +173,8 @@ references again after every PR body edit. Details: `references/prs.md`.
 
 When a procedure changes, update the reference that owns it and keep this file short.
 
+## Credit
+
+Planning, TDD, and rationalization patterns draw on [mattpocock/skills](https://github.com/mattpocock/skills) by Matt Pocock (MIT License), [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills) by Addy Osmani (MIT License), and [obra/superpowers](https://github.com/obra/superpowers) by Jesse Vincent (MIT License).
+
 The installer resolves `${CLAUDE_PLUGIN_ROOT}` to the shared ndev release folder for each harness. Use the installed absolute paths to run shared scripts.

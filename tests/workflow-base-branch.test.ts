@@ -5,11 +5,11 @@ import { ROOT, SHA, CHECKS, engine, start, tool, command, turnEnds, idle, finish
 test('started does not claim a branch whose PR has merged, and names the repair', async ($, on) => {
   const w = engine(on, { wf: null })
   await start($, w)
-  w.s.branch = 'fix/lens-hybrid-copy'
+  w.s.branch = 'fix/hybrid-copy'
   w.s.branchPrs = [{ number: 58, state: 'closed', merged: true }]
   const r = await tool($, 'started', { issue: 7, shortName: 'add-sub' })
   expect(r.isError).toBe(true)
-  expect(r.text).toContain('fix/lens-hybrid-copy')
+  expect(r.text).toContain('fix/hybrid-copy')
   expect(r.text).toContain('#58')
   expect(r.text).toContain('git -C /')
   expect(r.text).toContain('origin/main')
@@ -316,7 +316,7 @@ for (const command of [
   'git -C ~/dev-wiki add -A && git -C ~/dev-wiki commit -qm "learn: x"',
   'git -C ~/dev-wiki commit -m "learn: never git push by hand"',
   'git -C "$HOME/dev-wiki" commit -m x',
-  'git -C /home/neil/dev-wiki push',
+  'git -C /home/user/dev-wiki push',
 ]) {
   test(`a commit or push in another repository passes while a workflow runs: ${command}`, async ($, on) => {
     const w = engine(on, { wf: { state: 'reviewing' } })

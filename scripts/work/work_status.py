@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (C) 2026 Neil Ellis. All rights reserved.
+# Copyright (c) 2026 Neil Ellis. Licensed under the MIT License.
 """Collect one bounded work snapshot without creating or claiming worktrees."""
 
 from __future__ import annotations

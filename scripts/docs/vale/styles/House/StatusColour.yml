@@ -2,12 +2,11 @@ extends: existence
 message: "'%s' — a status colour used as a countable noun. Say 'failures' / 'how often it fails'."
 level: error
 ignorecase: true
-# A bare `greens` is NOT flagged: "bowling greens", "village greens" and
-# "putting greens" are ordinary English, and this rule fired on a council
-# minute quoting one (2026-08-03, #1077). Go RE2 has no lookbehind, so the
-# plural is caught only with a counting word in front of it — which is the
-# shape the rule is actually about. `reds` keeps its bare token: it has no
-# such everyday sense in this repo's prose.
+# A bare `greens` is NOT flagged: "village greens" and "putting greens" are
+# ordinary English, and this rule previously fired on a report quoting one.
+# Go RE2 has no lookbehind, so the plural is caught only with a counting word
+# in front of it — which is the shape the rule is actually about. `reds` keeps
+# its bare token: it has no such everyday sense in this repo's prose.
 tokens:
   - \d+\s+reds?\b
   - \d+\s+greens?\b

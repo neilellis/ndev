@@ -29,7 +29,7 @@ const listing = {
 const record = {
   version: 2,
   resources: {
-    docker: [{ kind: 'supabase', projectId: 'fcc-1', workdir: WT, cliVersion: '2.122.0', live: true }],
+    docker: [{ kind: 'supabase', projectId: 'app-1', workdir: WT, cliVersion: '2.122.0', live: true }],
     'dev-servers': {
       docs: { pid: 4821, port: 3000, command: 'node next dev', cwd: `${WT}/apps/docs`, started: '2026-10-30T10:00:00.000Z', live: true },
       ui: { pid: 4822, port: 3001, command: 'pnpm dev', cwd: `${WT}/apps/ui`, started: '2026-10-30T10:00:00.000Z', live: false },
@@ -58,8 +58,8 @@ function world(on: On, answers: Record<string, ReturnType<typeof ok>> = {}, curr
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('prompt.compose', () => ({ sections: [] }))
   on('prompt.submit', (_, e) => e)
-  on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || e.path === `${ROOT}/.ndev-inited` || e.path in files || Object.keys(files).some(k => k.startsWith(`${e.path}/`)) }))
+  on('env.get', () => ({ value: '/home/user' }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/user/dev-wiki') || e.path === `${ROOT}/.ndev-inited` || e.path in files || Object.keys(files).some(k => k.startsWith(`${e.path}/`)) }))
   on('fs.list', (_, e) => ({ value: Object.keys(files).filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => ({ value: files[e.path] ?? '' }))
   on('ui.toast', () => ({ value: undefined }))
@@ -127,7 +127,7 @@ test('resources show their live status: running, stopped, and a docker stack by 
   const ui = await start($)
   expect((await ui.find({ type: 'Text', text: /docs/ }))?.text).toMatch(/● docs\s+:3000\s+running/)
   expect((await ui.find({ type: 'Text', text: /ui\s+:3001/ }))?.text).toMatch(/○ ui\s+:3001\s+stopped/)
-  expect((await ui.find({ type: 'Text', text: /fcc-1/ }))?.text).toMatch(/● supabase fcc-1\s+running/)
+  expect((await ui.find({ type: 'Text', text: /app-1/ }))?.text).toMatch(/● supabase app-1\s+running/)
   await ui.unmount()
 })
 
@@ -135,7 +135,7 @@ test('a docker stack whose state is unknown says so with docker\'s message', asy
   const unknown = { ...record, resources: { ...record.resources, docker: [{ ...record.resources.docker[0], live: null, liveError: 'Cannot connect to the Docker daemon' }] } }
   world(on, { [`${ENV} list --json --live --worktree ${WT}`]: ok(JSON.stringify(unknown)) })
   const ui = await start($)
-  expect((await ui.find({ type: 'Text', text: /fcc-1/ }))?.text).toMatch(/\? supabase fcc-1\s+unknown: Cannot connect to the Docker daemon/)
+  expect((await ui.find({ type: 'Text', text: /app-1/ }))?.text).toMatch(/\? supabase app-1\s+unknown: Cannot connect to the Docker daemon/)
   await ui.unmount()
 })
 
@@ -209,7 +209,7 @@ test('pressing another stop disarms the first', async ($, on) => {
   const w = world(on)
   const ui = await start($)
   await ui.press({ key: `stop:${WT}:docs` })
-  await ui.press({ key: `stop-keep:${WT}:supabase:fcc-1` })
+  await ui.press({ key: `stop-keep:${WT}:supabase:app-1` })
   await ui.press({ key: `stop:${WT}:docs` })
   expect(w.ran.some(l => l.includes(' stop '))).toBe(false)
   await ui.unmount()
@@ -219,10 +219,10 @@ test('a docker stack offers stop keeping data and stop deleting data, each with 
   const w = world(on)
   const ui = await start($)
   for (const [which, policy] of [['keep', 'stop-keep-data'], ['delete', 'stop-and-delete']] as const) {
-    const key = `stop-${which}:${WT}:supabase:fcc-1`
+    const key = `stop-${which}:${WT}:supabase:app-1`
     await ui.press({ key })
     await ui.press({ key })
-    expect(w.ran).toContain(`${ENV} stop --kind supabase --project-id fcc-1 --on-end ${policy} --worktree ${WT}`)
+    expect(w.ran).toContain(`${ENV} stop --kind supabase --project-id app-1 --on-end ${policy} --worktree ${WT}`)
   }
   await ui.unmount()
 })

@@ -2,7 +2,7 @@
 
 [kb](README.md) › llm-wiki
 
-**A project wiki is compiled knowledge: an agent reads the sources once, at ingest, and writes the result into a fixed tree of pages that hold the current state only.** Agents then read the wiki, not the raw sources. The method follows Karpathy's "LLM wiki" pattern. A starter is in [templates/wiki/](../templates/wiki/wiki.md).
+**A project wiki is compiled knowledge: an agent reads the sources once, at ingest, and writes the result into a fixed tree of pages that hold the current state only.** Agents then read the wiki, not the raw sources. The method follows Andrej Karpathy's "LLM Wiki" pattern (see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)). A starter is in [templates/wiki/](../templates/wiki/wiki.md).
 
 ## Three layers
 

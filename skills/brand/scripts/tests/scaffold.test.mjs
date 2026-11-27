@@ -37,7 +37,6 @@ test('a full site has no placeholder, no source brand, generated Vale files and 
   for (const f of text) {
     const body = readFileSync(f, 'utf8');
     assert.doesNotMatch(body, /\{\{[A-Za-z]+\}\}/, `placeholder left in ${f}`);
-    assert.doesNotMatch(body, /novus/i, `source brand left in ${f}`);
   }
   assert.ok(existsSync(path.join(target, 'public/ds/copy/vale/AcmeWidgets.zip')), 'Vale zip not generated');
   assert.ok(existsSync(path.join(target, 'lib/tokens.test.ts')), 'test files not renamed');

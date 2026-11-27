@@ -2855,7 +2855,7 @@ async function dispatch($: EngineInterface, name: string, c: Ctx): Promise<strin
 // inTurn queue, or /unblock could not get in. A hook's budget of ten seconds runs on through
 // $.clock.sleep and not through a $ call in flight, so the pause is a short process.
 const WAIT_SLICE_S = 2
-// On a busy computer each wake of the loop costs the hook far more of its own time (fcc-proto, load 150 on 10
+// On a busy computer each wake of the loop costs the hook far more of its own time (under heavy load on 10
 // cores: 100-230 ms a slice, so a 1200 s wait stopped after 1-4 checks). The pauses then grow, and the checks
 // space out, so that the time left lasts to the end of the wait. At most this long, so the owner stays live.
 const WAIT_PAUSE_MAX_S = 240
@@ -3852,7 +3852,7 @@ export const workflowTools = (on: Parameters<Register>[0], project: () => Loaded
       const name = s.name
       const isHeld = WAIT_TOOLS.includes(name) || (name === 'interview' && args.interviewJson !== undefined)
       // A hook's time runs on while it awaits the turn of another call, and a check script there can run for an
-      // hour: the host then dropped the call behind it after ten seconds (fcc-proto #876, checkpoint, twice).
+      // hour: the host then dropped the call behind it after ten seconds.
       // The pauses of whenTurnsFree are processes, which cost the hook nothing. The loop reads the count again,
       // as another call can take the turn between the last pause and here.
       if (!isHeld) {

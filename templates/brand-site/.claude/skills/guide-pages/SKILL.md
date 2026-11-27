@@ -10,7 +10,7 @@ description: Add, move or edit a page of the {{name}} brand guide.
 - A page is `app/<path>/page.mdx`. It starts with `export const metadata = { title: "…" };` and one `# Heading`. The title appears as "Title · {{name}} brand guide".
 - Add every page to `NAV` in `lib/nav.ts`. The structure test fails if a sidebar link has no page.
 - Use the shared components registered in `mdx-components.tsx`: `Demo`, `DoDont`, `Still`, `StillGrid`, `Rule`, `Tokens`, the specimens (`Swatch`, `SwatchGrid`, `GradientTile`, `TypeScale`, `SpacingScale`, `RadiusBox`, `ElevationCard`, `ContrastTable`) and `Wordmark`/`BrandLockup`. Register a new component there before using it.
-- Wrap live examples in `<Demo>`. It applies `.nv`, so the example renders with the real design system and not the guide's own styles.
+- Wrap live examples in `<Demo>`. It applies `.ds`, so the example renders with the real design system and not the guide's own styles.
 - Images live under `public/ds/assets/` and are referenced as `/ds/assets/…`. Every image needs alt text that says what it shows.
 
 ## Content

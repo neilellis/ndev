@@ -27,7 +27,7 @@ export type Remote = { hcloudContext?: string }
 
 // checkEnv: the names of the .neil-dev.env keys that the check scripts get, such as the URL of a local test
 // database. Absent: they get none. The file also holds credentials for hosted services, and a test that finds
-// such a key, as fcc-proto's do with FALKORDB_URL, runs against the hosted service and not a local one.
+// such a key (for example a hosted database URL) runs against the hosted service and not a local one.
 
 // How much risk the workflow tools take. straw_man: the agent may commit to main and merge PRs.
 // poc: the agent may merge PRs. small_project and formal_project: a human merges, and

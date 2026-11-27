@@ -7,7 +7,7 @@ description: "Triage ALL open GitHub issues of a repository into area epics, and
 
 You are the **triage owner**. You decide what is open, which epic owns it, and in what order the epics run. Coordinators deliver the epics; you rule on what they cannot, and the human decides the rest. Hand off: per-PR grouping is `triage`, writing one epic's spec is `epic-plan`, delivering one epic is `epic-coordinate`, Orca commands are `orchestration`. Do not repeat their work.
 
-Keep all working files in `<worktree>/.triage/` and add it to `.git/info/exclude`. Every step writes a file; the next step reads it. Worked example: fcc-proto, 182 issues → 38 closed, 11 epics.
+Keep all working files in `<worktree>/.triage/` and add it to `.git/info/exclude`. Every step writes a file; the next step reads it. Typical scale: ~180 issues triaged into ~40 closed and ~10 epics.
 
 ## Phase 1: triage (steps 1–9)
 
@@ -27,10 +27,10 @@ Keep all working files in `<worktree>/.triage/` and add it to `.git/info/exclude
 2. **Launch.** Per epic: `orca worktree create --repo path:<repo> --name <slug> --no-parent --issue <epic> --base-branch origin/main --json`, then `orca agent launch --agent claude --worktree id:<worktreeId> --prompt "$(cat brief)" --json`. Record worktree and session ids in `briefs/launched.json`. If a remote host is unavailable, create locally and say so.
 3. **Supervise without polling.** End the turn; read what arrived with `orca orchestration check --all --json` and state with `orca worktree ps --json`. Message a coordinator with `orca orchestration send --to orca_session_id:<id> --subject <s> --body <b> --json`.
 4. **Rule.** A coordinator reports what it needs. Decide what you can (scope splits between epics, order, which epic owns a shared file). Batch the rest into **one numbered decision list** for the human with options and a recommendation; send each answer back to the coordinator that asked.
-5. **Relay standing authorisations.** When the human grants a standing rule (for example "migrations and ontology publishing are authorised", "push migrations as you merge"), send it to every coordinator, append it to `briefs/common.md`, and save it to memory. An authorisation for one PR is not standing.
+5. **Relay standing authorisations.** When the human grants a standing rule (for example "migrations and docs publishing are authorised", "push migrations as you merge"), send it to every coordinator, append it to `briefs/common.md`, and save it to memory. An authorisation for one PR is not standing.
 6. **Red main.** When main's checks fail, start one priority agent to fix main, commit to main and merge main into the open PRs. When its fix is green on main, tell all coordinators.
 7. **Baseline failures.** A coordinator may merge past a check that also fails on main only if: main is merged in first; its failing tests are a subset of main's; the diff does not touch the failing packages; the independent review is done; the close-out records "merged with baseline failure #<issue>" and counts the check as failed.
-8. **CI load.** Many coordinators saturate shared runners. Watch the queue (`gh run list --status queued`); use the `ci-runner` skill to restart or relabel runners, and serialise migration-carrying merges across epics.
+8. **CI load.** Many coordinators saturate shared runners. Watch the queue (`gh run list --status queued`); use the `ci-server` skill to restart or relabel runners, and serialise migration-carrying merges across epics.
 9. **Finish.** An epic is done when its coordinator closes it with a summary. Report per epic: state, PRs with links, decisions pending, what was not run.
 
 ## Hard limits (always ask the human)

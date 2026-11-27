@@ -35,8 +35,8 @@ const engine = (on: On, opts: { files?: Record<string, string>; script?: { exitC
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('prompt.compose', () => ({ sections: [] }))
   on('prompt.submit', (_, e) => e)
-  on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) }))
+  on('env.get', () => ({ value: '/home/user' }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/user/dev-wiki') || files.has(e.path) }))
   on('fs.read', (_, e) => ({ value: files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => {
     files.set(e.path, e.text)
@@ -79,7 +79,7 @@ const section = async ($: Dollar) => {
 }
 
 test('a session end in a worktree with a listed stack starts the background stop, stop-and-delete by default', async ($, on) => {
-  const { ran } = engine(on, { files: { [RECORD]: record(stack('fcc-211')) } })
+  const { ran } = engine(on, { files: { [RECORD]: record(stack('app-211')) } })
   await start($)
   await end($)
 
@@ -89,7 +89,7 @@ test('a session end in a worktree with a listed stack starts the background stop
 
 test('the project file can keep the data: worktreeStacks.onSessionEnd stop-keep-data', async ($, on) => {
   const { ran } = engine(on, {
-    files: { [RECORD]: record(stack('fcc-211')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'stop-keep-data' } }) },
+    files: { [RECORD]: record(stack('app-211')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'stop-keep-data' } }) },
   })
   await start($)
   await end($)
@@ -99,13 +99,13 @@ test('the project file can keep the data: worktreeStacks.onSessionEnd stop-keep-
 
 test('keep-running stops nothing and says the stacks are left running', async ($, on) => {
   const { ran, toasts } = engine(on, {
-    files: { [RECORD]: record(stack('fcc-211')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }) },
+    files: { [RECORD]: record(stack('app-211')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }) },
   })
   await start($)
   await end($)
 
   expect(stops(ran)).toHaveLength(0)
-  expect(toasts.join(' ')).toContain('fcc-211')
+  expect(toasts.join(' ')).toContain('app-211')
   expect(toasts.join(' ')).toContain('keep-running')
 })
 
@@ -121,7 +121,7 @@ test('no record, or a record with no stacks: nothing runs', async ($, on) => {
 })
 
 test('a /clear or a resume is not the end of the work in this worktree: nothing is stopped', async ($, on) => {
-  const { ran } = engine(on, { files: { [RECORD]: record(stack('fcc-211')) } })
+  const { ran } = engine(on, { files: { [RECORD]: record(stack('app-211')) } })
   await start($)
   await end($, 'clear')
   await end($, 'resume')
@@ -131,7 +131,7 @@ test('a /clear or a resume is not the end of the work in this worktree: nothing 
 
 test('a stop that did not start: the toast names the exit code, the output and the repair command', async ($, on) => {
   const { toasts } = engine(on, {
-    files: { [RECORD]: record(stack('fcc-211')) },
+    files: { [RECORD]: record(stack('app-211')) },
     script: { exitCode: 2, stderr: 'worktree-env: /proj/.neil-dev.worktree.json is not valid JSON' },
   })
   await start($)
@@ -145,7 +145,7 @@ test('a stop that did not start: the toast names the exit code, the output and t
 
 test('a project file with an error: nothing is stopped, and the toast names the error and the repair', async ($, on) => {
   const { ran, toasts } = engine(on, {
-    files: { [RECORD]: record(stack('fcc-211')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'nuke' } }) },
+    files: { [RECORD]: record(stack('app-211')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'nuke' } }) },
   })
   await start($)
   expect(toasts.join(' ')).toContain('stop-and-delete, stop-keep-data or keep-running')
@@ -153,31 +153,31 @@ test('a project file with an error: nothing is stopped, and the toast names the 
 
   expect(stops(ran)).toHaveLength(0)
   const text = toasts.join(' ')
-  expect(text).toContain('fcc-211')
+  expect(text).toContain('app-211')
   expect(text).toContain('worktree-env.sh stop-all --worktree /proj')
 })
 
 test('a stop that failed at the last session end is reported at the next start, with the repair', async ($, on) => {
-  const failed = stack('fcc-211', {
+  const failed = stack('app-211', {
     lastStop: {
       at: '2026-10-30T11:00:00.000Z',
-      command: 'npx -y supabase@2.122.0 stop --project-id fcc-211 --no-backup',
+      command: 'npx -y supabase@2.122.0 stop --project-id app-211 --no-backup',
       exitCode: 1,
-      output: 'Error response from daemon: cannot stop container supabase_db_fcc-211',
-      repair: 'npx -y supabase@2.122.0 stop --project-id fcc-211 --no-backup',
+      output: 'Error response from daemon: cannot stop container supabase_db_app-211',
+      repair: 'npx -y supabase@2.122.0 stop --project-id app-211 --no-backup',
     },
   })
-  const { toasts } = engine(on, { files: { [RECORD]: record(failed, stack('fcc-212')) } })
+  const { toasts } = engine(on, { files: { [RECORD]: record(failed, stack('app-212')) } })
   await start($)
 
   const text = (await section($)) ?? ''
-  expect(text).toContain('fcc-211')
+  expect(text).toContain('app-211')
   expect(text).toContain('exit code 1')
-  expect(text).toContain('cannot stop container supabase_db_fcc-211')
-  expect(text).toContain('npx -y supabase@2.122.0 stop --project-id fcc-211 --no-backup')
-  expect(text).toContain('remove-stack --kind supabase --project-id fcc-211')
-  expect(text).not.toMatch(/fcc-212 \(workdir[^\n]*did not stop/)
-  expect(toasts.join(' ')).toContain('fcc-211')
+  expect(text).toContain('cannot stop container supabase_db_app-211')
+  expect(text).toContain('npx -y supabase@2.122.0 stop --project-id app-211 --no-backup')
+  expect(text).toContain('remove-stack --kind supabase --project-id app-211')
+  expect(text).not.toMatch(/app-212 \(workdir[^\n]*did not stop/)
+  expect(toasts.join(' ')).toContain('app-211')
 })
 
 test('a worktree whose stacks all stopped gets no section', async ($, on) => {
@@ -190,16 +190,16 @@ test('a worktree whose stacks all stopped gets no section', async ($, on) => {
 // A stop that never started (a launch failure or a config error at the last exit) leaves the
 // stacks listed with no lastStop: the next session is told, so they are not forgotten.
 test('stacks still listed at session start are named with the stop command', async ($, on) => {
-  engine(on, { files: { [RECORD]: record(stack('fcc-212')) } })
+  engine(on, { files: { [RECORD]: record(stack('app-212')) } })
   await start($)
 
   const text = (await section($)) ?? ''
-  expect(text).toContain('fcc-212')
+  expect(text).toContain('app-212')
   expect(text).toContain('worktree-env.sh stop-all --worktree /proj')
 })
 
 test('with keep-running, stacks still listed are expected and get no section', async ($, on) => {
-  engine(on, { files: { [RECORD]: record(stack('fcc-212')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }) } })
+  engine(on, { files: { [RECORD]: record(stack('app-212')), [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }) } })
   await start($)
 
   expect(await section($)).toBeUndefined()
@@ -217,7 +217,7 @@ test('a session end with only dev servers listed starts the background stop', as
 test('keep-running still stops the dev servers: the stop runs with --on-end keep-running, and the toast names the stacks left running', async ($, on) => {
   const { ran, toasts } = engine(on, {
     files: {
-      [RECORD]: withServers({ docs: devServer(4242, 3000) }, stack('fcc-211')),
+      [RECORD]: withServers({ docs: devServer(4242, 3000) }, stack('app-211')),
       [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'keep-running' } }),
     },
   })
@@ -226,14 +226,14 @@ test('keep-running still stops the dev servers: the stop runs with --on-end keep
 
   expect(stops(ran)).toHaveLength(1)
   expect(stops(ran)[0]!.argv.slice(2)).toEqual(['stop-all', '--background', '--on-end', 'keep-running', '--worktree', ROOT])
-  expect(toasts.join(' ')).toContain('fcc-211')
+  expect(toasts.join(' ')).toContain('app-211')
   expect(toasts.join(' ')).toContain('keep-running')
 })
 
 test('a project file with an error still stops the dev servers, and leaves the stacks', async ($, on) => {
   const { ran, toasts } = engine(on, {
     files: {
-      [RECORD]: withServers({ docs: devServer(4242, 3000) }, stack('fcc-211')),
+      [RECORD]: withServers({ docs: devServer(4242, 3000) }, stack('app-211')),
       [CONFIG]: JSON.stringify({ worktreeStacks: { onSessionEnd: 'nuke' } }),
     },
   })
@@ -242,11 +242,11 @@ test('a project file with an error still stops the dev servers, and leaves the s
 
   expect(stops(ran)).toHaveLength(1)
   expect(stops(ran)[0]!.argv).toContain('keep-running')
-  expect(toasts.join(' ')).toContain('did not stop supabase fcc-211')
+  expect(toasts.join(' ')).toContain('did not stop supabase app-211')
 })
 
 test('a version 1 record is refused: the section and the toast name the migrate repair, and the session end stops nothing', async ($, on) => {
-  const { ran, toasts } = engine(on, { files: { [RECORD]: JSON.stringify({ version: 1, stacks: [stack('fcc-211')] }) } })
+  const { ran, toasts } = engine(on, { files: { [RECORD]: JSON.stringify({ version: 1, stacks: [stack('app-211')] }) } })
   await start($)
 
   const text = (await section($)) ?? ''

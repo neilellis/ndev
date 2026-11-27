@@ -8,8 +8,8 @@ type Engine = Parameters<Parameters<typeof test>[1]>[0]
 
 const ROOT = '/proj'
 const PRIMARY = '/primary'
-const ORCA_YAML = `scripts:\n  setup: ./setup.sh\nenvironmentRecipes:\n  - id: dev-build\n    name: dev-build (Hetzner, SSH)\n    create: ./scripts/orca-vm/dev-build-create.sh\n  - id: orca-dev-2\n    name: "orca-dev-2 (Hetzner, SSH)"\n    create: ./scripts/orca-vm/orca-dev-2-create.sh\n  - id: bare\n    create: ./x.sh\nother:\n  - id: not-a-recipe\n`
-const STORE = '/home/neil/.config/ndev/remote.json'
+const ORCA_YAML = `scripts:\n  setup: ./setup.sh\nenvironmentRecipes:\n  - id: dev-build\n    name: dev-build (Hetzner, SSH)\n    create: ./scripts/orca-vm/dev-build-create.sh\n  - id: dev-host-2\n    name: "dev-host-2 (Hetzner, SSH)"\n    create: ./scripts/orca-vm/dev-host-2-create.sh\n  - id: bare\n    create: ./x.sh\nother:\n  - id: not-a-recipe\n`
+const STORE = '/home/user/.config/ndev/remote.json'
 const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A fake engine: the project is acme/widgets at /proj, and Orca's saved servers are `servers` (the test may change
@@ -24,8 +24,8 @@ function engine(on: On, servers: { id: string; name: string }[] = [{ id: 'aa11-x
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'remote-session' }))
   on('prompt.compose', () => ({ sections: [] }))
-  on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: files.has(e.path) || e.path.startsWith('/home/neil/dev-wiki') }))
+  on('env.get', () => ({ value: '/home/user' }))
+  on('fs.exists', (_, e) => ({ value: files.has(e.path) || e.path.startsWith('/home/user/dev-wiki') }))
   on('fs.read', (_, e) => ({ value: files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => { files.set(e.path, e.text); return { value: undefined } })
   on('ui.toast', () => ({ value: undefined }))
@@ -179,12 +179,12 @@ test('with no saved server for a name that orca.yaml has a recipe for, the refus
   w.files.set(`${PRIMARY}/orca.yaml`, ORCA_YAML)
   await start($)
 
-  const text = await remote($, 'orca-dev-2')
-  expect(text).toMatch(/Orca has no saved server for "orca-dev-2" yet/)
-  expect(text).toMatch(/\/primary\/orca\.yaml has the environmentRecipes entry orca-dev-2/)
-  expect(text).toMatch(/saves its server \("orca-dev-2 VM <id>"\) only when a workspace is made on the recipe in the Orca app/)
+  const text = await remote($, 'dev-host-2')
+  expect(text).toMatch(/Orca has no saved server for "dev-host-2" yet/)
+  expect(text).toMatch(/\/primary\/orca\.yaml has the environmentRecipes entry dev-host-2/)
+  expect(text).toMatch(/saves its server \("dev-host-2 VM <id>"\) only when a workspace is made on the recipe in the Orca app/)
   expect(text).toMatch(/The saved servers: dev-build VM 7dbce0aa \(7dbce0aa-1\)/)
-  expect(text).toContain('Repair: in the Orca app: New workspace, then Run on, then "orca-dev-2 (Hetzner, SSH)". Then run /dev remote orca-dev-2 again.')
+  expect(text).toContain('Repair: in the Orca app: New workspace, then Run on, then "dev-host-2 (Hetzner, SSH)". Then run /dev remote dev-host-2 again.')
   expect(text).not.toMatch(/orca skills get/)
   expect(w.saved()).toBeUndefined()
   // The list at column 0, a comment inside it, the name before the id, and a deeper name that is not the recipe's.
@@ -193,8 +193,8 @@ test('with no saved server for a name that orca.yaml has a recipe for, the refus
   // A recipe with no display name is shown by its id.
   expect(await remote($, 'bare')).toContain('then Run on, then "bare". Then run /dev remote bare again.')
   // Once the workspace is made, Orca has the server and the same command takes it.
-  w.servers.push({ id: 'ee55-v', name: 'orca-dev-2 VM 5e6f' })
-  expect(await remote($, 'orca-dev-2')).toMatch(/is now orca-dev-2 VM 5e6f \(ee55-v\)/)
+  w.servers.push({ id: 'ee55-v', name: 'dev-host-2 VM 5e6f' })
+  expect(await remote($, 'dev-host-2')).toMatch(/is now dev-host-2 VM 5e6f \(ee55-v\)/)
 })
 
 test('with no saved server and no recipe of that name, the refusal keeps the list and adds how to make a recipe', async ($, on) => {

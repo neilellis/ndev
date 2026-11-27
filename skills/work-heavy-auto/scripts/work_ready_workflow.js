@@ -843,7 +843,7 @@ function startPrompt(item) {
     '  you need from the reader, in three lines, BEFORE any evidence.',
     '- Never write "the <something> trap/gap/problem" for a thing you have not just defined. "The"',
     '  claims the reader already knows which one you mean. Say the thing itself.',
-    '- No noun stacks: "a corpus-wide role-accuracy figure" is not English. Unstack it with verbs.',
+    '- No noun stacks: "a suite-wide pass-rate figure" is not English. Unstack it with verbs.',
     '- Decisions get NUMBERED, LABELLED options so the reader can reply "2". Mark your recommendation.',
     '- Reference issues + PRs by BARE NUMBER (#1000). NEVER paste the title — it buries the sentence.',
     '- No coined jargon: no invented compounds or verbed nouns ("de-flake", "smoke it", "the ask"),',

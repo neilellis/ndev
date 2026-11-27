@@ -210,10 +210,10 @@ test('the guard denies the Walk agent the private values file, by name, in every
   const r = run({ agentIds: ['w'] })
   const withValues = { ...config, valuesFile: '.env.walk-docs' }
   const call = (tool: string, input: Record<string, unknown>) => guardCall(r, withValues, { tool, agentId: 'w', input })
-  for (const file of ['/repo/.neil-dev.env', '/main/lens/.neil-dev.env', '.neil-dev.env', '/repo/.env.walk-docs', '~/dev/lens/.env.walk-docs']) {
+  for (const file of ['/repo/.neil-dev.env', '/main/app/.neil-dev.env', '.neil-dev.env', '/repo/.env.walk-docs', '~/dev/app/.env.walk-docs']) {
     expect(call('Read', { file_path: file })).toMatch(/private values/)
   }
-  for (const command of ['cat /repo/.neil-dev.env', 'cat .neil-dev.env', 'head -1 ~/dev/lens/.neil-dev.env', 'cat /repo/.neil*', 'cat $HOME/x/.env.walk-*']) {
+  for (const command of ['cat /repo/.neil-dev.env', 'cat .neil-dev.env', 'head -1 ~/dev/app/.neil-dev.env', 'cat /repo/.neil*', 'cat $HOME/x/.env.walk-*']) {
     expect(call('Bash', { command })).toMatch(/private values/)
   }
   expect(call('Glob', { pattern: '**/.neil-dev.*', path: '/home/n/.walk-doc/r1/attempt-1' })).toMatch(/private values/)
@@ -551,7 +551,7 @@ test('the optional keys default to project-neutral values, and a bad value is re
 })
 
 test('the reader prompt is project-neutral: no machine tool, operating system or product is named', () => {
-  expect(WALK_SYSTEM_PROMPT).not.toMatch(/OrbStack|\borb\b|\bMac\b|NovusLens|Novus|\blens\b|quick-start|docker ps/)
+  expect(WALK_SYSTEM_PROMPT).not.toMatch(/OrbStack|\borb\b|\bMac\b|quick-start|docker ps/)
   expect(WALK_SYSTEM_PROMPT).toMatch(/On this computer never use sudo/)
   const plain = walkTask(run(), config)
   expect(plain).not.toMatch(/walk-r1-1|machine/i)

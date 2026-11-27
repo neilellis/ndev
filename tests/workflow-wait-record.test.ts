@@ -354,7 +354,7 @@ test('/flow off stops the tools and the reminders; on starts them again', async 
   expect(w.prompts.length).toBe(1)
 })
 
-// #661 in fcc-proto: /flow off answered "set-workflow exited 5 ... at revision 41, and this writer expected 40"
+// Regression: /flow off answered "set-workflow exited 5 ... at revision 41, and this writer expected 40"
 // and changed nothing, when the agent's own tool saved the record between the command's read and its write.
 test('/flow off reads the record again and turns the workflow off when another writer gets in first', async ($, on) => {
   const w = engine(on)
@@ -376,8 +376,8 @@ test('/flow off names its retries and the repair when another writer changes the
   expect(w.state()?.off).toBeUndefined()
 })
 
-// fcc-proto #465: /flow off found no record of this agent, so it turned the workflow off for the session and said
-// "no reminder comes". A later tool call made this session the owner of #465, and the turn-end reminder came back.
+// Regression: /flow off found no record of this agent, so it turned the workflow off for the session and said
+// "no reminder comes". A later tool call made this session the owner of an issue, and the turn-end reminder came back.
 test('/flow off for the session stops the reminders, also for a record that this session holds later', async ($, on) => {
   const w = engine(on, { wf: null })
   await start($, w)

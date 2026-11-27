@@ -329,7 +329,7 @@ function resizeWorld(t, extraWorkers = []) {
   const env = { PATH: root + ':' + process.env.PATH, HOME: root }
   writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ github: { repo: 'owner/one' } }))
   const type = (name, cores, memory, disk) => ({ name, cores, memory, disk, architecture: 'x86', deprecated: false, deprecation: null, prices: [{ location: 'fsn1', price_monthly: { net: '0', gross: String(cores * 2.5) } }] })
-  const box = { id: 901, name: 'orca-dev-2', status: 'running', primary_disk_size: 80, datacenter: { location: { name: 'fsn1' } } }
+  const box = { id: 901, name: 'dev-host-2', status: 'running', primary_disk_size: 80, datacenter: { location: { name: 'fsn1' } } }
   const db = join(root, 'world.json')
   writeFileSync(db, JSON.stringify({
     box, types: [type('cx33', 4, 8, 80), type('cx43', 8, 16, 160)], boxType: 'cx33', sent: [], starts: [], changes: [],
@@ -365,7 +365,7 @@ function resizeWorld(t, extraWorkers = []) {
     const fs = require('node:fs')
     const w = JSON.parse(fs.readFileSync(process.env.HOME + '/world.json'))
     const command = process.argv.at(-1)
-    if (process.argv.at(-2) !== 'orca@88.99.125.86' || w.box.status !== 'running') { console.error('ssh: connect refused'); process.exit(255) }
+    if (process.argv.at(-2) !== 'orca@198.51.100.86' || w.box.status !== 'running') { console.error('ssh: connect refused'); process.exit(255) }
     if (command.startsWith('curl -s http://169.254.169.254/')) return console.log(String(w.box.id))
     if (command.includes('handoff')) return console.log(w.sent.filter(id => command.includes(`paused ${id}`)).join('\n'))
     if (command !== 'true') { console.error('unexpected ssh ' + command); process.exit(9) }
@@ -378,7 +378,7 @@ function resizeWorld(t, extraWorkers = []) {
     const flag = name => (a.includes(name) ? a[a.indexOf(name) + 1] : undefined)
     const ok = result => console.log(JSON.stringify({ ok: true, result }))
     const sub = a.slice(0, 2).join(' ')
-    if (sub === 'environment list') return ok({ environments: [{ id: 'env-1', name: 'orca-dev-2' }] })
+    if (sub === 'environment list') return ok({ environments: [{ id: 'env-1', name: 'dev-host-2' }] })
     if (sub === 'orchestration run-list') return ok({ runs: flag('--environment') ? [{ id: 'srv-runs' }] : w.localRuns.map(id => ({ id })) })
     if (sub === 'orchestration worker-list' && flag('--environment')) {
       return ok({ workers: w.workers.map(x => ({ dispatchId: x.dispatchId, taskId: x.taskId, dispatchStatus: 'dispatched', resource: { worktreeId: x.worktree }, projection: { liveness: { verdict: 'live' } } })), page: { hasMore: false } })
@@ -411,7 +411,7 @@ function resizeWorld(t, extraWorkers = []) {
   for (const [name, fn] of [['hcloud', fakeHcloud], ['ssh', fakeSsh], ['orca', fakeOrca]]) writeFileSync(join(root, name), `#!/usr/bin/env node\n(${fn.toString()})()\n`, { mode: 0o755 })
   writeFileSync(join(root, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
   const resize = () => {
-    const p = spawnSync(binary, ['remote', 'resize', 'cx43', '--context', 'proj', '--server', 'env-1', '--ssh', 'orca@88.99.125.86', '--yes', '--json'], { cwd: root, env, encoding: 'utf8' })
+    const p = spawnSync(binary, ['remote', 'resize', 'cx43', '--context', 'proj', '--server', 'env-1', '--ssh', 'orca@198.51.100.86', '--yes', '--json'], { cwd: root, env, encoding: 'utf8' })
     return { status: p.status, ...JSON.parse(p.stdout) }
   }
   return { resize, world: () => JSON.parse(readFileSync(db)) }
@@ -441,7 +441,7 @@ test('remote resize resumes each paused worker in its worktree after the change 
   assert.equal(a[a.indexOf('--model') + 1], 'opus')
   assert.match(a[a.indexOf('--spec') + 1], /^Write the docs for #772\.[\s\S]*Resume from ~\/handoff\/772\.md/)
   const message = result.error.message
-  assert.match(message, /step 5 \(start the workers again\) failed: orca-dev-2 is now cx43, but 1 of 2 workers did not start again/)
+  assert.match(message, /step 5 \(start the workers again\) failed: dev-host-2 is now cx43, but 1 of 2 workers did not start again/)
   assert.match(message, /d-e \(Fix login\): .*agent_launch_failed at launch \(dispatch new-e\)/)
   assert.match(message, /Repair: orca orchestration worker-start --spec/)
   assert.match(message, /Started again:\n {2}d-a -> new-a/)

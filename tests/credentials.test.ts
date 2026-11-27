@@ -29,8 +29,8 @@ const engine = (on: On, opts: { statuses: (Status | { exitCode: number; stderr: 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('prompt.compose', () => ({ sections: [] }))
   on('prompt.submit', (_, e) => e)
-  on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || e.path === `${ROOT}/.ndev-inited` }))
+  on('env.get', () => ({ value: '/home/user' }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/user/dev-wiki') || e.path === `${ROOT}/.ndev-inited` }))
   on('fs.read', () => ({ value: '' }))
   on('fs.write', () => ({ value: undefined }))
   on('ui.toast', (_, e) => {

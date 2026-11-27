@@ -51,7 +51,7 @@ const TYPE_SCALE = [
 /** The live type ladder, each level at its real size. */
 export function TypeScale() {
   return (
-    <div className="spec-typescale nv">
+    <div className="spec-typescale ds">
       {TYPE_SCALE.map((t) => (
         <div className="spec-typescale-row" key={t.label}>
           <div className="spec-meta"><strong>{t.label}</strong><br />{t.note}</div>
@@ -63,7 +63,7 @@ export function TypeScale() {
               lineHeight: "var(--lh-heading)",
             }}
           >
-            Strategic insight. <em style={{ color: "var(--text-accent)" }}>Lasting impact.</em>
+            Clear strategy. <em style={{ color: "var(--text-accent)" }}>Practical results.</em>
           </span>
         </div>
       ))}

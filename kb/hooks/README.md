@@ -72,7 +72,7 @@ Each hook is opt-in per project. Add a `quality` key to `.ndev.json` at the proj
   "quality": {
     "editedFileGuards":    { "venv": ".venv" },
     "precheckReminder":    { "command": "./scripts/precheck.sh" },
-    "subscriptionWarning": { "gateVar": "NEXTGEN_ALLOW_CLAUDE_CLI" },
+    "subscriptionWarning": { "gateVar": "ALLOW_CLAUDE_CLI" },
     "worktreeSubmodules":  { "paths": [".claude/agents"] }
   }
 }

@@ -30,8 +30,8 @@ const engine = (
   on('clock.every', () => new Promise(() => {}))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('prompt.compose', () => ({ sections: [] }))
-  on('env.get', () => ({ value: '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) }))
+  on('env.get', () => ({ value: '/home/user' }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/user/dev-wiki') || files.has(e.path) }))
   on('fs.read', (_, e) => ({ value: files.get(e.path) ?? '' }))
   on('fs.write', (_, e) => {
     files.set(e.path, e.text)

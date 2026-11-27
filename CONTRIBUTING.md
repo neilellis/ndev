@@ -1,6 +1,6 @@
 # Contributing to ndev
 
-This repository holds the ndev CLI and installer, plus retained Claude Code plugin assets. The maintained Claude Code plugin is in `neilellis/ndev-plugin`. Read `README.md` first.
+This repository holds the ndev CLI, installer, skills, scripts, and retained Claude Code plugin assets. Read `README.md` first.
 
 - Text here is project-neutral. A fact about one project goes in that project's wiki, not here.
 - A helper that two or more skills, agents or hooks use goes in `scripts/<area>/`, with its tests in

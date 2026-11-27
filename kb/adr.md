@@ -88,7 +88,7 @@ What changes in code, tests and docs, and what stays the same.
 
 `records.mjs check` ignores dotfiles, folders and files that are not markdown. It fails a record in the old format (`**Status:**` line, `# NNNN —` title) and names the rewrite. It fails a bad file name, a duplicate number, a status that is not one of the three, a `Superseded by` that names no record, and a record that is not `Proposed` and has an empty field or section. Run it in the project's checks.
 
-A project can go further with a guard. The guard fails a change to a governed file (the North Star, the requirements, the specification) unless the same change adds or edits a record. The fcc-proto guard is the model: `scripts/ci/adr-guard.sh` in [TathataSystems/fcc pull request 1706](https://github.com/TathataSystems/fcc/pull/1706).
+A project can go further with a guard script (for example `scripts/ci/adr-guard.sh`). The guard fails a change to a governed file (the North Star, the requirements, the specification) unless the same change adds or edits a record:
 
 - It reads the whole branch against the base.
 - It counts no deleted record.

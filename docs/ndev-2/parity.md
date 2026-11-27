@@ -1,6 +1,6 @@
 # ndev 2.0 parity list
 
-The source paths are relative to `neilellis/ndev-plugin` at commit `b6e2547a66ae63c87acf86857102a2b09f92802f`, except where a row names the Orca plugin. The MCP inventory comes from the registration arrays. The command and hook inventory comes from the registered handlers. The skill and agent inventory comes from files with their entry definitions.
+The source paths are relative to the 0.x Claude Code plugin baseline, except where a row names the Orca plugin. The MCP inventory comes from the registration arrays. The command and hook inventory comes from the registered handlers. The skill and agent inventory comes from files with their entry definitions.
 
 The [spec](spec.md#work-items-and-proof) links the nine sub-issues. This work belongs to [epic #64](https://github.com/neilellis/ndev/issues/64). Tests in this list are acceptance cases. A test link names the suite that ran for the stated behavior. Rows marked **Drop** give the reason and the test of the replacement or removal.
 

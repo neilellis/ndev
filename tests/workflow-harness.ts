@@ -129,7 +129,7 @@ export const engine = (on: On, opts: Opts = {}) => {
   on('prompt.read', () => ({ value: { text: s.draft, cursor: 0 } }))
   on('prompt.submit', (_, e) => { if (s.promptFails) throw new Error('refused by the host'); prompts.push(e.text); return { text: e.text } })
   on('agent.list', () => ({ value: s.agents }) as never)
-  on('env.get', (_, e) => ({ value: s.env[e.name] ?? (e.name === 'HOME' ? '/home/neil' : e.name === 'ORCA_WORKSPACE_ID' && s.orcaOn ? 'workspace-1' : undefined) }) as never)
+  on('env.get', (_, e) => ({ value: s.env[e.name] ?? (e.name === 'HOME' ? '/home/user' : e.name === 'ORCA_WORKSPACE_ID' && s.orcaOn ? 'workspace-1' : undefined) }) as never)
   const guide = (path: string) => {
     if (path.endsWith('/kb/workflow.md')) return opts.guide !== false ? '# The guide' : undefined
     const skill = /\/skills\/(work-light|work-heavy)\/SKILL\.md$/.exec(path)
@@ -138,7 +138,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     return undefined
   }
   const isFolder = (path: string) => [...files.keys()].some(k => k.startsWith(`${path}/`))
-  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/neil/dev-wiki') || files.has(e.path) || isFolder(e.path) || guide(e.path) !== undefined }))
+  on('fs.exists', (_, e) => ({ value: e.path.startsWith('/home/user/dev-wiki') || files.has(e.path) || isFolder(e.path) || guide(e.path) !== undefined }))
   on('fs.list', (_, e) => ({ value: [...files.keys()].filter(k => k.startsWith(`${e.path}/`) && !k.slice(e.path.length + 1).includes('/')).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => {
     const answer = () => {
@@ -197,7 +197,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     }
     if (a[0] === 'git') {
       // Another repository on this computer, and a path that is not a repository.
-      if (a[1] === '-C' && a[2]?.startsWith('/home/neil/dev-wiki')) return ok('/home/neil/dev-wiki/.git\n/home/neil/dev-wiki/.git\n')
+      if (a[1] === '-C' && a[2]?.startsWith('/home/user/dev-wiki')) return ok('/home/user/dev-wiki/.git\n/home/user/dev-wiki/.git\n')
       if (a[1] === '-C' && a[2] === '/nowhere') return ok('', 128, 'fatal: cannot change to /nowhere')
       if (a[1] === '-C' && a[2]?.startsWith('/helper-wt')) return ok('/main/.git/worktrees/helper\n/main/.git\n')
       if (a[1] === '-C' && a[2] === '/main') return ok('/main/.git\n/main/.git\n')

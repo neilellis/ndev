@@ -248,7 +248,7 @@ test('waitForProcessEnd ends when ps no longer lists the pid, or lists a zombie'
   expect(w.s.probes.length).toBe(1)
 })
 
-// fcc-proto, load 120-190 on 10 cores: each 2 s slice of a pause cost the hook about 100-230 ms of its own ten
+// Under heavy load (120-190 on 10 cores): each 2 s slice of a pause cost the hook about 100-230 ms of its own ten
 // seconds, so a wait with a timeout of 1200 s stopped after 1-4 checks. A large record makes each read of it slow,
 // and that time is the hook's own, as in the test above. How slow depends on the computer and its load, so the
 // test sizes the record for about 60 ms a read. The wait spaces its pauses so that its own time lasts.

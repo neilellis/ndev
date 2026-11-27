@@ -66,8 +66,8 @@ If there is none, say so in one line. Do not invent a lesson to fill the review.
 ## Promote
 
 A lesson that has held in two or more repositories belongs in the plugin. Copy it into the
-matching page in the plugin's `kb/` on a branch of the plugin repository
-(`~/dev/ndev`, GitHub `neilellis/ndev`), bump the version in
+matching page in the plugin's `kb/` on a branch of the `ndev` repository
+(GitHub `neilellis/ndev`), bump the version in
 `.claude-plugin/plugin.json`, and open a PR. A human merges it. Do this only when the user asks,
 or as a suggestion at the end of a `/learn` review.
 

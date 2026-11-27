@@ -56,6 +56,10 @@ Bad news is short. State it, state the fix or the choice, and stop.
 
 End with the single next action and its owner. If it is theirs, make it one word to answer. If it is yours, say what you will do next.
 
+## Credit
+
+Adapted from [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd) by Ayoub Ghriss (MIT License).
+
 ## The workflow
 
 While a workflow runs, this skill is one step of the current stage. Commit each file that it changes with `mcp__ndev__checkpoint`, and read the next step with `mcp__ndev__status`. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`.

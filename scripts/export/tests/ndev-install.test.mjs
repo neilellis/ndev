@@ -389,7 +389,7 @@ test('skill discovery has one entry for each consolidated task in both harnesses
 
 test('the installer ships ndev-ci-server with its scripts and example config, executable, and leaves its tests out', t => {
   const { home, env, install } = fixture(t)
-  const shipped = ['SKILL.md', 'scripts/config.sh', 'scripts/provision.sh', 'scripts/sizing.sh', 'scripts/verify-server.sh', 'scripts/register-runner.sh', 'scripts/runner-env.sh', 'scripts/runner-sweep.sh', 'scripts/docker-sweep.sh', 'scripts/docker-prepull.sh', 'examples/fcc-analytics.conf', 'examples/fcc-ci-images.txt']
+  const shipped = ['SKILL.md', 'scripts/config.sh', 'scripts/provision.sh', 'scripts/sizing.sh', 'scripts/verify-server.sh', 'scripts/register-runner.sh', 'scripts/runner-env.sh', 'scripts/runner-sweep.sh', 'scripts/docker-sweep.sh', 'scripts/docker-prepull.sh', 'examples/multi-repo.conf', 'examples/ci-images.txt']
   for (const [profile, skillsDir] of [['claude', join(env.CLAUDE_CONFIG_DIR, 'skills')], ['codex', join(home, '.agents/skills')]]) {
     const { files } = install(profile, '--dry-run')
     for (const path of shipped) assert.ok(files.includes(join(skillsDir, 'ndev-ci-server', path)), `${profile} does not install ndev-ci-server/${path}`)

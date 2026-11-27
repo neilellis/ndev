@@ -3,15 +3,14 @@ message: "An issue or pull request is a record, not an actor — '%s'. Name the 
 level: error
 ignorecase: true
 # An issue, pull request or commit given a verb of thinking, deciding or perceiving.
-# "Pull request #998 read the clock" / "#937 assumed the first without testing it".
+# "Pull request #41 read the clock" / "#40 assumed the first without testing it".
 # The reader has to translate the shorthand back into who or what actually did the
 # thing before they can check it, and the answer is usually short: "the watcher in
-# #998 read the clock", "the agent who filed #937 assumed the first".
+# #41 read the clock", "the agent who filed #40 assumed the first".
 #
 # Sibling of AnthropomorphicCode, which covers CODE and named libraries. Kept separate
 # because the fix is different: there the answer is what ran, here it is who wrote it.
-# Deliberately NOT matching plain reporting verbs — "#1044 says", "#998 adds a flag",
-# "#937 reports 6 failures" are all ordinary English for a record.
-# (Cold reader on the #937 plan, 2026-08-03, which vale had passed clean.)
+# Deliberately NOT matching plain reporting verbs — "#42 says", "#41 adds a flag",
+# "#40 reports 6 failures" are all ordinary English for a record.
 tokens:
   - ((pull request|PR|issue|commit) )?#\d+ ((never|not|also|then|simply|just|already|correctly|wrongly) )*(assumed|assumes|believed|believes|thought|thinks|knew|knows|decided|decides|chose|chooses|noticed|notices|realised|realises|realized|realizes|wanted|wants|remembered|remembers|forgot|forgets|ignored|ignores|understood|understands|meant|read|reads|measured|measures|looked|looks|tried|tries)

@@ -1291,9 +1291,9 @@ function sync(root, ids) {
 
 function author(root, id, names) {
   const people = names.map((name) => name.trim());
-  if (!/^REQ-\d{4}$/.test(id ?? "") || !people.length || people.some((name) => !name)) throw new Usage(`author needs <REQ-NNNN> and one or more names, for example: author REQ-0001 "Suriya Khan" "Carter Dillard"`);
+  if (!/^REQ-\d{4}$/.test(id ?? "") || !people.length || people.some((name) => !name)) throw new Usage(`author needs <REQ-NNNN> and one or more names, for example: author REQ-0001 "Alex Rivera" "Jordan Lee"`);
   const comma = people.find((name) => name.includes(","));
-  if (comma) throw new Usage(`"${comma}" has a comma. Give each name as its own argument, for example: author ${id} "Suriya Khan" "Carter Dillard"`);
+  if (comma) throw new Usage(`"${comma}" has a comma. Give each name as its own argument, for example: author ${id} "Alex Rivera" "Jordan Lee"`);
   const entry = recordEntry(root, id);
   const tracked = spawnSync("git", ["-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"], { encoding: "utf8" }).status === 0;
   const base = tracked ? baseRecords(root, "HEAD").find((old) => old.id === id && old.front.data) : undefined;
