@@ -111,7 +111,7 @@ async function inBaseTree(base, work) {
   }
 }
 
-function repository() {
+export function repository() {
   if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY
   const url = run('git', ['remote', 'get-url', 'origin']).stdout.trim()
   const match = url.match(/github\.com[:/]([^/]+\/[^/]+?)(\.git)?$/)

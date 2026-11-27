@@ -9,11 +9,15 @@ export type DevServer = {
 }
 export type DevServers = Record<string, DevServer>
 
-const PROOF_CHECKS = ['requirements', 'code', 'visual', 'tests', 'model', 'docs', 'lessons'] as const
+export const PROOF_CHECKS = ['requirements', 'code', 'visual', 'tests', 'model', 'docs', 'lessons'] as const
 export type ProofCheck = (typeof PROOF_CHECKS)[number]
 const PROOF_SCHEMES = ['light', 'dark'] as const
 export type Viewport = { name: string; width: number; height: number }
 export type ProofTiers = { small?: number; large?: number }
+const LIMIT_TIERS = ['standard', 'complex'] as const
+const LIMIT_KEYS = ['turns', 'budget']
+export type AgentLimit = { turns: number; budget: number }
+export type ProofLimits = Record<(typeof LIMIT_TIERS)[number], AgentLimit>
 
 export type Proof = {
   enabled?: boolean
@@ -22,6 +26,7 @@ export type Proof = {
   schemes?: (typeof PROOF_SCHEMES)[number][]
   label?: string
   tiers?: ProofTiers
+  limits?: Partial<Record<(typeof LIMIT_TIERS)[number], Partial<AgentLimit>>>
 }
 
 export type ProofSettings = {
@@ -31,11 +36,12 @@ export type ProofSettings = {
   schemes: (typeof PROOF_SCHEMES)[number][]
   label: string
   tiers: Required<ProofTiers>
+  limits: ProofLimits
 }
 
 const DEV_SERVER_NAME = /^[A-Za-z0-9._-]+$/
 const SERVER_KEYS = ['command', 'cwd', 'port', 'ready', 'env', 'routes', 'timeout']
-const PROOF_KEYS = ['enabled', 'checks', 'viewports', 'schemes', 'label', 'tiers']
+const PROOF_KEYS = ['enabled', 'checks', 'viewports', 'schemes', 'label', 'tiers', 'limits']
 const LABEL = /^[^,\s][^,]{0,49}$/
 
 const DEFAULT_PROOF: ProofSettings = {
@@ -49,6 +55,7 @@ const DEFAULT_PROOF: ProofSettings = {
   schemes: ['light', 'dark'],
   label: 'no-proof',
   tiers: { small: 50, large: 400 },
+  limits: { standard: { turns: 40, budget: 3 }, complex: { turns: 100, budget: 10 } },
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -79,6 +86,19 @@ export function devServersError(raw: unknown): string | undefined {
   return undefined
 }
 
+function limitsError(raw: unknown): string | undefined {
+  if (!isObject(raw)) return `"proof.limits" is ${JSON.stringify(raw)}; use { "standard": { "turns": 40, "budget": 3 } }; the tiers are ${list(LIMIT_TIERS)}`
+  const unknown = Object.keys(raw).filter(key => !(LIMIT_TIERS as readonly string[]).includes(key))
+  if (unknown.length > 0) return `"proof.limits" has the unknown tier ${unknown.map(key => `"${key}"`).join(', ')}; the tiers are ${list(LIMIT_TIERS)}`
+  for (const [tier, limit] of Object.entries(raw)) {
+    const at = `"proof.limits.${tier}" is ${JSON.stringify(limit)}`
+    if (!isObject(limit) || Object.keys(limit).some(key => !LIMIT_KEYS.includes(key))) return `${at}; the keys are ${list(LIMIT_KEYS)}`
+    if (limit.turns !== undefined && (!Number.isInteger(limit.turns) || (limit.turns as number) < 1)) return `${at}; use turns a whole number from 1`
+    if (limit.budget !== undefined && (typeof limit.budget !== 'number' || !Number.isFinite(limit.budget) || limit.budget <= 0)) return `${at}; use budget in US dollars above 0, such as 3`
+  }
+  return undefined
+}
+
 export function proofError(raw: unknown): string | undefined {
   if (!isObject(raw)) return '"proof" must be an object such as { "enabled": true }'
   const extra = Object.keys(raw).filter(key => !PROOF_KEYS.includes(key))
@@ -105,6 +125,7 @@ export function proofError(raw: unknown): string | undefined {
     const large = (tiers.large as number | undefined) ?? DEFAULT_PROOF.tiers.large
     if (small >= large) return shape
   }
+  if (raw.limits !== undefined) return limitsError(raw.limits)
   return undefined
 }
 
@@ -117,5 +138,9 @@ export function proofSettings(raw: Proof | undefined): ProofSettings {
     schemes: proof.schemes ?? DEFAULT_PROOF.schemes,
     label: proof.label ?? DEFAULT_PROOF.label,
     tiers: { ...DEFAULT_PROOF.tiers, ...proof.tiers },
+    limits: {
+      standard: { ...DEFAULT_PROOF.limits.standard, ...proof.limits?.standard },
+      complex: { ...DEFAULT_PROOF.limits.complex, ...proof.limits?.complex },
+    },
   }
 }

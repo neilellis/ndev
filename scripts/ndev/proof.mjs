@@ -3,6 +3,8 @@ import { join } from 'node:path'
 
 import { argsFor, checked, CliError, gitWorkspace, releaseRoot, run } from './common.mjs'
 import { evidence } from './proof-evidence.mjs'
+import { report } from './proof-report.mjs'
+import { proofRun } from './proof-run.mjs'
 import { snapshots } from './proof-snapshots.mjs'
 import { CODE_FILE, DOCS_SITES, REQUIREMENTS, UI_FILE } from './proof-paths.mjs'
 import { proofSettingsAt } from './proof-settings.mjs'
@@ -226,6 +228,14 @@ export function runProof([verb, ...argv]) {
   if (verb === 'snapshots') {
     const { values } = argsFor(argv, { pr: { type: 'string' }, routes: { type: 'string' }, out: { type: 'string' }, base: { type: 'string' }, local: { type: 'boolean' } }, repair)
     return snapshots(gitWorkspace().root, values)
+  }
+  if (verb === 'report') {
+    const { values } = argsFor(argv, { plan: { type: 'string' }, verdict: { type: 'string' }, evidence: { type: 'string' }, grid: { type: 'string' }, pr: { type: 'string' }, local: { type: 'boolean' } }, repair)
+    return report(gitWorkspace().root, values)
+  }
+  if (verb === 'run') {
+    const { values } = argsFor(argv, { pr: { type: 'string' }, local: { type: 'boolean' }, base: { type: 'string' }, out: { type: 'string' }, body: { type: 'string' } }, repair)
+    return proofRun(gitWorkspace().root, values)
   }
   throw new CliError(2, `Unknown proof command ${JSON.stringify(verb)}.`, { repair: 'ndev proof --help' })
 }
