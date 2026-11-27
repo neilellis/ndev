@@ -154,7 +154,7 @@ function checksFor({ settings, short, tier, stats, root }) {
   const hasServers = Object.keys(settings.devServers).length > 0
   const reasons = {
     requirements: !exists(root, 'HEAD', 'docs/formal') ? 'no docs/formal' : tier === 'trivial' ? 'trivial tier' : undefined,
-    code: tier === 'trivial' && stats.docsOnly ? 'trivial tier: docs-only change' : undefined,
+    code: tier !== 'trivial' ? undefined : stats.docsOnly ? 'trivial tier: docs-only change' : 'trivial tier: no agent reads the diff',
     visual: stats.ui.length === 0 ? 'no UI files changed' : !hasServers ? `no devServers in .ndev.json at ${short}` : undefined,
     tests: stats.code.length === 0 ? 'no code files changed' : undefined,
     model: tier === 'complex' ? undefined : `only the complex tier needs a model; this change is ${tier}`,

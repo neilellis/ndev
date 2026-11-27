@@ -161,7 +161,7 @@ const groups = {
       plan: '--base <ref> [--pr <n> | --event <file>] [--proven <sha>]',
       evidence: '--plan <file> [--body <file>]',
       snapshots: '--out <dir> (--pr <n> | --local) [--routes <list>] [--base <ref>]',
-      report: '--plan <file> [--verdict <file>] [--evidence <file>] [--grid <file>] (--pr <n> | --local)',
+      report: '--plan <file> [--verdict <file> --evidence <file>] [--grid <file>] (--pr <n> | --local)',
       run: '(--pr <n> | --local) [--base <ref>] [--out <dir>] [--body <file>]',
     },
   },

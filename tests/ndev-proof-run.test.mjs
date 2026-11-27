@@ -73,6 +73,7 @@ test('a trivial change is judged from the evidence alone, with no agent', t => {
   assert.equal(result.json.result.checks.tests.state, 'pass')
   assert.equal(result.json.result.checks.code.state, 'skipped')
   assert.match(result.json.result.checks.code.reason, /trivial tier: no agent/)
+  assert.equal(JSON.parse(readFileSync(join(repo.base, 'out/verdict.json'), 'utf8')).checks.code, undefined)
   assert.ok(existsSync(join(repo.base, 'out/verdict.json')))
 })
 
@@ -97,6 +98,37 @@ test('a standard change runs the agent with the caps for its tier from the base 
   assert.equal(env.NDEV_PROOF_PLAN, join(repo.base, 'out/plan.json'))
   assert.equal(env.NDEV_PROOF_EVIDENCE, join(repo.base, 'out/evidence.json'))
   assert.equal(result.json.result.agent.turns, 4)
+  assert.equal(argv[argv.indexOf('--setting-sources') + 1], 'user')
+  assert.ok(argv.includes('--strict-mcp-config'))
+  assert.ok(!argv.includes('--bare'))
+  const tools = argv[argv.indexOf('--allowedTools') + 1].split(',')
+  assert.ok(tools.includes(`Write(/${join(repo.base, 'out/verdict.json')})`), tools.join(' '))
+  assert.ok(!tools.includes('Write'))
+  assert.ok(tools.every(tool => !tool.startsWith('Bash(node') || tool.includes('proof report --local')), tools.join(' '))
+  assert.ok(tools.filter(tool => tool.startsWith('Bash(git')).every(tool => !/HEAD:\*\)$/.test(tool)), tools.join(' '))
+})
+
+test('with an API key the agent runs bare, so the pull request cannot add hooks or instructions', t => {
+  const repo = repository(t, null, standard)
+  const result = proofRun(repo, { env: { ANTHROPIC_API_KEY: 'test-key' } })
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.ok(result.agent.argv.includes('--bare'))
+})
+
+test('in GitHub Actions a standard change needs ANTHROPIC_API_KEY, so the agent never reads the pull request instructions', t => {
+  const repo = repository(t, null, standard)
+  const result = proofRun(repo, { env: { GITHUB_ACTIONS: 'true' } })
+  assert.equal(result.status, 2, JSON.stringify(result.json))
+  assert.match(result.json.error.message, /ANTHROPIC_API_KEY/)
+  assert.equal(result.agent, null)
+})
+
+test('a stale verdict in --out is not read when the agent writes none', t => {
+  const repo = repository(t, null, standard)
+  assert.equal(proofRun(repo).status, 0)
+  const result = proofRun(repo, { mode: 'silent' })
+  assert.equal(result.status, 1, JSON.stringify(result.json))
+  assert.match(result.json.error.details.checks.code.reason, /wrote no verdict/)
 })
 
 for (const [mode, says] of [

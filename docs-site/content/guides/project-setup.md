@@ -157,10 +157,10 @@ The body comes from `--body`, else from `gh` for the plan's pull request, else f
 
 The command stops with an error when a route does not load, a server does not start, or the screenshot tool cannot run. The message names the server, the route and the end of the server log. The screenshots need Playwright where the server runs (`npm i -D playwright`, then `npx playwright install chromium`).
 
-`ndev proof report --plan <file> [--verdict <file>] [--evidence <file>] [--grid <file>] (--pr <n> | --local)` checks a verdict and posts the result:
+`ndev proof report --plan <file> [--verdict <file> --evidence <file>] [--grid <file>] (--pr <n> | --local)` checks a verdict and posts the result:
 
-1. It refuses a verdict that does not match the plan, lists every problem, and exits 2. A check whose evidence is `not-run` cannot pass. A skipped plan needs no verdict.
-2. With `--pr <n>`, it writes one comment on the pull request: a table of the checks A to G with each state and its evidence, the tier with its reasons, and the snapshot grid. The next report edits the same comment. It edits only a comment of the same user, `github-actions[bot]` in GitHub Actions.
+1. It refuses a verdict that does not match the plan, lists every problem, and exits 2. A check that the plan runs cannot be `skipped`. A pass or a fail needs at least one evidence item. A check whose evidence is `not-run` cannot pass. A skipped plan needs no verdict and no evidence; any other plan needs both.
+2. With `--pr <n>`, it writes one comment on the pull request: a table of the checks A to G with each state and its evidence, the tier with its reasons, and the snapshot grid. The agent's text is escaped, so it cannot add HTML, images or links, or mention people. When the grid makes the comment too long, the comment leaves the grid out. The next report edits the same comment. It edits only a comment of the same user, `github-actions[bot]` in GitHub Actions.
 3. It sets the `ndev proof` check run on the plan's commit: `success`, `failure`, or `skipped` for a skipped plan. The token needs `checks: write`.
 4. It exits 1 when a check that the plan runs fails or did not run.
 
@@ -170,9 +170,11 @@ With `--local`, it posts nothing and prints the comment.
 
 | Tier | Verdict |
 | --- | --- |
-| `trivial` | From the evidence, with no agent: `present` and `not-needed` pass, `missing` and `empty` fail. The code check is skipped. |
+| `trivial` | From the evidence, with no agent: `present` and `not-needed` pass, `missing` and `empty` fail. The plan skips the code check. |
 | `standard` | The Proof agent (`claude`, or `NDEV_PROOF_AGENT`) reads the diff, with the `ndev-proof` skill, inside the `limits` of the tier. |
 | `complex` | The agent also reads the code paths that the change touches, and the Quint models. |
+
+The agent runs with `--setting-sources user --strict-mcp-config`, and with `--bare` when `ANTHROPIC_API_KEY` is set, so the pull request cannot add settings, hooks or MCP servers. In GitHub Actions, the run needs `ANTHROPIC_API_KEY` for the standard and complex tiers, so that the agent never reads the instructions of the pull request. The agent can write only the verdict file. It can run only its own self-check and a few exact `git diff` and `git log` commands against the base. The run deletes an old verdict in `--out` before it starts.
 
 When the agent fails, stops at a limit, or writes no valid verdict, each check that it judges is `not-run`, and the run fails.
 

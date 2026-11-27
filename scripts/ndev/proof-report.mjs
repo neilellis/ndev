@@ -34,12 +34,13 @@ function checkProblems(check, entry, planned, found) {
   const problems = Object.keys(entry).filter(key => !CHECK_KEYS.includes(key)).map(key => `${at}" has the unknown key "${key}"; the keys are ${CHECK_KEYS.join(', ')}`)
   if (!STATES.includes(entry.state)) return [...problems, `${at}.state" is ${JSON.stringify(entry.state)}; use one of ${STATES.join(', ')}`]
   if (planned?.action !== 'run' && entry.state !== 'skipped') problems.push(`${at}.state" is "${entry.state}", and the plan skips it (${planned?.reason ?? 'not in the plan'}); use "skipped" or leave it out`)
+  if (planned?.action === 'run' && entry.state === 'skipped') problems.push(`${at}.state" is "skipped", and the plan runs it; use pass, fail or not-run`)
   if (entry.state !== 'pass' && (typeof entry.reason !== 'string' || entry.reason.trim() === '')) problems.push(`${at}.reason" is missing; a ${entry.state} needs the reason in one sentence`)
   if (entry.reason !== undefined && typeof entry.reason !== 'string') problems.push(`${at}.reason" must be a string`)
   const evidence = entry.evidence ?? []
   if (!Array.isArray(evidence)) problems.push(`${at}.evidence" must be a list of { "text", "file", "line" }`)
   else {
-    if (entry.state === 'fail' && evidence.length === 0) problems.push(`${at}.evidence" is empty, and a fail needs at least one item`)
+    if ((entry.state === 'fail' || entry.state === 'pass') && evidence.length === 0) problems.push(`${at}.evidence" is empty, and a ${entry.state} needs at least one item`)
     evidence.forEach((item, index) => {
       const where = `${at}.evidence[${index}]`
       if (!isObject(item)) return problems.push(`${where}" must be an object such as { "text": "...", "file": "src/a.js", "line": 3 }`)
@@ -75,7 +76,12 @@ export function verdictProblems(verdict, plan, evidence) {
   return problems
 }
 
-const cell = text => String(text).replace(/\r?\n/g, ' ').replaceAll('|', '\\|').trim()
+const CELL_LIMIT = 1000
+const safe = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('@', '&#64;').replaceAll('[', '&#91;').replaceAll(']', '&#93;').replaceAll('!', '&#33;')
+const cell = text => {
+  const flat = safe(text).replace(/\r?\n/g, ' ').trim()
+  return (flat.length > CELL_LIMIT ? `${flat.slice(0, CELL_LIMIT)}…` : flat).replaceAll('|', '\\|')
+}
 const cite = item => `${item.text}${item.file ? ` (${item.file}${item.line ? `:${item.line}` : ''})` : ''}`
 
 function rowsOf(plan, verdict) {
@@ -92,13 +98,14 @@ function bodyOf(plan, verdict, rows, grid) {
   const detail = row => cell([row.reason, row.evidence.map(cite).join('; ')].filter(Boolean).join(': ') || '-')
   const lines = [MARKER, `## Proof of ${plan.head.slice(0, 12)}`, '']
   if (plan.skip) lines.push(`Proof skipped: ${plan.skip.reason}.`, '')
-  else if (verdict?.summary) lines.push(verdict.summary.trim(), '')
+  else if (verdict?.summary) lines.push(safe(verdict.summary.trim()).slice(0, CELL_LIMIT * 2), '')
   lines.push('| | Check | State | Detail |', '|---|---|---|---|')
   for (const row of rows) lines.push(`| ${LETTERS[row.check]} | ${NAMES[row.check]} | ${SHOWN[row.state]} | ${detail(row)} |`)
   lines.push('', `Tier: **${plan.tier}**: ${plan.reasons.join('; ')}. Base ${plan.base}, settings from ${plan.settings}.`)
-  if (grid) lines.push('', '<details><summary>Snapshots</summary>', '', grid.trim(), '', '</details>')
   const body = lines.join('\n')
-  return body.length <= COMMENT_LIMIT ? body : `${body.slice(0, COMMENT_LIMIT)}\n\n(The comment is cut at ${COMMENT_LIMIT} characters.)`
+  if (!grid) return body
+  const withGrid = [body, '', '<details><summary>Snapshots</summary>', '', grid.trim(), '', '</details>'].join('\n')
+  return withGrid.length <= COMMENT_LIMIT ? withGrid : `${body}\n\nThe snapshot grid is longer than ${COMMENT_LIMIT} characters, so it is not in this comment. Read it in the Proof files of the run.`
 }
 
 function gh(args, repair) {
@@ -152,7 +159,8 @@ export function report(root, values) {
   if (!plan.skip) {
     if (!values.verdict) throw new CliError(2, 'Give the verdict with --verdict <file>; only a skipped plan needs none.', { repair: `Write the verdict as ${VERDICT_GUIDE} says.` })
     verdict = readJson(values.verdict, 'verdict', `Write the verdict as ${VERDICT_GUIDE} says.`)
-    const evidence = values.evidence ? readJson(values.evidence, 'evidence', 'ndev proof evidence --plan plan.json --json > evidence.json') : null
+    if (!values.evidence) throw new CliError(2, 'Give the evidence with --evidence <file>, the output of ndev proof evidence --json, so a check whose evidence did not run cannot pass.', { repair: 'ndev proof evidence --plan plan.json --json > evidence.json' })
+    const evidence = readJson(values.evidence, 'evidence', 'ndev proof evidence --plan plan.json --json > evidence.json')
     const problems = verdictProblems(verdict, plan, evidence)
     if (problems.length > 0) throw new CliError(2, `The verdict ${values.verdict} has ${problems.length} problem${problems.length === 1 ? '' : 's'}:\n${problems.map(problem => `- ${problem}`).join('\n')}`, { repair: `Fix the verdict as ${VERDICT_GUIDE} says, then run ndev proof report again.`, details: { problems } })
   }

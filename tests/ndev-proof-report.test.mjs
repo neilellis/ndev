@@ -68,10 +68,12 @@ function write(base, name, value) {
   return file
 }
 
-function report(base, { plan = planOf(), verdict, evidence, grid, args = ['--pr', '5'], env = {} } = {}) {
+const EVIDENCE = { head: HEAD, evidence: {} }
+
+function report(base, { plan = planOf(), verdict, evidence = EVIDENCE, grid, args = ['--pr', '5'], env = {} } = {}) {
   const argv = ['proof', 'report', '--plan', write(base, 'plan.json', plan), ...args]
   if (verdict !== undefined) argv.push('--verdict', write(base, 'verdict.json', verdict))
-  if (evidence !== undefined) argv.push('--evidence', write(base, 'evidence.json', evidence))
+  if (evidence !== null) argv.push('--evidence', write(base, 'evidence.json', evidence))
   if (grid !== undefined) argv.push('--grid', write(base, 'grid.md', grid))
   const clean = { ...process.env }
   for (const name of ['GITHUB_ACTIONS', 'GITHUB_REPOSITORY', 'NDEV_PROOF_COMMENTER', 'FAKE_GH_CHECKS_403']) delete clean[name]
@@ -131,7 +133,6 @@ for (const [name, change, status] of [
   ['every planned check passes', {}, 0],
   ['a planned check fails', { tests: { state: 'fail', reason: 'no test of the new branch', evidence: [{ text: 'src/a.js has no test' }] } }, 1],
   ['a planned check did not run', { visual: { state: 'not-run', reason: 'the dev server did not start' } }, 1],
-  ['a planned check is skipped with a reason', { model: { state: 'skipped', reason: 'no state machine in this change' } }, 0],
 ]) {
   test(`the exit status is ${status} when ${name}`, t => {
     const base = setup(t)
@@ -168,7 +169,8 @@ test('a bad verdict lists every problem and exits 2', t => {
       visual: { state: 'not-run' },
       tests: { state: 'pass', evidence: [{ text: 'x', line: 2 }] },
       model: { state: 'pass', evidence: [{ text: 'x', file: 'a.qnt', line: 0 }] },
-      docs: { state: 'pass', extra: true },
+      docs: { state: 'pass', extra: true, evidence: [{ text: 'x' }] },
+      lessons: { state: 'skipped', reason: 'nothing to learn' },
       speed: { state: 'pass' },
     },
   }
@@ -185,9 +187,49 @@ test('a bad verdict lists every problem and exits 2', t => {
     '"checks.tests.evidence[0].line" needs a file',
     '"checks.model.evidence[0].line" is 0',
     '"checks.docs" has the unknown key "extra"',
-    '"checks.lessons" is missing, and the plan runs it',
+    '"checks.lessons.state" is "skipped", and the plan runs it',
   ]) assert.ok(message.includes(problem), `${message}\ndoes not say: ${problem}`)
   assert.match(result.json.error.repair, /skills\/proof\/references\/verdict\.md/)
+})
+
+test('a verdict with a check missing or a pass with no evidence is refused', t => {
+  const base = setup(t)
+  const verdict = passing(CHECKS.filter(check => check !== 'lessons'))
+  verdict.checks.code = { state: 'pass' }
+  const result = report(base, { verdict, args: ['--local'] })
+  assert.equal(result.status, 2)
+  assert.match(result.json.error.message, /"checks\.lessons" is missing, and the plan runs it/)
+  assert.match(result.json.error.message, /"checks\.code\.evidence" is empty, and a pass needs at least one item/)
+})
+
+test('a verdict without the evidence file is refused', t => {
+  const base = setup(t)
+  const result = report(base, { verdict: passing(), evidence: null, args: ['--local'] })
+  assert.equal(result.status, 2)
+  assert.match(result.json.error.message, /--evidence <file>/)
+})
+
+test('agent text cannot ping people, forge the marker or break the table', t => {
+  const base = setup(t)
+  const verdict = passing()
+  verdict.summary = 'All good @octocat <!-- ndev-proof --> </details>'
+  verdict.checks.code.evidence = [{ text: 'see <img src=x> and @team|x', file: 'src/a.js', line: 2 }]
+  const result = report(base, { verdict, args: ['--local'] })
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  const { body } = result.json.result
+  assert.equal(body.split('<!-- ndev-proof -->').length, 2)
+  assert.ok(!body.includes('@octocat') && !body.includes('@team') && !body.includes('<img'), body)
+  assert.match(body, /\| B \| Code \| ✅ pass \| see &lt;img src=x&gt; and &#64;team\\\|x \(src\/a\.js:2\) \|/)
+})
+
+test('agent text cannot render a remote image or a link', t => {
+  const base = setup(t)
+  const verdict = passing()
+  verdict.summary = 'Done ![x](https://evil.example/p.png) [click](https://evil.example)'
+  const result = report(base, { verdict, args: ['--local'] })
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  const { body } = result.json.result
+  assert.ok(!body.includes('![x]') && !body.includes('[click]'), body)
 })
 
 test('a check whose evidence did not run cannot pass', t => {
