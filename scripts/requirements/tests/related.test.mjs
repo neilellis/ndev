@@ -190,6 +190,10 @@ describe("related records in check", () => {
     assert.match(failed.stderr, /HTTP 500/);
     assert.match(failed.stderr, /failed on purpose/);
     assert.match(failed.stderr, /REQ-0001, REQ-0002, REQ-0003, REQ-0004/);
+    const reset = requirements(root, ["index"], { tag: "reset" });
+    assert.equal(reset.status, 1);
+    assert.match(reset.stderr, /POST http:\/\/127\.0\.0\.1:\d+\/reset\/v1\/embeddings for inputs 1 to 8 of 8 \(REQ-0001, REQ-0002, REQ-0003, REQ-0004\) answered HTTP 200, and its body could not be read: /);
+    assert.doesNotMatch(reset.stderr, /^\s+at /m);
     const first = indexed(root);
     assert.match(first.stdout, /^8 embedded, 0 kept, 0 removed; \d+ tokens, \$\d+\.\d+/m);
     const lines = readFileSync(path.join(root, INDEX), "utf8").split("\n");
@@ -297,6 +301,31 @@ describe("related records in check", () => {
     assert.equal(lines.filter((line) => /^  REQ-\d{4} \(shares src\/report\.js/.test(line)).length, 5);
     assert.ok(lines.includes("  and 6 more by shared trace: ndev requirements related REQ-0001 --json"), out.stdout);
     assert.match(out.stdout, /^  REQ-0013 \(statement similarity 0\.\d\d\)$/m);
+  });
+
+  it("shows a semantic match with all its reasons when it ranks past the trace records shown", () => {
+    const both = "- File: src/report.js\n- File: src/extra.js";
+    const fillers = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [String(i + 2).padStart(4, "0"), { statement: `Rule ${i + 2} holds.`, trace: both }]));
+    const root = repository(
+      {
+        "0001": { statement: "The report opens with the central finding.", trace: both },
+        ...fillers,
+        "0008": { statement: "Place the Verdict Ledger near the conclusion." },
+      },
+      { "src/extra.js": "export {}\n" },
+    );
+    indexed(root);
+    const out = requirements(root, ["related", "REQ-0001"]);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /^  and 1 more by shared trace: ndev requirements related REQ-0001 --json\n  REQ-0008 \(shares src\/report\.js \(Trace File here, Trace File in REQ-0008; 8 records trace it\); statement similarity 0\.\d\d\)\n/m);
+    assert.equal(out.stdout.split("\n").filter((line) => line.startsWith("  REQ-0008 ")).length, 1);
+  });
+
+  it("refuses an id that is not a record before it checks the records", () => {
+    const out = requirements(acceptance(), ["check", "REQ-0001", "REQ-9999"]);
+    assert.equal(out.status, 2, out.stderr);
+    assert.match(out.stderr, /REQ-9999 is not a record in docs\/formal\/requirements/);
+    assert.equal(out.stdout, "");
   });
 
   it("needs record ids or --base", () => {

@@ -474,6 +474,9 @@ function valid(root) {
 function check(root, ids, options) {
   const scoped = Boolean(ids.length || options.base);
   if (scoped) relatedIds(ids, "check");
+  const known = new Set(entries(root).filter((e) => NAME.test(e.file)).map((e) => e.id));
+  const unknown = ids.filter((id) => !known.has(id));
+  if (unknown.length) throw new Usage(`${unknown.join(", ")} ${unknown.length === 1 ? "is not a record" : "are not records"} in ${DIR}. Run: ${SCRIPT} search <term> to find the ID`);
   let count;
   try {
     count = valid(root).length;

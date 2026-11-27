@@ -63,8 +63,9 @@ function cosine(a, b) {
 
 function embed(inputs, labels, timeout) {
   const ran = spawnSync(process.execPath, [EMBED], { input: JSON.stringify({ model: MODEL, dimensions: DIMENSIONS, inputs, labels }), encoding: "utf8", timeout, maxBuffer: 1024 * 1024 * 1024 });
-  if (ran.error) return { error: `${EMBED} did not finish within ${timeout / 1000}s: ${ran.error.message}` };
-  if (ran.status !== 0) return { error: `${ran.stderr.trim() || ran.stdout.trim() || "no output"} (${EMBED} exited ${ran.status})` };
+  if (ran.error) return { error: `${EMBED} failed with ${ran.error.code ?? "an error"}${ran.error.code === "ETIMEDOUT" ? ` after ${timeout / 1000}s` : ""}: ${ran.error.message}` };
+  const ended = ran.signal ? `was killed by ${ran.signal}` : `exited ${ran.status}`;
+  if (ran.status !== 0) return { error: `${ran.stderr.trim() || ran.stdout.trim() || "no output"} (${EMBED} ${ended})` };
   try {
     const answer = JSON.parse(ran.stdout);
     if (!Array.isArray(answer.vectors) || answer.vectors.length !== inputs.length) throw new Error(`${answer.vectors?.length} vectors for ${inputs.length} inputs`);
@@ -169,7 +170,7 @@ function overlap(set, matchers, rarity) {
 }
 
 function sharedText(shared, id) {
-  const shown = shared.slice(0, SHARED_SHOWN).map((s) => `${s.item} (${s.here} here, ${s.there} in ${id}; ${s.records === 1 ? "1 record traces" : `${s.records} records trace`} it)`);
+  const shown = shared.slice(0, SHARED_SHOWN).map((s) => `${s.item} (${s.here} here, ${s.there} in ${id}; ${s.records} records trace it)`);
   const more = shared.length - shown.length;
   return `shares ${shown.join(", ")}${more ? ` and ${more} more` : ""}`;
 }
@@ -211,14 +212,18 @@ function ordered(candidates) {
 function listing(id, listed) {
   if (!listed.length) return [`${id}: no related record found`];
   const line = (c) => `  ${c.id} (${c.reasons.map((r) => reasonText(r, c.id, id)).join("; ")})`;
+  const semantic = (c) => c.reasons.some((r) => r.kind === "semantic");
   const traced = listed.filter((c) => channel(c) === 1);
-  const more = traced.length - TRACE_SHOWN;
+  const shown = traced.slice(0, TRACE_SHOWN);
+  const below = traced.slice(TRACE_SHOWN);
+  const more = below.filter((c) => !semantic(c)).length;
+  const close = [...below.filter(semantic), ...listed.filter((c) => channel(c) === 2)].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   return [
     `Check ${id} against:`,
     ...listed.filter((c) => channel(c) === 0).map(line),
-    ...traced.slice(0, TRACE_SHOWN).map(line),
+    ...shown.map(line),
     ...(more > 0 ? [`  and ${more} more by shared trace: ndev requirements related ${id} --json`] : []),
-    ...listed.filter((c) => channel(c) === 2).map(line),
+    ...close.map(line),
   ];
 }
 

@@ -416,7 +416,7 @@ The list leaves out `Retired` and `Superseded` records. It finds records in thre
 - **Trace overlap.** The other record names a file or a link that the changed record also names. The changed record names the files of its `- File:` patterns, its Source citations and its `- PDR:` and `- ADR:` lines, and the links of its Trace and its Source text. The other record matches them as `ndev requirements for` does. So a `- File:` line in one record matches a Source citation in another. The reason names each shared file, the field on each side and the number of records that trace the file. A file that few records trace counts for more than a file that many records trace. The weight of a record is the sum of 1 divided by that number, for each shared file.
 - **Meaning.** The Statement or the Source text of the other record is close in meaning to the Statement of the changed record, with a score from 0 to 1. Records that use different words count too. The list keeps the 5 closest records with a score of 0.25 or more.
 
-A record found in more than one way appears once, at its strongest way, with all its reasons. In each way, the records in force come before the `Rejected` records. The text shows each cited record, the 5 trace records with the highest weight and the records close in meaning. It gives the number of trace records that it does not show. `--json` gives the full list.
+A record found in more than one way appears once, at its strongest way, with all its reasons. In each way, the records in force come before the `Rejected` records. The text shows each cited record, the 5 trace records with the highest weight and the records close in meaning. A trace record that is also close in meaning is always shown. The text gives the number of trace records that it does not show. `--json` gives the full list.
 
 The meaning comes from a semantic index, `docs/formal/requirements/generated/embeddings.json`. Commit it. `ndev requirements index` writes it. It sends the Statement and the quoted Source text of each record that is not `Retired` or `Superseded` to OpenRouter (`openai/text-embedding-3-small`). It sends only the text that changed since the last run. It needs `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`). Keep the key in the project's `.neil-dev.env`, and run `node <ndev>/scripts/env/neil-dev-env.mjs run --need OPENROUTER_API_KEY -- ndev requirements index`. With no change, it makes no request.
 
@@ -427,7 +427,7 @@ The meaning comes from a semantic index, `docs/formal/requirements/generated/emb
 - other records are not current in the index: the note gives the count;
 - OpenRouter gave an error: the note gives the status and its answer.
 
-The agent hook lists the related records after a record changes, before the commit.
+The agent hook lists the related records after a record changes, when the changed records pass their checks. It does not list them when a commit is checked.
 
 ## Verification
 

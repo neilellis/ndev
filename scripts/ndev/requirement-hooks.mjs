@@ -52,7 +52,7 @@ function checkBase(root) {
   throw new CliError(1, `git rev-parse -q --verify MERGE_HEAD in ${root} exited ${merging.status}: ${merging.stderr.trim() || 'no output'}`, { repair: `Run git status in ${root} and repair the repository.` })
 }
 
-export function recordCheck(root, cached) {
+export function recordCheck(root, cached, { related = true } = {}) {
   if (!hasRecords(root)) return null
   const changed = changedRecordKey(root)
   if (!changed) return null
@@ -66,7 +66,8 @@ export function recordCheck(root, cached) {
     if (ran.status !== 0 && ran.status !== 1) throw new CliError(1, `ndev requirements ${name} --base ${base} in ${root} exited ${ran.status}: ${output || 'no output'}`, { repair: `Run ndev requirements ${name} --base ${base} in ${root} and repair the cause.` })
     if (ran.status === 1) failed.push({ output, command: `ndev requirements ${name} --base ${base}` })
   }
-  return { key, ok: !failed.length, output: failed.map(f => f.output).join('\n'), commands: failed.map(f => f.command), related: relatedRecords(root, base), fresh: true }
+  const ok = !failed.length
+  return { key, ok, output: failed.map(f => f.output).join('\n'), commands: failed.map(f => f.command), related: ok && related ? relatedRecords(root, base) : null, fresh: true }
 }
 
 function relatedRecords(root, base) {

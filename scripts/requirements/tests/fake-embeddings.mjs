@@ -38,6 +38,10 @@ const server = createServer((request, response) => {
     if (body.model !== "openai/text-embedding-3-small") return answer(response, 400, { error: { message: `unknown model ${body.model}` } });
     if (body.dimensions !== DIMENSIONS) return answer(response, 400, { error: { message: `dimensions must be ${DIMENSIONS}` } });
     if (tag === "fail500") return answer(response, 500, { error: { message: "the fake embeddings service failed on purpose" } });
+    if (tag === "reset") {
+      response.writeHead(200, { "content-type": "application/json", "content-length": "100000" });
+      return response.write('{"data":[', () => setTimeout(() => request.socket.destroy(), 50));
+    }
     const tokens = body.input.reduce((sum, text) => sum + text.split(/\s+/).length, 0);
     answer(response, 200, { data: body.input.map((text, index) => ({ index, embedding: vector(text) })), usage: { prompt_tokens: tokens, cost: tokens / 1e6 } });
   });

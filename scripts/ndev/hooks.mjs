@@ -133,7 +133,7 @@ function toolCall(payload) {
 
 function changedRecordCheck(root, id, { commit = false } = {}) {
   const saved = id ? readObject(hookSessionFile(root, id), { missing: {} }).recordChecks : undefined
-  const check = recordCheck(root, commit && !saved?.ok ? undefined : saved)
+  const check = recordCheck(root, commit && !saved?.ok ? undefined : saved, { related: !commit })
   if (check?.fresh) changeSession(root, id, { recordChecks: { key: check.key, ok: check.ok, output: check.output, commands: check.commands, related: check.related } })
   return check
 }

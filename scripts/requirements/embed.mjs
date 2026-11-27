@@ -34,7 +34,12 @@ async function main() {
     } catch (error) {
       fail(`POST ${url} for ${which} got no answer: ${error.cause?.message ?? error.message}`);
     }
-    const body = await response.text();
+    let body;
+    try {
+      body = await response.text();
+    } catch (error) {
+      fail(`POST ${url} for ${which} answered HTTP ${response.status}, and its body could not be read: ${error.cause?.message ?? error.message}`);
+    }
     if (!response.ok) fail(`POST ${url} for ${which} answered HTTP ${response.status}: ${body.slice(0, EXCERPT)}`);
     let answer;
     try {
