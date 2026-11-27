@@ -65,6 +65,68 @@ Open the project worktree in Orca and give Claude Code, Codex or opencode this p
 
 The project file was `.neil-dev.json` before. `ndev` still reads `.neil-dev.json` when `.ndev.json` does not exist, and the next write moves it to `.ndev.json`. To move it now, run `ndev project migrate-config` and commit the rename. When both files exist and their settings differ, `ndev` reads neither and stops with an error. Keep the settings you want in `.ndev.json` and delete `.neil-dev.json`.
 
+## Dev servers and Proof
+
+`devServers` names the servers that boot the app. Agents and Proof start them to look at the app:
+
+```json
+{
+  "devServers": {
+    "web": { "command": "npm run dev", "cwd": "apps/web", "port": 3000, "ready": "http://localhost:3000/", "routes": ["/", "/settings"] }
+  }
+}
+```
+
+- `command` runs in `cwd` (relative to the project root), with `env` added to the environment.
+- `ready` is a URL or a path. The server is ready when the URL answers or the path exists. `timeout` is the seconds to wait for it, 60 by default.
+- `routes` are the pages to look at.
+
+`ndev project dev-servers` lists them. `ndev project dev-servers start web` starts one and waits until it is ready.
+
+`proof` sets the Proof check of pull requests. Proof is on unless you turn it off:
+
+```json
+{
+  "proof": {
+    "enabled": true,
+    "checks": { "requirements": true, "code": true, "visual": true, "tests": true, "model": true, "docs": true, "lessons": true },
+    "viewports": [{ "name": "phone", "width": 390, "height": 844 }],
+    "schemes": ["light", "dark"],
+    "label": "no-proof",
+    "tiers": { "small": 50, "large": 400 }
+  }
+}
+```
+
+- Set `"enabled": false` to turn Proof off for the project, or set one check to `false`.
+- Add the label (`no-proof` by default) to one pull request to skip Proof for it.
+- `tiers` are the changed-line counts at which Proof does more checks.
+- Proof reads these settings from the base branch, not from the pull request, so a pull request cannot turn off its own checks.
+
+`ndev proof plan --base <ref> [--pr <n> | --event <file>] [--proven <sha>]` shows what Proof will check, with no agent. It gives:
+
+- the tier: `trivial`, `standard` or `complex`, with the reasons;
+- for each check, `run`, or `skip` with the reason;
+- `skip`, with the reason, when Proof skips the whole run.
+
+| Tier | When |
+| --- | --- |
+| `complex` | At least `tiers.large` changed lines, a risk path (a schema, migration, auth, lock or concurrency, or workflow file), or the label `proof:complex`. |
+| `standard` | At least `tiers.small` changed lines, a new exported interface, or a touched requirement record. |
+| `trivial` | Any other change, for example a docs-only change. |
+
+Lock files count as changed files, but their lines do not count. A deleted code file makes the change at least `standard`. The label `proof:complex` raises the tier and never lowers it.
+
+Proof skips the whole run when:
+
+- `enabled` is `false` on the base branch;
+- the pull request has the opt-out label;
+- the pull request is a draft;
+- the pull request comes from a fork and `ANTHROPIC_API_KEY` is not set;
+- since the commit given by `--proven`, there is only a rebase, or only a change to blank lines and spaces at the ends of lines. Any other space change runs Proof, because a space inside a string or between tokens can change what the code does. A Python, YAML or Makefile change always runs Proof.
+
+The pull request facts come from `gh` with `--pr`, or from the GitHub event file with `--event` (`GITHUB_EVENT_PATH` by default).
+
 ## Project defaults and credentials
 
 Set the default workflow mode (`light`, `heavy` or `hack`) and steering (`interactive` or `auto`):

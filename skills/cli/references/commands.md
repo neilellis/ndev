@@ -9,6 +9,7 @@ Choose the operation here, then consult its current `--help` for flags and input
 | `ndev project status` | Read project identity, mode, steering, and missing setup before work. |
 | `ndev project setup --repo <owner/name>` | Configure the repository. Use `--board` when a project board applies. |
 | `ndev project migrate-config` | Move the old `.neil-dev.json` to `.ndev.json`, with `git mv` when Git tracks it. It refuses when both files exist and differ. |
+| `ndev project dev-servers [start <name>]` | List the dev servers in `.ndev.json` (`devServers`). `start` boots one, waits until its `ready` URL answers or path exists, and records it so the session end stops it. A server that exits or is not ready in time fails with its command, exit code and the end of its log. |
 | `ndev project init` | Initialize the project's ndev setup. |
 | `ndev project mode` / `steering` | Read the setting. Supply a supported value only when changing it is intended. |
 | `ndev project credentials --copy-from-main` | Copy the project's credential file into its worktree through the guarded path. Use `--init` to create one. |
@@ -172,6 +173,12 @@ Use `ndev remote status` and `list` to inspect saved servers. `set <server>` sel
 Start with `ndev walk-doc start <path-or-url>`, then inspect `status`. Use `ask`, `answer <ask-number> "<text>"`, or `tip` to exchange reader guidance. `restart` starts another attempt, `stop` stops the walk, and `finish` closes it with a summary.
 
 Reader-side `report`, `enhance`, `record`, `reply`, and `escalate` take JSON files. `done <summary>` reports the reader's completion. Follow the walk's role and attempt boundaries instead of submitting a report as another reader.
+
+## Proof
+
+| Command | When to use it |
+| --- | --- |
+| `ndev proof plan --base <ref> [--pr <n> \| --event <file>] [--proven <sha>]` | Show what Proof checks for this branch: the tier and its reasons, `run` or `skip` for each check, and whether the whole run is skipped. It reads the settings from the base ref and runs no agent. |
 
 ## Installation and harness integration
 
