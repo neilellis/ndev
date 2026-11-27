@@ -16,11 +16,12 @@ const BUILD = "ndev requirements index";
 const NOT_BUILT = `semantic index not built: run ${BUILD}`;
 const MIN_SCORE = 0.25;
 const TOP_K = 5;
-const SHOWN = 10;
+const TRACE_SHOWN = 5;
 const SHARED_SHOWN = 3;
 const IN_FORCE = ["Proposed", "Open", "Accepted"];
 const GONE = /^(Retired|Superseded by \d{4})$/;
 const FIELDS = ["statement", "source"];
+const REQ_ID = /\bREQ-\d{4}\b/g;
 
 const failure = (message) => new CliError(1, message);
 const words = (text) => (text ?? "").replace(/\s+/g, " ").trim();
@@ -144,48 +145,81 @@ function semanticIndex(root) {
 }
 
 function fileSet(matchers, tracked) {
-  const files = new Map();
-  const patterns = new Map();
-  const add = (map, item, field) => map.set(item, [...new Set([...(map.get(item) ?? []), field])]);
+  const items = new Map();
+  const add = (key, item, match, field) => {
+    const entry = items.get(key) ?? { item, match, here: [] };
+    if (!entry.here.includes(field)) entry.here.push(field);
+    items.set(key, entry);
+  };
   for (const m of matchers.files) {
     if (m.field === "model") continue;
-    if (m.field !== "Trace File") add(files, m.raw, m.field);
-    else {
-      const hits = tracked().filter((file) => m.test(file));
-      if (hits.length) for (const file of hits) add(files, file, m.field);
-      else add(patterns, m.raw, m.field);
-    }
+    const hits = m.field === "Trace File" ? tracked().filter((file) => m.test(file)) : [m.raw];
+    if (hits.length) for (const file of hits) add(`file ${file}`, file, (other) => other.files.filter((o) => o.test(file)), m.field);
+    else add(`pattern ${m.raw}`, m.raw, (other) => other.files.filter((o) => o.raw === m.raw), m.field);
   }
-  const keys = new Map();
-  for (const m of matchers.links) keys.set(m.key, { url: keys.get(m.key)?.url ?? m.url, here: [...new Set([...(keys.get(m.key)?.here ?? []), m.field])] });
-  return { files, patterns, keys };
+  for (const m of matchers.links) add(`link ${m.key}`, items.get(`link ${m.key}`)?.item ?? m.url, (other) => other.links.filter((o) => o.key === m.key), m.field);
+  return [...items].map(([key, entry]) => ({ key, ...entry }));
 }
 
-function overlap(set, matchers) {
-  const shared = new Map();
-  const note = (item, here, field) => {
-    const entry = shared.get(item) ?? { item, here, there: [] };
-    if (!entry.there.includes(field)) entry.there.push(field);
-    shared.set(item, entry);
-  };
-  for (const [file, here] of set.files) for (const m of matchers.files) if (m.test(file)) note(file, here, m.field);
-  for (const [raw, here] of set.patterns) for (const m of matchers.files) if (m.raw === raw) note(raw, here, m.field);
-  for (const [key, { url, here }] of set.keys) for (const m of matchers.links) if (m.key === key) note(url, here, m.field);
-  return [...shared.values()].map(({ item, here, there }) => ({ item, here: here.join(" and "), there: there.join(" and ") }));
+function overlap(set, matchers, rarity) {
+  return set
+    .map(({ key, item, match, here }) => ({ item, here: here.join(" and "), there: [...new Set(match(matchers).map((o) => o.field))].join(" and "), records: rarity(key, match) }))
+    .filter((shared) => shared.there)
+    .sort((a, b) => a.records - b.records || a.item.localeCompare(b.item));
 }
 
 function sharedText(shared, id) {
-  const shown = shared.slice(0, SHARED_SHOWN).map((s) => `${s.item} (${s.here} here, ${s.there} in ${id})`);
+  const shown = shared.slice(0, SHARED_SHOWN).map((s) => `${s.item} (${s.here} here, ${s.there} in ${id}; ${s.records === 1 ? "1 record traces" : `${s.records} records trace`} it)`);
   const more = shared.length - shown.length;
   return `shares ${shown.join(", ")}${more ? ` and ${more} more` : ""}`;
 }
 
-const reasonText = (reason, id) => (reason.kind === "trace" ? sharedText(reason.shared, id) : `${reason.field === "statement" ? "statement" : "Source text"} similarity ${reason.score.toFixed(2)}`);
+const sectionList = (sections) => sections.join(" and ");
+
+function reasonText(reason, id, query) {
+  if (reason.kind === "cited") return reason.direction === "here" ? `cited in this record's ${sectionList(reason.sections)}` : `cites ${query} in its ${sectionList(reason.sections)}`;
+  if (reason.kind === "trace") return sharedText(reason.shared, id);
+  return `${reason.field === "statement" ? "statement" : "Source text"} similarity ${reason.score.toFixed(2)}`;
+}
+
+function citedParts(record) {
+  const front = record.front?.data ? record.text.slice(0, record.text.length - record.front.body.length) : "";
+  return [["front matter", front], ...Object.entries(record.sections).filter(([name]) => name !== "Log")];
+}
+
+function citations(record) {
+  const named = new Map();
+  for (const [part, text] of citedParts(record))
+    for (const id of (text ?? "").match(REQ_ID) ?? []) {
+      if (id === record.id) continue;
+      if (!named.has(id)) named.set(id, []);
+      if (!named.get(id).includes(part)) named.get(id).push(part);
+    }
+  return named;
+}
+
+const channel = (c) => (c.reasons.some((r) => r.kind === "cited") ? 0 : c.reasons.some((r) => r.kind === "trace") ? 1 : 2);
+const weightOf = (c) => c.reasons.find((r) => r.kind === "trace")?.weight ?? 0;
+const KIND_ORDER = ["cited", "trace", "semantic"];
 
 function ordered(candidates) {
   const group = (c) => (IN_FORCE.includes(c.status) ? 0 : 1);
-  const traced = (c) => c.reasons.find((r) => r.kind === "trace")?.shared.length ?? 0;
-  return candidates.sort((a, b) => group(a) - group(b) || traced(b) - traced(a) || (b.score ?? -2) - (a.score ?? -2) || a.id.localeCompare(b.id));
+  for (const c of candidates) c.reasons.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+  return candidates.sort((a, b) => channel(a) - channel(b) || group(a) - group(b) || weightOf(b) - weightOf(a) || (b.score ?? -2) - (a.score ?? -2) || a.id.localeCompare(b.id));
+}
+
+function listing(id, listed) {
+  if (!listed.length) return [`${id}: no related record found`];
+  const line = (c) => `  ${c.id} (${c.reasons.map((r) => reasonText(r, c.id, id)).join("; ")})`;
+  const traced = listed.filter((c) => channel(c) === 1);
+  const more = traced.length - TRACE_SHOWN;
+  return [
+    `Check ${id} against:`,
+    ...listed.filter((c) => channel(c) === 0).map(line),
+    ...traced.slice(0, TRACE_SHOWN).map(line),
+    ...(more > 0 ? [`  and ${more} more by shared trace: ndev requirements related ${id} --json`] : []),
+    ...listed.filter((c) => channel(c) === 2).map(line),
+  ];
 }
 
 export function relatedRecords(root, chosen, all, { base, matchers, tracked, sourceText }) {
@@ -231,17 +265,33 @@ export function relatedRecords(root, chosen, all, { base, matchers, tracked, sou
         });
     }
   }
+  const known = new Set(all.map((record) => record.id));
+  const liveIds = new Map(candidates.map((record) => [record.id, record]));
+  const citedBy = new Map(candidates.map((record) => [record.id, citations(record)]));
+  const rarityCache = new Map();
+  const rarity = (key, match) => {
+    if (!rarityCache.has(key)) rarityCache.set(key, candidates.filter((c) => match(matcherOf.get(c.rel)).length).length);
+    return rarityCache.get(key);
+  };
   const records = chosen.map((record) => {
     const found = new Map();
     const entry = (c) => {
       if (!found.has(c.id)) found.set(c.id, { id: c.id, title: c.title, status: c.status ?? "", reasons: [] });
       return found.get(c.id);
     };
+    for (const [id, sections] of citations(record)) {
+      if (!known.has(id)) notes.push(`${record.id} names ${id}, which is not a record`);
+      else if (liveIds.has(id)) entry(liveIds.get(id)).reasons.push({ kind: "cited", direction: "here", sections });
+    }
+    for (const c of candidates) {
+      const sections = c.id !== record.id && citedBy.get(c.id).get(record.id);
+      if (sections) entry(c).reasons.push({ kind: "cited", direction: "there", sections });
+    }
     const set = fileSet(matchers(record), tracked);
     for (const c of candidates) {
       if (c.id === record.id) continue;
-      const shared = overlap(set, matcherOf.get(c.rel));
-      if (shared.length) entry(c).reasons.push({ kind: "trace", shared });
+      const shared = overlap(set, matcherOf.get(c.rel), rarity);
+      if (shared.length) entry(c).reasons.push({ kind: "trace", weight: Math.round(shared.reduce((sum, s) => sum + 1 / s.records, 0) * 1000) / 1000, shared });
     }
     const query = queries.get(record.id);
     if (query) {
@@ -263,11 +313,6 @@ export function relatedRecords(root, chosen, all, { base, matchers, tracked, sou
     }
     return { id: record.id, title: record.title, candidates: ordered([...found.values()]) };
   });
-  const lines = records.map(({ id, candidates: listed }) => {
-    if (!listed.length) return `${id}: no related record found`;
-    const shown = listed.slice(0, SHOWN).map((c) => `${c.id} (${c.reasons.map((r) => reasonText(r, c.id)).join("; ")})`);
-    const more = listed.length - shown.length;
-    return `Check ${id} against ${shown.join(", ")}${more ? `, and ${more} more: ndev requirements related ${id}` : "."}`;
-  });
+  const lines = records.flatMap(({ id, candidates: listed }) => listing(id, listed));
   return { text: `${[...lines, ...notes].join("\n")}\n`, records, semantic: summary, notes };
 }

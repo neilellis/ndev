@@ -819,7 +819,7 @@ test('a changed record lists the records to compare it with once after the edit'
   git('commit', '-q', '-m', 'second record')
   writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
   const note = contextOf(call('post-tool-use', 'Edit', { file_path: recordFile }))
-  assert.match(note, /Before you commit, compare each changed record with the records listed:\nCheck REQ-0001 against REQ-0002 \(shares src\/report\.js \(Trace File here, Trace File in REQ-0002\)\)\.\nsemantic index not built: run ndev requirements index/)
+  assert.match(note, /Before you commit, compare each changed record with the records listed:\nCheck REQ-0001 against:\n  REQ-0002 \(shares src\/report\.js \(Trace File here, Trace File in REQ-0002; 2 records trace it\)\)\nsemantic index not built: run ndev requirements index/)
   assert.equal(call('post-tool-use', 'Bash', { command: 'ls' }, { exitCode: 0 }), null)
 })
 

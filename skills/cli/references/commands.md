@@ -54,7 +54,7 @@ The `requirements` skill lists each command. These two find the records that a c
 | Command | When to use it |
 | --- | --- |
 | `ndev requirements check [<REQ-NNNN>... \| --base <git ref>]` | Check each record. With record IDs or `--base`, it also lists the related records of those records when the check passes. The list is advice and does not change the exit status. |
-| `ndev requirements related <REQ-NNNN>... \| --base <git ref>` | List the records to compare with each record: shared files and links, and the records closest in meaning. |
+| `ndev requirements related <REQ-NNNN>... \| --base <git ref>` | List the records to compare with each record: cited IDs, shared files and links, and the records closest in meaning. |
 | `ndev requirements index` | Write the semantic index `docs/formal/requirements/generated/embeddings.json` for `related`. It needs `OPENROUTER_API_KEY`, and sends only changed text. |
 
 ## Requirement models
