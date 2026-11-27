@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 const ndev = fileURLToPath(new URL('../bin/ndev', import.meta.url))
 const identity = { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.test', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('ORCA_')))
 const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh']
 const SELF_ROOTED = name => `#!/usr/bin/env bash
 set -euo pipefail
@@ -23,7 +24,7 @@ function git(cwd, ...args) {
   return result.stdout.trim()
 }
 
-function nested(t) {
+function nested(t, { base = SELF_ROOTED } = {}) {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'ndev-worktree-checks-')))
   t.after(() => rmSync(parent, { recursive: true, force: true }))
   const origin = join(parent, 'origin.git')
@@ -34,7 +35,7 @@ function nested(t) {
   git(parent, 'clone', '-q', origin, main)
   mkdirSync(join(main, 'scripts/ndev/workflow'), { recursive: true })
   for (const name of CHECKS) {
-    writeFileSync(join(main, 'scripts/ndev/workflow', name), SELF_ROOTED(name))
+    writeFileSync(join(main, 'scripts/ndev/workflow', name), base(name))
     chmodSync(join(main, 'scripts/ndev/workflow', name), 0o755)
   }
   writeFileSync(join(main, 'marker.txt'), 'base\n')
@@ -52,12 +53,19 @@ function nested(t) {
   git(wt, 'commit', '-q', '-m', 'mark the worktree')
   git(wt, 'push', '-q', '-u', 'origin', 'feat')
   const gh = join(parent, 'fake-gh.sh')
-  writeFileSync(gh, '#!/bin/sh\necho "fake gh.sh: unexpected $*" >&2\nexit 9\n')
+  writeFileSync(gh, `#!/bin/sh
+case "$1" in
+  issue-read) echo '{"title":"Fix the thing","state":"open","body":""}' ;;
+  pr-read) echo '{"number":5,"state":"open","body":"Closes #12","head":{"sha":"x","ref":"feat"},"base":{"ref":"main"}}' ;;
+  *) echo "fake gh.sh: unexpected $*" >&2; exit 9 ;;
+esac
+`)
   chmodSync(gh, 0o755)
   writeFileSync(join(wt, '.neil-dev.issue-12.json'), JSON.stringify({ version: 1, issue: 12, rounds: [], workflow: { issue: 12, root: wt, repo: 'o/r', base: 'main', branch: 'feat', prs: [5], mode: 'light', steering: 'auto', state: 'developing', evidence: {}, history: [], followUps: [], migrations: [], attempts: 0, nudges: { count: 0 }, rev: 1, baseCheck: { exitCode: 0 } } }))
-  const checkpoint = (file, cwd = main) => spawnSync(ndev, ['flow', 'checkpoint', '--worktree', wt, '--issue', '12', '--message', `Add ${file}`, '--file', file], { cwd, encoding: 'utf8', env: { ...process.env, ...identity, NDEV_FLOW_GH: gh, NDEV_TEST_STATE: state } })
+  const flow = (args, cwd = wt) => spawnSync(ndev, ['flow', ...args, '--issue', '12'], { cwd, encoding: 'utf8', env: { ...env, ...identity, NDEV_FLOW_GH: gh, NDEV_TEST_STATE: state } })
+  const checkpoint = (file, cwd = main) => spawnSync(ndev, ['flow', 'checkpoint', '--worktree', wt, '--issue', '12', '--message', `Add ${file}`, '--file', file], { cwd, encoding: 'utf8', env: { ...env, ...identity, NDEV_FLOW_GH: gh, NDEV_TEST_STATE: state } })
   const ran = () => existsSync(join(state, 'ran')) ? readFileSync(join(state, 'ran'), 'utf8').trim().split('\n') : []
-  return { main, wt, origin, checkpoint, ran }
+  return { main, wt, origin, checkpoint, flow, ran }
 }
 
 test('checkpoint in a worktree nested in the main checkout runs the worktree copy of each check in the worktree', t => {
@@ -77,4 +85,13 @@ test('a check that the branch changed runs the base version in the worktree, nev
   assert.doesNotMatch(p.ran().join('\n'), /weakened|main-checkout|main-copy/)
   assert.match(result.stderr, /fast-checks\.sh exited 1/)
   assert.match(result.stderr, /differs from the version on main.*NDEV_WORKTREE_ROOT/s)
+})
+
+test('finished-development reports that a passing check ran the base version outside the worktree', t => {
+  const p = nested(t, { base: name => `#!/bin/sh\ncd "$NDEV_WORKTREE_ROOT"\necho "${name} $(pwd) $(cat marker.txt)" >> "$NDEV_TEST_STATE/ran"\n` })
+  writeFileSync(join(p.wt, 'scripts/ndev/workflow/fast-checks.sh'), '#!/bin/sh\necho weakened >> "$NDEV_TEST_STATE/ran"\n')
+  const result = p.flow(['finished-development', '--file', 'scripts/ndev/workflow/fast-checks.sh', '--message', 'Change the fast check'])
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+  assert.deepEqual(p.ran().slice(0, 2), [`fast-checks.sh ${p.wt} worktree`, `pre-commit-check.sh ${p.wt} worktree`])
+  assert.match(`${result.stdout}\n${result.stderr}`, /differs from the version on main.*NDEV_WORKTREE_ROOT/s)
 })

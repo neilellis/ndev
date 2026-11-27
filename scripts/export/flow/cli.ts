@@ -644,7 +644,7 @@ function resolveRepo(root: string, config: Config): string {
   return ghJson<{ repo: string }>(root, undefined, ['repo']).repo
 }
 
-function setUpPr(wf: Workflow, title: string) {
+function setUpPr(wf: Workflow, title: string): string | undefined {
   if (wf.direct || wf.prs.length) return
   const open = ghRun(wf.root, wf.repo, ['pr-list', '--head', wf.branch, '--state', 'open']).split('\n').filter(Boolean).map(line => JSON.parse(line) as { number: number })
   if (open[0]) {
@@ -660,8 +660,9 @@ function setUpPr(wf: Workflow, title: string) {
     wf.prTitle = title
     return
   }
+  let note: string | undefined
   if (git(wf.root, 'rev-parse', `origin/${wf.branch}`).stdout.trim() !== headSha(wf.root)) {
-    runCheck(wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
+    note = runCheck(wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
     push(wf)
   }
   const body = writeTemp(wf, 'pr-body.md', wf.prBody ?? `Plan incoming.\n\nCloses #${wf.issue}\n`)
@@ -671,13 +672,15 @@ function setUpPr(wf: Workflow, title: string) {
   wf.prs = [Number(number)]
   delete wf.prTitle
   delete wf.prBody
+  return note
 }
 
-function openPendingPr(wf: Workflow) {
-  if (!wf.prTitle || wf.prs.length) return
-  setUpPr(wf, wf.prTitle)
+function openPendingPr(wf: Workflow): string | undefined {
+  if (!wf.prTitle || wf.prs.length) return undefined
+  const note = setUpPr(wf, wf.prTitle)
   if (!wf.prs.length) throw new Fail(1, `Issue #${wf.issue} on ${wf.branch} has no commits beyond ${wf.base}. Repair: make a real change and run ndev flow checkpoint.`)
   save(wf)
+  return note
 }
 
 function started(root: string, config: Config, args: Args) {
@@ -732,7 +735,8 @@ function started(root: string, config: Config, args: Args) {
     return report(wf, config, [`Missing check scripts in ${root}/${CHECK_DIR}: ${missing.join(', ')}. Start each from the template ${HOME}/scripts/workflow/fast-checks-template.sh.`])
   }
   if (!standalone) save(wf)
-  setUpPr(wf, info.title)
+  const opened = setUpPr(wf, info.title)
+  if (opened) notes.push(opened)
   apply(wf, afterStarted(undefined, { mode: wf.mode as any, steering: wf.steering as any }), 'started', notes)
   save(wf)
   return report(wf, config, [`Issue #${issue}: ${info.title}`, ...notes])
@@ -783,7 +787,8 @@ function checkpoint(wf: Workflow, config: Config, args: Args) {
     if (note) notes.push(note)
     const lease = push(wf, true)
     if (lease) notes.push(lease)
-    openPendingPr(wf)
+    const opened = openPendingPr(wf)
+    if (opened) notes.push(opened)
     notes.push(`Committed and pushed ${headSha(wf.root).slice(0, 8)}.`)
   } else notes.push(`Committed ${headSha(wf.root).slice(0, 8)} on this computer only: in the state "${wf.state}" nothing is pushed.`)
   delete wf.op
@@ -809,15 +814,13 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = 
   if (machine.hardens && !args.hardening?.trim()) throw new Fail(2, 'ndev-flow: hack mode needs --hardening: each test that pins the change, the command and the failing line on the base, and its pass on HEAD.')
   const notes: string[] = []
   if (stage(wf, files)) {
-    runCheck(wf, 'fast-checks.sh', files, declared)
-    runCheck(wf, 'pre-commit-check.sh', [], declared)
+    for (const note of [runCheck(wf, 'fast-checks.sh', files, declared), runCheck(wf, 'pre-commit-check.sh', [], declared)]) if (note) notes.push(note)
     commit(wf, need(args, 'message'), opId(wf, 'finishedDevelopment'))
     notes.push(`Committed ${headSha(wf.root).slice(0, 8)}. It is not pushed until finishedReview.`)
   }
   if ((wf.steering ?? config.steering ?? 'interactive') === 'interactive') wf.developmentConfirmation = args['human-confirmation'].trim()
   addTypes(wf, files, declared)
-  if (machine.hardens) runCheck(wf, 'pre-push-check.sh', [], declared)
-  openPendingPr(wf)
+  for (const note of [machine.hardens ? runCheck(wf, 'pre-push-check.sh', [], declared) : undefined, openPendingPr(wf)]) if (note) notes.push(note)
   if (machine.gates && !wf.direct) {
     const gates = run('bash', [`${HOME}/scripts/work/gates.sh`, String(wf.issue), 'HEAD', String(prOf(wf))], { cwd: wf.root, env: { GH_REPO: wf.repo } })
     if (gates.status !== 0) throw new Fail(1, `gates.sh exited ${gates.status} for #${wf.issue}: ${said(gates)}\nThe commit is held here and not pushed. Add what is missing, then run ndev-flow finishedDevelopment again.`)
