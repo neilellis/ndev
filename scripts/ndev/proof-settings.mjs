@@ -21,7 +21,7 @@ export function proofSettingsAt(root, ref) {
   const choice = chooseConfig(ref, textAtRef(root, ref, CONFIG_FILE), textAtRef(root, ref, LEGACY_CONFIG_FILE))
   if (choice.conflict) throw new CliError(1, `At ${ref}: ${choice.conflict.message}.`, { repair: `Fix the config on ${ref}: ${choice.conflict.repair}` })
   const source = `${ref}:${basename(choice.path)}`
-  if (choice.text === undefined) return { ...proofSettings(undefined), source: `${ref} (no config file)` }
+  if (choice.text === undefined) return { ...proofSettings(undefined), devServers: {}, source: `${ref} (no config file)` }
   let raw
   try {
     raw = JSON.parse(choice.text)
@@ -30,5 +30,5 @@ export function proofSettingsAt(root, ref) {
   }
   const error = validate(raw)
   if (error) throw new CliError(1, `${source}: ${error}`, { repair: `Fix ${basename(choice.path)} on ${ref}.` })
-  return { ...proofSettings(raw.proof), source }
+  return { ...proofSettings(raw.proof), devServers: raw.devServers ?? {}, source }
 }

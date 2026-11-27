@@ -103,6 +103,30 @@ The project file was `.neil-dev.json` before. `ndev` still reads `.neil-dev.json
 - `tiers` are the changed-line counts at which Proof does more checks.
 - Proof reads these settings from the base branch, not from the pull request, so a pull request cannot turn off its own checks.
 
+`ndev proof plan --base <ref> [--pr <n> | --event <file>] [--proven <sha>]` shows what Proof will check, with no agent. It gives:
+
+- the tier: `trivial`, `standard` or `complex`, with the reasons;
+- for each check, `run`, or `skip` with the reason;
+- `skip`, with the reason, when Proof skips the whole run.
+
+| Tier | When |
+| --- | --- |
+| `complex` | At least `tiers.large` changed lines, a risk path (a schema, migration, auth, lock or concurrency, or workflow file), or the label `proof:complex`. |
+| `standard` | At least `tiers.small` changed lines, a new exported interface, or a touched requirement record. |
+| `trivial` | Any other change, for example a docs-only change. |
+
+Lock files count as changed files, but their lines do not count. A deleted code file makes the change at least `standard`. The label `proof:complex` raises the tier and never lowers it.
+
+Proof skips the whole run when:
+
+- `enabled` is `false` on the base branch;
+- the pull request has the opt-out label;
+- the pull request is a draft;
+- the pull request comes from a fork and `ANTHROPIC_API_KEY` is not set;
+- since the commit given by `--proven`, there is only a rebase, or only a change to blank lines and spaces at the ends of lines. Any other space change runs Proof, because a space inside a string or between tokens can change what the code does. A Python, YAML or Makefile change always runs Proof.
+
+The pull request facts come from `gh` with `--pr`, or from the GitHub event file with `--event` (`GITHUB_EVENT_PATH` by default).
+
 ## Project defaults and credentials
 
 Set the default workflow mode (`light`, `heavy` or `hack`) and steering (`interactive` or `auto`):
