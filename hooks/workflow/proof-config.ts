@@ -9,9 +9,9 @@ export type DevServer = {
 }
 export type DevServers = Record<string, DevServer>
 
-export const PROOF_CHECKS = ['requirements', 'code', 'visual', 'tests', 'model', 'docs', 'lessons'] as const
+const PROOF_CHECKS = ['requirements', 'code', 'visual', 'tests', 'model', 'docs', 'lessons'] as const
 export type ProofCheck = (typeof PROOF_CHECKS)[number]
-export const PROOF_SCHEMES = ['light', 'dark'] as const
+const PROOF_SCHEMES = ['light', 'dark'] as const
 export type Viewport = { name: string; width: number; height: number }
 export type ProofTiers = { small?: number; large?: number }
 
@@ -33,12 +33,12 @@ export type ProofSettings = {
   tiers: Required<ProofTiers>
 }
 
-export const DEV_SERVER_NAME = /^[A-Za-z0-9._-]+$/
+const DEV_SERVER_NAME = /^[A-Za-z0-9._-]+$/
 const SERVER_KEYS = ['command', 'cwd', 'port', 'ready', 'env', 'routes', 'timeout']
 const PROOF_KEYS = ['enabled', 'checks', 'viewports', 'schemes', 'label', 'tiers']
 const LABEL = /^[^,\s][^,]{0,49}$/
 
-export const DEFAULT_PROOF: ProofSettings = {
+const DEFAULT_PROOF: ProofSettings = {
   enabled: true,
   checks: Object.fromEntries(PROOF_CHECKS.map(check => [check, true])) as Record<ProofCheck, boolean>,
   viewports: [
