@@ -7,6 +7,7 @@ import { isDeepStrictEqual, promisify } from 'node:util'
 import { copyFromMain, createFile, inspectWorkspace, mainCheckout, NDEV_FILES, WORKTREE_FILE } from '../../orca-plugin/ndev/worker/files.mjs'
 import { forgetEntry, readResources, stopAllResources, stopDevServer, stopDocker } from '../../orca-plugin/ndev/worker/resources.mjs'
 import { isAlive, run, stateRoot } from './common.mjs'
+import { readConfigObject } from './config-file.mjs'
 
 const exec = promisify(execFile)
 const SCHEMA_VERSION = 1
@@ -352,8 +353,11 @@ async function viewData(scope) {
     })),
   ])
   const [project, checkout] = await Promise.all([...new Set([main, scope.root])].map(async root => {
-    const file = await workspaceFile(root, '.neil-dev.json')
-    return file ? await jsonFile(file) : {}
+    try {
+      return readConfigObject(root).config
+    } catch (error) {
+      throw paneError(`${error.message} ${error.repair ?? ''}`.trim(), { details: { path: root } })
+    }
   }))
   const settings = { ...project, ...checkout, ...worktree?.settings }
   return {

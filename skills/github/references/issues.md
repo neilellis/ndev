@@ -1,6 +1,6 @@
 # Issues, sub-issues, milestones and the board
 
-Run the commands below with `ndev github`. The repository comes from `GH_REPO`, else `.neil-dev.json`, else the current checkout.
+Run the commands below with `ndev github`. The repository comes from `GH_REPO`, else `.ndev.json`, else the current checkout.
 
 ## Write issues
 

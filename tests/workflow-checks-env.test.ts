@@ -58,7 +58,7 @@ test('a commit with no merge gives the checks the merge base of HEAD', async ($,
   expect(w.s.checkEnv['pre-commit-check.sh']?.NDEV_MERGE_BASE).toBe(OLD_BASE)
 })
 
-test('the checks get the keys of the worktree .neil-dev.env that checkEnv in .neil-dev.json names, and no other', async ($, on) => {
+test('the checks get the keys of the worktree .neil-dev.env that checkEnv in .ndev.json names, and no other', async ($, on) => {
   const w = engine(on, { files: { [CONFIG]: JSON.stringify({ checkEnv: ['TEST_DB_URL', 'QUOTED'] }), [`${ROOT}/.neil-dev.env`]: '# graph\nFALKORDB_URL=rediss://graph.example.com:6380\nTEST_DB_URL=redis://localhost:6379\nexport QUOTED="a b"\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']
@@ -71,7 +71,7 @@ test('the checks get the keys of the worktree .neil-dev.env that checkEnv in .ne
 
 // fcc-proto PR #828: .neil-dev.env held FALKORDB_URL and FALKORDB_CA of the hosted graph server, for kb:publish. The
 // test scripts start a local server only when FALKORDB_URL is unset, so with that key the tests wrote to the hosted one.
-test('with no checkEnv in .neil-dev.json the checks get no key of .neil-dev.env, so the tests do not reach hosted services', async ($, on) => {
+test('with no checkEnv in .ndev.json the checks get no key of .neil-dev.env, so the tests do not reach hosted services', async ($, on) => {
   const w = engine(on, { files: { [`${ROOT}/.neil-dev.env`]: 'FALKORDB_URL=rediss://graph.example.com:6380\nFALKORDB_CA=/keys/ca.pem\n' } })
   await start($, w)
   w.s.dirty = [' M a.ts']

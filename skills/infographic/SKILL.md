@@ -12,7 +12,7 @@ Choose a layout for the structure of the information and a style for its appeara
 
 ## Brand
 
-If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Take the colours and the type from the tokens of the brand guide, and write them into the prompt as named colours with hex values and as font descriptions. They replace the palette of the chosen style; keep the layout and the texture of the style. Follow the rules of the guide on logo use. Otherwise skip this section.
+If `.ndev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Take the colours and the type from the tokens of the brand guide, and write them into the prompt as named colours with hex values and as font descriptions. They replace the palette of the chosen style; keep the layout and the texture of the style. Follow the rules of the guide on logo use. Otherwise skip this section.
 
 ## Preferences
 

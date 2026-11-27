@@ -24,7 +24,7 @@ const HELP = [
   '/flow steering [interactive|auto] [issue]: the same for the steering.',
   '/flow off [reason]: stop the tools and the reminders for the issue or PR that this agent is on. The record stays.',
   '/flow on: turn them back on.',
-  '/flow off project, /flow on project: the same for the whole project, in .neil-dev.json.',
+  '/flow off project, /flow on project: the same for the whole project, in .ndev.json.',
   ...EPIC_HELP,
 ].join('\n')
 

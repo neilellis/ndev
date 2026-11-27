@@ -33,7 +33,7 @@ Prefer photos with clear space for text. Check that the photo still reads under 
 
 ## Branding
 
-If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Take the logos and wordmark from the source it names, and follow its rules on photography and logo use. Otherwise skip this section.
+If `.ndev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Take the logos and wordmark from the source it names, and follow its rules on photography and logo use. Otherwise skip this section.
 
 ## Credits
 

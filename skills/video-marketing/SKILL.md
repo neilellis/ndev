@@ -36,7 +36,7 @@ While a workflow runs, this skill is one step of the current stage. Commit each 
 
 ## Branding
 
-If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Use its voice for the words, and its colours and fonts for the page tokens (see `video-setup`). If the guide has a video style or a video review checklist, follow it and check it before you share the film. Otherwise skip this section.
+If `.ndev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Use its voice for the words, and its colours and fonts for the page tokens (see `video-setup`). If the guide has a video style or a video review checklist, follow it and check it before you share the film. Otherwise skip this section.
 
 ## Variants
 

@@ -35,7 +35,7 @@ The kit applies each type's timing defaults. A project can change them in `video
 
 ## Branding
 
-If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`) before you write. Use its copy rules for the register, its voice and its product names, and its video pages if it has them. Otherwise skip this section.
+If `.ndev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`) before you write. Use its copy rules for the register, its voice and its product names, and its video pages if it has them. Otherwise skip this section.
 
 ## Signs you chose the wrong type
 

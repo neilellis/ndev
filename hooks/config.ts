@@ -1,10 +1,10 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Mode, Steering } from '../types'
+import { chooseConfig, CONFIG_FILE, LEGACY_CONFIG_FILE } from './workflow/config-file.ts'
 import { SECRET_NAME } from './workflow/secrets.ts'
 
-// All per-project settings of the plugin live in one checked-in file at the project root.
-export const CONFIG_FILE = '.neil-dev.json'
+export { CONFIG_FILE, LEGACY_CONFIG_FILE }
 
 export type NeilDevConfig = {
   mode?: Mode
@@ -61,6 +61,7 @@ export type LoadedConfig = {
   exists: boolean
   config: NeilDevConfig
   error?: string
+  legacy?: string
 }
 
 const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv', 'chatGuard', 'remote'] as const
@@ -145,27 +146,43 @@ export const missingGitHub = (config: NeilDevConfig): ('repo' | 'board')[] => {
   return g.repo !== null && g.board === undefined ? ['board'] : []
 }
 
-// Reads and checks .neil-dev.json. A missing file is an empty config; a bad file sets `error`
-// and an empty config, so the caller shows the error and runs nothing that the file would enable.
+// Reads and checks the project config: .ndev.json, else the legacy name. A missing file is an empty
+// config; a bad file, or two files that differ, sets `error` and an empty config, so the caller shows the
+// error and runs nothing that the file would enable.
 export async function loadConfig($: EngineInterface, cwd: string): Promise<LoadedConfig> {
   return loadConfigAt($, await projectRoot($, cwd))
 }
 
-// The same, for a project root that is already known.
-export async function loadConfigAt($: EngineInterface, root: string): Promise<LoadedConfig> {
-  const path = `${root}/${CONFIG_FILE}`
-  if (!(await $.fs.exists(path))) return { root, path, exists: false, config: {} }
-  let raw: unknown
-  try {
-    raw = JSON.parse(await $.fs.read(path))
-  } catch (error) {
-    return { root, path, exists: true, config: {}, error: `not valid JSON: ${String(error).slice(0, 160)}` }
-  }
-  const error = validate(raw)
-  return error ? { root, path, exists: true, config: {}, error } : { root, path, exists: true, config: raw as NeilDevConfig }
+async function textAt($: EngineInterface, path: string) {
+  return (await $.fs.exists(path)) ? await $.fs.read(path) : undefined
 }
 
-// Writes one key back to the file and keeps every other key as it was.
+export async function loadConfigAt($: EngineInterface, root: string): Promise<LoadedConfig> {
+  const choice = chooseConfig(root, await textAt($, `${root}/${CONFIG_FILE}`), await textAt($, `${root}/${LEGACY_CONFIG_FILE}`))
+  if (choice.conflict) return { root, path: `${root}/${CONFIG_FILE}`, exists: true, config: {}, error: `${choice.conflict.message}. Repair: ${choice.conflict.repair}` }
+  const { path, text, legacy } = choice
+  const base = { root, path, exists: text !== undefined, ...(legacy ? { legacy } : {}) }
+  if (text === undefined) return { ...base, config: {} }
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch (error) {
+    return { ...base, config: {}, error: `not valid JSON: ${String(error).slice(0, 160)}` }
+  }
+  const error = validate(raw)
+  return error ? { ...base, config: {}, error } : { ...base, config: raw as NeilDevConfig }
+}
+
+const said = (r: { stdout: string; stderr: string }) => (r.stderr.trim() || r.stdout.trim() || 'no output').replace(/\s+/g, ' ').slice(0, 300)
+
+async function moveLegacy($: EngineInterface, root: string) {
+  const isTracked = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', LEGACY_CONFIG_FILE], { cwd: root, timeoutMs: 10000 })
+  const argv = isTracked.exitCode === 0 ? ['git', 'mv', '-f', '--', LEGACY_CONFIG_FILE, CONFIG_FILE] : ['rm', '--', LEGACY_CONFIG_FILE]
+  const moved = await $.process.run(argv, { cwd: root, timeoutMs: 10000 })
+  if (moved.exitCode !== 0) throw new Error(`${argv.join(' ')} in ${root} exited ${moved.exitCode}: ${said(moved)}. Repair: move ${root}/${LEGACY_CONFIG_FILE} to ${root}/${CONFIG_FILE} by hand, or run ndev project migrate-config.`)
+}
+
+// Writes one key to .ndev.json and keeps every other key as it was. A config under the legacy name moves to .ndev.json.
 export async function saveSetting(
   $: EngineInterface,
   loaded: LoadedConfig,
@@ -173,5 +190,6 @@ export async function saveSetting(
   value: unknown,
 ) {
   const current = loaded.exists && !loaded.error ? (JSON.parse(await $.fs.read(loaded.path)) as Record<string, unknown>) : {}
-  await $.fs.write(loaded.path, `${JSON.stringify({ ...current, [key]: value }, null, 2)}\n`)
+  if (loaded.legacy && !loaded.error) await moveLegacy($, loaded.root)
+  await $.fs.write(`${loaded.root}/${CONFIG_FILE}`, `${JSON.stringify({ ...current, [key]: value }, null, 2)}\n`)
 }

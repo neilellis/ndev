@@ -40,7 +40,7 @@ test('pane snapshots are versioned, stable on refresh and scoped to the Git work
 
 test('view reads recognized settings and shows the same workflow and resource rows as its snapshot', async t => {
   const options = await fixture(t)
-  await writeJson(join(options.cwd, '.neil-dev.json'), { mode: 'heavy', steering: 'interactive', token: 'must stay private' })
+  await writeJson(join(options.cwd, '.ndev.json'), { mode: 'heavy', steering: 'interactive', token: 'must stay private' })
   await writeJson(join(options.cwd, '.neil-dev.issue-26.json'), { issue: 26, state: 'review', pr: 30, reviewSpec: { answer: '' } })
   await writeJson(join(options.cwd, '.neil-dev.worktree.json'), { version: 2, resources: { 'dev-servers': {}, docker: [] } })
   const view = await runPane(['view'], options)
@@ -48,6 +48,14 @@ test('view reads recognized settings and shows the same workflow and resource ro
   assert.match(view.text, /#26.*review.*#30/)
   assert.doesNotMatch(JSON.stringify(view), /must stay private/)
   assert.deepEqual(await runPane(['bridge', 'snapshot', 'view'], options), view.snapshot)
+})
+
+test('view reads a .neil-dev.json, and refuses it beside a .ndev.json that differs, naming both', async t => {
+  const options = await fixture(t)
+  await writeJson(join(options.cwd, '.neil-dev.json'), { mode: 'heavy' })
+  assert.match((await runPane(['view'], options)).text, /Mode.*heavy/)
+  await writeJson(join(options.cwd, '.ndev.json'), { mode: 'light' })
+  await assert.rejects(runPane(['view'], options), error => error.message.includes('.ndev.json') && error.message.includes('.neil-dev.json'))
 })
 
 test('view shows the running flow step with its elapsed time and limit, and the last watcher result', async t => {
@@ -105,15 +113,15 @@ test('explicit open checks the selected workspace, uses text headless and report
 test('panel file actions reject stale and foreign revisions and use the CLI file handler', async t => {
   const options = await fixture(t)
   const files = await runPane(['bridge', 'snapshot', 'files'], options)
-  const request = { worktreeId: files.worktreeId, expectedRevision: files.revision, actionId: 'file.create', input: { name: '.neil-dev.json' } }
+  const request = { worktreeId: files.worktreeId, expectedRevision: files.revision, actionId: 'file.create', input: { name: '.ndev.json' } }
   const action = patch => runPane(['bridge', 'action', 'files', JSON.stringify({ ...request, ...patch })], options)
   await assert.rejects(action({ worktreeId: 'other' }), /worktree/)
   await assert.rejects(action({ actionId: 'shell.exec' }), /Unknown.*shell.exec/)
   await assert.rejects(action({ input: { name: '../elsewhere' } }), /name|file/)
-  await assert.rejects(action({ input: { name: '.neil-dev.json', dir: options.home } }), /input|dir/)
+  await assert.rejects(action({ input: { name: '.ndev.json', dir: options.home } }), /input|dir/)
   const result = await action({})
   assert.equal(result.snapshot.revision, files.revision + 1)
-  assert.equal(JSON.parse(await readFile(join(options.cwd, '.neil-dev.json'), 'utf8')).mode, 'light')
+  assert.equal(JSON.parse(await readFile(join(options.cwd, '.ndev.json'), 'utf8')).mode, 'light')
   await assert.rejects(action({}), /revision.*Refresh/i)
 })
 
@@ -204,7 +212,7 @@ test('Orca worker fences worktree identity before dispatch and refuses remote fi
     },
   })
   const snapshot = await handlers.get('panel.snapshot')({ panelId: 'files' })
-  const request = { panelId: 'files', worktreeId: snapshot.worktreeId, expectedRevision: snapshot.revision, actionId: 'file.create', input: { name: '.neil-dev.json' } }
+  const request = { panelId: 'files', worktreeId: snapshot.worktreeId, expectedRevision: snapshot.revision, actionId: 'file.create', input: { name: '.ndev.json' } }
   await assert.rejects(handlers.get('panel.action')({ ...request, worktreeId: 'foreign' }), /different worktree/)
   await assert.rejects(handlers.get('panel.action')({ ...request, expectedRevision: 0 }), /refresh/i)
   active = 'remote'
@@ -401,9 +409,9 @@ test('an open view panel shows file and resource changes on its timer and pauses
   const options = await fixture(t)
   const panel = await openPanel('view', options)
   assert.equal(panel.message(), '')
-  assert.match(panel.content(), /\.neil-dev\.json\nMissing/)
+  assert.match(panel.content(), /\.ndev\.json\nMissing/)
   assert.doesNotMatch(panel.content(), /ndev-web/)
-  await writeJson(join(options.cwd, '.neil-dev.json'), { mode: 'heavy' })
+  await writeJson(join(options.cwd, '.ndev.json'), { mode: 'heavy' })
   await writeJson(join(options.cwd, '.neil-dev.worktree.json'), { version: 2, resources: { docker: [], 'dev-servers': { 'ndev-web': { pid: 99999999, port: 3000, command: 'ndev-web', started: '2025-01-01' } } } })
   panel.document.hidden = true
   const before = panel.requests.length

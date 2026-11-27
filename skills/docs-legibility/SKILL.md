@@ -26,7 +26,7 @@ Write for a capable reader who is new to the project.
 
 ## Branding
 
-If `<project root>/.neil-dev.json` has a `branding` key with a `guide`, read that guide's writing rules too. Where they conflict with the standard above, follow the guide. Find the root with `git rev-parse --show-toplevel`. Otherwise skip this section.
+If `<project root>/.ndev.json` has a `branding` key with a `guide`, read that guide's writing rules too. Where they conflict with the standard above, follow the guide. Find the root with `git rev-parse --show-toplevel`. Otherwise skip this section.
 
 ## Precheck
 

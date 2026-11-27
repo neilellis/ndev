@@ -69,7 +69,7 @@ In the site folder: `npm install`, then `scripts/precheck.sh` (lint, types, test
 
 ## 6. Record it
 
-Set `branding` in the project's `.neil-dev.json`: `site` (the planned URL), `name`, and `path` (the folder, relative to the project root). Keep the keys that are already there. The docs, diagram, copy and video skills then use the brand.
+Set `branding` in the project's `.ndev.json`: `site` (the planned URL), `name`, and `path` (the folder, relative to the project root). Keep the keys that are already there. The docs, diagram, copy and video skills then use the brand.
 
 ## 7. Report
 

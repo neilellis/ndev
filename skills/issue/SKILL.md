@@ -16,7 +16,7 @@ Create the issue directly. The command is the request, so do not ask for approva
 
 ## 1. Read the project's choices
 
-`ndev github` reads the repository and board from `.neil-dev.json`.
+`ndev github` reads the repository and board from `.ndev.json`.
 
 Run these reads in parallel:
 
@@ -27,7 +27,7 @@ ndev github milestones                                      # use only "open" on
 gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){issueTypes(first:25){nodes{name description}}}}' -f o=<owner> -f n=<name>
 ```
 
-- If the project has no repository in `.neil-dev.json` (`"repo": null`) or `ndev github repo` cannot find one, stop. Say: "Run /dev-setup to set the GitHub repository and board."
+- If the project has no repository in `.ndev.json` (`"repo": null`) or `ndev github repo` cannot find one, stop. Say: "Run /dev-setup to set the GitHub repository and board."
 - If the board is `null`, create the issue and skip steps 3 and 4. Say that the project has no board.
 - If the board is not set yet, or `board fields` fails, stop and show the error. `ndev github` names the fix (`gh auth refresh -s project`, or `/dev-setup`).
 - `issueTypes` is `null` for a repository that does not belong to an organisation that uses issue types. In that case, set no type.

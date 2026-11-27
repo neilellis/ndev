@@ -1,6 +1,6 @@
 # Keep the brand site up to date
 
-The brand site is the source of truth for the responsive rules. `.neil-dev.json` names it under `branding` (its URL, and its local folder when the brand site is in the repository). The session prompt gives these values. When the project has no `branding`, skip this page.
+The brand site is the source of truth for the responsive rules. `.ndev.json` names it under `branding` (its URL, and its local folder when the brand site is in the repository). The session prompt gives these values. When the project has no `branding`, skip this page.
 
 ## What the brand site records
 

@@ -98,7 +98,7 @@ test('flow off --project quiets the watcher, and flow on --project resumes it af
     return JSON.parse(result.stdout).result.notices
   }
   const flow = (...args) => spawnSync(ndev, ['flow', ...args, '--json'], { cwd: root, env, encoding: 'utf8' })
-  const setting = () => JSON.parse(readFileSync(join(root, '.neil-dev.json'), 'utf8')).workflow
+  const setting = () => JSON.parse(readFileSync(join(root, '.ndev.json'), 'utf8')).workflow
   const off = flow('off', '--project')
   assert.equal(off.status, 0, off.stdout + off.stderr)
   assert.equal(setting(), false)

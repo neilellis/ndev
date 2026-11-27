@@ -75,7 +75,7 @@ type Opts = {
 
 function world(on: On, opts: Opts = {}) {
   const files = new Map<string, string>([
-    [`${ROOT}/.neil-dev.json`, JSON.stringify(opts.config ?? { github: { repo: 'acme/widgets', board: null }, remote: { hcloudContext: 'proj' } })],
+    [`${ROOT}/.ndev.json`, JSON.stringify(opts.config ?? { github: { repo: 'acme/widgets', board: null }, remote: { hcloudContext: 'proj' } })],
     [RUNTIMES, JSON.stringify(opts.runtimes ?? { version: 1, runtimes: [
       { runtimeEnvironmentId: 'env-old', status: 'cleaned', recipeResult: { connection: { type: 'ssh', target: { host: '10.9.9.9', port: 22, username: 'orca' } } } },
       { runtimeEnvironmentId: ENV, status: 'running', recipeResult: { connection: { type: 'ssh', target: { label: 'orca-dev-2', host: '88.99.125.86', port: 22, username: 'orca' } } } },
@@ -220,20 +220,20 @@ function world(on: On, opts: Opts = {}) {
 const start = ($: Engine, isInteractive = true) => $.session.start({ cwd: `${ROOT}/src`, surface: 'terminal', isInteractive })
 const dev = async ($: Engine, args: string) => (await $.command.run({ command: 'dev', args: `remote ${args}`.trim() })).text ?? ''
 
-test('with no hcloud context in .neil-dev.json and no --context, resize stops before any call to Hetzner and names the key to set', async ($, on) => {
+test('with no hcloud context in .ndev.json and no --context, resize stops before any call to Hetzner and names the key to set', async ($, on) => {
   const w = world(on, { config: { github: { repo: 'acme/widgets', board: null } } })
   await start($)
 
   const text = await dev($, 'resize cx43')
   expect(text).toMatch(/no hcloud context/)
   expect(text).toMatch(/"remote": \{ "hcloudContext": "<context>" \}/)
-  expect(text).toMatch(/\/proj\/\.neil-dev\.json/)
+  expect(text).toMatch(/\/proj\/\.ndev\.json/)
   expect(text).toMatch(/--context <context>/)
   expect(w.hcloudRuns().filter(a => a[1] === '--context')).toEqual([])
   expect(w.sent.size).toBe(0)
 })
 
-test('.neil-dev.json refuses a remote key that is not { "hcloudContext": "<name>" }', async ($, on) => {
+test('.ndev.json refuses a remote key that is not { "hcloudContext": "<name>" }', async ($, on) => {
   world(on, { config: { github: { repo: 'acme/widgets', board: null }, remote: { hcloudContext: '' } } })
   await start($)
   expect(await dev($, 'resize cx43')).toMatch(/"remote\.hcloudContext" must be a non-empty string/)

@@ -40,7 +40,7 @@ The watcher performs four recurring checks:
 
 ## Native Orca chat guard (`ndev chat-guard`)
 
-The native chat guard protects local Codex and Claude Code native Orca chats from expensive sends after long idle periods. It is **off by default** and enabled per project in `.neil-dev.json` (`"chatGuard": true`).
+The native chat guard protects local Codex and Claude Code native Orca chats from expensive sends after long idle periods. It is **off by default** and enabled per project in `.ndev.json` (`"chatGuard": true`).
 
 ```sh
 ndev chat-guard on

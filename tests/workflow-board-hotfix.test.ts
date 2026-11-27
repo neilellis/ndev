@@ -523,7 +523,7 @@ test('a retry with the issue files nothing more, and its worktree and PR pass th
 })
 
 test('the board comes from the main checkout when the worktree has no board setting', async ($, on) => {
-  const w = engine(on, { wf: { state: 'developing', board: 'progress' }, files: { '/main/.neil-dev.json': JSON.stringify(BOARD.config) } })
+  const w = engine(on, { wf: { state: 'developing', board: 'progress' }, files: { '/main/.ndev.json': JSON.stringify(BOARD.config) } })
   await start($, w)
   await tool($, 'blocked', { message: 'Which colour?' })
   expect(moves(w)).toEqual(['board.sh move I7 awaiting'])

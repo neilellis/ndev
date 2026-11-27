@@ -5,7 +5,7 @@ const SECTION = 'ndev:dev-mode'
 type On = Parameters<Parameters<typeof test>[1]>[1]
 
 const ROOT = '/proj'
-const CONFIG = `${ROOT}/.neil-dev.json`
+const CONFIG = `${ROOT}/.ndev.json`
 const ran = (stdout = '') => ({
   value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
@@ -164,7 +164,7 @@ test('/dev-mode writes the project file and keeps its other keys', async ($, on)
   await start($)
 
   const ran = await $.command.run({ command: 'dev-mode', args: 'heavy' })
-  expect(ran.text).toContain('Saved to .neil-dev.json')
+  expect(ran.text).toContain('Saved to .ndev.json')
   expect(JSON.parse(files.get(CONFIG) ?? '{}')).toEqual({
     steering: 'auto',
     quality: { precheckReminder: {} },

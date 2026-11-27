@@ -60,7 +60,7 @@ Ask the user whether to commit the work folder or keep it out of git. Delete it 
 
 ## Branding
 
-If `.neil-dev.json` at the project root has `branding`, read `branding.guide` (or else `branding.site`) before any design change to the site (colour, type, spacing, layout, components, theme or figure styling). Its tokens are the source of truth: where the guide and the site's code differ, follow the guide and update the tokens. Give the same instruction to the diagram pass. Otherwise skip this section.
+If `.ndev.json` at the project root has `branding`, read `branding.guide` (or else `branding.site`) before any design change to the site (colour, type, spacing, layout, components, theme or figure styling). Its tokens are the source of truth: where the guide and the site's code differ, follow the guide and update the tokens. Give the same instruction to the diagram pass. Otherwise skip this section.
 
 ## Rules
 

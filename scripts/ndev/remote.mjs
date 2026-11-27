@@ -10,6 +10,7 @@ import { importHost } from '../../hooks/remote-import.ts'
 import { orcaServers, projectKey, readStore, storePath, writeStore } from '../../hooks/remote-store.ts'
 import { makeRun, orca } from '../../hooks/remote-orca.ts'
 import { argsFor, atomicJson, CliError, gitWorkspace, locked, readObject, releaseRoot, run, stateRoot } from './common.mjs'
+import { readConfigText } from './config-file.mjs'
 import { readProject } from './project.mjs'
 
 function host(root) {
@@ -46,7 +47,7 @@ function host(root) {
 
 function context(cwd) {
   const { root } = gitWorkspace(cwd)
-  return { root, engine: host(root), project: { root, config: readProject(root), path: join(root, '.neil-dev.json') } }
+  return { root, engine: host(root), project: { root, config: readProject(root), path: readConfigText(root).path } }
 }
 
 export async function resolveRemote(wanted = '', { root = process.cwd(), repo, selector } = {}) {

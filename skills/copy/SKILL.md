@@ -33,7 +33,7 @@ If a workflow runs for this issue (`mcp__ndev__status` tells you), commit with `
 
 ## Branding
 
-If `<project root>/.neil-dev.json` has a `branding` key, read `branding.guide` (or `branding.site` when there is no guide) before you write. Use its vocabulary, voice and product names; the rules above still apply. Find the root with `git rev-parse --show-toplevel`. Otherwise skip this section.
+If `<project root>/.ndev.json` has a `branding` key, read `branding.guide` (or `branding.site` when there is no guide) before you write. Use its vocabulary, voice and product names; the rules above still apply. Find the root with `git rev-parse --show-toplevel`. Otherwise skip this section.
 
 ## Tested copy
 

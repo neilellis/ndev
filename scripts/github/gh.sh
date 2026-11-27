@@ -100,7 +100,7 @@ check_requirement() {
 # --- project board ---------------------------------------------------------
 board_env() {
   [ -n "${GH_PROJECT_OWNER:-}" ] && [ -n "${GH_PROJECT_NUMBER:-}" ] \
-    || die "board commands need GH_PROJECT_OWNER and GH_PROJECT_NUMBER, and .neil-dev.json names no board. Repair: run /dev-setup in Claude Code, or find them with: gh project list --owner <owner>"
+    || die "board commands need GH_PROJECT_OWNER and GH_PROJECT_NUMBER, and .ndev.json names no board. Repair: run /dev-setup in Claude Code, or find them with: gh project list --owner <owner>"
 }
 
 project_id() {

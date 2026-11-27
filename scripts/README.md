@@ -14,7 +14,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 |---|---|---|
 | `gh.sh` | Compact GitHub reads and writes (issues, PRs, project board), one JSON object per line. The gh command runs first and REST is the fallback; every other script reaches GitHub only through it. `GH_CACHE_TTL=<seconds>` keeps the answers of `issue-read`, `pr-read` and `issue-states` in a cache (off by default), and every other command clears the cache of its repository. Agents do not run it by path: `ndev github`, `ndev project pr-new` and `ndev project issue-new` run it for them. Guard: `github/tests/no_raw_gh.test.mjs`. | `ndev github`, `ndev project`, the hooks, `board/board.sh` and the other scripts that reach GitHub |
 | `lib.sh` | Shared GitHub settings (repository, retries). Source it; do not run it. | the scripts in `github/`, `work/work_status.py`, command-reuse |
-| `project-config.sh` | Sets `GH_REPO`, `GH_PROJECT_OWNER` and `GH_PROJECT_NUMBER` from `.neil-dev.json`. Source it. | `github/` scripts, `board/board.sh` |
+| `project-config.sh` | Sets `GH_REPO`, `GH_PROJECT_OWNER` and `GH_PROJECT_NUMBER` from `.ndev.json`. Source it. | `github/` scripts, `board/board.sh` |
 | `dump.py` | Dumps an issue or PR to one markdown file and downloads its images. Agents run it as `ndev github dump`. | `ndev github dump` |
 | `merge-main-into-open-prs.sh` | Merges the base branch into each open PR branch. Wrapper for `merge_main_into_open_prs.py`. Agents run it as `ndev github merge-main`. | `ndev github merge-main` |
 | `merge_main_into_open_prs.py` | The merge logic, one worktree for each PR. | `merge-main-into-open-prs.sh` |
@@ -44,7 +44,7 @@ Tests are in `<area>/tests/`. Run them after a change.
 | `work_status.py` | The status logic. | `work-status.sh` |
 | `wait_for_process_end.sh` | Waits until a process exits. | work-light, fix-ci, command-reuse |
 | `worktree-env.sh` | Records the resources a worktree started in `.neil-dev.worktree.json`: docker stacks (`add-stack`, `remove-stack`) and dev servers by name (`add-dev-server`, `remove-dev-server`). Shows them (`list`, with `--json --live` for status), stops one (`stop`) or all (`stop-all`) converts a version 1 file (`migrate`), creates a missing record (`init`), saves the worktree's mode and steering (`set-setting`) and writes the workflow state of one issue to `.neil-dev.issue-<id>.json` (`set-workflow`). Wrapper for `worktree_env.mjs`. | work-light, work-heavy, `hooks/worktree-stacks.ts` (session end) |
-| `ndev-files.sh` | Lists the ndev files of every git worktree (`list --json`) and creates or copies a missing `.neil-dev.json` or `.neil-dev.env` (`create`, `copy`). Wrapper for `ndev_files.mjs`. | `hooks/view.tsx` (`/view`) |
+| `ndev-files.sh` | Lists the ndev files of every git worktree (`list --json`) and creates or copies a missing `.ndev.json` or `.neil-dev.env` (`create`, `copy`). Wrapper for `ndev_files.mjs`. | `hooks/view.tsx` (`/view`) |
 | `ndev_files.mjs` | The listing and create/copy logic. Test: `node --test scripts/work/tests/ndev_files.test.mjs`. | `ndev-files.sh` |
 | `worktree_env.mjs` | The record and stop logic. Test: `node --test scripts/work/tests/worktree_env.test.mjs`. | `worktree-env.sh` |
 | `tests/test_gates.sh`, `tests/test_peer_activity.sh`, `tests/test_worktree_claim.sh` | Prove `gates.sh`, `peer_activity.sh` and `worktree_claim.sh` in both directions. | work-heavy-auto (its Tests line) |

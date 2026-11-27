@@ -18,7 +18,7 @@ Forty-five visual types. Semantic patterns describe behavior; type references de
 
 ## 0. Branding
 
-If `<project root>/.neil-dev.json` has a `branding` key, apply it before the first diagram; otherwise skip this section. Find the root with `git rev-parse --show-toplevel`. The key is `{ "site", "name"?, "guide"? }`.
+If `<project root>/.ndev.json` has a `branding` key, apply it before the first diagram; otherwise skip this section. Find the root with `git rev-parse --show-toplevel`. The key is `{ "site", "name"?, "guide"? }`.
 
 1. If the project has a `.diagram-design` marker, resolve it per [`references/profiles.md`](references/profiles.md). A resolved profile is the skin; go to step 4.
 2. If a saved profile has the same `name` or source URL as `branding`, load it per `profiles.md`.

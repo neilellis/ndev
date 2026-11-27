@@ -516,14 +516,14 @@ function init(values) {
 }
 
 // Saves one setting of this worktree (the mode or steering), creating the file when it is missing.
-// The main checkout keeps no record, so there it refuses (exit 3); the caller writes .neil-dev.json.
+// The main checkout keeps no record, so there it refuses (exit 3); the caller writes .ndev.json.
 function setSetting(values) {
   const key = need(values, 'key')
   const value = need(values, 'value')
   if (!Object.hasOwn(SETTINGS, key)) throw new Fail(2, `worktree-env: --key "${key}" is not a setting. The settings are ${Object.keys(SETTINGS).join(', ')}.`)
   if (!SETTINGS[key].includes(value)) throw new Fail(2, `worktree-env: --value "${value}" is not a ${key}. The choices are ${SETTINGS[key].join(', ')}.`)
   const root = worktreeRoot(resolve(values.worktree ?? process.cwd()))
-  const common = refuseMainCheckout(root, 'edit .neil-dev.json instead')
+  const common = refuseMainCheckout(root, 'edit .ndev.json instead')
   refuseNotIgnored(root, common)
   withLock(root, () => {
     const record = readRecord(root)
@@ -702,7 +702,7 @@ function addStack(values) {
   }
   const file = join(root, FILE)
   changeDocker(root, stacks => [...stacks.filter(s => !same(s, kind, id)), { ...stack, addedAt: new Date().toISOString() }])
-  console.log(`worktree-env: recorded ${kind} stack ${id} in ${file}. When a Claude session in this worktree ends, the ndev hook stops it (worktreeStacks.onSessionEnd in .neil-dev.json; default stop-and-delete).`)
+  console.log(`worktree-env: recorded ${kind} stack ${id} in ${file}. When a Claude session in this worktree ends, the ndev hook stops it (worktreeStacks.onSessionEnd in .ndev.json; default stop-and-delete).`)
 }
 
 function removeStack(values) {

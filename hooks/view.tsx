@@ -23,7 +23,7 @@ const POLL_MS = 5000
 // A stop is armed by its first press and runs on the second, if it comes within this time.
 const ARM_MS = 5000
 const RECORD = '.neil-dev.worktree.json'
-const WRITABLE = ['.neil-dev.json', '.neil-dev.env']
+const WRITABLE = ['.ndev.json', '.neil-dev.env']
 
 const view = atom({ plugin: 'ndev', key: 'resourceView' } as const, { trees: [], busy: [] } as ResourceView, { shape: 'resource-view-2' })
 

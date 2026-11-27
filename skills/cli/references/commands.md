@@ -8,6 +8,7 @@ Choose the operation here, then consult its current `--help` for flags and input
 | --- | --- |
 | `ndev project status` | Read project identity, mode, steering, and missing setup before work. |
 | `ndev project setup --repo <owner/name>` | Configure the repository. Use `--board` when a project board applies. |
+| `ndev project migrate-config` | Move the old `.neil-dev.json` to `.ndev.json`, with `git mv` when Git tracks it. It refuses when both files exist and differ. |
 | `ndev project init` | Initialize the project's ndev setup. |
 | `ndev project mode` / `steering` | Read the setting. Supply a supported value only when changing it is intended. |
 | `ndev project credentials --copy-from-main` | Copy the project's credential file into its worktree through the guarded path. Use `--init` to create one. |
@@ -169,7 +170,7 @@ Reader-side `report`, `enhance`, `record`, `reply`, and `escalate` take JSON fil
 | `ndev install <harness> --dry-run` | Preview the files and conflicts before an authorized install. |
 | `ndev install <harness>` | Install or update ndev for `claude`, `codex`, `opencode`, or `antigravity`. `all` selects all built-in harnesses. |
 | `ndev install verify <harness>` | Verify the installed release, skills, agents, and hook configuration. |
-| `ndev chat-guard status` / `on` / `off` | Inspect or change native Orca idle-send protection for this project (`chatGuard` in `.neil-dev.json`; off by default). |
+| `ndev chat-guard status` / `on` / `off` | Inspect or change native Orca idle-send protection for this project (`chatGuard` in `.ndev.json`; off by default). |
 | `ndev watch --once` | Perform one watcher tick for an Orca terminal session. Omit `--once` only when a watcher is intended and none already owns the session. |
 | `ndev hook <event> --harness <harness>` | Dispatch a native harness event with the expected payload. This is adapter plumbing, not a replacement for workflow commands. |
 

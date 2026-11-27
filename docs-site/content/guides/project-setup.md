@@ -1,11 +1,11 @@
 ---
 title: Project setup
-description: Configure a Git repository for ndev with .neil-dev.json, credentials and NORTH_STAR.md.
+description: Configure a Git repository for ndev with .ndev.json, credentials and NORTH_STAR.md.
 ---
 
 # Project setup
 
-Run project setup once in each Git repository that uses `ndev`. Setup writes shared GitHub and workflow defaults to `.neil-dev.json` at the repository root.
+Run project setup once in each Git repository that uses `ndev`. Setup writes shared GitHub and workflow defaults to `.ndev.json` at the repository root.
 
 ## Set up a repository from the CLI
 
@@ -56,12 +56,14 @@ Open the project worktree in Orca and give Claude Code, Codex or opencode this p
 
 | File | Scope | Committed to Git | Purpose |
 | --- | --- | --- | --- |
-| `<repo>/.neil-dev.json` | Shared project | Yes | GitHub repo and board, default mode and steering, branding, checks, chat guard and remote defaults. |
+| `<repo>/.ndev.json` | Shared project | Yes | GitHub repo and board, default mode and steering, branding, checks, chat guard and remote defaults. |
 | `<worktree>/.neil-dev.worktree.json` | Local worktree | No | Worktree overrides and running Docker stacks or dev servers. |
 | `<worktree>/.neil-dev.env` | Local worktree | No (mode 600) | Private environment keys used by skills. Values are never printed in CLI output or state. |
 | `<worktree>/.neil-dev.issue-<n>.json` | Local worktree | No | Issue workflow phase, ownership, check evidence, interviews and PR association. |
 | `<worktree>/.neil-dev.epic-<n>.json` | Local worktree | No | Epic phases, sub-issue states, blockers, workers and stacked PR records. |
 | `<repo>/NORTH_STAR.md` | Shared project | Yes | Project purpose and non-negotiable guiding rules checked during planning and review. |
+
+The project file was `.neil-dev.json` before. `ndev` still reads `.neil-dev.json` when `.ndev.json` does not exist, and the next write moves it to `.ndev.json`. To move it now, run `ndev project migrate-config` and commit the rename. When both files exist and their settings differ, `ndev` reads neither and stops with an error. Keep the settings you want in `.ndev.json` and delete `.neil-dev.json`.
 
 ## Project defaults and credentials
 
@@ -79,7 +81,7 @@ ndev project credentials --copy-from-main
 ndev project credentials --init
 ```
 
-At session start in a linked worktree, `ndev hook session-start` copies missing `.neil-dev.json` and `.neil-dev.env` from the main checkout. It sets mode `600` on `.neil-dev.env` and adds local Git excludes for local state files.
+At session start in a linked worktree, `ndev hook session-start` copies missing `.ndev.json` and `.neil-dev.env` from the main checkout. It sets mode `600` on `.neil-dev.env` and adds local Git excludes for local state files.
 
 ## Next step
 

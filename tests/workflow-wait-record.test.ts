@@ -1,6 +1,6 @@
 // Workflow tests: The record of a wait: other writers, a dead session, status and /flow off. The shared harness is in tests/workflow-harness.ts.
 import { expect, test } from './sdk-testing'
-import { ROOT, RECORD, CONFIG, flow, held, engine, settle, start, tool, command, turnEnds, idle, seven, unblock, expectBackIn, noIssue, talk } from './workflow-harness'
+import { ROOT, RECORD, CONFIG, LEGACY_CONFIG, flow, held, engine, settle, start, tool, command, turnEnds, idle, seven, unblock, expectBackIn, noIssue, talk } from './workflow-harness'
 
 test('a wait ends well when another writer gets in first', async ($, on) => {
   const w = engine(on)
@@ -415,7 +415,7 @@ test('/flow off for the session leaves the tools that keep the state, such as ad
   expect(r.text).not.toContain('turned the workflow off for this session')
 })
 
-test('/flow off project writes .neil-dev.json and stops the reminders', async ($, on) => {
+test('/flow off project writes .ndev.json and stops the reminders', async ($, on) => {
   const w = engine(on)
   await start($, w)
   await command($, 'off project')
@@ -424,6 +424,16 @@ test('/flow off project writes .neil-dev.json and stops the reminders', async ($
   expect(w.prompts).toEqual([])
   await command($, 'on project')
   expect((JSON.parse(w.files.get(CONFIG) ?? '{}') as { workflow?: boolean }).workflow).toBe(true)
+})
+
+test('/flow off project moves a tracked .neil-dev.json to .ndev.json with git and writes the key there', async ($, on) => {
+  const w = engine(on)
+  w.files.set(LEGACY_CONFIG, w.files.get(CONFIG)!)
+  w.files.delete(CONFIG)
+  await start($, w)
+  await command($, 'off project')
+  expect(w.files.has(LEGACY_CONFIG)).toBe(false)
+  expect((JSON.parse(w.files.get(CONFIG) ?? '{}') as { workflow?: boolean; mode?: string })).toMatchObject({ workflow: false, mode: 'light' })
 })
 
 // ---- the limit on GitHub calls ----

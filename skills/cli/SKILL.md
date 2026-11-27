@@ -7,7 +7,7 @@ description: Choose and use native ndev CLI commands during development, reviews
 
 Use `ndev` for the operations it owns. Its commands retain state, check gates, and return the next action. A Git commit, GitHub comment, or Orca message alone does not advance that state.
 
-Use `ndev` on PATH. If it is missing, use `"${CLAUDE_PLUGIN_ROOT}/bin/ndev"`. Run commands in the project worktree that owns the task. Follow the project's instructions and configured mode and steering. If `.neil-dev.json` sets `"workflow": false`, keep it disabled and use the project's Git procedure.
+Use `ndev` on PATH. If it is missing, use `"${CLAUDE_PLUGIN_ROOT}/bin/ndev"`. Run commands in the project worktree that owns the task. Follow the project's instructions and configured mode and steering. If `.ndev.json` sets `"workflow": false`, keep it disabled and use the project's Git procedure.
 
 ## Choose by the task
 

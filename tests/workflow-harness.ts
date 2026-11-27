@@ -9,7 +9,8 @@ export type Dollar = Parameters<Body>[0]
 
 export const ROOT = '/proj'
 export const RECORD = `${ROOT}/.neil-dev.worktree.json`
-export const CONFIG = `${ROOT}/.neil-dev.json`
+export const CONFIG = `${ROOT}/.ndev.json`
+export const LEGACY_CONFIG = `${ROOT}/.neil-dev.json`
 export const REPO = 'acme/w'
 export const SHA = 'aaaaaaaa11111111'
 export const STREAM_CAP = 4194304 // What $.process.run keeps of each stream, and the most $.fs.write takes.
@@ -203,6 +204,13 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === '-C' && a[2] === CLAIMED) return ok('/main/.git/worktrees/claimed\n/main/.git\n')
       if (line.includes('--path-format=absolute')) return ok(s.main ? '/main/.git\n/main/.git\n' : `${ROOT}/.git/worktrees/x\n/main/.git\n`)
       // Each read of the remote refs differs, so a Bash call that names a push lands.
+      if (a[1] === 'mv') {
+        const [from, to] = a.slice(-2).map(name => name.startsWith('/') ? name : `${e.init?.cwd ?? ROOT}/${name}`)
+        if (!files.has(from)) return ok('', 128, `fatal: bad source, source=${from}`)
+        files.set(to, files.get(from)!)
+        files.delete(from)
+        return ok()
+      }
       if (a[1] === 'for-each-ref') return ok(`refs/remotes/origin/issue-7 ${++refReads}\n`)
       if (a[1] === 'reflog') return ok('update by push\n')
       // As real git does: with MERGE_HEAD named, the base of the hypothetical merge of HEAD and MERGE_HEAD.

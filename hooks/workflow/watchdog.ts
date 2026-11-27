@@ -71,7 +71,7 @@ async function fingerprint($: EngineInterface, wf: Workflow, problems: string[])
 // another session's workflow.
 async function ready($: EngineInterface, project: LoadedConfig | undefined): Promise<Workflow | undefined> {
   if (project?.config.workflow === false) {
-    await note($, 'quiet: .neil-dev.json turns the workflow off')
+    await note($, 'quiet: .ndev.json turns the workflow off')
     return undefined
   }
   // /flow off with no record of this agent turns the workflow off for the session, and says that no reminder comes.

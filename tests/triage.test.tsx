@@ -76,10 +76,10 @@ function world(on: On, opts: { environments?: { id: string; name: string }[]; re
   // env: what the session's environment holds besides HOME, such as the markers Orca's Chat UI sets.
   on('env.get', (_, e) => ({ value: e.name === 'HOME' ? '/home/neil' : opts.env?.[e.name] }))
   // The project's files a test gives, plus the files the mod writes, such as the /dev remote setting;
-  // every other read is the project's .neil-dev.json.
+  // every other read is the project's .ndev.json.
   const files: Record<string, string> = { ...(opts.files ?? {}) }
   const inDir = (dir: string) => Object.keys(files).filter(k => k.startsWith(`${dir}/`) && !k.slice(dir.length + 1).includes('/'))
-  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' || e.path in files || inDir(e.path).length > 0 }))
+  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.ndev.json' || e.path in files || inDir(e.path).length > 0 }))
   on('fs.list', (_, e) => ({ value: inDir(e.path).map(k => ({ name: k.slice(e.path.length + 1), kind: 'file', size: 0, isLink: false })) }) as never)
   on('fs.read', (_, e) => e.path in files ? { value: files[e.path] } : ({ value: JSON.stringify({ github: { repo: opts.repo ?? 'acme/widgets', board: opts.board ?? null }, ...(opts.workflowOff ? { workflow: false } : {}) }) }))
   on('fs.write', (_, e) => { files[e.path] = e.text; return { value: undefined } })

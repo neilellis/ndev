@@ -130,7 +130,7 @@ async function runLong($: EngineInterface, root: string, dir: string, script: st
   return { exitCode, stdout: out.stdout, stderr, isStdoutTruncated: out.isStdoutTruncated, isStderrTruncated: err.isStdoutTruncated, ...(stoppedAfterMs === undefined ? {} : { stoppedAfterMs }) }
 }
 
-// The keys of the worktree's .neil-dev.env that checkEnv in .neil-dev.json names, such as the URL of a local
+// The keys of the worktree's .neil-dev.env that checkEnv in .ndev.json names, such as the URL of a local
 // test database, as CI sets them. The other keys stay out, as they can be credentials for hosted services
 // (fcc-proto's FALKORDB_URL for kb:publish made its tests write to the hosted graph server); withheld names them.
 async function projectEnv($: EngineInterface, root: string, path: string): Promise<{ env: Record<string, string>; withheld: string[] }> {
@@ -143,7 +143,7 @@ async function projectEnv($: EngineInterface, root: string, path: string): Promi
     throw new Refuse(`${path} did not run: ${e instanceof Error ? e.message : String(e)} Nothing was pushed. Then call the tool again.`)
   }
   const missing = named.filter(k => !(k in values))
-  if (missing.length) throw new Refuse(`${path} did not run: checkEnv in ${root}/.neil-dev.json names ${missing.join(', ')}, which ${file} does not set. Nothing was pushed. Repair: node ${$.plugin.root}/scripts/env/neil-dev-env.mjs init ${missing.map(k => `--key ${k}`).join(' ')}, or take the name out of checkEnv. Then call the tool again.`)
+  if (missing.length) throw new Refuse(`${path} did not run: checkEnv in ${root}/.ndev.json names ${missing.join(', ')}, which ${file} does not set. Nothing was pushed. Repair: node ${$.plugin.root}/scripts/env/neil-dev-env.mjs init ${missing.map(k => `--key ${k}`).join(' ')}, or take the name out of checkEnv. Then call the tool again.`)
   return { env: Object.fromEntries(named.map(k => [k, values[k] as string])), withheld: Object.keys(values).filter(k => !named.includes(k)) }
 }
 
@@ -198,7 +198,7 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
     const cut = outputCut(r, path)
     const output = `${cut ? `${cut}\n` : ''}${tail}`
     const merge = merging ? ` A merge is in progress, so HEAD is the commit before the merge: a check that compares with \`git merge-base HEAD origin/${base}\` reads the old base. Repair: read the base from NDEV_MERGE_BASE=${env.NDEV_MERGE_BASE ?? '(git merge-base failed)'}, as ${base} merged in here.` : ''
-    const withheld = project.withheld.length ? ` The check did not get ${project.withheld.join(', ')} from ${root}/.neil-dev.env: the checks get only the keys that checkEnv in .neil-dev.json names. If a test needs one, such as the URL of a local test database, name it there; never a key of a hosted service.` : ''
+    const withheld = project.withheld.length ? ` The check did not get ${project.withheld.join(', ')} from ${root}/.neil-dev.env: the checks get only the keys that checkEnv in .ndev.json names. If a test needs one, such as the URL of a local test database, name it there; never a key of a hosted service.` : ''
     throw new CheckFailed(`${path} exited ${r.exitCode}. Nothing was pushed.${merge}${withheld} Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
   }
   const after = (await porcelain($, root)).join('\n')
@@ -216,7 +216,7 @@ export function readPr($: EngineInterface, root: string, repo: string, n: number
 export async function repoFromOrigin($: EngineInterface, root: string): Promise<string> {
   const url = await gitOut(root, $, 'remote', 'get-url', 'origin')
   const match = url.match(/github\.com[:/]([^/]+\/[^/]+?)(\.git)?\/?$/)
-  if (!match) throw new Refuse(`Refused: the origin of ${root} is not a GitHub repository (${url}). Repair: set github.repo in .neil-dev.json with /dev setup.`)
+  if (!match) throw new Refuse(`Refused: the origin of ${root} is not a GitHub repository (${url}). Repair: set github.repo in .ndev.json with /dev setup.`)
   return match[1] as string
 }
 // From GitHub and not from refs/remotes/origin/HEAD: clone sets that ref once, and a fetch does not move it.

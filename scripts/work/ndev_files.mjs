@@ -2,14 +2,14 @@
 // The ndev files of a repository's git worktrees, for the /view pane.
 //
 //   ndev-files.sh list --json [--repo <dir>]
-//   ndev-files.sh create --file .neil-dev.json|.neil-dev.env --worktree <dir> [--repo <dir>]
-//   ndev-files.sh copy   --file .neil-dev.json|.neil-dev.env --worktree <dir> [--repo <dir>]
+//   ndev-files.sh create --file .ndev.json|.neil-dev.env --worktree <dir> [--repo <dir>]
+//   ndev-files.sh copy   --file .ndev.json|.neil-dev.env --worktree <dir> [--repo <dir>]
 //
 // list shows, for each worktree (the main checkout first), the three known files
-// (.neil-dev.json, .neil-dev.env, .neil-dev.worktree.json) as present or missing and every other
+// (.ndev.json, .neil-dev.env, .neil-dev.worktree.json) as present or missing and every other
 // .neil-dev* file that exists, such as .neil-dev.issue-<id>.json, with whether git ignores the name.
 // It never reads a file's content.
-// create writes a minimal .neil-dev.json, or an empty .neil-dev.env (mode 600). copy takes the file
+// create writes a minimal .ndev.json, or an empty .neil-dev.env (mode 600). copy takes the file
 // from the main checkout. Neither overwrites a file. .neil-dev.env is only written where git ignores
 // it, so it cannot be committed. .neil-dev.worktree.json belongs to worktree-env.sh.
 //
@@ -20,9 +20,11 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { parseArgs } from 'node:util'
+const CONFIG_FILE = '.ndev.json'
+const LEGACY_CONFIG_FILE = '.neil-dev.json'
 
-const KNOWN = ['.neil-dev.json', '.neil-dev.env', '.neil-dev.worktree.json']
-const WRITABLE = ['.neil-dev.json', '.neil-dev.env']
+const KNOWN = [CONFIG_FILE, '.neil-dev.env', '.neil-dev.worktree.json']
+const WRITABLE = [CONFIG_FILE, '.neil-dev.env']
 const MINIMAL_CONFIG = { mode: 'light', steering: 'interactive' }
 
 class Fail extends Error {
@@ -101,8 +103,10 @@ function target(trees, values) {
   return { name, tree, file: join(tree.path, name) }
 }
 
-function refuseExisting({ name, file }) {
+function refuseExisting({ name, file, tree }) {
   if (existsSync(file)) throw new Fail(3, `ndev-files: ${file} already exists, so ${name} was not written. Nothing was changed.`)
+  const legacy = join(tree.path, LEGACY_CONFIG_FILE)
+  if (name === CONFIG_FILE && existsSync(legacy)) throw new Fail(3, `ndev-files: ${legacy} already holds the project config, so ${name} was not written. Nothing was changed. Repair: run ndev project migrate-config in ${tree.path}.`)
 }
 
 function refuseOpenEnv({ name, tree }) {
@@ -123,7 +127,7 @@ function create(trees, values) {
   const t = target(trees, values)
   refuseExisting(t)
   refuseOpenEnv(t)
-  write(t, t.name === '.neil-dev.json' ? `${JSON.stringify(MINIMAL_CONFIG, null, 2)}\n` : '# Private keys for ndev skills: one KEY=VALUE per line. Never commit this file.\n')
+  write(t, t.name === CONFIG_FILE ? `${JSON.stringify(MINIMAL_CONFIG, null, 2)}\n` : '# Private keys for ndev skills: one KEY=VALUE per line. Never commit this file.\n')
   console.log(`ndev-files: created ${t.file}.`)
 }
 
@@ -131,7 +135,8 @@ function copy(trees, values) {
   const t = target(trees, values)
   const main = trees[0]
   if (t.tree.isMain) throw new Fail(3, `ndev-files: ${t.tree.path} is the main checkout, which holds the original, so nothing was copied. Pick a linked worktree.`)
-  const source = join(main.path, t.name)
+  const legacy = join(main.path, LEGACY_CONFIG_FILE)
+  const source = t.name === CONFIG_FILE && !existsSync(join(main.path, t.name)) && existsSync(legacy) ? legacy : join(main.path, t.name)
   if (!existsSync(source)) throw new Fail(3, `ndev-files: the main checkout has no ${t.name} (${source}), so there is nothing to copy. Create it first with: ndev-files.sh create --file ${t.name} --worktree ${main.path}`)
   refuseExisting(t)
   refuseOpenEnv(t)

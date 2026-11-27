@@ -6,7 +6,7 @@ type On = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => u
 type Run = { argv: string[]; cwd?: string; env?: Record<string, string>; stdin?: string }
 
 const ROOT = '/proj'
-const CONFIG = `${ROOT}/.neil-dev.json`
+const CONFIG = `${ROOT}/.ndev.json`
 
 const answered = (config: string | undefined) => {
   if (config === undefined) return undefined
@@ -18,7 +18,7 @@ const answered = (config: string | undefined) => {
   }
 }
 
-// The engine beneath the plugin: a project at /proj whose .neil-dev.json holds `config`
+// The engine beneath the plugin: a project at /proj whose .ndev.json holds `config`
 // (undefined: no file), and hook scripts that answer with `script`.
 const engine = async (
   $: Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0],
@@ -78,7 +78,7 @@ const engine = async (
     }
   })
   on('tool.call', () => ({ result: {} }))
-  // register.ts reads .neil-dev.json once, at session start.
+  // register.ts reads .ndev.json once, at session start.
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   return { runs, toasts }
 }
@@ -160,7 +160,7 @@ test('an unknown quality hook: one toast naming the file and the key, and nothin
 
   expect(runs).toHaveLength(0)
   expect(toasts).toHaveLength(1)
-  expect(toasts[0]).toContain('.neil-dev.json')
+  expect(toasts[0]).toContain('.ndev.json')
   expect(toasts[0]).toContain('quality.lintEverything')
 })
 

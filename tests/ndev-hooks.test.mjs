@@ -59,12 +59,12 @@ test('session start copies project files and creates a separate worktree record'
   const credentials = 'FIXTURE_API_KEY=fixture-only-secret\n'
   const projectFile = name => join(main, name)
   const linkedFile = name => join(linked, name)
-  writeFileSync(projectFile('.neil-dev.json'), config)
+  writeFileSync(projectFile('.ndev.json'), config)
   writeFileSync(projectFile('.neil-dev.env'), credentials, { mode: 0o644 })
   writeFileSync(projectFile('.neil-dev.worktree.json'), '{"version":1,"stacks":["different checkout"]}\n')
   const first = start()
   assert.equal(first.status, 0, first.stderr)
-  assert.equal(readFileSync(linkedFile('.neil-dev.json'), 'utf8'), config)
+  assert.equal(readFileSync(linkedFile('.ndev.json'), 'utf8'), config)
   assert.equal(readFileSync(linkedFile('.neil-dev.env'), 'utf8'), credentials)
   assert.equal(statSync(linkedFile('.neil-dev.env')).mode & 0o777, 0o600)
   const record = linkedFile('.neil-dev.worktree.json')
@@ -73,12 +73,12 @@ test('session start copies project files and creates a separate worktree record'
   assert.doesNotMatch(first.stdout + first.stderr, /fixture-only-secret/)
   assert.doesNotMatch(first.stdout, /Ask which issue/)
   assert.equal(checkedGit(linked, 'check-ignore', '.neil-dev.env', '.neil-dev.worktree.json'), '.neil-dev.env\n.neil-dev.worktree.json')
-  writeFileSync(linkedFile('.neil-dev.json'), '{"mode":"light"}\n')
+  writeFileSync(linkedFile('.ndev.json'), '{"mode":"light"}\n')
   writeFileSync(linkedFile('.neil-dev.env'), 'FIXTURE_API_KEY=local\n')
   writeFileSync(record, JSON.stringify({ ...fresh, settings: { steering: 'auto' } }))
   const again = start('claude')
   assert.equal(again.status, 0, again.stderr)
-  assert.equal(readFileSync(linkedFile('.neil-dev.json'), 'utf8'), '{"mode":"light"}\n')
+  assert.equal(readFileSync(linkedFile('.ndev.json'), 'utf8'), '{"mode":"light"}\n')
   assert.equal(readFileSync(linkedFile('.neil-dev.env'), 'utf8'), 'FIXTURE_API_KEY=local\n')
   assert.deepEqual(JSON.parse(readFileSync(record, 'utf8')).settings, { steering: 'auto' })
 })
@@ -87,7 +87,7 @@ test('session start creates defaults when neither checkout has project files', t
   const { main, linked, checkedGit, start } = linkedFixture(t)
   const result = start('opencode')
   assert.equal(result.status, 0, result.stderr)
-  assert.deepEqual(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')), { mode: 'light', steering: 'interactive' })
+  assert.deepEqual(JSON.parse(readFileSync(join(linked, '.ndev.json'), 'utf8')), { mode: 'light', steering: 'interactive' })
   const credentials = join(linked, '.neil-dev.env')
   assert.match(readFileSync(credentials, 'utf8'), /^(?:#.*\n)*$/)
   assert.equal(statSync(credentials).mode & 0o777, 0o600)
@@ -116,18 +116,18 @@ test('session start creates defaults for a linked worktree of a bare repository'
   checkedGit(bare, 'worktree', 'add', '-q', linked, 'topic')
   const result = start()
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')).mode, 'light')
+  assert.equal(JSON.parse(readFileSync(join(linked, '.ndev.json'), 'utf8')).mode, 'light')
   assert.equal(statSync(join(linked, '.neil-dev.env')).mode & 0o777, 0o600)
   assert.ok(existsSync(join(linked, '.neil-dev.worktree.json')))
 })
 
 test('session start does not copy project files from a separate Git metadata directory', t => {
   const { linked, metadata, start } = linkedFixture(t, '', true)
-  writeFileSync(join(metadata, '.neil-dev.json'), '{"mode":"heavy"}')
+  writeFileSync(join(metadata, '.ndev.json'), '{"mode":"heavy"}')
   writeFileSync(join(metadata, '.neil-dev.env'), 'FIXTURE_WRONG_SOURCE=metadata\n')
   const result = start()
   assert.equal(result.status, 0, result.stderr)
-  assert.equal(JSON.parse(readFileSync(join(linked, '.neil-dev.json'), 'utf8')).mode, 'light')
+  assert.equal(JSON.parse(readFileSync(join(linked, '.ndev.json'), 'utf8')).mode, 'light')
   assert.doesNotMatch(readFileSync(join(linked, '.neil-dev.env'), 'utf8'), /FIXTURE_WRONG_SOURCE/)
 })
 
@@ -187,7 +187,7 @@ test('native Git guards allow disabled issue and project workflows', t => {
   const held = JSON.parse(readFileSync(path, 'utf8'))
   for (const scope of ['issue', 'project']) {
     writeFileSync(path, JSON.stringify({ ...held, workflow: { ...held.workflow, off: scope === 'issue' ? { at: 1 } : undefined } }))
-    writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ workflow: scope !== 'project' }))
+    writeFileSync(join(root, '.ndev.json'), JSON.stringify({ workflow: scope !== 'project' }))
     for (const [harness, tool] of [['claude', 'Bash'], ['codex', 'exec_command'], ['opencode', 'shell']]) {
       for (const command of ['git commit -m test', 'git push origin topic']) {
         assert.equal(hook(root, harness, tool, command), null, `${harness}: ${scope}: ${command}`)
@@ -240,7 +240,7 @@ test('a Claude turn end never blocks the stop or re-prompts, whether the workflo
   ]
   for (const [name, record, enabled] of cases) {
     writeFileSync(path, JSON.stringify({ version: 1, issue: 17, workflow: record }))
-    writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ workflow: enabled }))
+    writeFileSync(join(root, '.ndev.json'), JSON.stringify({ workflow: enabled }))
     for (const [turn, active] of [['t1', false], ['t2', true]]) {
       const result = spawnSync(ndev, ['hook', 'turn-complete', '--harness', 'claude'], {
         cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH },
@@ -255,7 +255,7 @@ test('a Claude turn end never blocks the stop or re-prompts, whether the workflo
 
 test('a successful component edit gives one reuse prompt per file and session', t => {
   const root = fixture(t)
-  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  writeFileSync(join(root, '.ndev.json'), '{"workflow":false}\n')
   const call = () => {
     const result = spawnSync(ndev, ['hook', 'post-tool-use', '--harness', 'claude'], {
       cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH },
@@ -270,7 +270,7 @@ test('a successful component edit gives one reuse prompt per file and session', 
 
 test('the learning hook reacts to a landed push and leaves an unchanged ref alone', t => {
   const root = fixture(t)
-  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  writeFileSync(join(root, '.ndev.json'), '{"workflow":false}\n')
   const env = { HOME: root, PATH: process.env.PATH }
   const git = (...args) => {
     const command = spawnSync('git', args, { cwd: root, env, encoding: 'utf8' })
@@ -297,7 +297,7 @@ test('the learning hook reacts to a landed push and leaves an unchanged ref alon
 test('Codex SessionStart directs the first work turn to the linked GitHub issue', t => {
   const root = fixture(t)
   rmSync(join(root, '.neil-dev.issue-17.json'))
-  writeFileSync(join(root, '.neil-dev.json'), '{"github":{"repo":"neilellis/ndev"}}')
+  writeFileSync(join(root, '.ndev.json'), '{"github":{"repo":"neilellis/ndev"}}')
   mkdirSync(join(root, 'dev-wiki'))
   writeFileSync(join(root, 'dev-wiki/wiki.md'), '')
   const orca = join(root, 'orca')
@@ -317,7 +317,7 @@ test('Codex SessionStart directs the first work turn to the linked GitHub issue'
     version: 1, issue: 17, workflow: { issue: 17, root, state: 'developing', branch: 'topic', base: 'main' },
   }))
   assert.match(start('startup').hookSpecificOutput.additionalContext, /Before development work, run ndev flow start 17\./)
-  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}')
+  writeFileSync(join(root, '.ndev.json'), '{"workflow":false}')
   const declined = start('startup')
   assert.match(declined.systemMessage, /Workflow is disabled.*ndev flow on --project/)
   assert.doesNotMatch(declined.hookSpecificOutput.additionalContext, /Ask which issue|ndev flow start/)
@@ -349,9 +349,9 @@ test('native chat prompt guard blocks stale sends and allows retry after local c
   assert.notEqual(call('codex', 'draft', stale).decision, 'block')
   writeFileSync(legacyFlag, '')
   assert.notEqual(call('codex', 'draft', [codex(51, 200_001)]).decision, 'block')
-  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":false}')
+  writeFileSync(join(root, '.ndev.json'), '{"chatGuard":false}')
   assert.notEqual(call('codex', 'draft', [codex(51, 200_001)]).decision, 'block')
-  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":true}')
+  writeFileSync(join(root, '.ndev.json'), '{"chatGuard":true}')
   assert.notEqual(call('codex', 'draft', stale, '').decision, 'block')
   assert.notEqual(call('codex', 'draft', [codex(21, 200_000)]).decision, 'block')
   assert.notEqual(call('codex', 'draft', [codex(6, 300_000)]).decision, 'block')
@@ -386,25 +386,25 @@ test('chat guard hook ignores a folder outside Git and fails on an invalid proje
     input: JSON.stringify({ cwd, session_id: 'fixture', transcript_path: transcript, prompt: 'draft' }),
   })
   assert.doesNotMatch(call(outside).stdout, /"block"/)
-  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":"yes"}')
+  writeFileSync(join(root, '.ndev.json'), '{"chatGuard":"yes"}')
   const bad = call(root)
   assert.notEqual(bad.status, 0)
   assert.match(bad.stderr, /"chatGuard" is "yes"; use true or false/)
-  assert.ok(bad.stderr.includes(join(root, '.neil-dev.json')))
+  assert.ok(bad.stderr.includes(join(root, '.ndev.json')))
 })
 
 test('ndev chat-guard on, off and status set the project key and leave other keys alone', t => {
   const root = fixture(t)
   const guard = verb => spawnSync(ndev, ['chat-guard', verb], { cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH } })
-  const config = () => JSON.parse(readFileSync(join(root, '.neil-dev.json'), 'utf8'))
+  const config = () => JSON.parse(readFileSync(join(root, '.ndev.json'), 'utf8'))
   assert.match(guard('status').stdout, /guard is off for/)
-  writeFileSync(join(root, '.neil-dev.json'), '{"mode":"heavy"}')
+  writeFileSync(join(root, '.ndev.json'), '{"mode":"heavy"}')
   assert.match(guard('on').stdout, /guard is on for/)
   assert.deepEqual(config(), { mode: 'heavy', chatGuard: true })
   assert.match(guard('status').stdout, /guard is on for/)
   assert.match(guard('off').stdout, /guard is off for/)
   assert.deepEqual(config(), { mode: 'heavy', chatGuard: false })
-  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":"yes"}')
+  writeFileSync(join(root, '.ndev.json'), '{"chatGuard":"yes"}')
   const bad = guard('status')
   assert.notEqual(bad.status, 0)
   assert.match(bad.stderr, /"chatGuard" is "yes"; use true or false/)
@@ -413,7 +413,7 @@ test('ndev chat-guard on, off and status set the project key and leave other key
 test('chat guard continue passes the saved request once without launching a new chat', t => {
   const root = fixture(t)
   const state = join(root, 'state')
-  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":true}')
+  writeFileSync(join(root, '.ndev.json'), '{"chatGuard":true}')
   const transcript = join(root, 'conversation.jsonl')
   const timestamp = '2000-01-01T00:00:00.000Z'
   const draft = 'Check the release.\nKeep "$HOME" and `echo test` literal.'
@@ -445,7 +445,7 @@ test('chat guard continue passes the saved request once without launching a new 
 test('chat guard replies launch Orca with the saved prompt from the same chat', t => {
   const root = fixture(t)
   const state = join(root, 'state')
-  writeFileSync(join(root, '.neil-dev.json'), '{"chatGuard":true}')
+  writeFileSync(join(root, '.ndev.json'), '{"chatGuard":true}')
   const transcript = join(root, 'conversation.jsonl')
   const timestamp = new Date(Date.now() - 51 * 60_000).toISOString()
   writeFileSync(transcript, [
@@ -627,7 +627,7 @@ test('a bug report that only quotes a gh watch is not refused, and a quoted gh w
 
 function recordsFixture(t) {
   const root = fixture(t)
-  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  writeFileSync(join(root, '.ndev.json'), '{"workflow":false}\n')
   const env = { HOME: root, PATH: process.env.PATH }
   const git = (...args) => {
     const result = spawnSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', ...args], { cwd: root, env, encoding: 'utf8' })
@@ -702,7 +702,7 @@ test('the list of requirements stops at 20 records and names the command that pr
 
 test('a project with no requirement records gets no list of requirements', t => {
   const root = fixture(t)
-  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  writeFileSync(join(root, '.ndev.json'), '{"workflow":false}\n')
   const result = spawnSync(ndev, ['hook', 'pre-tool-use', '--harness', 'claude'], { cwd: root, encoding: 'utf8', env: { HOME: root, PATH: process.env.PATH }, input: JSON.stringify({ session_id: 'fixture', cwd: root, tool_name: 'Edit', tool_input: { file_path: join(root, 'README.md') } }) })
   assert.equal(result.status, 0, result.stderr)
   assert.doesNotMatch(result.stdout, /requirements in force/)
@@ -720,7 +720,7 @@ test('a project with requirement records refuses a raw gh issue or pr create and
 
 test('a project with no requirement records allows a raw gh issue create', t => {
   const root = fixture(t)
-  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}\n')
+  writeFileSync(join(root, '.ndev.json'), '{"workflow":false}\n')
   assert.equal(hook(root, 'claude', 'Bash', 'gh issue create --title T --body B', { HOME: root, PATH: process.env.PATH }), null)
 })
 
@@ -864,7 +864,7 @@ function quietFixture(t, config = { workflow: false }) {
   rmSync(join(root, '.neil-dev.issue-17.json'))
   mkdirSync(join(root, 'dev-wiki'))
   writeFileSync(join(root, 'dev-wiki/wiki.md'), '')
-  writeFileSync(join(root, '.neil-dev.json'), JSON.stringify(config))
+  writeFileSync(join(root, '.ndev.json'), JSON.stringify(config))
   return root
 }
 
@@ -941,7 +941,7 @@ test('prompt submit reloads changed settings and adds correction guidance to a h
   const first = textOf(hookEvent(root, 'prompt-submit', { prompt: 'Please add the parser test.' }))
   assert.match(first, /Mode light\./)
   assert.doesNotMatch(first, lesson)
-  writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ workflow: false, mode: 'heavy' }))
+  writeFileSync(join(root, '.ndev.json'), JSON.stringify({ workflow: false, mode: 'heavy' }))
   const corrected = textOf(hookEvent(root, 'prompt-submit', { prompt: "No, don't mock the parser." }))
   assert.match(corrected, /Mode heavy\..*Load ndev-work-heavy/s)
   assert.match(corrected, lesson)
@@ -963,7 +963,7 @@ test('prompt context supplies mode, steering, brand, GitHub, wiki, report, setup
     assert.match(context, /Report decisions needed, PRs and their check status, and any follow-up issues for review\./, harness)
     assert.match(context, /Issue #17 is in developing\. Run ndev flow status for the next step\./, harness)
   }
-  writeFileSync(join(root, '.neil-dev.json'), '{}')
+  writeFileSync(join(root, '.ndev.json'), '{}')
   rmSync(join(root, '.neil-dev.issue-17.json'))
   const fresh = textOf(hookEvent(root, 'prompt-context'))
   assert.match(fresh, /Mode light\. Steering interactive\. Load ndev-work-light for development work\./)
@@ -986,7 +986,7 @@ test('a configured subscription warning reaches the agent and lets the matched c
     assert.match(textOf(output), /WARNING: this command can spend the user's subscription.*FIXTURE_GATE gate/, command)
   }
   assert.equal(hookEvent(root, 'pre-tool-use', { tool_name: 'Bash', tool_input: { command: 'ls' } }), null)
-  writeFileSync(join(root, '.neil-dev.json'), '{"workflow":false}')
+  writeFileSync(join(root, '.ndev.json'), '{"workflow":false}')
   assert.equal(hookEvent(root, 'pre-tool-use', { tool_name: 'Bash', tool_input: { command: 'claude -p "summarize"' } }), null)
 })
 
@@ -999,7 +999,7 @@ test('edited file checks report findings outside a workflow and leave the check 
   writeFileSync(file, 'banned()\n')
   const edit = (env = {}) => hookEvent(root, 'post-tool-use', { tool_name: 'Edit', tool_input: { file_path: file }, tool_response: {} }, { env })
   assert.match(textOf(edit()), new RegExp(`The guards refuse ${file}\\.[\\s\\S]*fixture-rule: banned call at ${file}:1[\\s\\S]*Fix the file\\.`))
-  writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ quality: { editedFileGuards: {} } }))
+  writeFileSync(join(root, '.ndev.json'), JSON.stringify({ quality: { editedFileGuards: {} } }))
   writeFileSync(join(root, '.neil-dev.issue-17.json'), JSON.stringify({
     version: 1, issue: 17, workflow: { issue: 17, root, state: 'developing', branch: 'topic', base: 'main' },
   }))
@@ -1027,7 +1027,7 @@ test('a worktree add starts submodule setup and reports a failed setup with the 
   writeFileSync(join(library, 'lib.txt'), 'library\n')
   git(library, 'add', '.')
   git(library, 'commit', '-q', '-m', 'library')
-  writeFileSync(join(root, '.gitignore'), 'library/\nlinked/\nbroken/\n.neil-dev.json\ndev-wiki/\n')
+  writeFileSync(join(root, '.gitignore'), 'library/\nlinked/\nbroken/\n.ndev.json\ndev-wiki/\n')
   git(root, 'submodule', 'add', '-q', library, 'vendor/lib')
   git(root, 'add', '.gitignore')
   git(root, 'commit', '-q', '-m', 'fixture')
@@ -1059,7 +1059,7 @@ test('prompt context lists the services a worktree still runs and the repair of 
     assert.match(context, /still lists supabase live-db, which may run from an earlier session\..*stop-all --worktree/, harness)
     assert.match(context, /still lists dev server web \(pid 4242, port 3000\)/, harness)
   }
-  writeFileSync(join(root, '.neil-dev.json'), JSON.stringify({ workflow: false, github: { repo: null }, worktreeStacks: { onSessionEnd: 'keep-running' } }))
+  writeFileSync(join(root, '.ndev.json'), JSON.stringify({ workflow: false, github: { repo: null }, worktreeStacks: { onSessionEnd: 'keep-running' } }))
   const kept = textOf(hookEvent(root, 'prompt-context'))
   assert.doesNotMatch(kept, /still lists supabase live-db/)
   assert.match(kept, /supabase stack fixture-db/)

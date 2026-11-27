@@ -62,7 +62,7 @@ function parseArgs(argv) {
     else if (opts.project) stop(`one project folder only; got "${opts.project}" and "${a}"`);
     else opts.project = path.resolve(a);
   }
-  if (!opts.brand) stop('--brand is required: the brand site folder ("branding.path" in .neil-dev.json)');
+  if (!opts.brand) stop('--brand is required: the brand site folder ("branding.path" in .ndev.json)');
   opts.project ??= process.cwd();
   if (!existsSync(opts.project) || !statSync(opts.project).isDirectory()) stop(`${opts.project} is not a folder. Give the project root`);
   return opts;
@@ -92,7 +92,7 @@ function distance(a, b) {
 
 function readBrand(brand) {
   const dir = path.join(brand, 'public/ds/tokens');
-  const repair = 'Run "/brand create" to make the brand site, or set "branding.path" in .neil-dev.json to its folder';
+  const repair = 'Run "/brand create" to make the brand site, or set "branding.path" in .ndev.json to its folder';
   if (!existsSync(dir)) stop([`${brand} has no public/ds/tokens folder, so it is not a brand site.`, repair]);
   // Every declaration counts: a token set again for dark mode or a theme adds a value.
   const tokens = [];

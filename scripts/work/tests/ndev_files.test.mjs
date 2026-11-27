@@ -53,17 +53,17 @@ test('list --json names every worktree, the main checkout first, with its branch
 
 test('list --json reports each known ndev file as present or missing, and every other .neil-dev* file', () => {
   const p = project()
-  writeFileSync(join(p.main, '.neil-dev.json'), '{}')
+  writeFileSync(join(p.main, '.ndev.json'), '{}')
   writeFileSync(join(p.main, '.neil-dev.env'), 'SECRET_KEY=hunter2\n')
   writeFileSync(join(p.one, '.neil-dev.worktree.json'), '{}')
   writeFileSync(join(p.one, '.neil-dev.local'), 'x')
   const out = listing(p)
   const [main, one, two] = out.worktrees
-  assert.deepEqual(['.neil-dev.json', '.neil-dev.env', '.neil-dev.worktree.json'].map(n => fileOf(main, n).present), [true, true, false])
+  assert.deepEqual(['.ndev.json', '.neil-dev.env', '.neil-dev.worktree.json'].map(n => fileOf(main, n).present), [true, true, false])
   assert.equal(fileOf(one, '.neil-dev.worktree.json').present, true)
   assert.equal(fileOf(one, '.neil-dev.local').present, true)
   assert.equal(fileOf(one, '.neil-dev.local').isKnown, false)
-  assert.equal(fileOf(two, '.neil-dev.json').present, false)
+  assert.equal(fileOf(two, '.ndev.json').present, false)
   assert.equal(fileOf(two, '.neil-dev.local'), undefined, 'a file nobody has is listed')
 })
 
@@ -74,7 +74,7 @@ test('list --json says whether git ignores each name, and never prints a value o
   assert.doesNotMatch(r.out, /hunter2|SECRET_KEY/)
   const env = fileOf(JSON.parse(r.stdout).worktrees[0], '.neil-dev.env')
   assert.equal(env.isIgnored, true)
-  assert.equal(fileOf(JSON.parse(r.stdout).worktrees[0], '.neil-dev.json').isIgnored, false)
+  assert.equal(fileOf(JSON.parse(r.stdout).worktrees[0], '.ndev.json').isIgnored, false)
 })
 
 test('list --json works from a linked worktree, and fails with the repair outside a repository', () => {
@@ -87,12 +87,12 @@ test('list --json works from a linked worktree, and fails with the repair outsid
   assert.match(outside.out, /not in a git repository/)
 })
 
-test('create writes a valid .neil-dev.json that the plugin accepts, and refuses to overwrite one', () => {
+test('create writes a valid .ndev.json that the plugin accepts, and refuses to overwrite one', () => {
   const p = project()
-  const r = run(p.main, 'create', '--file', '.neil-dev.json', '--worktree', p.one)
+  const r = run(p.main, 'create', '--file', '.ndev.json', '--worktree', p.one)
   assert.equal(r.status, 0, r.out)
-  assert.deepEqual(JSON.parse(readFileSync(join(p.one, '.neil-dev.json'), 'utf8')), { mode: 'light', steering: 'interactive' })
-  const again = run(p.main, 'create', '--file', '.neil-dev.json', '--worktree', p.one)
+  assert.deepEqual(JSON.parse(readFileSync(join(p.one, '.ndev.json'), 'utf8')), { mode: 'light', steering: 'interactive' })
+  const again = run(p.main, 'create', '--file', '.ndev.json', '--worktree', p.one)
   assert.equal(again.status, 3, again.out)
   assert.match(again.out, /already exists/)
 })
@@ -112,32 +112,32 @@ test('create makes an empty .neil-dev.env with mode 600 where git ignores it, an
 
 test('copy takes the file from the main checkout, keeps the env file private, and refuses to overwrite', () => {
   const p = project()
-  writeFileSync(join(p.main, '.neil-dev.json'), '{"mode":"heavy"}')
+  writeFileSync(join(p.main, '.ndev.json'), '{"mode":"heavy"}')
   writeFileSync(join(p.main, '.neil-dev.env'), 'KEY=v\n')
   chmodSync(join(p.main, '.neil-dev.env'), 0o600)
-  assert.equal(run(p.main, 'copy', '--file', '.neil-dev.json', '--worktree', p.one).status, 0)
-  assert.equal(readFileSync(join(p.one, '.neil-dev.json'), 'utf8'), '{"mode":"heavy"}')
+  assert.equal(run(p.main, 'copy', '--file', '.ndev.json', '--worktree', p.one).status, 0)
+  assert.equal(readFileSync(join(p.one, '.ndev.json'), 'utf8'), '{"mode":"heavy"}')
   assert.equal(run(p.main, 'copy', '--file', '.neil-dev.env', '--worktree', p.one).status, 0)
   assert.equal(readFileSync(join(p.one, '.neil-dev.env'), 'utf8'), 'KEY=v\n')
   assert.equal(statSync(join(p.one, '.neil-dev.env')).mode & 0o777, 0o600)
-  const again = run(p.main, 'copy', '--file', '.neil-dev.json', '--worktree', p.one)
+  const again = run(p.main, 'copy', '--file', '.ndev.json', '--worktree', p.one)
   assert.equal(again.status, 3, again.out)
   assert.match(again.out, /already exists/)
-  assert.equal(readFileSync(join(p.one, '.neil-dev.json'), 'utf8'), '{"mode":"heavy"}')
+  assert.equal(readFileSync(join(p.one, '.ndev.json'), 'utf8'), '{"mode":"heavy"}')
 })
 
 test('copy refuses a missing source, an env file where git does not ignore it, the main checkout and other names', () => {
   const p = project()
-  const missing = run(p.main, 'copy', '--file', '.neil-dev.json', '--worktree', p.one)
+  const missing = run(p.main, 'copy', '--file', '.ndev.json', '--worktree', p.one)
   assert.equal(missing.status, 3, missing.out)
-  assert.match(missing.out, /main checkout has no \.neil-dev\.json/)
+  assert.match(missing.out, /main checkout has no \.ndev\.json/)
   const q = project({ ignore: [] })
   writeFileSync(join(q.main, '.neil-dev.env'), 'KEY=v\n')
   const open = run(q.main, 'copy', '--file', '.neil-dev.env', '--worktree', q.one)
   assert.equal(open.status, 3, open.out)
   assert.match(open.out, /not git-ignored/)
   assert.equal(existsSync(join(q.one, '.neil-dev.env')), false)
-  const self = run(p.main, 'copy', '--file', '.neil-dev.json', '--worktree', p.main)
+  const self = run(p.main, 'copy', '--file', '.ndev.json', '--worktree', p.main)
   assert.equal(self.status, 3, self.out)
   assert.match(self.out, /main checkout/)
   for (const name of ['.neil-dev.worktree.json', '.neil-dev.local', '../x']) {
@@ -149,7 +149,7 @@ test('copy refuses a missing source, an env file where git does not ignore it, t
 
 test('copy and create refuse a folder that is not a worktree of this repository', () => {
   const p = project()
-  const r = run(p.main, 'create', '--file', '.neil-dev.json', '--worktree', p.base)
+  const r = run(p.main, 'create', '--file', '.ndev.json', '--worktree', p.base)
   assert.equal(r.status, 2, r.out)
   assert.match(r.out, /not a worktree of/)
 })

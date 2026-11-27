@@ -83,7 +83,7 @@ Run `node scripts/video-kit/check.mjs` (or `npm run check`) in the video's folde
 
 ## Branding
 
-If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`) at step 3. Set the template's `:root` colour tokens and its fonts from it, add the font files to `assets/` with `@font-face`, and use `branding.name` in the page title. Otherwise skip this section.
+If `.ndev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`) at step 3. Set the template's `:root` colour tokens and its fonts from it, add the font files to `assets/` with `@font-face`, and use `branding.name` in the page title. Otherwise skip this section.
 
 ## Change the kit
 

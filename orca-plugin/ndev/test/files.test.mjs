@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, existsSync, statSync, readFileSync } from '
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
-import { copyFromMain, createFile, inspectWorkspace, mainCheckout, NdevError } from '../worker/files.mjs'
+import { copyFromMain, createFile, ensureProjectFiles, inspectWorkspace, mainCheckout, NdevError } from '../worker/files.mjs'
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' })
 
@@ -32,22 +32,22 @@ test('mainCheckout finds the main checkout from a linked worktree and from itsel
 
 test('inspectWorkspace reports present and missing files, and env key names only', async () => {
   const { main } = fixture()
-  writeFileSync(path.join(main, '.neil-dev.json'), JSON.stringify({ mode: 'heavy', steering: 'auto' }))
+  writeFileSync(path.join(main, '.ndev.json'), JSON.stringify({ mode: 'heavy', steering: 'auto' }))
   writeFileSync(path.join(main, '.neil-dev.env'), '# c\nOPENAI_API_KEY=sk-secret-value\nFOO=bar\n', { mode: 0o600 })
   const result = await inspectWorkspace(main)
   const byName = Object.fromEntries(result.files.map((f) => [f.name, f]))
-  assert.equal(byName['.neil-dev.json'].exists, true)
-  assert.equal(byName['.neil-dev.json'].summary, 'mode heavy · steering auto')
+  assert.equal(byName['.ndev.json'].exists, true)
+  assert.equal(byName['.ndev.json'].summary, 'mode heavy · steering auto')
   assert.deepEqual(byName['.neil-dev.env'].keys, ['OPENAI_API_KEY', 'FOO'])
   assert.equal(byName['.neil-dev.env'].ignored, true)
   assert.equal(byName['.neil-dev.worktree.json'].exists, false)
   assert.ok(!JSON.stringify(result).includes('sk-secret-value'), 'a value must never be returned')
 })
 
-test('inspectWorkspace reports a bad .neil-dev.json instead of hiding it', async () => {
+test('inspectWorkspace reports a bad .ndev.json instead of hiding it', async () => {
   const { main } = fixture()
-  writeFileSync(path.join(main, '.neil-dev.json'), '{ nope')
-  const f = (await inspectWorkspace(main)).files.find((x) => x.name === '.neil-dev.json')
+  writeFileSync(path.join(main, '.ndev.json'), '{ nope')
+  const f = (await inspectWorkspace(main)).files.find((x) => x.name === '.ndev.json')
   assert.match(f.problem, /not valid JSON/)
 })
 
@@ -58,11 +58,11 @@ test('inspectWorkspace flags an env file that other users can read', async () =>
   assert.match(f.problem, /chmod 600 .*\.neil-dev\.env/)
 })
 
-test('createFile makes .neil-dev.json and refuses to overwrite it', async () => {
+test('createFile makes .ndev.json and refuses to overwrite it', async () => {
   const { work } = fixture()
-  await createFile(work, '.neil-dev.json')
-  assert.deepEqual(JSON.parse(readFileSync(path.join(work, '.neil-dev.json'), 'utf8')), { mode: 'light', steering: 'interactive' })
-  await assert.rejects(createFile(work, '.neil-dev.json'), (e) => e instanceof NdevError && e.code === 'exists')
+  await createFile(work, '.ndev.json')
+  assert.deepEqual(JSON.parse(readFileSync(path.join(work, '.ndev.json'), 'utf8')), { mode: 'light', steering: 'interactive' })
+  await assert.rejects(createFile(work, '.ndev.json'), (e) => e instanceof NdevError && e.code === 'exists')
 })
 
 test('createFile makes a mode 600 env file only where git ignores it, and names the repair otherwise', async () => {
@@ -81,21 +81,21 @@ test('createFile refuses .neil-dev.worktree.json, which the plugin owns', async 
 
 test('copyFromMain copies the file, keeps mode 600 on env, and never overwrites', async () => {
   const { main, work } = fixture()
-  writeFileSync(path.join(main, '.neil-dev.json'), '{"mode":"heavy"}')
+  writeFileSync(path.join(main, '.ndev.json'), '{"mode":"heavy"}')
   writeFileSync(path.join(main, '.neil-dev.env'), 'K=v\n', { mode: 0o600 })
-  await copyFromMain(work, '.neil-dev.json')
+  await copyFromMain(work, '.ndev.json')
   await copyFromMain(work, '.neil-dev.env')
-  assert.equal(readFileSync(path.join(work, '.neil-dev.json'), 'utf8'), '{"mode":"heavy"}')
+  assert.equal(readFileSync(path.join(work, '.ndev.json'), 'utf8'), '{"mode":"heavy"}')
   assert.equal(statSync(path.join(work, '.neil-dev.env')).mode & 0o777, 0o600)
-  await assert.rejects(copyFromMain(work, '.neil-dev.json'), (e) => e.code === 'exists')
+  await assert.rejects(copyFromMain(work, '.ndev.json'), (e) => e.code === 'exists')
 })
 
 test('copyFromMain fails clearly when main lacks the file, or when copying onto main', async () => {
   const { main, work } = fixture()
-  const missing = path.join(await mainCheckout(main), '.neil-dev.json')
-  await assert.rejects(copyFromMain(work, '.neil-dev.json'), (e) => e.code === 'no_source' && e.message.includes(missing))
-  writeFileSync(path.join(main, '.neil-dev.json'), '{}')
-  await assert.rejects(copyFromMain(main, '.neil-dev.json'), (e) => e.code === 'is_main')
+  const missing = path.join(await mainCheckout(main), '.ndev.json')
+  await assert.rejects(copyFromMain(work, '.ndev.json'), (e) => e.code === 'no_source' && e.message.includes(missing))
+  writeFileSync(path.join(main, '.ndev.json'), '{}')
+  await assert.rejects(copyFromMain(main, '.ndev.json'), (e) => e.code === 'is_main')
 })
 
 test('copyFromMain refuses the env file where git does not ignore it', async () => {
@@ -107,4 +107,30 @@ test('copyFromMain refuses the env file where git does not ignore it', async () 
 test('copyFromMain refuses .neil-dev.worktree.json, which belongs to one worktree', async () => {
   const { work } = fixture()
   await assert.rejects(copyFromMain(work, '.neil-dev.worktree.json'), (e) => e.code === 'not_allowed')
+})
+
+test('createFile refuses .ndev.json beside a .neil-dev.json and names the migration', async () => {
+  const { work } = fixture()
+  writeFileSync(path.join(work, '.neil-dev.json'), '{"mode":"heavy"}')
+  await assert.rejects(createFile(work, '.ndev.json'), (e) => e.code === 'exists' && e.message.includes(path.join(work, '.neil-dev.json')) && /ndev project migrate-config/.test(e.message))
+  assert.equal(existsSync(path.join(work, '.ndev.json')), false)
+})
+
+test('copyFromMain takes the main checkout .neil-dev.json when it has no .ndev.json', async () => {
+  const { main, work } = fixture()
+  writeFileSync(path.join(main, '.neil-dev.json'), '{"mode":"heavy"}')
+  await copyFromMain(work, '.ndev.json')
+  assert.equal(readFileSync(path.join(work, '.ndev.json'), 'utf8'), '{"mode":"heavy"}')
+  assert.equal(existsSync(path.join(work, '.neil-dev.json')), false)
+})
+
+test('ensureProjectFiles keeps a worktree .neil-dev.json and copies a main .neil-dev.json to .ndev.json', async () => {
+  const kept = fixture()
+  writeFileSync(path.join(kept.work, '.neil-dev.json'), '{"mode":"heavy"}')
+  await ensureProjectFiles(kept.work)
+  assert.equal(existsSync(path.join(kept.work, '.ndev.json')), false)
+  const copied = fixture()
+  writeFileSync(path.join(copied.main, '.neil-dev.json'), '{"mode":"heavy"}')
+  await ensureProjectFiles(copied.work)
+  assert.equal(readFileSync(path.join(copied.work, '.ndev.json'), 'utf8'), '{"mode":"heavy"}')
 })

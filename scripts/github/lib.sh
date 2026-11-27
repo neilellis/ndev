@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared GitHub settings for the github skill's helpers. Source this file; do not run it.
 #
-# Repository: $GH_REPO (OWNER/REPO) if set, else "github.repo" in the project's .neil-dev.json
+# Repository: $GH_REPO (OWNER/REPO) if set, else "github.repo" in the project's .ndev.json
 # (see project-config.sh), else the repository of the current checkout, found with `gh repo view`. Each helper also accepts --repo where it says so.
 #
 # Token: when GH_USE_KEYRING=1, the helpers drop GITHUB_TOKEN so that the gh keyring
@@ -9,7 +9,7 @@
 # (project, actions, read:org). Otherwise gh uses its normal authentication.
 #
 # Project board (optional): GH_PROJECT_OWNER and GH_PROJECT_NUMBER name a Projects v2
-# board; unset, they come from "github.board" in .neil-dev.json. Field and option ids are looked up by name at run time; no ids are stored here.
+# board; unset, they come from "github.board" in .ndev.json. Field and option ids are looked up by name at run time; no ids are stored here.
 set -euo pipefail
 
 # shellcheck source=project-config.sh

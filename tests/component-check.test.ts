@@ -5,7 +5,7 @@ const ran = (stdout = '') => ({
   value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
 })
 
-// A fake engine: a git repository at /proj with no .neil-dev.json, and ~/dev-wiki present.
+// A fake engine: a git repository at /proj with no .ndev.json, and ~/dev-wiki present.
 // Beneath the plugin, every Edit and Write gives `result`.
 const engine = async ($: Engine, on: On, result: () => { isError?: true; deny?: string; result?: string } = () => ({ result: '' })) => {
   on('command.register', (_, e) => ({ value: { command: e.name } }))

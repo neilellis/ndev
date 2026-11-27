@@ -76,7 +76,7 @@ test('a link that leaves a skill points to the exported home or the exported sib
   mkdirSync(join(plugin, 'skills/sample'), { recursive: true })
   mkdirSync(join(plugin, 'agents'))
   mkdirSync(join(plugin, 'hooks/workflow'), { recursive: true })
-  for (const file of ['machine.ts', 'change-types.ts', 'records.ts', 'session.ts']) copyFileSync(join(PLUGIN, 'hooks/workflow', file), join(plugin, 'hooks/workflow', file))
+  for (const file of ['machine.ts', 'change-types.ts', 'records.ts', 'session.ts', 'config-file.ts']) copyFileSync(join(PLUGIN, 'hooks/workflow', file), join(plugin, 'hooks/workflow', file))
   writeFileSync(join(plugin, 'skills/sample/SKILL.md'), '---\nname: sample\ndescription: d\n---\nInline `[x](../../docs/a.md)`.\n\n```md\n[y](../../docs/b.md)\n```\n')
   const target = fresh()
   const ran = run(['codex', '--out', target, '--plugin-root', plugin, '--date', DATE])
@@ -232,4 +232,12 @@ test('an --out folder whose name holds shell syntax does not run it', () => {
   const flow = spawnSync(join(out, 'home/bin/ndev-flow'), ['help'], { cwd: base, encoding: 'utf8' })
   assert.equal(flow.status, 0, flow.stderr)
   assert.ok(!existsSync(join(base, 'pwned')), 'the $(...) in the path ran')
+})
+
+test('the exported ndev-files script lists the project files', () => {
+  const { out } = exported()
+  const repo = fresh()
+  assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0)
+  const ran = spawnSync('node', [join(out, 'home/scripts/work/ndev_files.mjs'), 'list', '--json'], { cwd: repo, encoding: 'utf8' })
+  assert.equal(ran.status, 0, ran.stderr)
 })
