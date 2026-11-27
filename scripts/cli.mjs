@@ -159,6 +159,7 @@ const groups = {
     module: './ndev/proof.mjs', run: 'runProof',
     commands: {
       plan: '--base <ref> [--pr <n> | --event <file>] [--proven <sha>]',
+      evidence: '--plan <file> [--body <file>]',
     },
   },
   requirements: {
