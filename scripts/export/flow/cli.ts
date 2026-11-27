@@ -276,30 +276,38 @@ function runCheck(wf: Workflow, check: string, args: string[] = [], declared: re
   if (wf.noChecks && !existsSync(join(wf.root, path))) return `${path} did not run: the human skipped the set-up.`
   const onBase = git(wf.root, 'cat-file', '-e', `origin/${wf.base}:${path}`).status === 0
   let script = join(wf.root, path)
+  let outside: string | undefined
   let note: string | undefined = `${path} is not on ${wf.base} yet, so a human must read it in this PR.`
   if (onBase) {
-    script = join(dir, `ndev-${check}`)
-    writeFileSync(script, git(wf.root, 'show', `origin/${wf.base}:${path}`).stdout)
-    chmodSync(script, 0o755)
+    const shown = git(wf.root, 'show', `origin/${wf.base}:${path}`)
+    if (shown.status !== 0) throw new Fail(1, `git show origin/${wf.base}:${path} exited ${shown.status} in ${wf.root}: ${said(shown)}`)
+    if (!existsSync(script) || readFileSync(script, 'utf8') !== shown.stdout) {
+      const copies = join(dir, 'ndev-base-checks')
+      script = join(copies, path)
+      mkdirSync(dirname(script), { recursive: true })
+      writeFileSync(script, shown.stdout)
+      chmodSync(script, 0o755)
+      outside = `The worktree's ${path} differs from the version on ${wf.base}, so ndev-flow ran the version on ${wf.base} from ${script}, with ${wf.root} as the working directory. A script that finds the project root from its own path found ${copies} instead. Repair: find the root from NDEV_WORKTREE_ROOT or the working directory, or bring the worktree's ${path} level with origin/${wf.base}.`
+    }
     note = git(wf.root, 'diff', '--quiet', `origin/${wf.base}...HEAD`, '--', path).status !== 0 ? `This branch changes ${path}. ndev-flow ran the version on ${wf.base}, and a human must read the change in this PR.` : undefined
   }
   const mergeBase = git(wf.root, 'merge-base', `origin/${wf.base}`, 'HEAD')
   const baseSha = mergeBase.status === 0 ? mergeBase.stdout.trim() : ''
   const types = changeTypesEnv(wf.root, baseSha, declared)
-  const env = { ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types ? { NDEV_CHANGE_TYPES: types } : {}) }
+  const env = { NDEV_WORKTREE_ROOT: wf.root, ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types ? { NDEV_CHANGE_TYPES: types } : {}) }
   const before = git(wf.root, 'status', '--porcelain').stdout
   const r = runBounded(script, args, wf.root, env, join(dir, `ndev-${check}.run`), path, envMs('NDEV_FLOW_CHECK_MAX_MS', CHECK_MAX_MS))
   const log = join(dir, `ndev-${check}.log`)
   writeFileSync(log, `$ ${path} ${args.join(' ')}\nexit ${r.status}\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`)
   if (r.status !== 0) {
     const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').slice(-20).join('\n').slice(-4000)
-    const error = new Fail(1, `${path} exited ${r.status}. Nothing was pushed. Fix the cause and run the command again. Log: ${log}\n${tail}`)
+    const error = new Fail(1, `${path} exited ${r.status}. Nothing was pushed. Fix the cause and run the command again. Log: ${log}${outside ? `\n${outside}` : ''}\n${tail}`)
     error.name = CHECK_FAILED
     throw error
   }
   const after = git(wf.root, 'status', '--porcelain').stdout
   if (after !== before) throw new Fail(1, `${path} passed but changed the working tree. Name the changed files in --files and run the command again:\n${after}`)
-  return note
+  return [note, outside].filter(Boolean).join(' ') || undefined
 }
 
 function runBaseCheck(wf: Workflow, notes: string[]) {

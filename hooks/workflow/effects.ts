@@ -172,10 +172,19 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   const { gitDir } = await paths($, root)
   const onBase = (await git(root, $, 'cat-file', '-e', `origin/${base}:${path}`)).exitCode === 0
   let script = `${root}/${path}`
+  let outside: string | undefined
   let note: string | undefined = `${path} is not on ${base} yet, so a human must read it in this PR.`
   if (onBase) {
-    script = `${gitDir}/ndev-${check}`
-    await $.fs.write(script, await gitOut(root, $, 'show', `origin/${base}:${path}`))
+    const showing = await git(root, $, 'show', `origin/${base}:${path}`)
+    if (showing.exitCode !== 0) throw new Refuse(`git show origin/${base}:${path} exited ${showing.exitCode} in ${root}: ${said(showing)}`)
+    const shown = showing.stdout
+    if (!(await $.fs.exists(script)) || (await $.fs.read(script)) !== shown) {
+      const copies = `${gitDir}/ndev-base-checks`
+      script = `${copies}/${path}`
+      await must($, ['mkdir', '-p', `${copies}/${CHECK_DIR}`], { cwd: root })
+      await $.fs.write(script, shown)
+      outside = `The worktree's ${path} differs from the version on ${base}, so the tool ran the version on ${base} from ${script}, with ${root} as the working directory. A script that finds the project root from its own path found ${copies} instead. Repair: find the root from NDEV_WORKTREE_ROOT or the working directory, or bring the worktree's ${path} level with origin/${base}.`
+    }
     const changed = (await git(root, $, 'diff', '--quiet', `origin/${base}...HEAD`, '--', path)).exitCode !== 0
     note = changed ? `This branch changes ${path}. The tool ran the version on ${base}, and a human must read the change in this PR.` : undefined
   }
@@ -184,8 +193,8 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
   const baseSha = mergeBase.exitCode === 0 ? mergeBase.stdout.trim() : ''
   const types = await changeTypesEnv($, root, base, baseSha, declared)
   const project = await projectEnv($, root, path)
-  const env: Record<string, string> = { ...project.env, ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types.value ? { NDEV_CHANGE_TYPES: types.value } : {}) }
-  note = [note, types.note].filter(Boolean).join(' ') || undefined
+  const env: Record<string, string> = { ...project.env, NDEV_WORKTREE_ROOT: root, ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types.value ? { NDEV_CHANGE_TYPES: types.value } : {}) }
+  note = [note, outside, types.note].filter(Boolean).join(' ') || undefined
   const before = (await porcelain($, root)).join('\n')
   const r = await withStep($, check, CHECK_MAX_MS, () => runLong($, root, `${gitDir}/ndev-${check}.run`, script, args, env))
   const log = `${gitDir}/ndev-${check}.log`
@@ -199,7 +208,7 @@ export async function runCheck($: EngineInterface, root: string, base: string, c
     const output = `${cut ? `${cut}\n` : ''}${tail}`
     const merge = merging ? ` A merge is in progress, so HEAD is the commit before the merge: a check that compares with \`git merge-base HEAD origin/${base}\` reads the old base. Repair: read the base from NDEV_MERGE_BASE=${env.NDEV_MERGE_BASE ?? '(git merge-base failed)'}, as ${base} merged in here.` : ''
     const withheld = project.withheld.length ? ` The check did not get ${project.withheld.join(', ')} from ${root}/.neil-dev.env: the checks get only the keys that checkEnv in .ndev.json names. If a test needs one, such as the URL of a local test database, name it there; never a key of a hosted service.` : ''
-    throw new CheckFailed(`${path} exited ${r.exitCode}. Nothing was pushed.${merge}${withheld} Fix the cause and call the tool again. Log: ${log}\n${output}`, { path, exitCode: r.exitCode, log, output })
+    throw new CheckFailed(`${path} exited ${r.exitCode}. Nothing was pushed.${merge}${withheld} Fix the cause and call the tool again. Log: ${log}${outside ? `\n${outside}` : ''}\n${output}`, { path, exitCode: r.exitCode, log, output })
   }
   const after = (await porcelain($, root)).join('\n')
   if (after !== before) throw new CheckFailed(`${path} passed but changed the working tree. Name the changed files in the tool call and call it again:\n${after}`, { path, exitCode: 0, log, output: after })
