@@ -812,6 +812,23 @@ test('a pass saved during a merge is not reused for a squash of the same records
   assert.match(reason, /this commit is refused:[\s\S]*REQ-0002: no "type"[\s\S]*ndev requirements types --base HEAD/)
 })
 
+test('a changed record lists the records to compare it with once after the edit', t => {
+  const { recordFile, record, call, git } = recordsFixture(t)
+  writeFileSync(recordFile.replace('0001-the-report-names-each-source', '0002-the-report-has-a-title'), record('- File: src/report.js').replace('REQ-0001', 'REQ-0002').replace('"The report names each source"', '"The report has a title"'))
+  git('add', '-A')
+  git('commit', '-q', '-m', 'second record')
+  writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
+  const note = contextOf(call('post-tool-use', 'Edit', { file_path: recordFile }))
+  assert.match(note, /Before you commit, compare each changed record with the records listed:\nCheck REQ-0001 against REQ-0002 \(shares src\/report\.js \(Trace File here, Trace File in REQ-0002\)\)\.\nsemantic index not built: run ndev requirements index/)
+  assert.equal(call('post-tool-use', 'Bash', { command: 'ls' }, { exitCode: 0 }), null)
+})
+
+test('a changed record with no related record gets no list of records to compare', t => {
+  const { recordFile, record, call } = recordsFixture(t)
+  writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
+  assert.equal(call('post-tool-use', 'Edit', { file_path: recordFile }), null)
+})
+
 test('a commit is checked again after a link problem is repaired outside the record', t => {
   const { root, recordFile, record, call } = recordsFixture(t)
   writeFileSync(recordFile, record('- File: src/new.js'))

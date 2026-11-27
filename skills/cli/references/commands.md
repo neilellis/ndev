@@ -47,6 +47,16 @@ Use the entrypoint's stage table for the normal sequence. These commands handle 
 
 After three review rounds no more reviews start. For a substantive finding, commit the fix and ask the human to run `ndev flow authorise-review`. Then wait with `ndev wait agent dispatch:<id>` and run `finished-review`. It passes only in a clean worktree, when each of those reviewers succeeded, its chat has no gaps, and every line with `ndev-review-verdict` in its assistant messages is exactly `ndev-review-verdict: approve <full HEAD commit id>`. An objection that was read stays with the commit. A later commit needs a new authorisation. Do not message a reviewer about its verdict, and do not edit the worktree while it runs.
 
+## Requirement records
+
+The `requirements` skill lists each command. These two find the records that a changed record can contradict.
+
+| Command | When to use it |
+| --- | --- |
+| `ndev requirements check [<REQ-NNNN>... \| --base <git ref>]` | Check each record. With record IDs or `--base`, it also lists the related records of those records when the check passes. The list is advice and does not change the exit status. |
+| `ndev requirements related <REQ-NNNN>... \| --base <git ref>` | List the records to compare with each record: shared files and links, and the records closest in meaning. |
+| `ndev requirements index` | Write the semantic index `docs/formal/requirements/generated/embeddings.json` for `related`. It needs `OPENROUTER_API_KEY`, and sends only changed text. |
+
 ## Requirement models
 
 A model has a manifest beside it: `docs/formal/models/<name>.json`. The `requirements-model` skill writes both. `kb/requirements.md` describes the manifest.

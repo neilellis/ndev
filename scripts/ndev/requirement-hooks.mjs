@@ -66,7 +66,27 @@ export function recordCheck(root, cached) {
     if (ran.status !== 0 && ran.status !== 1) throw new CliError(1, `ndev requirements ${name} --base ${base} in ${root} exited ${ran.status}: ${output || 'no output'}`, { repair: `Run ndev requirements ${name} --base ${base} in ${root} and repair the cause.` })
     if (ran.status === 1) failed.push({ output, command: `ndev requirements ${name} --base ${base}` })
   }
-  return { key, ok: !failed.length, output: failed.map(f => f.output).join('\n'), commands: failed.map(f => f.command), fresh: true }
+  return { key, ok: !failed.length, output: failed.map(f => f.output).join('\n'), commands: failed.map(f => f.command), related: relatedRecords(root, base), fresh: true }
+}
+
+function relatedRecords(root, base) {
+  const command = `ndev requirements related --base ${base} --json`
+  const ran = run(process.execPath, [CLI, 'requirements', 'related', '--base', base, '--json', '--root', root], { cwd: root, timeout: 120_000 })
+  const output = [ran.stdout.trim(), ran.stderr.trim()].filter(Boolean).join('\n') || 'no output'
+  const repair = `Run ${command} in ${root} and repair the cause.`
+  if (ran.status !== 0) throw new CliError(1, `${command} in ${root} exited ${ran.status}: ${output}`, { repair })
+  let answer
+  try {
+    answer = JSON.parse(ran.stdout).result
+    if (!Array.isArray(answer.records) || typeof answer.text !== 'string') throw new Error('result has no records list and text')
+  } catch (error) {
+    throw new CliError(1, `${command} in ${root} gave output that is not its JSON answer (${error.message}): ${output.slice(0, 500)}`, { repair })
+  }
+  return answer.records.some(record => record.candidates.length) ? answer.text.trim() : null
+}
+
+export function relatedNote(result) {
+  return `Before you commit, compare each changed record with the records listed:\n${result.related}`
 }
 
 export function recordProblemNote(result) {

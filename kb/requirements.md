@@ -406,6 +406,26 @@ When a project has models and no formal check, add `scripts/ci/formal-check.sh`,
 
 The workflow runs the base version of each check script, so a branch cannot remove its own formal check.
 
+## Related records
+
+A changed record can contradict a record that it does not name. `ndev requirements related <REQ-NNNN>...` lists, for each named record, the other records to compare it with. `related --base <git ref>` does this for the records that changed or are new since the ref. `ndev requirements check` takes the same IDs or `--base`. When the records pass the check, it adds the list. The list is advice: it never changes the exit status. When the check fails, it says that the list comes after the records pass. With `--json`, the list is structured data.
+
+The list leaves out `Retired` and `Superseded` records. It puts the records in force first, then the `Rejected` records. It gives the reason for each record:
+
+- **Trace overlap.** The other record names a file or a link that the changed record also names. The changed record names the files of its `- File:` patterns, its Source citations and its `- PDR:` and `- ADR:` lines, and the links of its Trace and its Source text. The other record matches them as `ndev requirements for` does. So a `- File:` line in one record matches a Source citation in another. The reason names the shared file and the field on each side.
+- **Meaning.** The Statement or the Source text of the other record is close in meaning to the Statement of the changed record, with a score from 0 to 1. Records that use different words count too. The list keeps the 5 closest records with a score of 0.25 or more.
+
+The meaning comes from a semantic index, `docs/formal/requirements/generated/embeddings.json`. Commit it. `ndev requirements index` writes it. It sends the Statement and the quoted Source text of each record that is not `Retired` or `Superseded` to OpenRouter (`openai/text-embedding-3-small`). It sends only the text that changed since the last run. It needs `OPENROUTER_API_KEY` (or `OPEN_ROUTER_API_KEY`). Keep the key in the project's `.neil-dev.env`, and run `node <ndev>/scripts/env/neil-dev-env.mjs run --need OPENROUTER_API_KEY -- ndev requirements index`. With no change, it makes no request.
+
+`related` and `check` never write the index. The trace overlap always runs. When the meaning cannot run, the output says why:
+
+- the index does not exist, or was built with another model: run `ndev requirements index`;
+- the changed Statement is not in the index, and no key is set: the output gives the ID of that record. With a key, the command reads the meaning of the Statement for this run only;
+- other records are not current in the index: the note gives the count;
+- OpenRouter gave an error: the note gives the status and its answer.
+
+The agent hook lists the related records after a record changes, before the commit.
+
 ## Verification
 
 A record links code and models. That does not show that the code meets the requirement at a given commit. `ndev requirements verify` gives each requirement one state for one commit. The record keeps its links, and no result goes in the record.

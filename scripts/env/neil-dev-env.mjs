@@ -25,7 +25,7 @@ const INIT = `node ${SELF} init`
 
 // The keys that ndev skills read. `alias` is a second name that the same skills accept.
 export const KEYS = [
-  { name: 'OPENROUTER_API_KEY', alias: 'OPEN_ROUTER_API_KEY', use: 'speech for narration (video-narration, video-setup)' },
+  { name: 'OPENROUTER_API_KEY', alias: 'OPEN_ROUTER_API_KEY', use: 'speech for narration (video-narration, video-setup) and the semantic index of requirement records (ndev requirements index)' },
   { name: 'OPENAI_API_KEY', use: 'word timings for narration (video-narration, video-setup)' },
   { name: 'UNSPLASH_ACCESS_KEY', use: 'photographs (video-images, video-setup)' },
   { name: 'VERCEL_AUTOMATION_BYPASS_SECRET', use: 'protected Vercel previews (site-check)' },
