@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
 import { parseRecord } from '../requirements/requirements.mjs'
-import { checked, CliError, releaseRoot, run } from './common.mjs'
+import { CliError, releaseRoot, run } from './common.mjs'
 import { CODE_FILE, DOCS_SITES, REQUIREMENTS, UI_FILE } from './proof-paths.mjs'
 
 const CITED = /\bREQ-\d{4,}\b/g
@@ -40,7 +40,8 @@ function diffOf(root, base) {
 function recordsAt(root) {
   const folder = join(root, REQUIREMENTS)
   const listed = run('git', ['-C', root, 'ls-files', '-z', '--', REQUIREMENTS])
-  if (listed.status !== 0 || !existsSync(folder)) return new Map()
+  if (listed.status !== 0) throw new CliError(1, `git ls-files ${REQUIREMENTS} failed in ${root}: ${`${listed.stdout}${listed.stderr}`.trim()}`, { repair: `git -C ${root} status` })
+  if (!existsSync(folder)) return new Map()
   const records = new Map()
   for (const rel of listed.stdout.split('\0').filter(path => path.endsWith('.md') && dirname(path) === REQUIREMENTS)) {
     const record = parseRecord(rel, readFileSync(join(root, rel), 'utf8'))
@@ -50,24 +51,23 @@ function recordsAt(root) {
   return records
 }
 
+function ghRead(args) {
+  const result = run('bash', [ghScript(), ...args])
+  const output = `${result.stdout}${result.stderr}`.trim()
+  if (result.status !== 0) return { failed: { state: 'not-run', command: `gh.sh ${args.join(' ')}`, output } }
+  return { body: JSON.parse(result.stdout).body ?? '' }
+}
+
 function bodyOf(plan, values) {
-  if (values.body) return readFileSync(values.body, 'utf8')
-  if (plan.pr?.number) {
-    const output = checked('bash', [ghScript(), 'pr-read', String(plan.pr.number)], { repair: `Check gh auth status, and that pull request ${plan.pr.number} exists in this repository.` })
-    return JSON.parse(output).body ?? ''
-  }
+  if (values.body) return { body: readFileSync(values.body, 'utf8') }
+  if (plan.pr?.number) return ghRead(['pr-read', String(plan.pr.number)])
   const event = process.env.GITHUB_EVENT_PATH
-  if (!event) return undefined
+  if (!event) return {}
   try {
-    return JSON.parse(readFileSync(event, 'utf8')).pull_request?.body ?? ''
+    return { body: JSON.parse(readFileSync(event, 'utf8')).pull_request?.body ?? '' }
   } catch (error) {
     throw new CliError(1, `The GitHub event file ${event} (GITHUB_EVENT_PATH) cannot be read: ${error.message}`, { repair: 'Give the body with --body <file>, or unset GITHUB_EVENT_PATH.' })
   }
-}
-
-function issueText(number) {
-  const output = checked('bash', [ghScript(), 'issue-read', String(number)], { repair: `Check gh auth status, and that issue ${number} exists in this repository.` })
-  return JSON.parse(output).body ?? ''
 }
 
 function ndev(root, args) {
@@ -75,10 +75,18 @@ function ndev(root, args) {
   return { exit: result.status, output: `${result.stdout}${result.stderr}`.trim() }
 }
 
-function requirements(root, plan, body, records) {
-  const commits = git(root, ['log', '--format=%B', `${plan.base}..HEAD`])
-  const texts = [body ?? '', commits.output]
-  for (const [, number] of (body ?? '').matchAll(CLOSING)) texts.push(issueText(number))
+const NO_BODY = 'no pull request body: give --body <file>, a plan made with --pr <n>, or GITHUB_EVENT_PATH'
+
+function requirements(root, plan, { body, failed }, records) {
+  if (failed) return failed
+  if (body === undefined) return { state: 'not-run', reason: NO_BODY }
+  const texts = [body, git(root, ['log', '--format=%B', `${plan.base}..HEAD`]).output]
+  const closed = [...new Set(texts.flatMap(text => [...text.matchAll(CLOSING)].map(match => match[1])))]
+  for (const number of closed) {
+    const issue = ghRead(['issue-read', number])
+    if (issue.failed) return issue.failed
+    texts.push(issue.body)
+  }
   const cited = [...new Set(texts.flatMap(text => text.match(CITED) ?? []))].sort()
   const found = cited.map(id => {
     const record = records.get(id)
@@ -108,7 +116,9 @@ function tests({ entries }) {
   const testFiles = changed.filter(entry => TEST_FILE.test(entry.path) && entry.status !== 'D').map(entry => entry.path)
   const source = changed.filter(entry => !TEST_FILE.test(entry.path) && !entry.path.endsWith('.qnt') && entry.status !== 'D').map(entry => entry.path)
   const stem = path => basename(path).replace(/\.[^.]+$/, '')
-  const untested = source.filter(path => !testFiles.some(test => dirname(test) === dirname(path) || basename(test).includes(stem(path))))
+  const named = (test, path) => new RegExp(`^(test_)?${stem(path).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([._-]|$)`).test(basename(test))
+  const untested = source.filter(path => !testFiles.some(test => dirname(test) === dirname(path) || named(test, path)))
+  if (source.length === 0) return { state: 'not-needed', untested, tests: testFiles }
   return { state: untested.length === 0 ? 'present' : 'missing', untested, tests: testFiles }
 }
 
@@ -119,7 +129,7 @@ function model(root, plan, { entries }, records) {
   const command = 'ndev requirements model-check'
   const quint = join(root, 'node_modules/.bin/quint')
   const result = ndev(root, ['requirements', 'model-check'])
-  if (!existsSync(quint)) return { state: 'not-run', models, added, command, output: result.output }
+  if (!existsSync(quint) && result.exit !== 0) return { state: 'not-run', models, added, command, output: result.output }
   return { state: 'present', models, added, check: { exit: result.exit, output: result.output } }
 }
 
@@ -132,8 +142,9 @@ function docs({ entries }) {
   return { state: 'not-needed', changed, undocumented: [] }
 }
 
-function lessons(body) {
-  if (body === undefined) return { state: 'not-run', reason: 'no pull request body: give --body <file>, a plan made with --pr <n>, or GITHUB_EVENT_PATH' }
+function lessons({ body, failed }) {
+  if (failed) return failed
+  if (body === undefined) return { state: 'not-run', reason: NO_BODY }
   const heading = body.match(LESSONS)
   if (!heading) return { state: 'missing' }
   const rest = body.slice(heading.index + heading[0].length)
@@ -150,7 +161,7 @@ export function evidence(root, values) {
   if (plan.skip) return { ...result, evidence: {}, text: `Proof evidence for ${head.slice(0, 12)}: none, the run is skipped: ${plan.skip.reason}.` }
   const wanted = check => plan.checks[check]?.action === 'run'
   const needsBody = wanted('requirements') || wanted('lessons')
-  const body = needsBody ? bodyOf(plan, values) : undefined
+  const body = needsBody ? bodyOf(plan, values) : {}
   const diff = ['tests', 'model', 'docs'].some(wanted) ? diffOf(root, plan.base) : undefined
   const records = wanted('requirements') || wanted('model') ? recordsAt(root) : new Map()
   const collectors = {

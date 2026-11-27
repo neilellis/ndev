@@ -181,6 +181,61 @@ test('requirements: a verify that cannot run is not-run, with the command and it
   assert.match(found.output, /the worktree has changes/)
 })
 
+test('requirements: a closing reference in a commit message reads that issue', t => {
+  const { base, root } = repository(t, withRecords)
+  commit(root, { 'src/report.js': 'function report() {\n  return ["guide"]\n}\n' }, 'Name the sources\n\nFixes #12.')
+  const script = join(base, 'gh.sh')
+  writeFileSync(script, '[ "$*" = "issue-read 12" ] || { echo "unexpected: $*" >&2; exit 9; }\necho \'{"number":12,"title":"t","state":"open","body":"Needs REQ-0001.","url":"u"}\'\n')
+  assert.deepEqual(evidence(base, root, { body: LESSONS, env: { NDEV_FLOW_GH: script } }).evidence.requirements.cited, ['REQ-0001'])
+})
+
+test('requirements: an issue that gh.sh cannot read is not-run, and the other checks still run', t => {
+  const { base, root } = repository(t, withRecords)
+  commit(root, { 'src/report.js': 'function report() {\n  return ["guide"]\n}\n' })
+  const script = join(base, 'gh.sh')
+  writeFileSync(script, 'echo "HTTP 404: Could not resolve to an issue" >&2\nexit 1\n')
+  const result = evidence(base, root, { body: `Closes #12.\n\n${LESSONS}`, env: { NDEV_FLOW_GH: script } })
+  assert.equal(result.evidence.requirements.state, 'not-run')
+  assert.equal(result.evidence.requirements.command, 'gh.sh issue-read 12')
+  assert.match(result.evidence.requirements.output, /Could not resolve to an issue/)
+  assert.equal(result.evidence.lessons.state, 'present')
+})
+
+test('requirements: with no pull request body to read, the collector is not-run', t => {
+  const { base, root } = repository(t, withRecords)
+  commit(root, { 'src/report.js': 'function report() {\n  return ["guide"]\n}\n' }, 'REQ-0001')
+  const found = evidence(base, root).evidence.requirements
+  assert.equal(found.state, 'not-run')
+  assert.match(found.reason, /no pull request body/)
+})
+
+test('lessons: a body that gh.sh cannot read is not-run, with the command and its output', t => {
+  const { base, root } = repository(t)
+  commit(root, { 'src/util.js': 'function add(a, b) {\n  return b + a\n}\n'.repeat(30) })
+  const script = join(base, 'gh.sh')
+  writeFileSync(script, 'case "$*" in "view-json pr 7 "*) echo \'{"labels":[],"isDraft":false,"isCrossRepository":false}\' ;; *) echo "gh: not logged in" >&2; exit 4 ;; esac\n')
+  const env = { NDEV_FLOW_GH: script }
+  const result = ndev(root, ['proof', 'plan', '--base', 'main', '--pr', '7'], env)
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`)
+  const plan = join(base, 'plan.json')
+  writeFileSync(plan, result.stdout)
+  const found = evidence(base, root, { plan, env }).evidence.lessons
+  assert.deepEqual({ ...found, output: undefined }, { state: 'not-run', command: 'gh.sh pr-read 7', output: undefined })
+  assert.match(found.output, /not logged in/)
+})
+
+test('tests: a test whose name only contains the source name is not near it', t => {
+  const { base, root } = repository(t)
+  commit(root, { 'src/a.js': 'function a() {}\n', 'tests/data.test.js': 'test()\n' })
+  assert.deepEqual(evidence(base, root, { body: LESSONS }).evidence.tests, { state: 'missing', untested: ['src/a.js'], tests: ['tests/data.test.js'] })
+})
+
+test('tests: only test files changed needs no other test', t => {
+  const { base, root } = repository(t)
+  commit(root, { 'tests/util.test.js': 'test()\n' })
+  assert.deepEqual(evidence(base, root, { body: LESSONS }).evidence.tests, { state: 'not-needed', untested: [], tests: ['tests/util.test.js'] })
+})
+
 test('tests: a changed source with a changed test nearby is present', t => {
   const { base, root } = repository(t)
   commit(root, { 'src/util.js': 'function add(a, b) {\n  return b + a\n}\n', 'tests/util.test.js': 'test()\n' })
