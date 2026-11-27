@@ -321,6 +321,23 @@ describe("related records in check", () => {
     assert.equal(out.stdout.split("\n").filter((line) => line.startsWith("  REQ-0008 ")).length, 1);
   });
 
+  it("shows the close matches in force before a Rejected one that scores higher", () => {
+    const root = repository(
+      {
+        "0001": { statement: "The report opens with the central finding." },
+        "0002": { statement: "Place the Verdict Ledger near the conclusion.", trace: "- File: src/ledger.js", status: "Rejected" },
+        "0003": { statement: "Place the Verdict Ledger and its caption near the conclusion.", trace: "- File: src/export.js" },
+      },
+      { "src/ledger.js": "export {}\n", "src/export.js": "export {}\n" },
+    );
+    indexed(root);
+    const out = requirements(root, ["related", "REQ-0001"]);
+    assert.equal(out.status, 0, out.stderr);
+    const scores = Object.fromEntries([...out.stdout.matchAll(/^  (REQ-\d{4}) \(statement similarity (0\.\d\d)\)$/gm)].map((m) => [m[1], Number(m[2])]));
+    assert.ok(scores["REQ-0002"] > scores["REQ-0003"], out.stdout);
+    assert.ok(out.stdout.indexOf("  REQ-0003 ") < out.stdout.indexOf("  REQ-0002 "), out.stdout);
+  });
+
   it("refuses an id that is not a record before it checks the records", () => {
     const out = requirements(acceptance(), ["check", "REQ-0001", "REQ-9999"]);
     assert.equal(out.status, 2, out.stderr);

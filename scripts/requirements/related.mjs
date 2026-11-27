@@ -203,8 +203,9 @@ const channel = (c) => (c.reasons.some((r) => r.kind === "cited") ? 0 : c.reason
 const weightOf = (c) => c.reasons.find((r) => r.kind === "trace")?.weight ?? 0;
 const KIND_ORDER = ["cited", "trace", "semantic"];
 
+const group = (c) => (IN_FORCE.includes(c.status) ? 0 : 1);
+
 function ordered(candidates) {
-  const group = (c) => (IN_FORCE.includes(c.status) ? 0 : 1);
   for (const c of candidates) c.reasons.sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
   return candidates.sort((a, b) => channel(a) - channel(b) || group(a) - group(b) || weightOf(b) - weightOf(a) || (b.score ?? -2) - (a.score ?? -2) || a.id.localeCompare(b.id));
 }
@@ -217,7 +218,7 @@ function listing(id, listed) {
   const shown = traced.slice(0, TRACE_SHOWN);
   const below = traced.slice(TRACE_SHOWN);
   const more = below.filter((c) => !semantic(c)).length;
-  const close = [...below.filter(semantic), ...listed.filter((c) => channel(c) === 2)].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  const close = [...below.filter(semantic), ...listed.filter((c) => channel(c) === 2)].sort((a, b) => group(a) - group(b) || b.score - a.score || a.id.localeCompare(b.id));
   return [
     `Check ${id} against:`,
     ...listed.filter((c) => channel(c) === 0).map(line),

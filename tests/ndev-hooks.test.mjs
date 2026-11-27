@@ -876,6 +876,8 @@ test('a commit runs no related search', async t => {
   const result = call('pre-tool-use', 'Bash', { command: 'git commit -m change' }, {}, fake.env)
   assert.equal(result?.hookSpecificOutput?.permissionDecision, undefined)
   assert.deepEqual(fake.inputs(), [])
+  call('post-tool-use', 'Bash', { command: 'git status' }, { exitCode: 0 }, fake.env)
+  assert.deepEqual(fake.inputs(), [['The report names each source.']])
 })
 
 test('a commit is checked again after a link problem is repaired outside the record', t => {
