@@ -26,7 +26,7 @@ Do not ask about a decision that a test, the code or the user already settles. D
    node ${CLAUDE_PLUGIN_ROOT}/skills/second-opinion/scripts/second-opinion.mjs quota
    ```
 
-3. Ask. The call blocks until the report comes back, up to `--timeout-min` (default 30). From Claude Code, run it with `run_in_background` and wait for the notice.
+3. Ask. The call blocks until the report comes back, up to `--timeout-min` (default 25). From Claude Code, run it with `run_in_background` and wait for the notice. Run one `ask` at a time in each terminal: the terminal has only one bound Run.
 
    ```sh
    node ${CLAUDE_PLUGIN_ROOT}/skills/second-opinion/scripts/second-opinion.mjs ask --kind design \

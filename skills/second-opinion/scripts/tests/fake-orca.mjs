@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // A stand-in for the `orca` CLI. It answers from $FAKE_ORCA_DIR/state.json and logs each call to calls.jsonl.
-// state.json: { rateLimits, outcome: "succeeded"|"failed"|"timeout"|"dead"|"escalate"|"checkError", report: "<text>"|null,
-//   boundRun: "<id>"|null, blocked, startState, payloadReportPath }
+// state.json: { rateLimits, outcome: "succeeded"|"failed"|"timeout"|"hang"|"dead"|"escalate"|"checkError", report: "<text>"|null,
+//   boundRun: "<id>"|null, fencedBy: <a Run that another caller binds at the first check>, runCurrent: <a reply that replaces run-current's>, blocked, startState,
+//   payloadReportPath }
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -13,6 +14,12 @@ const flag = (name) => args[args.indexOf(name) + 1];
 const reply = (result) => console.log(JSON.stringify({ id: "x", ok: true, result }));
 const save = () => writeFileSync(path.join(dir, "state.json"), JSON.stringify(state));
 const command = args.filter((a) => !a.startsWith("--")).slice(0, 2).join(" ");
+const fenced = (run) => {
+  const bound = state.boundRun;
+  if (!bound || bound === run) return;
+  console.log(JSON.stringify({ id: "x", ok: false, error: { code: "consumer_fenced", message: `This caller is bound to Run ${bound}, not Run ${run}. Nothing changed.` } }));
+  process.exit(1);
+};
 // As Orca 1.4 does: with no --full, an orchestration command prints a concise view with other keys.
 if (command.startsWith("orchestration ") && !args.includes("--full")) {
   console.log(JSON.stringify({ id: "x", ok: true, result: { runId: null, concise: true } }));
@@ -27,12 +34,14 @@ switch (command) {
     reply({ rateLimits: state.rateLimits });
     break;
   case "orchestration run-current":
-    reply({ run: state.boundRun ? { id: state.boundRun } : null });
+    reply(state.runCurrent ?? (state.boundRun ? { run: { id: state.boundRun, objective: "The caller's own work", consumer_generation: 3 } } : { run: null }));
     break;
   case "orchestration run-create":
     reply({ run: { id: "run_1" } });
     break;
   case "orchestration run-use":
+    state.boundRun = flag("--id");
+    save();
     reply({ run: { id: flag("--id") } });
     break;
   case "orchestration worker-start": {
@@ -50,6 +59,12 @@ switch (command) {
     break;
   }
   case "orchestration check": {
+    if (state.fencedBy && !state.fenceTaken) {
+      state.boundRun = state.fencedBy;
+      state.fenceTaken = true;
+      save();
+    }
+    fenced(flag("--run"));
     if (args.includes("--ack")) {
       reply({ deliveryId: null, messages: [] });
       break;
@@ -62,6 +77,10 @@ switch (command) {
       state.escalated = true;
       save();
       reply({ deliveryId: "dlv_0", messages: [{ id: "msg_0", from_handle: "term_1", type: "escalation", body: "I am stuck.", payload: JSON.stringify({ dispatchId: "dsp_1" }) }] });
+      break;
+    }
+    if (state.outcome === "hang") {
+      setTimeout(() => reply({ deliveryId: null, messages: [], timedOut: true }), Number(flag("--timeout-ms")));
       break;
     }
     if (state.outcome === "timeout" || state.outcome === "dead") {
@@ -78,6 +97,7 @@ switch (command) {
     reply({ terminal: { tail: ["  Hooks need review", "  5 hooks are new or changed.", "› 1. Review hooks"] } });
     break;
   case "orchestration reply":
+    fenced(flag("--run"));
     reply({ id: "msg_reply" });
     break;
   case "orchestration worker-list": {

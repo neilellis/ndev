@@ -1,9 +1,10 @@
 // Tests for /second-opinion. Run with `node --test tests/*.test.mjs`.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
 import { choose, headroom } from "../second-opinion-lib.mjs";
 
@@ -19,13 +20,34 @@ const limits = ({ codex = [20, 10], claude = [10, 10] } = {}) => ({
   gemini: { provider: "gemini", status: "unavailable", session: null, weekly: null, error: "Gemini CLI OAuth is disabled in settings" },
 });
 
-function run(args, state) {
+function setup(state) {
   const dir = mkdtempSync(path.join(tmpdir(), "second-opinion-test-"));
   writeFileSync(path.join(dir, "state.json"), JSON.stringify({ outcome: "succeeded", report: "## Verdict\nAgree, with one change.", boundRun: null, ...state }));
   writeFileSync(path.join(dir, "calls.jsonl"), "");
-  const out = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env: { ...process.env, ORCA_BIN: FAKE, FAKE_ORCA_DIR: dir, SECOND_OPINION_DIR: dir } });
+  return { dir, env: { ...process.env, ORCA_BIN: FAKE, FAKE_ORCA_DIR: dir, SECOND_OPINION_DIR: dir } };
+}
+
+function result(dir, out) {
   const calls = readFileSync(path.join(dir, "calls.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  return { status: out.status, stdout: out.stdout, stderr: out.stderr, calls, called: (cmd) => calls.filter((c) => c.slice(0, cmd.length).join(" ") === cmd.join(" ")) };
+  const bound = JSON.parse(readFileSync(path.join(dir, "state.json"), "utf8")).boundRun;
+  return { ...out, calls, bound, called: (cmd) => calls.filter((c) => c.slice(0, cmd.length).join(" ") === cmd.join(" ")) };
+}
+
+function run(args, state) {
+  const { dir, env } = setup(state);
+  const out = spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8", env });
+  return result(dir, { status: out.status, stdout: out.stdout, stderr: out.stderr });
+}
+
+async function stopDuringWait(args, state, signal) {
+  const { dir, env } = setup(state);
+  const child = spawn(process.execPath, [CLI, ...args], { env, stdio: ["ignore", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
+  const closed = new Promise((resolve) => child.on("close", (status, killedBy) => resolve({ status, killedBy })));
+  while (!readFileSync(path.join(dir, "calls.jsonl"), "utf8").includes('"check"')) await sleep(50);
+  child.kill(signal);
+  return result(dir, { ...(await closed), stderr });
 }
 
 describe("headroom", () => {
@@ -186,9 +208,82 @@ describe("second-opinion CLI", () => {
     assert.doesNotMatch(r.stdout + r.stderr, /not the opinion/);
   });
 
-  it("ask binds the caller's own Run again afterwards", () => {
+  it("ask waits for its worker while its own Run is bound, then binds the caller's own Run again", () => {
     const r = run(["ask", "--question", "Is this right?"], { rateLimits: limits(), boundRun: "run_mine" });
     assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(r.called(["orchestration", "run-use"])[0].slice(2, 4), ["--id", "run_mine"]);
+    assert.match(r.stdout, /Agree, with one change\./);
+    assert.deepEqual(r.called(["orchestration", "run-use"]).map((c) => c[c.indexOf("--id") + 1]), ["run_1", "run_mine"]);
+    assert.equal(r.bound, "run_mine");
   });
+
+  it("ask stops with exit 1 and names the reply when Orca's run-current reply has no run", () => {
+    const r = run(["ask", "--question", "Is this right?"], { rateLimits: limits(), boundRun: "run_mine", runCurrent: { runId: "run_mine" } });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /orca orchestration run-current answered no run, so the bound Run is unknown.*\{"runId":"run_mine"\}/);
+    assert.equal(r.called(["orchestration", "run-create"]).length, 0);
+    assert.equal(r.bound, "run_mine");
+  });
+
+  for (const [outcome, status, extra] of [["failed", 1, []], ["timeout", 4, ["--timeout-min", "0.001"]], ["checkError", 4, []]]) {
+    it(`ask binds the caller's own Run again when the worker ends ${outcome}`, () => {
+      const r = run(["ask", "--question", "Is this right?", ...extra], { rateLimits: limits(), boundRun: "run_mine", outcome, report: null });
+      assert.equal(r.status, status, r.stderr);
+      assert.doesNotMatch(r.stderr, /consumer_fenced/);
+      assert.equal(r.bound, "run_mine");
+    });
+  }
+
+  const waitArgs = (dir) => ["wait", "--run", "run_1", "--dispatch", "dsp_1", "--out", path.join(dir, "opinion.md")];
+  const waitDir = () => mkdtempSync(path.join(tmpdir(), "second-opinion-wait-"));
+
+  it("wait binds its Run for the wait from a terminal bound to another Run, then binds the earlier Run again", () => {
+    const dir = waitDir();
+    const r = run(waitArgs(dir), { boundRun: "run_mine", reportPath: path.join(dir, "opinion.md") });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Agree, with one change\./);
+    assert.equal(r.bound, "run_mine");
+  });
+
+  for (const [outcome, status, extra] of [["failed", 1, []], ["timeout", 4, ["--timeout-min", "0.001"]], ["checkError", 4, []]]) {
+    it(`wait binds the earlier Run again when the wait ends ${outcome}`, () => {
+      const dir = waitDir();
+      const r = run([...waitArgs(dir), ...extra], { boundRun: "run_mine", reportPath: path.join(dir, "opinion.md"), outcome, report: null });
+      assert.equal(r.status, status, r.stderr);
+      assert.doesNotMatch(r.stderr, /consumer_fenced/);
+      assert.equal(r.bound, "run_mine");
+    });
+  }
+
+  it("a consumer_fenced refusal names run-use for the Run, not starting Orca", () => {
+    const dir = waitDir();
+    const r = run(waitArgs(dir), { boundRun: "run_mine", fencedBy: "run_elsewhere", reportPath: path.join(dir, "opinion.md") });
+    assert.equal(r.status, 4);
+    assert.match(r.stderr, /consumer_fenced: This caller is bound to Run run_elsewhere, not Run run_1\./);
+    assert.match(r.stderr, /Repair: orca orchestration run-use --id run_1 --json/);
+    assert.doesNotMatch(r.stderr, /start the Orca app/);
+    assert.equal(r.bound, "run_mine");
+  });
+
+  it("wait from a terminal already bound to its Run binds nothing", () => {
+    const dir = waitDir();
+    const r = run(waitArgs(dir), { boundRun: "run_1", reportPath: path.join(dir, "opinion.md") });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.called(["orchestration", "run-use"]).length, 0);
+    assert.equal(r.bound, "run_1");
+  });
+
+  it("ask from a terminal with no bound Run says that its Run stays bound", () => {
+    const r = run(["ask", "--question", "Is this right?"], { rateLimits: limits() });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /This terminal stays bound to Run run_1\./);
+  });
+
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+    it(`ask stopped by ${signal} during the wait binds the caller's own Run again`, async () => {
+      const r = await stopDuringWait(["ask", "--question", "Is this right?", "--timeout-min", "5"], { rateLimits: limits(), boundRun: "run_mine", outcome: "hang" }, signal);
+      assert.equal(r.bound, "run_mine");
+      assert.equal(r.status, 128 + constants.signals[signal], `killed by ${r.killedBy}; ${r.stderr}`);
+      assert.match(r.stderr, /If this process is stopped, bind your Run again: orca orchestration run-use --id run_mine --json/);
+    });
+  }
 });

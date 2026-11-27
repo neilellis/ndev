@@ -17,7 +17,7 @@
 // --context       a file the worker reads first. Repeat for more files.
 // --agent         the agents to consider, in order (default: codex, then claude).
 // --min-headroom  the percent of quota to leave for the agent's own work (default: 15).
-// --timeout-min   how long to wait for the report (default: 30).
+// --timeout-min   how long to wait for the report (default: 25).
 // --out           the report file (default: a new file in $SECOND_OPINION_DIR, else <tmp>/ndev-second-opinion).
 // --worktree      the Orca worktree the worker reads (default: current).
 // --dry-run       print the choice and the worker's Task spec, and start nothing.
@@ -28,9 +28,9 @@
 //   2  usage error
 //   3  skipped: no agent has quota to spare; carry on without a second opinion
 //   4  still waiting: the worker runs on; the message gives the `wait` command
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import path from "node:path";
 import { AGENTS, DEFAULT_AGENTS, DEFAULT_MIN_HEADROOM, KINDS, choose, describe, headroom, spec } from "./second-opinion-lib.mjs";
 
@@ -43,6 +43,7 @@ const NO_QUESTIONS = "No more context is available. State your assumption, conti
 const NO_HELP = "No help is available. Put what blocks you in the report under ## Risks, finish the report from what you can read, and send worker_done. If you cannot write the report, send worker_done with --outcome failed.";
 // Orca's orchestration contract: after three empty waits, look at the worker instead of waiting blindly.
 const EMPTY_WAITS_BEFORE_LOOK = 3;
+const STOP_SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"];
 
 class Exit extends Error {
   constructor(code, message) {
@@ -57,8 +58,30 @@ const firstLine = (text) => String(text).trim().split("\n")[0];
 // Runs one Orca CLI command with --json and answers its result. A failure names the command and Orca's own error.
 // An orchestration command needs --full too: without it Orca prints a concise view with other keys, such as runId for run.id.
 function orca(args, { timeoutMs = 120_000 } = {}) {
+  return answer(args, spawnSync(ORCA, orcaArgs(args), { encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }));
+}
+
+const orcaArgs = (args) => [...args, ...(args[0] === "orchestration" ? ["--full"] : []), "--json"];
+let pending = null;
+
+function orcaAsync(args, { timeoutMs }) {
+  return new Promise((resolve) => {
+    const child = spawn(ORCA, orcaArgs(args), { stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs });
+    pending = child;
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
+    child.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
+    child.on("error", (error) => resolve({ error, stdout, stderr }));
+    child.on("close", (status, signal) => resolve({ status: status ?? signal, stdout, stderr }));
+  }).then((r) => {
+    pending = null;
+    return answer(args, r);
+  });
+}
+
+function answer(args, r) {
   const what = `orca ${args.slice(0, 2).join(" ")}`;
-  const r = spawnSync(ORCA, [...args, ...(args[0] === "orchestration" ? ["--full"] : []), "--json"], { encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 });
   if (r.error) throw new Exit(1, `${what} could not run: ${r.error.message}${START_ORCA}`);
   let reply;
   try {
@@ -68,14 +91,14 @@ function orca(args, { timeoutMs = 120_000 } = {}) {
   }
   if (reply?.ok !== true) {
     const e = reply?.error;
-    const steps = Array.isArray(e?.data?.nextSteps) ? e.data.nextSteps.join("\n") : "";
+    const steps = e?.code === "consumer_fenced" ? `orca orchestration run-use --id ${args.includes("--run") ? args[args.indexOf("--run") + 1] : "<run>"} --json` : Array.isArray(e?.data?.nextSteps) ? e.data.nextSteps.join("\n") : "";
     throw new Exit(1, `${what} refused: ${e?.code ?? ""}: ${e?.message ?? JSON.stringify(reply).slice(0, 500)}${steps ? `\nRepair: ${steps}` : START_ORCA}`);
   }
   return reply.result;
 }
 
 function parseArgs(argv) {
-  const o = { command: argv[0], kind: "design", context: [], agents: [], minHeadroom: DEFAULT_MIN_HEADROOM, timeoutMin: 30, worktree: "current", json: false, dryRun: false };
+  const o = { command: argv[0], kind: "design", context: [], agents: [], minHeadroom: DEFAULT_MIN_HEADROOM, timeoutMin: 25, worktree: "current", json: false, dryRun: false };
   const value = (i, name) => {
     if (i >= argv.length || argv[i].startsWith("--")) throw new Exit(2, `${name} needs a value`);
     return argv[i];
@@ -146,7 +169,7 @@ function reportFile(o, kind) {
   return path.join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${kind}.md`);
 }
 
-function ask(o) {
+async function ask(o) {
   const text = question(o);
   const contextFiles = o.context.map((f) => path.resolve(f));
   const missing = contextFiles.filter((f) => !existsSync(f));
@@ -169,24 +192,20 @@ function ask(o) {
     return;
   }
 
-  const previous = orca(["orchestration", "run-current"])?.run?.id ?? null;
-  let runId, start;
+  const previous = boundRun();
+  const runId = orca(["orchestration", "run-create", "--objective", `Second opinion (${o.kind}): ${firstLine(text).slice(0, 80)}`]).run.id;
+  let start;
   try {
-    runId = orca(["orchestration", "run-create", "--objective", `Second opinion (${o.kind}): ${firstLine(text).slice(0, 80)}`]).run.id;
-    // worker-start prints its receipt with `ok: true` even when the start failed, so the receipt's state decides.
-    try {
-      start = orca([
-        "orchestration", "worker-start", "--spec", taskSpec, "--task-title", `Second opinion: ${firstLine(text).slice(0, 60)}`,
-        "--run", runId, "--worktree", o.worktree, "--agent", pick.agent, "--model", pick.model, "--effort", pick.effort, "--timeout-ms", "120000",
-      ], { timeoutMs: 180_000 });
-    } catch (err) {
-      // The call can fail after Orca started the worker, so the worker may run.
-      if (err instanceof Exit) throw new Exit(4, `${err.message}\n${mayRun(runId)}`);
-      throw err;
-    }
-  } finally {
-    if (previous && previous !== runId) rebind(previous);
+    start = orca([
+      "orchestration", "worker-start", "--spec", taskSpec, "--task-title", `Second opinion: ${firstLine(text).slice(0, 60)}`,
+      "--run", runId, "--worktree", o.worktree, "--agent", pick.agent, "--model", pick.model, "--effort", pick.effort, "--timeout-ms", "120000",
+    ], { timeoutMs: 180_000 });
+  } catch (err) {
+    // The call can fail after Orca started the worker, so the worker may run.
+    if (err instanceof Exit) throw new Exit(4, `${err.message}\n${mayRun(runId)}`);
+    throw err;
   }
+  // worker-start prints its receipt with `ok: true` even when the start failed, so the receipt's state decides.
   if (start.state === "failed") failedStart(start, runId, pick.agent);
   if (start.state !== "ready") {
     throw new Exit(4, [
@@ -198,7 +217,14 @@ function ask(o) {
     ].join("\n"));
   }
   note(`Worker ${start.dispatchId} started on Run ${runId}. Report file: ${reportPath}`);
-  wait({ ...o, run: runId, dispatch: start.dispatchId, out: reportPath }, pick);
+  await wait({ ...o, run: runId, dispatch: start.dispatchId, out: reportPath, previous }, pick);
+}
+
+function boundRun() {
+  const current = orca(["orchestration", "run-current"]);
+  if (current?.run === null) return null;
+  if (typeof current?.run?.id === "string") return current.run.id;
+  throw new Exit(1, `orca orchestration run-current answered no run, so the bound Run is unknown: ${JSON.stringify(current).slice(0, 500)}\nRepair: check \`orca orchestration run-current --json --full\`; bind your own Run with orca orchestration run-use --id <run> --json`);
 }
 
 const waitCommand = (run, dispatch, out) => `node ${SELF} wait --run ${run} --dispatch ${dispatch} --out ${out}`;
@@ -228,7 +254,7 @@ function failedStart(start, runId, agent) {
   ].join("\n"));
 }
 
-// A coordinator's later plain `check` uses its bound Run, so the caller's own Run is bound again.
+// Orca fences `check` to the caller's bound Run, and run-create binds nothing, so the wait binds its Run and then the caller's own Run again (#291).
 function rebind(previous) {
   try {
     orca(["orchestration", "run-use", "--id", previous]);
@@ -237,24 +263,48 @@ function rebind(previous) {
   }
 }
 
-function wait(o, pick) {
+async function wait(o, pick) {
   if (!o.run || !o.dispatch || !o.out) throw new Exit(2, "wait needs --run, --dispatch and --out");
   const runsOn = `Worker ${o.dispatch} runs on, on Run ${o.run}.\nKeep waiting: ${waitCommand(o.run, o.dispatch, o.out)}\nWatch it: orca orchestration worker-read --dispatch ${o.dispatch} --source auto --json`;
   // An Orca failure here says nothing about the worker, so the caller gets the ids to wait again, never "ask again".
-  const call = (args, opts) => {
+  const runsOnError = (err) => (err instanceof Exit ? new Exit(4, `${err.message}\n${runsOn}`) : err);
+  const guard = (fn) => {
     try {
-      return orca(args, opts);
+      return fn();
     } catch (err) {
-      if (err instanceof Exit) throw new Exit(4, `${err.message}\n${runsOn}`);
-      throw err;
+      throw runsOnError(err);
     }
   };
+  const call = (args, opts) => guard(() => orca(args, opts));
+  const callAsync = (args, opts) => orcaAsync(args, opts).catch((err) => {
+    throw runsOnError(err);
+  });
+  const previous = o.previous !== undefined ? o.previous : guard(boundRun);
+  if (previous !== o.run) call(["orchestration", "run-use", "--id", o.run]);
+  const restores = previous && previous !== o.run;
+  if (restores) note(`If this process is stopped, bind your Run again: orca orchestration run-use --id ${previous} --json`);
+  const stop = (signal) => {
+    pending?.kill();
+    if (restores) rebind(previous);
+    process.exit(128 + constants.signals[signal]);
+  };
+  for (const signal of STOP_SIGNALS) process.on(signal, stop);
+  try {
+    return await waitBound(o, pick, call, callAsync, runsOn);
+  } finally {
+    for (const signal of STOP_SIGNALS) process.off(signal, stop);
+    if (restores) rebind(previous);
+    else if (!previous) note(`This terminal stays bound to Run ${o.run}.`);
+  }
+}
+
+async function waitBound(o, pick, call, callAsync, runsOn) {
   const deadline = Date.now() + o.timeoutMin * 60_000;
   let empty = 0;
   let liveness = "not checked";
   for (;;) {
     const slice = Math.max(1000, Math.min(deadline - Date.now(), WAIT_SLICE_MS));
-    const got = call(["orchestration", "check", "--run", o.run, "--wait", "--types", MESSAGE_TYPES, "--timeout-ms", String(slice)], { timeoutMs: slice + 60_000 });
+    const got = await callAsync(["orchestration", "check", "--run", o.run, "--wait", "--types", MESSAGE_TYPES, "--timeout-ms", String(slice)], { timeoutMs: slice + 60_000 });
     let settled;
     for (const m of got.messages ?? []) {
       const payload = m.payload ? JSON.parse(m.payload) : {};
@@ -324,8 +374,8 @@ function release(dispatch) {
 try {
   const o = parseArgs(process.argv.slice(2));
   if (o.command === "quota") quota(o);
-  else if (o.command === "ask") ask(o);
-  else wait(o);
+  else if (o.command === "ask") await ask(o);
+  else await wait(o);
 } catch (err) {
   if (!(err instanceof Exit)) throw err;
   note(err.message);
