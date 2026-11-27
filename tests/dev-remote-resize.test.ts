@@ -300,7 +300,7 @@ test('resize pauses each live worker on the box, shuts it down, changes the type
   expect(argOf(a, '--agent')).toBe('claude')
   expect(argOf(a, '--model')).toBe('opus')
   expect(argOf(a, '--effort')).toBe('high')
-  expect(argOf(a, '--spec')).toMatch(/^Write the KG docs for #772\.[\s\S]*Resume from ~\/handoff\/772\.md/)
+  expect(argOf(a, '--spec')).toMatch(/^Write the API docs for #772\.[\s\S]*Resume from ~\/handoff\/772\.md/)
   const e = starts.find(s => argOf(s, '--run') === 'run-2')!
   expect(argOf(e, '--agent')).toBe('codex')
   expect(e).not.toContain('--model')
