@@ -60,10 +60,10 @@ Open the project worktree in Orca and give Claude Code, Codex or opencode this p
 | `<worktree>/.neil-dev.worktree.json` | Local worktree | No | Worktree overrides and running Docker stacks or dev servers. |
 | `<worktree>/.neil-dev.env` | Local worktree | No (mode 600) | Private environment keys used by skills. Values are never printed in CLI output or state. |
 | `<worktree>/.neil-dev.issue-<n>.json` | Local worktree | No | Issue workflow phase, ownership, check evidence, interviews and PR association. |
-
-The project file was `.neil-dev.json` before. `ndev` still reads `.neil-dev.json` when `.ndev.json` does not exist, and the next write moves it to `.ndev.json`. To move it now, run `ndev project migrate-config` and commit the rename. When both files exist and their settings differ, `ndev` reads neither and stops with an error. Keep the settings you want in `.ndev.json` and delete `.neil-dev.json`.
 | `<worktree>/.neil-dev.epic-<n>.json` | Local worktree | No | Epic phases, sub-issue states, blockers, workers and stacked PR records. |
 | `<repo>/NORTH_STAR.md` | Shared project | Yes | Project purpose and non-negotiable guiding rules checked during planning and review. |
+
+The project file was `.neil-dev.json` before. `ndev` still reads `.neil-dev.json` when `.ndev.json` does not exist, and the next write moves it to `.ndev.json`. To move it now, run `ndev project migrate-config` and commit the rename. When both files exist and their settings differ, `ndev` reads neither and stops with an error. Keep the settings you want in `.ndev.json` and delete `.neil-dev.json`.
 
 ## Project defaults and credentials
 
