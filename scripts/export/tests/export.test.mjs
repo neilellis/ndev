@@ -233,3 +233,11 @@ test('an --out folder whose name holds shell syntax does not run it', () => {
   assert.equal(flow.status, 0, flow.stderr)
   assert.ok(!existsSync(join(base, 'pwned')), 'the $(...) in the path ran')
 })
+
+test('the exported ndev-files script lists the project files', () => {
+  const { out } = exported()
+  const repo = fresh()
+  assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0)
+  const ran = spawnSync('node', [join(out, 'home/scripts/work/ndev_files.mjs'), 'list', '--json'], { cwd: repo, encoding: 'utf8' })
+  assert.equal(ran.status, 0, ran.stderr)
+})

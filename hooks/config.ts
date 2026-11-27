@@ -177,7 +177,7 @@ const said = (r: { stdout: string; stderr: string }) => (r.stderr.trim() || r.st
 
 async function moveLegacy($: EngineInterface, root: string) {
   const isTracked = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', LEGACY_CONFIG_FILE], { cwd: root, timeoutMs: 10000 })
-  const argv = isTracked.exitCode === 0 ? ['git', 'mv', '-f', '--', LEGACY_CONFIG_FILE, CONFIG_FILE] : ['rm', '-f', '--', LEGACY_CONFIG_FILE]
+  const argv = isTracked.exitCode === 0 ? ['git', 'mv', '-f', '--', LEGACY_CONFIG_FILE, CONFIG_FILE] : ['rm', '--', LEGACY_CONFIG_FILE]
   const moved = await $.process.run(argv, { cwd: root, timeoutMs: 10000 })
   if (moved.exitCode !== 0) throw new Error(`${argv.join(' ')} in ${root} exited ${moved.exitCode}: ${said(moved)}. Repair: move ${root}/${LEGACY_CONFIG_FILE} to ${root}/${CONFIG_FILE} by hand, or run ndev project migrate-config.`)
 }

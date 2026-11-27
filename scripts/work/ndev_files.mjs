@@ -20,7 +20,8 @@ import { spawnSync } from 'node:child_process'
 import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { parseArgs } from 'node:util'
-import { CONFIG_FILE, LEGACY_CONFIG_FILE } from '../../hooks/workflow/config-file.ts'
+const CONFIG_FILE = '.ndev.json'
+const LEGACY_CONFIG_FILE = '.neil-dev.json'
 
 const KNOWN = [CONFIG_FILE, '.neil-dev.env', '.neil-dev.worktree.json']
 const WRITABLE = [CONFIG_FILE, '.neil-dev.env']

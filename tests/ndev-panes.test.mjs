@@ -50,6 +50,14 @@ test('view reads recognized settings and shows the same workflow and resource ro
   assert.deepEqual(await runPane(['bridge', 'snapshot', 'view'], options), view.snapshot)
 })
 
+test('view reads a .neil-dev.json, and refuses it beside a .ndev.json that differs, naming both', async t => {
+  const options = await fixture(t)
+  await writeJson(join(options.cwd, '.neil-dev.json'), { mode: 'heavy' })
+  assert.match((await runPane(['view'], options)).text, /Mode.*heavy/)
+  await writeJson(join(options.cwd, '.ndev.json'), { mode: 'light' })
+  await assert.rejects(runPane(['view'], options), error => error.message.includes('.ndev.json') && error.message.includes('.neil-dev.json'))
+})
+
 test('view shows the running flow step with its elapsed time and limit, and the last watcher result', async t => {
   const options = await fixture(t)
   const gitDir = git(options.cwd, 'rev-parse', '--absolute-git-dir')

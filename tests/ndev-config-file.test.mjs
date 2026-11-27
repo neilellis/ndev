@@ -147,7 +147,7 @@ test('the shell helpers stop on two config files that differ', t => {
   assert.match(result.stderr, /ndev project migrate-config/)
 })
 
-const RESOLVERS = new Set(['hooks/workflow/config-file.ts', 'scripts/ndev/config-file.mjs', 'scripts/github/project-config.sh', 'orca-plugin/ndev/worker/files.mjs'])
+const RESOLVERS = new Set(['hooks/workflow/config-file.ts', 'scripts/ndev/config-file.mjs', 'scripts/github/project-config.sh', 'orca-plugin/ndev/worker/files.mjs', 'scripts/work/ndev_files.mjs'])
 
 test('only the config resolvers name .neil-dev.json in code', () => {
   const listed = spawnSync('git', ['-C', repoRoot, 'grep', '-l', '-F', '.neil-dev.json', '--', 'hooks', 'scripts', 'orca-plugin', 'skills/*/scripts', 'bin'], { encoding: 'utf8' })
