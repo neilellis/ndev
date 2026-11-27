@@ -6,7 +6,7 @@ type Dollar = Parameters<Body>[0]
 
 const ROOT = '/proj'
 const RECORD = `${ROOT}/.neil-dev.worktree.json`
-const CONFIG = `${ROOT}/.neil-dev.json`
+const CONFIG = `${ROOT}/.ndev.json`
 const ok = (stdout = '', exitCode = 0, stderr = '') => ({
   value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
 })
@@ -21,7 +21,7 @@ const devServer = (pid: number, port: number, extra: Record<string, unknown> = {
   pid, port, command: 'node next dev', cwd: `${ROOT}/apps/docs`, started: '2026-10-30T10:00:00.000Z', ...extra,
 })
 
-// A fake engine: a git worktree at /proj. `files` holds the worktree record and .neil-dev.json;
+// A fake engine: a git worktree at /proj. `files` holds the worktree record and .ndev.json;
 // `script` is what worktree-env.sh does when run.
 const engine = (on: On, opts: { files?: Record<string, string>; script?: { exitCode: number; stdout?: string; stderr?: string } } = {}) => {
   const files = new Map(Object.entries({ [`${ROOT}/.ndev-inited`]: '', ...opts.files }))

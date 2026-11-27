@@ -3,7 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import { RECORD } from './worktree-stacks'
 
 // A linked worktree keeps its own mode and steering under "settings" in .neil-dev.worktree.json
-// (git-ignored), ahead of the project's .neil-dev.json. The main checkout keeps no such file, so
+// (git-ignored), ahead of the project's .ndev.json. The main checkout keeps no such file, so
 // there the project file is used. scripts/work/worktree_env.mjs owns the file.
 export type WorktreeSettings = { mode?: string; steering?: string }
 

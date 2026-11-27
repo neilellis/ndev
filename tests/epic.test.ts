@@ -134,7 +134,7 @@ const engine = (on: On, opts: Opts = {}) => {
   const usual = { rev: 1, issue: 7, root: ROOT, repo: REPO, base: 'main', branch: 'issue-7', prs: [12], state: 'developing', evidence: {}, attempts: 0, nudges: { count: 0 }, followUps: [], migrations: [], history: [], owner: { session: 's1', at: 0 }, baseCheck: { sha: SHA, script: 'pre-commit-check.sh', exitCode: 0, at: 0 } }
   const files = new Map<string, string>(Object.entries({
     [`${ROOT}/.ndev-inited`]: '',
-    [`${ROOT}/.neil-dev.json`]: JSON.stringify({ github: { repo: REPO, board: null }, mode: 'light', steering: 'auto' }),
+    [`${ROOT}/.ndev.json`]: JSON.stringify({ github: { repo: REPO, board: null }, mode: 'light', steering: 'auto' }),
     ...(opts.workflowOpen ? { [`${ROOT}/.neil-dev.worktree.json`]: JSON.stringify({ version: 2, resources: {}, workflows: { 7: usual }, prs: {} }) } : {}),
     [`${ROOT}/docs/prompt.md`]: 'the customer prompt',
     [`${ROOT}/docs/core-idea.md`]: '# Core idea\n\nAim: make the thing.\n\nA1: an order → a receipt\nA2: a refund → a credit note\nA3: an empty cart → a refusal\n',

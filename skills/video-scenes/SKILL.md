@@ -67,7 +67,7 @@ An arrow cue draws a `browser-arrows` arrow (`arrow.js`, calm look, size L, a bo
 
 ## Branding
 
-If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Set the `:root` tokens and fonts from it before you change any colour or font, and match its logo use. Otherwise skip this section.
+If `.ndev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read `branding.guide` (or else `branding.site`). Set the `:root` tokens and fonts from it before you change any colour or font, and match its logo use. Otherwise skip this section.
 
 ## Preview
 

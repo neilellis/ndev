@@ -37,9 +37,9 @@ async function brandSources($: EngineInterface, project: LoadedConfig | undefine
   const local = await brandFiles($, project)
   if (local.length) return local
   const url = project?.config.branding?.guide ?? project?.config.branding?.site
-  if (!url) throw new Refuse('This project has no brand: .neil-dev.json has no "branding". Use the /brand create skill to make one, or choose with your own judgement.')
+  if (!url) throw new Refuse('This project has no brand: .ndev.json has no "branding". Use the /brand create skill to make one, or choose with your own judgement.')
   const page = await run($, ['curl', '-sSL', '--fail', '--max-time', '20', url], { cwd: project?.root ?? $.plugin.root, timeoutMs: 30_000 })
-  if (page.exitCode !== 0) throw new Refuse(`The brand page ${url} was not read: curl exited ${page.exitCode}: ${said(page)}. Set branding.path in .neil-dev.json to read a local copy.`)
+  if (page.exitCode !== 0) throw new Refuse(`The brand page ${url} was not read: curl exited ${page.exitCode}: ${said(page)}. Set branding.path in .ndev.json to read a local copy.`)
   return [{ name: url, text: page.stdout }]
 }
 

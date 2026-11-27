@@ -6,7 +6,7 @@ Open it from the right sidebar (the document icon). The current workspace comes 
 
 | File | What it holds | Create | Copy from main |
 | --- | --- | --- | --- |
-| `.neil-dev.json` | mode, steering, GitHub repo and board | `{ "mode": "light", "steering": "interactive" }` | yes |
+| `.ndev.json` | mode, steering, GitHub repo and board | `{ "mode": "light", "steering": "interactive" }` | yes |
 | `.neil-dev.env` | private keys for ndev skills | empty file, mode 600 | yes, mode 600 |
 | `.neil-dev.worktree.json` | stacks one worktree started | no (ndev writes it) | no (one per worktree) |
 

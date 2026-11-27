@@ -22,8 +22,8 @@ const open = { command: 'view', args: '', origin: { kind: 'composer' }, presenta
 const file = (name: string, present: boolean, isIgnored = false) => ({ name, isKnown: true, present, isIgnored })
 const listing = {
   worktrees: [
-    { path: ROOT, branch: 'main', isMain: true, files: [file('.neil-dev.json', true), file('.neil-dev.env', true, true), file('.neil-dev.worktree.json', false, true)] },
-    { path: WT, branch: 'fix-1', isMain: false, files: [file('.neil-dev.json', false), file('.neil-dev.env', false, true), file('.neil-dev.worktree.json', true, true), { name: '.neil-dev.local', isKnown: false, present: true, isIgnored: false }] },
+    { path: ROOT, branch: 'main', isMain: true, files: [file('.ndev.json', true), file('.neil-dev.env', true, true), file('.neil-dev.worktree.json', false, true)] },
+    { path: WT, branch: 'fix-1', isMain: false, files: [file('.ndev.json', false), file('.neil-dev.env', false, true), file('.neil-dev.worktree.json', true, true), { name: '.neil-dev.local', isKnown: false, present: true, isIgnored: false }] },
   ],
 }
 const record = {
@@ -117,7 +117,7 @@ test('the worktree shows its ndev files as present or missing, and any other .ne
   world(on)
   const ui = await start($)
   expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.worktree\.json$/ }))?.text).toBe('✔ .neil-dev.worktree.json')
-  expect((await ui.find({ type: 'Text', text: /^✖ \.neil-dev\.json \(missing\)$/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^✖ \.ndev\.json \(missing\)$/ }))?.text).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /\.neil-dev\.local/ }))?.text).toMatch(/\.neil-dev\.local/)
   await ui.unmount()
 })
@@ -157,20 +157,20 @@ test('a failed list of the worktrees shows the error, with the command that fail
 test('a linked worktree copies a missing file from the main checkout when the main one has it', async ($, on) => {
   const w = world(on)
   const ui = await start($)
-  await ui.press({ key: `copy:${WT}:.neil-dev.json` })
-  expect(w.ran).toContain(`${FILES} copy --file .neil-dev.json --worktree ${WT} --repo ${ROOT}`)
+  await ui.press({ key: `copy:${WT}:.ndev.json` })
+  expect(w.ran).toContain(`${FILES} copy --file .ndev.json --worktree ${WT} --repo ${ROOT}`)
   await ui.press({ key: `copy:${WT}:.neil-dev.env` })
   expect(w.ran).toContain(`${FILES} copy --file .neil-dev.env --worktree ${WT} --repo ${ROOT}`)
   await ui.unmount()
 })
 
 test('the main checkout offers create where a file is missing, never copy', async ($, on) => {
-  const missing = { worktrees: [{ ...listing.worktrees[0], files: [file('.neil-dev.json', false), file('.neil-dev.env', false, true)] }] }
+  const missing = { worktrees: [{ ...listing.worktrees[0], files: [file('.ndev.json', false), file('.neil-dev.env', false, true)] }] }
   const w = world(on, { [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify(missing)) }, ROOT)
   const ui = await start($)
-  expect(await ui.find({ type: 'Button', key: `copy:${ROOT}:.neil-dev.json` })).toBeUndefined()
-  await ui.press({ key: `create:${ROOT}:.neil-dev.json` })
-  expect(w.ran).toContain(`${FILES} create --file .neil-dev.json --worktree ${ROOT} --repo ${ROOT}`)
+  expect(await ui.find({ type: 'Button', key: `copy:${ROOT}:.ndev.json` })).toBeUndefined()
+  await ui.press({ key: `create:${ROOT}:.ndev.json` })
+  expect(w.ran).toContain(`${FILES} create --file .ndev.json --worktree ${ROOT} --repo ${ROOT}`)
   await ui.unmount()
 })
 
@@ -299,25 +299,25 @@ test('/view that cannot create the record shows the script\'s own message and it
 
 const SERVICES = { services: { supabase: { url: 'https://supabase.com/dashboard/project/abc' }, vercel: { url: 'https://vercel.com/acme/web' } } }
 
-test('the services of .neil-dev.json show as links, each with its name', async ($, on) => {
-  world(on, {}, WT, { [`${WT}/.neil-dev.json`]: JSON.stringify(SERVICES) })
+test('the services of .ndev.json show as links, each with its name', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.ndev.json`]: JSON.stringify(SERVICES) })
   const ui = await start($)
   expect((await ui.find({ type: 'Link', text: 'supabase' }))?.props).toMatchObject({ href: 'https://supabase.com/dashboard/project/abc', label: 'supabase' })
   expect((await ui.find({ type: 'Link', text: 'vercel' }))?.props).toMatchObject({ href: 'https://vercel.com/acme/web', label: 'vercel' })
   await ui.unmount()
 })
 
-test('a worktree without .neil-dev.json shows the services of the main checkout', async ($, on) => {
-  world(on, {}, WT, { [`${ROOT}/.neil-dev.json`]: JSON.stringify(SERVICES) })
+test('a worktree without .ndev.json shows the services of the main checkout', async ($, on) => {
+  world(on, {}, WT, { [`${ROOT}/.ndev.json`]: JSON.stringify(SERVICES) })
   const ui = await start($)
   expect((await ui.find({ type: 'Link', text: 'vercel' }))?.props.href).toBe('https://vercel.com/acme/web')
   await ui.unmount()
 })
 
-test('a .neil-dev.json that cannot be read shows its error and the file, and the pane still lists', async ($, on) => {
-  world(on, {}, WT, { [`${WT}/.neil-dev.json`]: JSON.stringify({ services: { vercel: { url: 'ftp://x' } } }) })
+test('a .ndev.json that cannot be read shows its error and the file, and the pane still lists', async ($, on) => {
+  world(on, {}, WT, { [`${WT}/.ndev.json`]: JSON.stringify({ services: { vercel: { url: 'ftp://x' } } }) })
   const ui = await start($)
-  expect((await ui.find({ type: 'Text', text: /\.neil-dev\.json.*services\.vercel\.url/ }))?.text).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /\.ndev\.json.*services\.vercel\.url/ }))?.text).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /^✔ \.neil-dev\.worktree\.json$/ }))?.text).toBeDefined()
   await ui.unmount()
 })
@@ -530,7 +530,7 @@ const issueFiles = (issue: Record<string, unknown>, prs?: Record<string, unknown
 const hrefOf = async (ui: Awaited<ReturnType<typeof start>>, text: string | RegExp) => (await ui.find({ type: 'Link', text }))?.props.href
 
 test('a worktree with issue files and no worktree file still shows its workflows and its resources', async ($, on) => {
-  const onlyIssue = { worktrees: [listing.worktrees[0], { ...listing.worktrees[1], files: [file('.neil-dev.json', true), file('.neil-dev.worktree.json', false, true), { name: '.neil-dev.issue-7.json', isKnown: false, present: true, isIgnored: true }] }] }
+  const onlyIssue = { worktrees: [listing.worktrees[0], { ...listing.worktrees[1], files: [file('.ndev.json', true), file('.neil-dev.worktree.json', false, true), { name: '.neil-dev.issue-7.json', isKnown: false, present: true, isIgnored: true }] }] }
   world(on, { [`${FILES} list --json --repo ${ROOT}`]: ok(JSON.stringify(onlyIssue)) }, WT, issueFiles(fullIssue))
   const ui = await start($)
   expect(await ui.find({ type: 'Text', text: /^developing, issue #7/ })).toBeTruthy()

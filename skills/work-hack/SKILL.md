@@ -13,7 +13,7 @@ Hack mode has two parts. First, the human and the agent hack at a solution with 
 
 ## The workflow
 
-While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp__ndev__*` tools carry this method. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. The answer of each tool names the next step. If it differs from this skill, the answer wins.
+While the project does not set `"workflow": false` in `.ndev.json`, the `mcp__ndev__*` tools carry this method. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. The answer of each tool names the next step. If it differs from this skill, the answer wins.
 
 | Stage | State | Tool that ends it |
 |---|---|---|

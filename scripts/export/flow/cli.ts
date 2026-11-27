@@ -11,6 +11,7 @@ const { BEFORE_REVIEW, MACHINES, MERGEABLE_BEFORE_DONE, afterSkip, afterStarted,
 const { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isWebPath, requiredSmokeTypes, reviewerBrief } = await import(join(workflowModules, 'change-types.ts'))
 const { RECORDS_DIR, citedIds, issueRecordNotes, planLine, recordFileOf, summarise, traceProblems, verificationProblems } = await import(join(workflowModules, 'records.ts'))
 const { harnessSession } = await import(join(workflowModules, 'session.ts'))
+const { chooseConfig, CONFIG_FILE, LEGACY_CONFIG_FILE } = await import(join(workflowModules, 'config-file.ts'))
 
 class Fail extends Error {
   code: number
@@ -122,10 +123,13 @@ const headSha = (root: string) => gitOk(root, 'rev-parse', 'HEAD')
 
 type Config = { mode?: string; steering?: string; projectLevel?: string; workflow?: boolean; github?: { repo?: string } }
 function readConfig(root: string): Config {
-  const file = join(root, '.neil-dev.json')
-  if (!existsSync(file)) return {}
+  const text = (name: string) => existsSync(join(root, name)) ? readFileSync(join(root, name), 'utf8') : undefined
+  const choice = chooseConfig(root, text(CONFIG_FILE), text(LEGACY_CONFIG_FILE))
+  if (choice.conflict) throw new Fail(1, `ndev-flow: ${choice.conflict.message}. Repair: ${choice.conflict.repair}`)
+  const file = choice.path
+  if (choice.text === undefined) return {}
   try {
-    return JSON.parse(readFileSync(file, 'utf8'))
+    return JSON.parse(choice.text)
   } catch (error) {
     throw new Fail(1, `ndev-flow: ${file} is not valid JSON (${(error as Error).message}). Repair: fix the file.`)
   }
@@ -669,7 +673,7 @@ function openPendingPr(wf: Workflow) {
 }
 
 function started(root: string, config: Config, args: Args) {
-  if (config.workflow === false) throw new Fail(2, `ndev-flow: ${root}/.neil-dev.json sets "workflow": false, so this project works without the workflow. Repair: remove that key to use ndev-flow.`)
+  if (config.workflow === false) throw new Fail(2, `ndev-flow: ${root}/${CONFIG_FILE} sets "workflow": false, so this project works without the workflow. Repair: remove that key to use ndev-flow.`)
   const issue = findIssue(root, args)
   const notes: string[] = []
   let wf = readRecord(root, issue)

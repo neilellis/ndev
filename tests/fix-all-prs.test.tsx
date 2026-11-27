@@ -103,7 +103,7 @@ function world(on: On, prs: Pr[], agents: { name: string; status: string }[], is
   // so it runs no set-up and no wiki script, and every process call below is the loop's.
   // The loop's time between GitHub reads: none here, so each tick reads. A test of the budget clears it.
   on('env.get', (_, e) => ({ value: e.name === 'NDEV_PR_CHECK_MS' ? fault.checkEvery : '/home/neil' }))
-  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.neil-dev.json' }))
+  on('fs.exists', (_, e) => ({ value: e.path === '/home/neil/dev-wiki/wiki.md' || e.path === '/.ndev.json' }))
   on('fs.read', () => ({ value: JSON.stringify({ github: { repo: 'acme/widgets', board: null } }) }))
   on('clock.every', () => new Promise(resolve => {
     if (isFireDue) {

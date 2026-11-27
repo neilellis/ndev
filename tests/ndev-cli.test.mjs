@@ -50,7 +50,7 @@ test('an unknown command returns one JSON error with the repair', () => {
 
 test('project setup preserves existing settings and returns persisted values', t => {
   const root = worktree(t)
-  const path = join(root, '.neil-dev.json')
+  const path = join(root, '.ndev.json')
   writeFileSync(path, '{"branding":{"name":"Example","site":"https://example.com"}}\n')
   const result = run(['project', 'setup', '--repo', 'owner/example', '--no-board', '--json'], root)
   assert.equal(result.status, 0, result.stderr || result.stdout)
@@ -97,7 +97,7 @@ test('project setup asks the owner for a root North Star when the file is missin
 
 test('setting auto in hack mode fails before saving the configuration', t => {
   const root = worktree(t)
-  const path = join(root, '.neil-dev.json')
+  const path = join(root, '.ndev.json')
   const original = '{"mode":"hack","steering":"interactive"}\n'
   writeFileSync(path, original)
   const result = run(['project', 'steering', 'auto', '--json'], root)
@@ -108,7 +108,7 @@ test('setting auto in hack mode fails before saving the configuration', t => {
 
 test('project mode toggles light and heavy, sets hack by name and refuses hack in auto', t => {
   const root = worktree(t)
-  const path = join(root, '.neil-dev.json')
+  const path = join(root, '.ndev.json')
   const mode = (...args) => {
     const result = run(['project', 'mode', ...args, '--json'], root)
     return { status: result.status, body: JSON.parse(result.stdout) }
@@ -180,8 +180,8 @@ test('guidance names the sources of each kind, refuses a missing brand, and name
   const noBrand = ask('brand-style')
   assert.equal(noBrand.status, 1)
   assert.match(noBrand.body.error.message, /has no branding sources/)
-  assert.match(noBrand.body.error.repair, /branding\.site in \.neil-dev\.json/)
-  writeFileSync(join(root, '.neil-dev.json'), '{"branding":{"name":"Example","site":"https://brand.example.test"}}\n')
+  assert.match(noBrand.body.error.repair, /branding\.site in \.ndev\.json/)
+  writeFileSync(join(root, '.ndev.json'), '{"branding":{"name":"Example","site":"https://brand.example.test"}}\n')
   const expected = {
     'react-component': ['kb/ui-components.md', 'https://brand.example.test'],
     library: ['kb/libraries.md'],

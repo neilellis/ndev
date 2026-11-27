@@ -51,7 +51,7 @@ The project owns its wiring. A usual set-up:
 
 ## Page text
 
-When you review page text, use `copy`. If `.neil-dev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read the writing rules in `branding.guide` (or else `branding.site`) too. Make sure that desktop and mobile give the same meaning.
+When you review page text, use `copy`. If `.ndev.json` at the project root (`git rev-parse --show-toplevel`) has `branding`, read the writing rules in `branding.guide` (or else `branding.site`) too. Make sure that desktop and mobile give the same meaning.
 
 ## Failures
 

@@ -30,11 +30,11 @@ async function run(label, fn) {
 }
 
 const WHAT = {
-  '.neil-dev.json': 'Project settings: mode, steering, GitHub repo and board. Checked in.',
+  '.ndev.json': 'Project settings: mode, steering, GitHub repo and board. Checked in.',
   '.neil-dev.env': 'Private keys for ndev skills. Git-ignored, mode 600. Only key names are shown.',
   '.neil-dev.worktree.json': 'Local stacks this worktree started. Written by ndev, one per worktree.'
 }
-const COPYABLE = new Set(['.neil-dev.json', '.neil-dev.env'])
+const COPYABLE = new Set(['.ndev.json', '.neil-dev.env'])
 
 function button(label, onclick) {
   const b = document.createElement('button')

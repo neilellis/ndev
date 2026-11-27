@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CONFIG_FILE, missingGitHub, REPO, validate } from '../../hooks/config.ts'
+import { migrateConfig, moveLegacyConfig, readConfigObject } from './config-file.mjs'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, stateRoot, worktreeScript } from './common.mjs'
 
 const configPath = root => join(root, CONFIG_FILE)
@@ -13,8 +14,7 @@ const string = { type: 'string' }
 const boolean = { type: 'boolean' }
 
 export function readProject(root) {
-  const path = configPath(root)
-  const config = readObject(path, { missing: {} })
+  const { path, config } = readConfigObject(root)
   const problem = validate(config)
   if (problem) throw new CliError(1, `${path}: ${problem}.`, { repair: `Fix ${path} and retry.` })
   return config
@@ -69,6 +69,7 @@ export function saveProject(root, key, value) {
     const config = { ...readProject(root), [key]: value }
     const problem = validate(config)
     if (problem) throw new CliError(1, `${path}: ${problem}.`, { repair: 'Run ndev project status.' })
+    moveLegacyConfig(root)
     atomicJson(path, config)
   })
 }
@@ -113,6 +114,7 @@ function setup(workspace, argv, repair) {
       const existingBoard = config.github?.repo === repo ? config.github?.board : undefined
       const chosenBoard = values['no-board'] || repo === null ? null : board ? { owner: board[1], number: Number(board[2]) } : existingBoard
       const github = { repo, ...(chosenBoard !== undefined ? { board: chosenBoard } : {}) }
+      moveLegacyConfig(workspace.root)
       atomicJson(path, { ...config, github })
     })
   }
@@ -145,7 +147,7 @@ function guidance(root, argv, repair) {
   if (!Object.hasOwn(catalog, kind)) throw new CliError(2, `${JSON.stringify(kind ?? '')} is not a kind. The kinds are ${Object.keys(catalog).join(', ')}.`, { repair })
   if (!description?.trim()) throw new CliError(2, `Give a description of the ${kind} you need.`, { repair })
   const sources = catalog[kind]
-  if (!sources.length) throw new CliError(1, `${root} has no branding sources.`, { repair: 'Set branding.site in .neil-dev.json or load the ndev-brand skill.' })
+  if (!sources.length) throw new CliError(1, `${root} has no branding sources.`, { repair: 'Set branding.site in .ndev.json or load the ndev-brand skill.' })
   return { kind, description, sources, text: `Guidance for ${kind}. ${description}\nRead these sources in order and cite any suggestion you use.\n${sources.join('\n')}` }
 }
 
@@ -238,6 +240,7 @@ export function runProject([verb, ...argv]) {
   argsFor(argv, {}, repair)
   if (verb === 'status') return setupStatus(workspace)
   if (verb === 'init') return initialize(workspace)
+  if (verb === 'migrate-config') return migrateConfig(workspace.root)
   if (verb === 'learn') return { skill: 'ndev-dev-wiki', text: 'Load the ndev-dev-wiki skill. Review the session for reusable lessons and record each one. Use ndev-remember for project facts.' }
   throw new CliError(2, `Unknown project command ${JSON.stringify(verb)}.`, { repair: 'ndev project --help' })
 }

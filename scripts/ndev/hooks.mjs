@@ -9,6 +9,7 @@ import { envFor, SCRIPT, TIMEOUT_MS, validateQuality } from '../../hooks/quality
 import { ensureProjectFiles } from '../../orca-plugin/ndev/worker/files.mjs'
 import { binding } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
+import { readConfigText } from './config-file.mjs'
 import { readProject } from './project.mjs'
 import { commitFiles, fixedEditReason, hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, requirementsList, savesCommit } from './requirement-hooks.mjs'
 import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
@@ -406,7 +407,7 @@ function qualityHook(name, root, settings, event, call, payload) {
 function qualityNotes(root, config, workflow, call, payload, event) {
   const quality = config.quality ?? {}
   const error = validateQuality(quality)
-  if (error) throw new CliError(1, `${root}/.neil-dev.json: ${error}`, { repair: 'Fix the quality settings and retry the tool call.' })
+  if (error) throw new CliError(1, `${readConfigText(root).path}: ${error}`, { repair: 'Fix the quality settings and retry the tool call.' })
   const notes = []
   const add = (name, nativeEvent) => {
     if (quality[name] !== undefined) notes.push(qualityHook(name, root, quality[name], nativeEvent, call, payload))
@@ -458,7 +459,7 @@ function linkedIssueGuidance(root, repo) {
 function workflowStartup(root, config, workflow, source) {
   if (source && source !== 'startup') return {}
   if (config.workflow === false) {
-    return { systemMessage: `Workflow is disabled in ${root}/.neil-dev.json. To enable it, run ndev flow on --project.` }
+    return { systemMessage: `Workflow is disabled in ${readConfigText(root).path}. To enable it, run ndev flow on --project.` }
   }
   if (workflow) {
     return { context: `Before development work, run ndev flow start ${workflow.issue}. Follow the next step it returns.` }

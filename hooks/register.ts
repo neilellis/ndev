@@ -37,7 +37,7 @@ const steering = atom(
   'interactive' as Steering,
 )
 
-// The project's .neil-dev.json as read at session start; the switches write back to it.
+// The project's .ndev.json as read at session start; the switches write back to it.
 let project: LoadedConfig | undefined
 // The linked worktree's own settings (its .neil-dev.worktree.json); undefined in the main checkout.
 let worktree: { root: string; settings: WorktreeSettings } | undefined
@@ -97,7 +97,7 @@ const choose = <T extends string>(
   return choices.find(c => c === word)
 }
 
-// Only a project that sets `branding` in .neil-dev.json gets a brand; otherwise nothing names one.
+// Only a project that sets `branding` in .ndev.json gets a brand; otherwise nothing names one.
 const brandingText = (b: Branding | undefined) =>
   b === undefined
     ? undefined
@@ -158,7 +158,7 @@ const initWiki = async ($: EngineInterface) => {
   }
 }
 
-// Records a switch in the project's .neil-dev.json and says what happened.
+// Records a switch in the project's .ndev.json and says what happened.
 async function persist($: EngineInterface, key: 'mode' | 'steering', value: string) {
   if (worktree !== undefined) {
     const problem = await saveWorktreeSetting($, worktree.root, key, value)

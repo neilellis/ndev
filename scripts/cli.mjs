@@ -8,7 +8,7 @@ const groups = {
     module: './ndev/project.mjs', run: 'runProject',
     commands: {
       status: '', setup: '[--repo <owner/name>|--no-repo] [--board <owner/number>|--no-board]',
-      mode: '[light|heavy|hack]', steering: '[interactive|auto]', init: '',
+      mode: '[light|heavy|hack]', steering: '[interactive|auto]', init: '', 'migrate-config': '',
       credentials: '[--copy-from-main|--init]', learn: '', guidance: '<kind> <description>',
       'report-workflow-bug': '--title <title> --details <text>',
       'pr-new': '--title <title> --body-file <file> [--base <branch>] [--head <branch>] [--ready]',

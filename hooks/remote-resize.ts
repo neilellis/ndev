@@ -9,7 +9,7 @@ import { projectKey, type Server } from './remote-store.ts'
 // /dev remote resize [<type>]: change the Hetzner server type of the box that the project's Orca server runs on.
 // 1. Find the box: the Orca server's SSH host (Orca's runtimes file, or --ssh), its Hetzner instance id from the
 //    metadata service, and that id in hcloud server list. The hcloud context is --context, else remote.hcloudContext
-//    in .neil-dev.json; the active context is never used.
+//    in .ndev.json; the active context is never used.
 // 2. Show the current type and the target, and ask a person: the change is paid and restarts the box. With no type,
 //    list the types it can take and recommend the next size up of its family, and change nothing.
 // 3. Pause each live Orca worker on the box: a WIP commit, a handoff in ~/handoff/<issue>.md on the box, and a reply.
@@ -79,7 +79,7 @@ async function findBox($: EngineInterface, ctx: string, s: Ssh): Promise<Box> {
     throw new Error(`${sshShown(s, METADATA)} exited ${o.exitCode}: ${o.exitCode === 0 ? `it printed "${id.slice(0, 80)}", not a Hetzner instance id` : said(o)}. Nothing changed.\nRepair: check that ssh -p ${s.port} ${s.target} true works with no prompt (the host key must be in ~/.ssh/known_hosts), or name the box with --ssh <user@host>.`)
   }
   const box = (await hcJson<Box[]>($, ctx, ['server', 'list', '-o', 'json'])).find(b => String(b.id) === id)
-  if (!box) throw new Error(`the box ${s.target} is the Hetzner server ${id}, and the hcloud context ${ctx} has no server ${id} (${shown(ctx, ['server', 'list', '-o', 'json'])}). Nothing changed.\nRepair: name the context of the Hetzner project that holds it, with --context <context> or "remote": { "hcloudContext": "<context>" } in .neil-dev.json.`)
+  if (!box) throw new Error(`the box ${s.target} is the Hetzner server ${id}, and the hcloud context ${ctx} has no server ${id} (${shown(ctx, ['server', 'list', '-o', 'json'])}). Nothing changed.\nRepair: name the context of the Hetzner project that holds it, with --context <context> or "remote": { "hcloudContext": "<context>" } in .ndev.json.`)
   return box
 }
 
@@ -282,10 +282,10 @@ async function at<T>(step: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export async function resizeHost($: EngineInterface, project: LoadedConfig | undefined, typeName: string | undefined, o: HostOptions): Promise<string> {
-  if (project) projectKey(project) // refuses a .neil-dev.json with an error
+  if (project) projectKey(project) // refuses a .ndev.json with an error
   const kept = project?.config.remote?.hcloudContext
   if (!o.context && !kept) {
-    throw new Error(`no hcloud context is named for the box. The context is the Hetzner project that pays, so it must be named: the active context and HCLOUD_CONTEXT are never used. Nothing changed.\nRepair: add "remote": { "hcloudContext": "<context>" } to ${project?.path ?? '.neil-dev.json at the project root'}, or run /dev remote resize --context <context>.`)
+    throw new Error(`no hcloud context is named for the box. The context is the Hetzner project that pays, so it must be named: the active context and HCLOUD_CONTEXT are never used. Nothing changed.\nRepair: add "remote": { "hcloudContext": "<context>" } to ${project?.path ?? '.ndev.json at the project root'}, or run /dev remote resize --context <context>.`)
   }
   const env = await triageRemote($, project, o.server ?? '', '/dev remote resize', '/dev remote resize --server')
   const ctx = await contextOf($, `the box of ${env.name}`, o.context, kept, '/dev remote resize')

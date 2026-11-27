@@ -59,7 +59,7 @@ type Opts = {
 
 function world(on: On, opts: Opts = {}) {
   const files = new Map<string, string>([
-    [`${ROOT}/.neil-dev.json`, JSON.stringify({ github: { repo: 'acme/widgets', board: null } })],
+    [`${ROOT}/.ndev.json`, JSON.stringify({ github: { repo: 'acme/widgets', board: null } })],
     [`${HOME}/.ssh/id_ed25519.pub`, `${PUBLIC}\n`],
     [KNOWN, '10.0.0.9 ssh-ed25519 AAAAother\n'],
   ])

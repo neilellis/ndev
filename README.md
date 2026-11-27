@@ -39,7 +39,7 @@ flowchart LR
     subgraph Engines["Execution & state"]
         ORCA["Orca\nWorktrees · Workers · Panels · Browser"]
         GH["GitHub\nIssues · PRs · Checks · Boards"]
-        STATE["Local state\n.neil-dev.json · workflow records"]
+        STATE["Local state\n.ndev.json · workflow records"]
         QUINT["Quint models\nissue_workflow.qnt · epic_workflow.qnt"]
     end
 
@@ -161,7 +161,7 @@ Open the project worktree in Orca and give Claude Code, Codex, opencode or Antig
 >
 > If the project has no `NORTH_STAR.md` at the repository root, ask me to create it. I can also give you the project's purpose and guiding rules so you can draft the file for my approval. Keep the file if it already exists.
 
-The install adds the CLI, skills and hooks to your user account. Project setup writes GitHub settings to `.neil-dev.json`. Run project setup in each new repository and start a fresh agent session after installing new skills or hooks.
+The install adds the CLI, skills and hooks to your user account. Project setup writes GitHub settings to `.ndev.json`. Run project setup in each new repository and start a fresh agent session after installing new skills or hooks.
 
 ## Everyday use
 

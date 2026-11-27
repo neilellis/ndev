@@ -15,7 +15,7 @@ const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '', isStdou
 // A fake engine: the project is acme/widgets at /proj, and Orca's saved servers are `servers` (the test may change
 // them). Only the Orca CLI is faked beyond the engine's own file and process calls.
 function engine(on: On, servers: { id: string; name: string }[] = [{ id: 'aa11-x', name: 'vm-a' }, { id: 'bb22-y', name: 'vm-b' }]) {
-  const files = new Map<string, string>([[`${ROOT}/.neil-dev.json`, JSON.stringify({ github: { repo: 'acme/widgets', board: null } })]])
+  const files = new Map<string, string>([[`${ROOT}/.ndev.json`, JSON.stringify({ github: { repo: 'acme/widgets', board: null } })]])
   const runs: string[][] = []
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__ndev__${e.name}` } }))

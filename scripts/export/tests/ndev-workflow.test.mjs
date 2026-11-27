@@ -937,10 +937,10 @@ test('repair refuses to copy a workflow from another worktree and preserves its 
 test('repair respects a disabled project workflow and keeps shared or pending workflows intact', () => {
   const p = repairProject()
   const original = readFileSync(p.file, 'utf8')
-  writeFileSync(join(p.work, '.neil-dev.json'), JSON.stringify({ workflow: false }))
+  writeFileSync(join(p.work, '.ndev.json'), JSON.stringify({ workflow: false }))
   assert.match(p.repair().stderr, /Workflow is off/)
   assert.equal(readFileSync(p.file, 'utf8'), original)
-  writeFileSync(join(p.work, '.neil-dev.json'), '{}')
+  writeFileSync(join(p.work, '.ndev.json'), '{}')
   for (const patch of [{ prs: [9, 11] }, { prs: [9], op: { tool: 'checkpoint', id: 'held-op' } }]) {
     p.setRecord(patch)
     const record = readFileSync(p.file, 'utf8')
@@ -1194,13 +1194,13 @@ test('the stale carrier repair turns off without terminal input, retains the rec
 test('off applies immediately to issue, PR and project targets in JSON mode', () => {
   for (const target of [['--issue', '7'], ['--pr', '9'], ['--project']]) {
     const p = project()
-    writeFileSync(join(p.work, '.neil-dev.json'), JSON.stringify({ workflow: true, mode: 'light' }))
+    writeFileSync(join(p.work, '.ndev.json'), JSON.stringify({ workflow: true, mode: 'light' }))
     const before = JSON.parse(readFileSync(p.file, 'utf8'))
     const result = JSON.parse(output(flow(p, ['off', ...target])))
     assert.equal(result.nextAction, undefined)
     const after = JSON.parse(readFileSync(p.file, 'utf8'))
     if (target[0] === '--project') {
-      assert.deepEqual(JSON.parse(readFileSync(join(p.work, '.neil-dev.json'), 'utf8')), { workflow: false, mode: 'light' })
+      assert.deepEqual(JSON.parse(readFileSync(join(p.work, '.ndev.json'), 'utf8')), { workflow: false, mode: 'light' })
       assert.deepEqual(after, before)
     } else {
       assert.ok(after.workflow.off)
@@ -1364,7 +1364,7 @@ test('a human sets interactive steering in a terminal, and an agent cannot set i
 test('mode reads the issue override before the worktree and project settings, and a human changes it', () => {
   const p = project()
   const fake = services(p)
-  writeFileSync(join(p.work, '.neil-dev.json'), JSON.stringify({ mode: 'light' }))
+  writeFileSync(join(p.work, '.ndev.json'), JSON.stringify({ mode: 'light' }))
   writeFileSync(join(p.work, '.neil-dev.worktree.json'), JSON.stringify({ version: 2, resources: {}, settings: { mode: 'heavy' } }))
   setRecord(p, { mode: undefined })
   assert.equal(answer(cli(p, ['mode'], fake)).workflow.mode, 'heavy')
@@ -1376,7 +1376,7 @@ test('mode reads the issue override before the worktree and project settings, an
   const human = confirmed(p.work, fake, ['flow', 'mode', 'heavy'])
   assert.equal(human.status, 0, human.stdout)
   assert.equal(recordOf(p).mode, 'heavy')
-  assert.deepEqual(JSON.parse(readFileSync(join(p.work, '.neil-dev.json'), 'utf8')), { mode: 'light' })
+  assert.deepEqual(JSON.parse(readFileSync(join(p.work, '.ndev.json'), 'utf8')), { mode: 'light' })
 })
 
 test('a human skip records the reason on the PR and moves only to the next phase', () => {
@@ -1523,8 +1523,8 @@ test('done lists every open gate at once, and when complete it honours the merge
     const merged = join(p.dir, 'merged')
     writeFileSync(merge, `#!/bin/sh\necho "$*" >> '${merged}'\n`, { mode: 0o755 })
     const fake = { ...services(p), NDEV_FLOW_MERGE: merge }
-    writeFileSync(join(p.work, '.neil-dev.json'), JSON.stringify({ projectLevel: level }))
-    writeFileSync(join(p.work, '.git/info/exclude'), '.neil-dev.*\n')
+    writeFileSync(join(p.work, '.ndev.json'), JSON.stringify({ projectLevel: level }))
+    writeFileSync(join(p.work, '.git/info/exclude'), '.neil-dev.*\n.ndev.json\n')
     rmSync(join(p.work, 'next.txt'))
     const old = git(p.work, 'rev-parse', 'HEAD')
     git(p.work, 'commit', '-q', '--allow-empty', '-m', 'Unpushed change')
@@ -1623,7 +1623,7 @@ test('hotfix in a straw_man project files the issue and commits directly on the 
   const fake = services(p)
   git(p.work, 'switch', '-q', 'main')
   setRecord(p, { direct: true, branch: 'main', prs: [] })
-  writeFileSync(join(p.work, '.neil-dev.json'), JSON.stringify({ projectLevel: 'straw_man' }))
+  writeFileSync(join(p.work, '.ndev.json'), JSON.stringify({ projectLevel: 'straw_man' }))
   answer(cli(p, ['start', '7'], fake))
   const description = join(p.dir, 'hotfix.md')
   writeFileSync(description, 'Login crashes on empty password\n')

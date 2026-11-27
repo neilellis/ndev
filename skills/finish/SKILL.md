@@ -15,7 +15,7 @@ If a workflow runs for this issue (`mcp__ndev__status` tells you), do not use th
 
 ## Writing rules
 
-If `<project root>/.neil-dev.json` has a `branding` key, follow the project's brand copy rules for progress and ready reports. Use the `copy` skill for those rules, and when a fix changes text on the site. Find the root with `git rev-parse --show-toplevel`.
+If `<project root>/.ndev.json` has a `branding` key, follow the project's brand copy rules for progress and ready reports. Use the `copy` skill for those rules, and when a fix changes text on the site. Find the root with `git rev-parse --show-toplevel`.
 
 ## What the loop needs
 

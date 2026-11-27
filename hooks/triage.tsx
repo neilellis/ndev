@@ -193,7 +193,7 @@ function setGroup($: EngineInterface, lead: number, change: Partial<TriageGroup>
 // with a linked pull request or not. An issue an Orca workspace already links is someone's work, so it is left out.
 async function collect($: EngineInterface, project: LoadedConfig | undefined, o: Options): Promise<string> {
   const g = project?.config.github
-  if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
+  if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .ndev.json.`)
   if (project?.config.workflow === false) throw new Error(`each triage worker needs the ndev workflow, and ${project.path} sets "workflow": false.\nRepair: remove that setting, or work the issues without /dev triage.`)
   const repo = g.repo
   if ((await read($, view)).phase === 'running') return `A triage of ${(await read($, view)).repo} is running. /dev triage refresh reads it again.`
@@ -291,7 +291,7 @@ async function clean($: EngineInterface, project: LoadedConfig | undefined, o: P
   const g = project?.config.github
   // A new clean ends the one before it, even when this one fails or finds nothing: its verdicts must not be taken for this one's.
   cleaning = undefined
-  if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .neil-dev.json.`)
+  if (!g?.repo) throw new Error(`no GitHub repository is set for this project.\nRepair: run /dev setup, which saves it in .ndev.json.`)
   const repo = g.repo
   const got = await openIssues($, repo, undefined, o.isReverse ? 'sort:created-desc' : 'sort:created-asc', '/dev triage clean again', o.since, o.isMine)
   // More than LIMIT: the oldest LIMIT (the newest with --reverse) go now, and the human is told; the closed ones drop out, so a second clean takes the next.

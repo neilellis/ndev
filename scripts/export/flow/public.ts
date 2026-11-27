@@ -7,6 +7,7 @@ import { CliError, atomicJson, checked, gitWorkspace, locked, readObject, stateR
 import { finishRound, interviewOnly, parseChatAnswers, parseRound, roundMarkdown } from '../../../hooks/workflow/interview-model.ts'
 import type { Mode } from '../../../types'
 import { readProject } from '../../ndev/project.mjs'
+import { CONFIG_FILE, moveLegacyConfig, readConfigObject } from '../../ndev/config-file.mjs'
 export { secretFiles, findInText } from '../../../hooks/workflow/secrets.ts'
 export { effectiveWorkflowRecords, readWorkflowRecords } from '../../ndev/waits.mjs'
 
@@ -157,8 +158,8 @@ export function confirm(action: string, target: string, revision: string | numbe
   if (terminalLine().trim() !== phrase) throw new CliError(1, `Confirmation did not match ${action} for ${target} at revision ${revision}.`)
 }
 export function projectSwitch(root: string, enabled: boolean, json: boolean) {
-  const file = join(root, '.neil-dev.json')
-  const current = () => readObject(file, { missing: {} })
+  const file = join(root, CONFIG_FILE)
+  const current = () => readConfigObject(root).config
   const revision = (config: object) => createHash('sha256').update(JSON.stringify(config)).digest('hex').slice(0, 12)
   const before = revision(current())
   if (enabled) {
@@ -168,6 +169,7 @@ export function projectSwitch(root: string, enabled: boolean, json: boolean) {
   locked(file, () => {
     const config = current()
     if (revision(config) !== before) throw new CliError(5, `${file} changed before workflow ${enabled ? 'on' : 'off'} was saved. Read the settings and retry ndev flow ${enabled ? 'on' : 'off'} --project.`)
+    moveLegacyConfig(root)
     atomicJson(file, { ...config, workflow: enabled })
   })
   return { root, enabled, text: `Project workflow is ${enabled ? 'on' : 'off'} in ${root}.` }

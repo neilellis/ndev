@@ -17,7 +17,7 @@ Do not chain planning, TDD, review and board skills automatically. Read a specia
 
 ## The workflow
 
-While the project does not set `"workflow": false` in `.neil-dev.json`, the `mcp__ndev__*` tools carry this method. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. Each tool records the state in `.neil-dev.issue-<id>.json` and answers with the next step. Follow that answer. If it differs from this skill, the answer wins.
+While the project does not set `"workflow": false` in `.ndev.json`, the `mcp__ndev__*` tools carry this method. The guide is `${CLAUDE_PLUGIN_ROOT}/kb/workflow.md`. Each tool records the state in `.neil-dev.issue-<id>.json` and answers with the next step. Follow that answer. If it differs from this skill, the answer wins.
 
 | Stage | Tool | What the tool does |
 |---|---|---|

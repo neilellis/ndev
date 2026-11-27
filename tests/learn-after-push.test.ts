@@ -16,7 +16,7 @@ type Git = {
   fromSibling?: boolean
 }
 
-// A fake engine: a git repository at /proj with no .neil-dev.json, and ~/dev-wiki present.
+// A fake engine: a git repository at /proj with no .ndev.json, and ~/dev-wiki present.
 // Beneath the plugin, each Bash call can move the remote-tracking ref. The answer counts the git ref reads.
 const engine = async ($: Engine, on: On, { moves, failed = false, ref = 'refs/remotes/origin/feature', fromSibling = false }: Git = {}) => {
   let sha = 'aaa'

@@ -9,7 +9,7 @@
 #                                   #         or an exact column name
 #
 # Needs GH_PROJECT_OWNER and GH_PROJECT_NUMBER (the Projects v2 board), from the environment or
-# from "github.board" in the project's .neil-dev.json (saved by /dev-setup). Set
+# from "github.board" in the project's .ndev.json (saved by /dev-setup). Set
 # GH_USE_KEYRING=1 when the ambient GITHUB_TOKEN lacks the `project` scope.
 # Column names default to the GitHub board template. A board with other names sets
 # WORK_READY_COL_BACKLOG, _READY, _PROGRESS, _REVIEW, _AWAITING, _DONE, which gh.sh reads.
@@ -27,7 +27,7 @@ die() { echo "board.sh: $1" >&2; [ -n "${2:-}" ] && echo "  Repair: $2" >&2; exi
   "reinstall the plugin (claude plugin update ndev) so scripts/github/ sits beside scripts/board/"
 { [ -n "${GH_PROJECT_OWNER:-}" ] && [ -n "${GH_PROJECT_NUMBER:-}" ]; } \
   || die "no project board is set (GH_PROJECT_OWNER='${GH_PROJECT_OWNER:-}' GH_PROJECT_NUMBER='${GH_PROJECT_NUMBER:-}')" \
-         "run /dev-setup in Claude Code to save the board in .neil-dev.json, or export GH_PROJECT_OWNER=<org-or-user> GH_PROJECT_NUMBER=<n> (find them with 'gh project list --owner <org>')"
+         "run /dev-setup in Claude Code to save the board in .ndev.json, or export GH_PROJECT_OWNER=<org-or-user> GH_PROJECT_NUMBER=<n> (find them with 'gh project list --owner <org>')"
 
 cmd="${1:-}"; shift || true
 case "$cmd" in

@@ -1,5 +1,5 @@
 // Quality-control hooks: run the tested scripts in kb/hooks/ from tool calls,
-// switched on per project by the "quality" key of <project root>/.neil-dev.json.
+// switched on per project by the "quality" key of <project root>/.ndev.json.
 //
 // No file, or a hook not listed: that hook does not run (opt in).
 // A bad file (invalid JSON, an unknown key, a wrong type): one toast that names

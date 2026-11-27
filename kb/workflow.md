@@ -297,7 +297,7 @@ The hooks still run when there is no workflow, in `setup`, after a human skips `
 
 ## Project level
 
-Set `projectLevel` in `.neil-dev.json`. A project with no level behaves as `small_project`.
+Set `projectLevel` in `.ndev.json`. A project with no level behaves as `small_project`.
 
 
 | Level            | The agent can merge a PR | The agent can commit to the base branch | Plan sign-off    | Review and smoke can be skipped |
@@ -372,7 +372,7 @@ When a worker ends its turn or reports success, the mod checks its linked PR. Qu
 
 **`/dev remote import <hetzner-id> --context <context>`.** It hands a server that was made by hand to `create` and `remove` (`hooks/remote-import.ts`). It only adds the two labels, to the server, to each firewall applied to it and to its floating IPv4, and records the remote in `~/.config/ndev/remote.json`; it creates, deletes, resizes and reassigns nothing. The remote takes the server's Hetzner name. The refusals of `create` and `remove` for a server without the labels name this command. It refuses a label of another owner, a firewall that other servers share, several floating IPv4s with no `--floating-ip`, and a record of that name that is another server. The host key rule: import reads the key that the address presents, shows its SHA256 fingerprint in the confirmation, and records it only on yes, which is the one moment trust is given; a different key in `known_hosts` is refused with both fingerprints, and `--yes` confirms only a key this machine already holds. The record carries `imported: true`, and `remove` of an imported server first signs in over `ssh` as `root` with the recorded key as the only known host key (`StrictHostKeyChecking=yes`, a temporary `known_hosts`), so the server must prove it holds that key (`ssh-keyscan` proves nothing: it reads a public key any machine can show); a key that is not proved, or a sign-in that does not finish, refuses before the question, the shutdown and the snapshot (a record with a host key and no `sshKey`, written before the marker, counts as imported). With no host key saved on the machine for the server (no record, a record with no `hostKey`, or a record for another hcloud context), `remove` refuses and names both repairs: run it on the machine that created or imported the server, or pass `--unverified-host`, which removes with no host key check and prints one warning line; the option skips no check that a saved key allows. An imported server was not built by `root-setup.sh`, so a restore keeps its host key only when its own cloud-init keeps host keys (`ssh_deletekeys: false`).
 
-**`/dev remote resize [<type>]`.** It changes the server type of the box under the project's Orca server (`hooks/remote-resize.ts`; README, `/dev remote`). The rules that hold: the hcloud context is `--context` or `remote.hcloudContext` in `.neil-dev.json`, never the active one; the box is the Hetzner server whose id the metadata service gives over SSH; a person confirms (or `--yes`); every live worker on the server writes `~/handoff/<issue>.md` with the line `paused <dispatch id>` before the shutdown, and the wait reads those files over SSH, because the mail of a remote worker can arrive on either Orca; a failed shutdown becomes a poweroff with a `WARNING`; `--keep-disk` keeps the disk; the workers are found Run by Run, on the server's own records and on this machine's, because a `worker-list` with no `--run` shows only the bound Run; each worker starts again as a new Task with `--worktree id:<worker's worktree id>` (Orca's `<repo id>::<path>` value, which `path:` would read against this machine) and its first brief plus the handoff, and the result names the old and new task ids.
+**`/dev remote resize [<type>]`.** It changes the server type of the box under the project's Orca server (`hooks/remote-resize.ts`; README, `/dev remote`). The rules that hold: the hcloud context is `--context` or `remote.hcloudContext` in `.ndev.json`, never the active one; the box is the Hetzner server whose id the metadata service gives over SSH; a person confirms (or `--yes`); every live worker on the server writes `~/handoff/<issue>.md` with the line `paused <dispatch id>` before the shutdown, and the wait reads those files over SSH, because the mail of a remote worker can arrive on either Orca; a failed shutdown becomes a poweroff with a `WARNING`; `--keep-disk` keeps the disk; the workers are found Run by Run, on the server's own records and on this machine's, because a `worker-list` with no `--run` shows only the bound Run; each worker starts again as a new Task with `--worktree id:<worker's worktree id>` (Orca's `<repo id>::<path>` value, which `path:` would read against this machine) and its first brief plus the handoff, and the result names the old and new task ids.
 
 **`--open`.** The issues are every open issue of the repository, also when a board is set. An issue that an Orca workspace links is left out, as always.
 
@@ -420,7 +420,7 @@ Each issue in a worktree can have its own mode and steering. The first value in 
 
 1. The entry of the issue in `workflows`.
 2. `settings` in `.neil-dev.worktree.json`, which `/dev mode` and `/dev steering` set.
-3. `.neil-dev.json` of the project.
+3. `.ndev.json` of the project.
 4. The defaults, `light` and `interactive`.
 
 An issue with no value of its own stores nothing, and it follows the worktree.
@@ -456,7 +456,7 @@ There is no question when the session already has work: a first prompt, a linked
 | ----------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `react-component` | `kb/ui-components.md`                                                                           | Suggestions, and where to get them                                      |
 | `library`         | `kb/libraries.md` and the dependencies of the project                                           | Suggestions, and where to get them                                      |
-| `brand-style`     | The tokens of the local brand site, or else the brand page, from `branding` in `.neil-dev.json` | The call on a font, a colour and so on                                  |
+| `brand-style`     | The tokens of the local brand site, or else the brand page, from `branding` in `.ndev.json` | The call on a font, a colour and so on                                  |
 | `animation`       | The `motion` skill of the plugin                                                                | An idea for a micro-interaction, a simple animation or a full showy one |
 
 
@@ -653,7 +653,7 @@ A `/flow` command waits for any tool call that holds the turn. It waits through 
 | `/unblock <message>`                        | Gives the agent your answer and ends `blocked` or `wait`. The message is compulsory. It runs at once, also during a turn. |
 | `/flow unblock [message]`          | Ends `blocked`, for when the agent does not. The message is optional. It runs after the turn.                             |
 | `/flow off [reason]` / `on`        | Turns the tools and the reminders off or on for one record: the issue or PR that this agent is on. The record stays. When this agent has no record, `off` turns the workflow off for the session: the tools that move a state refuse, also on a record that the call names, and no reminder comes. `addMigration`, `finishedInterview` and `status` still work. The answer names the records in the worktree. |
-| `/flow off project` / `on project` | Does the same for the whole project, in `.neil-dev.json`.                                                                 |
+| `/flow off project` / `on project` | Does the same for the whole project, in `.ndev.json`.                                                                 |
 
 
 If you skip `reviewing`, the held commit is not pushed yet. The agent pushes it with `checkpoint` and no files, and `finishedChecks` tells it to do this.

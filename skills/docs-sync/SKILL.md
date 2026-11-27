@@ -43,7 +43,7 @@ python3 <skill>/scripts/docs_map.py check   --content <docs-content-dir>
 
 ## Branding
 
-If `<project root>/.neil-dev.json` has a `branding` key, read `branding.guide` (or `branding.site` when there is no guide) before any design change to the docs site, and match it. Find the root with `git rev-parse --show-toplevel`. Otherwise skip this section.
+If `<project root>/.ndev.json` has a `branding` key, read `branding.guide` (or `branding.site` when there is no guide) before any design change to the docs site, and match it. Find the root with `git rev-parse --show-toplevel`. Otherwise skip this section.
 
 ## Steps
 

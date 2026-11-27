@@ -76,7 +76,7 @@ test('a link that leaves a skill points to the exported home or the exported sib
   mkdirSync(join(plugin, 'skills/sample'), { recursive: true })
   mkdirSync(join(plugin, 'agents'))
   mkdirSync(join(plugin, 'hooks/workflow'), { recursive: true })
-  for (const file of ['machine.ts', 'change-types.ts', 'records.ts', 'session.ts']) copyFileSync(join(PLUGIN, 'hooks/workflow', file), join(plugin, 'hooks/workflow', file))
+  for (const file of ['machine.ts', 'change-types.ts', 'records.ts', 'session.ts', 'config-file.ts']) copyFileSync(join(PLUGIN, 'hooks/workflow', file), join(plugin, 'hooks/workflow', file))
   writeFileSync(join(plugin, 'skills/sample/SKILL.md'), '---\nname: sample\ndescription: d\n---\nInline `[x](../../docs/a.md)`.\n\n```md\n[y](../../docs/b.md)\n```\n')
   const target = fresh()
   const ran = run(['codex', '--out', target, '--plugin-root', plugin, '--date', DATE])

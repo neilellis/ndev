@@ -19,7 +19,7 @@ ndev pane screenshot http://localhost:3000 --viewport 1280x800 --scheme light --
 
 Available panels:
 
-- **Files** — inspects `.neil-dev.json`, `.neil-dev.env` (key names only; values never leave the worker) and `.neil-dev.worktree.json` across local worktrees, and manages recorded dev servers and Docker stacks.
+- **Files** — inspects `.ndev.json`, `.neil-dev.env` (key names only; values never leave the worker) and `.neil-dev.worktree.json` across local worktrees, and manages recorded dev servers and Docker stacks.
 - **View** — displays workflow state, running check elapsed time and limits, and active watchers for the worktree.
 - **Interview** — presents structured interactive questions and records answers on the issue record.
 - **Walk-doc** — tracks fresh-reader documentation walkthroughs.
@@ -30,7 +30,7 @@ Available panels:
 Manage worktree files and recorded resources from the CLI as well:
 
 ```sh
-ndev pane files create .neil-dev.json
+ndev pane files create .ndev.json
 ndev pane files copy-from-main .neil-dev.env
 ndev pane resources stop-server web
 ndev pane resources stop-all stop-keep-data

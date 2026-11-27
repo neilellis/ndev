@@ -58,7 +58,7 @@ The default viewports are iPhone SE (320), iPhone 15 Pro (393), Pixel 7 (412), i
 
 ## 4. Keep the brand site up to date
 
-When the project has a brand site (`.neil-dev.json` `branding`), the breakpoints, layout rules, touch target sizes and dark tokens are recorded there. A change to them goes to the brand site in the same PR. Run the matrix on the brand site too. The procedure is in [references/brand-site.md](references/brand-site.md).
+When the project has a brand site (`.ndev.json` `branding`), the breakpoints, layout rules, touch target sizes and dark tokens are recorded there. A change to them goes to the brand site in the same PR. Run the matrix on the brand site too. The procedure is in [references/brand-site.md](references/brand-site.md).
 
 ## Tools and limits
 

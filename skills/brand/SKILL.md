@@ -12,7 +12,7 @@ Take the first word as the action. If it is not `create`, `check` or `apply`, as
 
 ## Where the brand is
 
-`.neil-dev.json` in the project root holds the brand in `branding`:
+`.ndev.json` in the project root holds the brand in `branding`:
 
 ```json
 { "branding": { "site": "https://brand.acme.example", "name": "Acme Widgets", "path": "apps/brand" } }
@@ -26,7 +26,7 @@ Take the first word as the action. If it is not `create`, `check` or `apply`, as
 
 | Action | Read and follow | Result |
 |---|---|---|
-| `create` | [references/create.md](references/create.md) | A brand site that builds, with every default replaced or listed in its `BRAND-TODO.md`, and `branding` set in `.neil-dev.json` |
+| `create` | [references/create.md](references/create.md) | A brand site that builds, with every default replaced or listed in its `BRAND-TODO.md`, and `branding` set in `.ndev.json` |
 | `check` | [references/check.md](references/check.md), "Check" | A report of where the project breaks its brand. Nothing is changed |
 | `apply` | [references/check.md](references/check.md), "Apply" | The project changed to match its brand, and the check run again |
 

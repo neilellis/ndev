@@ -6,7 +6,7 @@ type On = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => u
 type Dollar = Parameters<Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>>[0]
 
 const ROOT = '/proj'
-const CONFIG = `${ROOT}/.neil-dev.json`
+const CONFIG = `${ROOT}/.ndev.json`
 const ok = (stdout = '', exitCode = 0, stderr = '') => ({
   value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
 })

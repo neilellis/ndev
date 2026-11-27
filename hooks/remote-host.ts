@@ -29,7 +29,7 @@ export const REMOTE_HOST_HELP = [
   '        options: --floating-ip <name or id> (when the server has several)  --name <the server\'s Hetzner name>  --yes (only for a host key already in known_hosts)',
   '  /dev remote resize [<type>] [options] change the Hetzner server type of the box under the Orca server: with no type, list the types and recommend one',
   '        it pauses the workers on the box (a WIP commit and ~/handoff/<issue>.md), shuts it down, changes the type with the disk kept, starts it and starts the workers again',
-  '        the hcloud context: remote.hcloudContext in .neil-dev.json, or --context <hcloud context>',
+  '        the hcloud context: remote.hcloudContext in .ndev.json, or --context <hcloud context>',
   '        options: --context <hcloud context>  --server <Orca server>  --ssh <user@host>  --agent <agent> (for a worker whose agent Orca does not record)  --yes',
 ]
 

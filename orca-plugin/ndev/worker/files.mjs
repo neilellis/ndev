@@ -13,7 +13,8 @@ export class NdevError extends Error {
   }
 }
 
-export const JSON_FILE = '.neil-dev.json'
+export const JSON_FILE = '.ndev.json'
+export const LEGACY_JSON_FILE = '.neil-dev.json'
 export const ENV_FILE = '.neil-dev.env'
 export const WORKTREE_FILE = '.neil-dev.worktree.json'
 export const NDEV_FILES = [JSON_FILE, ENV_FILE, WORKTREE_FILE]
@@ -142,8 +143,21 @@ async function writePrivateEnv(dir, target, contents) {
   }
 }
 
+async function refuseLegacy(dir, name) {
+  const legacy = path.join(dir, LEGACY_JSON_FILE)
+  if (name === JSON_FILE && await exists(legacy)) throw new NdevError('exists', `${legacy} already holds the project config, so ${path.join(dir, JSON_FILE)} was not written. Run: ndev project migrate-config in ${dir}`)
+}
+
+async function configSource(main) {
+  const current = path.join(main, JSON_FILE)
+  if (await exists(current)) return current
+  const legacy = path.join(main, LEGACY_JSON_FILE)
+  return await exists(legacy) ? legacy : current
+}
+
 export async function createFile(dir, name) {
   assertKnown(name)
+  await refuseLegacy(dir, name)
   const target = path.join(dir, name)
   if (name === ENV_FILE) await assertEnvIgnored(dir)
   try {
@@ -160,10 +174,11 @@ export async function copyFromMain(dir, name) {
   assertKnown(name)
   const main = await mainCheckout(dir)
   if (await sameFolder(main, dir)) throw new NdevError('is_main', `${dir} is the main checkout, so there is nothing to copy from.`)
-  return copyInto(dir, name, path.join(main, name))
+  return copyInto(dir, name, name === JSON_FILE ? await configSource(main) : path.join(main, name))
 }
 
 async function copyInto(dir, name, source) {
+  await refuseLegacy(dir, name)
   const target = path.join(dir, name)
   const sourceInfo = await exists(source)
   if (!sourceInfo) throw new NdevError('no_source', `The main checkout has no ${source}. Create it there first.`)
@@ -188,7 +203,8 @@ export async function ensureProjectFiles(dir) {
       if (!info.isFile()) throw new NdevError('invalid_params', `Use a regular file for ${target}.`)
       continue
     }
-    const source = main && path.join(main, name)
+    if (name === JSON_FILE && await exists(path.join(dir, LEGACY_JSON_FILE))) continue
+    const source = main && (name === JSON_FILE ? await configSource(main) : path.join(main, name))
     try {
       if (source && await exists(source)) await copyInto(dir, name, source)
       else await createFile(dir, name)

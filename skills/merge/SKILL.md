@@ -16,7 +16,7 @@ The `addMigration` workflow tool lists each migration in a marked section of the
 ## Who may merge
 
 - A human who runs `/ndev:merge` allows this merge.
-- An agent that a human did not ask may merge only when `projectLevel` in `.neil-dev.json` is `straw_man` or `poc`. At any other level, stop and tell the human.
+- An agent that a human did not ask may merge only when `projectLevel` in `.ndev.json` is `straw_man` or `poc`. At any other level, stop and tell the human.
 
 ## Steps
 

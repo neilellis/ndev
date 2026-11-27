@@ -22,7 +22,7 @@ Read these before you judge. The project rules win where they differ.
 1. The project's own writing rules, if its `CLAUDE.md` or `AGENTS.md` has them.
 2. `<plugin root>/kb/writing.md`.
 3. The skills `copy`, `docs-legibility` and `simple-english:simple-english`, which are preloaded. Take their language rules. Their steps that edit a file or call another reviewer do not apply to you. `simple-english` is a companion plugin. If its skill did not load, start your answer with the line `SKILL MISSING: simple-english`, then go on with `kb/writing.md`.
-4. The brand. If `<project root>/.neil-dev.json` has a `branding` key with a `guide`, fetch that guide's writing rules and its banned list.
+4. The brand. If `<project root>/.ndev.json` has a `branding` key with a `guide`, fetch that guide's writing rules and its banned list.
 
 ## Step 1: run Vale
 

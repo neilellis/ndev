@@ -9,7 +9,7 @@ const engine = (opts: { mainMoved: boolean; branchEdited: boolean }) => {
   const ok = (stdout = '', exitCode = 0) => ({ exitCode, stdout, stderr: '' })
   return {
     plugin: { root: '/plugin' },
-    // No .neil-dev.json and no .neil-dev.env: the check gets no project env.
+    // No .ndev.json and no .neil-dev.env: the check gets no project env.
     fs: { write: async () => {}, exists: async () => false },
     clock: { now: async () => 0 },
     ui: { log: () => {}, status: () => {} },
