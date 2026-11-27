@@ -127,6 +127,20 @@ Proof skips the whole run when:
 
 The pull request facts come from `gh` with `--pr`, or from the GitHub event file with `--event` (`GITHUB_EVENT_PATH` by default).
 
+`ndev proof evidence --plan <file> [--body <file>]` collects the facts for each check that the plan runs. It makes no judgement. Give it the output of `ndev proof plan --json`, made at the same commit. Each check gets a `state`:
+
+| Check | Facts | States |
+| --- | --- | --- |
+| `requirements` | The `REQ-NNNN` identifiers that the pull request body, its closing issues and its commits cite; the record and status of each; the report of `ndev requirements verify --base`. | `present`, `missing` (none cited), `not-run` |
+| `tests` | The changed test files, and the changed source files with no changed test in the same folder or with the same name. | `present`, `missing` |
+| `model` | The Quint models in the `model` lists of the touched records, the models that the change adds, and the result of `ndev requirements model-check`. | `present`, `missing`, `not-run` |
+| `docs` | The changed docs-site files, and the changed user-facing files when no docs-site file changed. | `present`, `missing`, `not-needed` |
+| `lessons` | The text of the `## Lessons` section of the pull request body. | `present`, `empty`, `missing`, `not-run` |
+
+A check that the plan skips is `skipped`, with the reason. A collector that cannot run is `not-run`, with the command and its output. Examples are a project with no Quint, and a base branch that is not fetched. `not-run` is never a pass.
+
+The body comes from `--body`, else from `gh` for the plan's pull request, else from `GITHUB_EVENT_PATH`.
+
 ## Project defaults and credentials
 
 Set the default workflow mode (`light`, `heavy` or `hack`) and steering (`interactive` or `auto`):

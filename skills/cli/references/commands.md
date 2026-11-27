@@ -179,6 +179,7 @@ Reader-side `report`, `enhance`, `record`, `reply`, and `escalate` take JSON fil
 | Command | When to use it |
 | --- | --- |
 | `ndev proof plan --base <ref> [--pr <n> \| --event <file>] [--proven <sha>]` | Show what Proof checks for this branch: the tier and its reasons, `run` or `skip` for each check, and whether the whole run is skipped. It reads the settings from the base ref and runs no agent. |
+| `ndev proof evidence --plan <file> [--body <file>]` | Collect the facts for each check that the plan runs: the cited requirement records and the verify report, the untested source files, the models and model-check, the docs-site changes, and the `## Lessons` section. Each check gets a state; a collector that cannot run gives `not-run` with the command and its output. It makes no judgement. |
 
 ## Installation and harness integration
 

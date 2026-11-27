@@ -2,13 +2,13 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { argsFor, checked, CliError, gitWorkspace, releaseRoot, run } from './common.mjs'
+import { evidence } from './proof-evidence.mjs'
+import { CODE_FILE, DOCS_SITES, REQUIREMENTS, UI_FILE } from './proof-paths.mjs'
 import { proofSettingsAt } from './proof-settings.mjs'
 
 const COMPLEX_LABEL = 'proof:complex'
 const LOCK_FILE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|Gemfile\.lock|composer\.lock|go\.sum|mix\.lock)$/
 const DOC_FILE = /\.(md|mdx|markdown|rst|adoc)$/i
-const CODE_FILE = /\.(js|mjs|cjs|ts|mts|cts|tsx|jsx|vue|svelte|astro|py|go|rs|rb|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|sql|ex|exs|scala|dart|lua|qnt)$/i
-const UI_FILE = /\.(tsx|jsx|vue|svelte|astro|css|scss|sass|less|html|svg)$/i
 const WHITESPACE_SENSITIVE = /\.(py|ya?ml|mk|haml|pug|slim|coffee|nim)$|(^|\/)(Makefile|GNUmakefile)$/
 const RISK_PATHS = [
   /migrat/i,
@@ -18,8 +18,6 @@ const RISK_PATHS = [
   /(^|[/_.-])(workflow|workflows|state[-_]?machine)([/_.-]|$)/i,
 ]
 const EXPORT_LINE = /^\s*(export\s|module\.exports\b|exports\.\w+\s*=|pub\s+(fn|struct|enum|trait|mod|type|const)\b)/
-const DOCS_SITES = ['docs-site', 'website', 'mkdocs.yml', 'docusaurus.config.js', 'docusaurus.config.ts', 'docusaurus.config.mjs', 'docs/.vitepress']
-const REQUIREMENTS = 'docs/formal/requirements'
 const REQUIREMENT_ID = /^id:\s*(REQ-\d+)\s*$/m
 
 function git(root, args, { input, repair } = {}) {
@@ -218,6 +216,11 @@ export function runProof([verb, ...argv]) {
     const { values } = argsFor(argv, { base: { type: 'string' }, pr: { type: 'string' }, event: { type: 'string' }, proven: { type: 'string' } }, repair)
     if (!values.base) throw new CliError(2, 'Give the base branch with --base <ref>.', { repair })
     return plan(gitWorkspace().root, values)
+  }
+  if (verb === 'evidence') {
+    const { values } = argsFor(argv, { plan: { type: 'string' }, body: { type: 'string' } }, repair)
+    if (!values.plan) throw new CliError(2, 'Give the plan file with --plan <file>, the output of ndev proof plan --json.', { repair })
+    return evidence(gitWorkspace().root, values)
   }
   throw new CliError(2, `Unknown proof command ${JSON.stringify(verb)}.`, { repair: 'ndev proof --help' })
 }
