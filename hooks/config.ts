@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { Mode, Steering } from '../types'
 import { chooseConfig, CONFIG_FILE, LEGACY_CONFIG_FILE } from './workflow/config-file.ts'
+import { devServersError, proofError, type DevServers, type Proof } from './workflow/proof-config.ts'
 import { SECRET_NAME } from './workflow/secrets.ts'
 
 export { CONFIG_FILE, LEGACY_CONFIG_FILE }
@@ -19,6 +20,8 @@ export type NeilDevConfig = {
   checkEnv?: string[]
   chatGuard?: boolean
   remote?: Remote
+  devServers?: DevServers
+  proof?: Proof
 }
 
 // remote.hcloudContext: the hcloud context (the Hetzner project) of the box that /dev remote resize changes. It is
@@ -64,7 +67,7 @@ export type LoadedConfig = {
   legacy?: string
 }
 
-const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv', 'chatGuard', 'remote'] as const
+const KEYS = ['mode', 'steering', 'quality', 'branding', 'github', 'worktreeStacks', 'services', 'projectLevel', 'workflow', 'checkEnv', 'chatGuard', 'remote', 'devServers', 'proof'] as const
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const MODES: readonly string[] = ['light', 'heavy', 'hack']
 const STEERINGS: readonly string[] = ['interactive', 'auto']
@@ -135,6 +138,14 @@ export const validate = (raw: unknown): string | undefined => {
     const extra = Object.keys(r).filter(k => k !== 'hcloudContext')
     if (extra.length > 0) return `unknown "remote" key ${extra.map(k => `"${k}"`).join(', ')}; the key is hcloudContext`
     if (r.hcloudContext !== undefined && (typeof r.hcloudContext !== 'string' || r.hcloudContext.trim() === '')) return `"remote.hcloudContext" must be a non-empty string (the name of an hcloud context, as hcloud context list shows it); got ${JSON.stringify(r.hcloudContext)}`
+  }
+  if (value.devServers !== undefined) {
+    const error = devServersError(value.devServers)
+    if (error) return error
+  }
+  if (value.proof !== undefined) {
+    const error = proofError(value.proof)
+    if (error) return error
   }
   return undefined
 }
