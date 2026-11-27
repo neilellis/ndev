@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import { argsFor, checked, CliError, gitWorkspace, releaseRoot, run } from './common.mjs'
 import { evidence } from './proof-evidence.mjs'
+import { snapshots } from './proof-snapshots.mjs'
 import { CODE_FILE, DOCS_SITES, REQUIREMENTS, UI_FILE } from './proof-paths.mjs'
 import { proofSettingsAt } from './proof-settings.mjs'
 
@@ -221,6 +222,10 @@ export function runProof([verb, ...argv]) {
     const { values } = argsFor(argv, { plan: { type: 'string' }, body: { type: 'string' } }, repair)
     if (!values.plan) throw new CliError(2, 'Give the plan file with --plan <file>, the output of ndev proof plan --json.', { repair })
     return evidence(gitWorkspace().root, values)
+  }
+  if (verb === 'snapshots') {
+    const { values } = argsFor(argv, { pr: { type: 'string' }, routes: { type: 'string' }, out: { type: 'string' }, base: { type: 'string' }, local: { type: 'boolean' } }, repair)
+    return snapshots(gitWorkspace().root, values)
   }
   throw new CliError(2, `Unknown proof command ${JSON.stringify(verb)}.`, { repair: 'ndev proof --help' })
 }

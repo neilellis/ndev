@@ -24,6 +24,9 @@ export const USAGE = `usage: responsive-check.mjs --base <url> [route ...]
   --out <dir>          report folder (default .responsive-check)
   --only <names>       comma list of viewport names to keep, for example "iPhone SE,iPad Mini"
   --widths <list>      extra desktop Chromium widths, for example 360,1024
+  --viewports <list>   Chromium windows in place of the default rows, for example phone:390x844,desktop:1440x900
+  --scale <n>          device scale of every row, for example 1 for small screenshots
+  --jpeg <quality>     JPEG screenshots at this quality from 1 to 100 (default PNG)
   --schemes <list>     light,dark (default both)
   --engine <name>      force one engine for every row: chromium or webkit
   --target <px>        smallest touch target before an error (default 24, WCAG 2.5.8 AA)
@@ -47,6 +50,9 @@ export function parseArgs(argv) {
     else if (a === '--out') o.out = value(++i, a)
     else if (a === '--only') o.only = value(++i, a).split(',').map((s) => s.trim()).filter(Boolean)
     else if (a === '--widths') o.widths = value(++i, a).split(',').map(Number)
+    else if (a === '--viewports') o.viewports = value(++i, a).split(',').map((s) => s.trim()).filter(Boolean).map(windowRow)
+    else if (a === '--scale') o.scale = Number(value(++i, a))
+    else if (a === '--jpeg') o.jpeg = Number(value(++i, a))
     else if (a === '--schemes') o.schemes = value(++i, a).split(',').map((s) => s.trim())
     else if (a === '--engine') o.engine = value(++i, a)
     else if (a === '--target') o.target = Number(value(++i, a))
@@ -64,25 +70,39 @@ export function parseArgs(argv) {
   if (o.routes.length === 0) o.routes.push('/')
   for (const s of o.schemes) if (!SCHEMES.includes(s)) throw new UsageError(`--schemes: ${s} is not light or dark`)
   for (const w of o.widths) if (!Number.isInteger(w) || w < 200) throw new UsageError(`--widths: ${w} is not a width in px of 200 or more`)
+  if (o.scale !== undefined && !(o.scale > 0)) throw new UsageError(`--scale ${o.scale} is not a device scale above 0`)
+  if (o.jpeg !== undefined && !(Number.isInteger(o.jpeg) && o.jpeg >= 1 && o.jpeg <= 100)) throw new UsageError(`--jpeg ${o.jpeg} is not a quality from 1 to 100`)
   if (o.engine && !['chromium', 'webkit'].includes(o.engine)) throw new UsageError(`--engine ${o.engine}: use chromium or webkit`)
   if (!(o.target > 0) || !(o.targetWarn >= o.target)) throw new UsageError('--target must be above 0 and --target-warn at least --target')
   return o
 }
 
+function windowRow(text) {
+  const match = text.match(/^([^:]+):(\d+)x(\d+)$/)
+  if (!match || Number(match[2]) < 1 || Number(match[3]) < 1) throw new UsageError(`--viewports: ${text} is not name:WIDTHxHEIGHT, such as phone:390x844`)
+  return { name: match[1], short: match[1], width: Number(match[2]), height: Number(match[3]) }
+}
+
 // The viewport rows this run uses, resolved against Playwright's device table.
 export function viewportsFor(o, devices) {
-  let rows = [...VIEWPORTS, ...o.widths.map((w) => ({ name: `${w}px`, short: `${w}`, width: w, height: 900 }))]
+  let rows = [...(o.viewports ?? VIEWPORTS), ...o.widths.map((w) => ({ name: `${w}px`, short: `${w}`, width: w, height: 900 }))]
   if (o.only) {
     const unknown = o.only.filter((n) => !rows.some((r) => r.name === n))
     if (unknown.length) throw new UsageError(`--only: no viewport named ${unknown.join(', ')}. Names: ${rows.map((r) => r.name).join(', ')}`)
     rows = rows.filter((r) => o.only.includes(r.name))
   }
   return rows.map((r) => {
-    if (!r.device) return { ...r, engine: o.engine ?? 'chromium', isMobile: false, options: { viewport: { width: r.width, height: r.height } } }
+    const scale = o.scale === undefined ? {} : { deviceScaleFactor: o.scale }
+    if (!r.device) return { ...r, engine: o.engine ?? 'chromium', isMobile: false, options: { viewport: { width: r.width, height: r.height }, ...scale } }
     const d = devices[r.device]
     if (!d) throw new UsageError(`this Playwright has no device "${r.device}". fix: update playwright in the web folder`)
-    return { ...r, width: d.viewport.width, height: d.viewport.height, engine: o.engine ?? d.defaultBrowserType, isMobile: !!d.isMobile, options: { ...d } }
+    return { ...r, width: d.viewport.width, height: d.viewport.height, engine: o.engine ?? d.defaultBrowserType, isMobile: !!d.isMobile, options: { ...d, ...scale } }
   })
+}
+
+export function shotFor(o, out, route, v, scheme) {
+  const type = o.jpeg === undefined ? 'png' : 'jpeg'
+  return { path: join(out, 'shots', slug(route), `${slug(v.name)}-${scheme}.${type === 'png' ? 'png' : 'jpg'}`), options: type === 'png' ? { type } : { type, quality: o.jpeg } }
 }
 
 export function cellsFor(routes, viewports, schemes) {
