@@ -60,7 +60,7 @@ function stop(pid) {
 test('the schema accepts dev servers and proof settings', () => {
   assert.equal(validate({
     devServers: { web: { command: 'npm run dev', cwd: 'apps/web', port: 3000, ready: 'http://localhost:3000/', env: { A: 'b' }, routes: ['/', '/settings'], timeout: 90 } },
-    proof: { enabled: true, checks: { visual: false }, viewports: [{ name: 'phone', width: 390, height: 844 }], schemes: ['light', 'dark'], label: 'skip-proof', tiers: { small: 50, large: 400 } },
+    proof: { enabled: true, checks: { visual: false }, viewports: [{ name: 'phone', width: 390, height: 844 }], schemes: ['light', 'dark'], label: 'skip-proof', tiers: { small: 50, large: 400 }, limits: { standard: { turns: 20, budget: 1.5 }, complex: { turns: 80 } } },
   }), undefined)
 })
 
@@ -77,6 +77,10 @@ for (const [config, path, fix] of [
   [{ proof: { viewports: [{ name: 'phone', width: 0, height: 800 }] } }, 'proof.viewports', 'width and height'],
   [{ proof: { label: '' } }, 'proof.label', 'a GitHub label name'],
   [{ proof: { tiers: { small: 500, large: 100 } } }, 'proof.tiers', 'small below large'],
+  [{ proof: { limits: { trivial: { turns: 5 } } } }, 'proof.limits', 'the tiers are standard, complex'],
+  [{ proof: { limits: { standard: { turns: 0 } } } }, 'proof.limits.standard', 'turns a whole number from 1'],
+  [{ proof: { limits: { complex: { budget: -1 } } } }, 'proof.limits.complex', 'budget in US dollars above 0'],
+  [{ proof: { limits: { complex: { minutes: 3 } } } }, 'proof.limits.complex', 'the keys are turns, budget'],
 ]) {
   test(`the schema refuses a bad ${path}, naming the path and the fix`, () => {
     const error = validate(config)
@@ -95,6 +99,7 @@ test('proof settings come from the base ref, so a pull request cannot turn its o
   assert.equal(settings.enabled, true)
   assert.deepEqual(settings.checks, { requirements: true, code: true, visual: false, tests: true, model: true, docs: true, lessons: true })
   assert.equal(settings.label, 'no-proof')
+  assert.deepEqual(settings.limits, { standard: { turns: 40, budget: 3 }, complex: { turns: 100, budget: 10 } })
   assert.equal(settings.source, 'main:.ndev.json')
 })
 
@@ -200,4 +205,9 @@ test('dev-servers start refuses a ready path that exists before the server start
   assert.notEqual(result.status, 0)
   const output = result.stderr + result.stdout
   for (const part of ['web', 'ready.flag', 'already exists']) assert.ok(output.includes(part), `${output} does not include ${part}`)
+})
+
+test('proof limits merge each tier with its defaults', t => {
+  const { main } = repository(t, { proof: { limits: { standard: { budget: 1 } } } })
+  assert.deepEqual(proofSettingsAt(main, 'main').limits, { standard: { turns: 40, budget: 1 }, complex: { turns: 100, budget: 10 } })
 })

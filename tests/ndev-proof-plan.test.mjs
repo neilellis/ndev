@@ -147,12 +147,12 @@ test('a docs-only change is trivial and skips the code, tests, model and lessons
   assert.deepEqual(result.stats, { files: 1, lines: 2, docsOnly: true, newExports: 0, risk: [], records: [], ui: [], code: [] })
 })
 
-test('a small code change with no export, risk path or record is trivial, but its code and tests are checked', t => {
+test('a small code change with no export, risk path or record is trivial: no agent reads its code, and its tests are checked', t => {
   const { root } = repository(t)
   commit(root, { 'src/util.js': 'function add(a, b) {\n  return b + a\n}\n' })
   const result = planned(root)
   assert.equal(result.tier, 'trivial')
-  assert.deepEqual(result.checks.code, ran)
+  assert.deepEqual(result.checks.code, skipped('trivial tier: no agent reads the diff'))
   assert.deepEqual(result.checks.tests, ran)
   assert.deepEqual(result.checks.lessons, skipped('trivial tier'))
   assert.deepEqual(result.stats.code, ['src/util.js'])
@@ -250,7 +250,7 @@ test('a check turned off at the base is skipped, and the PR cannot turn checks o
   const result = planned(root)
   assert.equal(result.skip, null)
   assert.deepEqual(result.checks.tests, skipped(`opted out in .ndev.json at ${baseSha.slice(0, 12)}`))
-  assert.deepEqual(result.checks.code, ran)
+  assert.deepEqual(result.checks.code, skipped('trivial tier: no agent reads the diff'))
 })
 
 test('Proof turned off at the base skips the run', t => {
@@ -332,7 +332,7 @@ test('a manifest .txt file is not documentation', t => {
   commit(root, { 'requirements.txt': 'requests==2.0\n' })
   const result = planned(root)
   assert.equal(result.stats.docsOnly, false)
-  assert.deepEqual(result.checks.code, ran)
+  assert.deepEqual(result.checks.code, skipped('trivial tier: no agent reads the diff'))
 })
 
 test('a path with glob characters counts its new exports', t => {
