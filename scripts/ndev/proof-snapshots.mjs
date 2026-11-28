@@ -24,7 +24,7 @@ export function serving(servers, files) {
 }
 
 export function proofServers(root, base) {
-  return { ...proofSettingsAt(root, base).devServers, ...devServers(root).servers }
+  return { ...devServers(root).servers, ...proofSettingsAt(root, base).devServers }
 }
 
 function selected(servers, wanted, names) {

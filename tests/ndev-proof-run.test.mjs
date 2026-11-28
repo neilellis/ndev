@@ -252,6 +252,16 @@ test('a pull request that removes the dev server of its changed UI files fails t
   assert.match(visual.reason, /admin/)
 })
 
+test('a pull request that moves the cwd of its dev server away from its changed UI files still runs the visual check', t => {
+  const both = servers([freePort(), freePort()])
+  const moved = { devServers: { ...both.devServers, admin: { ...both.devServers.admin, cwd: 'web' } } }
+  const repo = repository(t, both, { '.ndev.json': `${JSON.stringify(moved)}\n`, 'admin/App.tsx': 'export const App = () => null\n', 'admin/App.test.tsx': 'test()\n' }, serverFolders)
+  const result = proofRun(repo, { env: { NDEV_PROOF_MATRIX: matrix } })
+  const visual = (result.json.result ?? result.json.error.details).checks.visual
+  assert.notEqual(visual.state, 'skipped', JSON.stringify(visual))
+  assert.ok(existsSync(join(repo.base, 'out/snapshots/head/admin')), 'the admin server was not started')
+})
+
 test('the visual check is skipped, naming the changed UI files, when no dev server holds them', t => {
   const repo = repository(t, servers([freePort(), freePort()]), { 'other/Thing.tsx': 'export const Thing = () => null\n', 'other/Thing.test.tsx': 'test()\n' }, serverFolders)
   const result = proofRun(repo, { env: { NDEV_PROOF_MATRIX: matrix } })

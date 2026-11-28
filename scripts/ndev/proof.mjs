@@ -209,7 +209,7 @@ export function plan(root, values) {
   }
   const deleted = code.filter(path => !exists(root, 'HEAD', path))
   const { tier, reasons } = tierOf({ ...stats, deleted, labels: pr?.labels ?? [] }, settings.tiers)
-  const checks = checksFor({ settings, servers: proofServers(root, base), short, tier, stats, root })
+  const checks = checksFor({ settings, servers: stats.ui.length > 0 ? proofServers(root, base) : {}, short, tier, stats, root })
   const skipReason = skipFor({ settings, short, pr, root, base, proven: values.proven })
   const skip = skipReason ? { reason: skipReason } : null
   const result = { base, baseSha, head, tier, reasons, stats, pr, checks, skip, settings: settings.source }
