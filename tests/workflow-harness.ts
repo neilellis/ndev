@@ -78,7 +78,7 @@ export const engine = (on: On, opts: Opts = {}) => {
     duringDiff: undefined as (() => Promise<unknown>) | undefined, duringTurnEnd: undefined as (() => Promise<unknown>) | undefined, diffFails: '', orcaGone: false, orcaReachable: true, pageUrl: undefined as string | undefined, pageWidth: undefined as number | undefined, viewportWidth: 0, viewportHeight: 0, pageHeight: undefined as number | undefined, innerScroller: undefined as { element: string; height: number; total: number } | undefined, stuckAt: undefined as number | undefined, scrollY: 0, scrolls: [] as number[], shotsAt: [] as number[], orcaVersion: '1.4.274', loadingImages: 0, sameImages: false, cmpFails: '', dark: false, cpFails: '',
     merging: undefined as string | undefined, unchanged: [] as string[], removed: [] as string[], renamedFrom: [] as string[], committedGone: [] as string[], fromBase: [] as string[], checkEnv: {} as Record<string, Record<string, string> | undefined>,
     originHead: 'origin/main', githubBase: 'main', defaultBranchFails: '', branchPrs: [] as { number: number; state: string; merged: boolean }[],
-    ops: new Set<string>(), pushFails: '', leaseOk: false, remoteOnly: ['cccc9'] as string[], replaced: [] as string[], leases: [] as string[], noOpenPr: false, prNewFails: '', prBodies: [] as string[], diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[], duringSpawn: undefined as (() => void) | undefined,
+    ops: new Set<string>(), pushFails: '', pushMs: 0, guardTimeout: '', hookOutput: '', leaseOk: false, remoteOnly: ['cccc9'] as string[], replaced: [] as string[], leases: [] as string[], noOpenPr: false, prNewFails: '', prBodies: [] as string[], diffText: '', commitAt: -3_600_000, commitIso: '2026-11-01T00:00:00Z', commitUnknown: false, workflowsDir: false, blobSize: '', promptFails: false, comments: [] as unknown[], commitDirs: [] as (string | undefined)[], duringSpawn: undefined as (() => void) | undefined,
   }
   const gh: string[] = []
   const ready: string[] = []
@@ -172,6 +172,13 @@ export const engine = (on: On, opts: Opts = {}) => {
     return s.failCheck && script.includes(s.failCheck) ? ok('lint: broken line', 3) : ok('passed')
   }
   const checkRuns = new Map<string, { at: number; ms: number; answer: Promise<Answer>; done?: Answer['value'] }>()
+  const gitPush = (line: string) => {
+    if (line.includes('--force-with-lease')) s.leases.push(line)
+    if (s.pushFails && !(s.leaseOk && line.includes('--force-with-lease'))) return ok(s.hookOutput, 1, s.pushFails)
+    pushes.push(line)
+    s.upstream = s.sha
+    return ok(s.hookOutput)
+  }
   on('process.run', (_, e) => {
     const a = e.argv.map(String)
     const line = a.join(' ')
@@ -228,6 +235,8 @@ export const engine = (on: On, opts: Opts = {}) => {
       if (a[1] === 'log' && line.includes('--no-walk')) return ok(s.remoteOnly.filter(c => a.includes(c)).map(c => `${c} subject of ${c}\n`).join(''))
       if (a[1] === 'rev-list' && a.includes('--no-merges')) return ok(`${s.unmerged}\n`)
       if (a[1] === 'rev-list' && s.ahead !== undefined) return ok(`${s.ahead}\n`)
+      if (a[1] === 'config' && a.includes('guard.timeoutSeconds')) return s.guardTimeout ? ok(`${s.guardTimeout}\n`) : ok('', 1)
+      if (a[1] === 'rev-parse' && a[2] === '--git-path') return ok(`/main/.git/${a[3]}\n`)
       if (a[1] === 'rev-parse') return ok(`${ROOT}\n`)
       // As real git does: a folder of untracked files is one line, unless the call asks for all of them.
       if (a[1] === 'status') return ok([...s.dirty, ...(s.untracked.length ? (a.includes('--untracked-files=all') ? s.untracked.map(f => `?? ${f}`) : [`?? ${s.untracked[0]!.replace(/[^/]+$/, '')}`]) : [])].join('\n'))
@@ -270,9 +279,9 @@ export const engine = (on: On, opts: Opts = {}) => {
         s.sha = `bbbb${commits.length}`
         return ok()
       }
-      if (a[1] === 'push' && line.includes('--force-with-lease')) s.leases.push(line)
-      if (a[1] === 'push' && s.pushFails && !(s.leaseOk && line.includes('--force-with-lease'))) return ok('', 1, s.pushFails)
-      if (a[1] === 'push') { pushes.push(line); s.upstream = s.sha; return ok() }
+      // A push runs the pre-push hook for pushMs on the clock. The host stops a run that outlasts its limit, and the call rejects.
+      if (a[1] === 'push' && limit !== undefined && s.pushMs > limit) { s.now += limit; throw new Error(`ndev: $.process.run(git) aborted: still running after ${limit}ms`) }
+      if (a[1] === 'push') { s.now += s.pushMs; return gitPush(line) }
       return ok('', 1, `git not faked: ${line}`)
     }
     if (a[0] === 'test') return ok('', s.scripts ? 0 : 1)
@@ -390,6 +399,10 @@ export const engine = (on: On, opts: Opts = {}) => {
       const [sub, dir] = [a[2], a[3]!]
       if (sub === 'start') {
         const script = a[4]!
+        if (script.endsWith('/git-push.sh')) {
+          checkRuns.set(dir, { at: s.now, ms: s.pushMs, answer: Promise.resolve(gitPush(['git', 'push', ...a.slice(5)].join(' '))) })
+          return ok('4242\n')
+        }
         steps.push(`${script.split('/').pop()}${a.length > 5 ? ` ${a.slice(5).join(' ')}` : ''}`)
         s.checkEnv[script.split('/').pop()!.replace(/^ndev-/, '')] = e.init?.env
         const ms = Object.entries(s.checkMs).find(([name]) => script.includes(name))?.[1] ?? 0

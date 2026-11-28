@@ -97,7 +97,7 @@ export async function missingChecks($: EngineInterface, root: string): Promise<s
 // So run-check.sh starts the check detached, and each wait for it is one process shorter than that limit.
 export const CHECK_MAX_MS = 60 * 60_000
 const WAIT_PART_S = 540
-async function runLong($: EngineInterface, root: string, dir: string, script: string, args: string[], env: Record<string, string>): Promise<Ran & { stoppedAfterMs?: number }> {
+async function runLong($: EngineInterface, root: string, dir: string, script: string, args: string[], env: Record<string, string>, limitMs = CHECK_MAX_MS): Promise<Ran & { stoppedAfterMs?: number }> {
   const runner = `${$.plugin.root}/scripts/workflow/run-check.sh`
   const started = await run($, ['bash', runner, 'start', dir, script, ...args], { cwd: root, env, timeoutMs: 30_000 })
   const pid = started.stdout.trim()
@@ -106,9 +106,9 @@ async function runLong($: EngineInterface, root: string, dir: string, script: st
   let exitCode: number | undefined
   let stoppedAfterMs: number | undefined
   while (exitCode === undefined) {
-    const left = CHECK_MAX_MS - ((await $.clock.now()) - at)
+    const left = limitMs - ((await $.clock.now()) - at)
     if (left <= 0) {
-      stoppedAfterMs = CHECK_MAX_MS - left
+      stoppedAfterMs = limitMs - left
       const stop = await run($, ['bash', runner, 'stop', pid], { cwd: root, timeoutMs: 30_000 })
       if (stop.exitCode !== 0) $.ui.log(`ndev: run-check.sh stop ${pid} exited ${stop.exitCode}: ${said(stop)}`, { to: 'debug' })
       exitCode = 124
@@ -128,6 +128,34 @@ async function runLong($: EngineInterface, root: string, dir: string, script: st
   const err = await run($, ['bash', runner, 'err', dir], { cwd: root, timeoutMs: 60_000 })
   const stderr = stoppedAfterMs === undefined ? err.stdout : `${err.stdout}\n[stopped by the tool after ${Math.round(stoppedAfterMs / 60_000)} minutes]`
   return { exitCode, stdout: out.stdout, stderr, isStdoutTruncated: out.isStdoutTruncated, isStderrTruncated: err.isStdoutTruncated, ...(stoppedAfterMs === undefined ? {} : { stoppedAfterMs }) }
+}
+
+const PUSH_MS = 300_000
+const HOOK_SECONDS = 2700
+type PrePushHook = { path: string; seconds: number; limitMs: number }
+async function prePushHook($: EngineInterface, root: string): Promise<PrePushHook> {
+  const read = await git(root, $, 'config', '--get', 'guard.timeoutSeconds')
+  if (read.exitCode > 1) throw new Refuse(`git config --get guard.timeoutSeconds exited ${read.exitCode} in ${root}: ${said(read)}. Nothing was pushed.`)
+  const value = read.stdout.trim()
+  if (read.exitCode === 0 && !/^\d+$/.test(value)) throw new Refuse(`guard.timeoutSeconds is '${value}', not a whole number of seconds, so the tool cannot tell how long the pre-push hook may run. Nothing was pushed; the commit is local. Repair: git -C ${root} config guard.timeoutSeconds ${HOOK_SECONDS}, then call the tool again.`)
+  const seconds = read.exitCode === 0 ? Number(value) : HOOK_SECONDS
+  const where = (await gitOut(root, $, 'rev-parse', '--git-path', 'hooks/pre-push'))
+  return { path: where.startsWith('/') ? where : `${root}/${where}`, seconds, limitMs: seconds * 1000 + PUSH_MS }
+}
+
+// The pre-push hook may run for its guard.timeoutSeconds, past the host limit of 10 minutes for one process, so the push runs detached (#317).
+export async function pushBranch($: EngineInterface, root: string, branch: string, args: string[]): Promise<Ran> {
+  const hook = await prePushHook($, root)
+  const { gitDir } = await paths($, root)
+  const r = await withStep($, 'git push', hook.limitMs, () => runLong($, root, `${gitDir}/ndev-git-push.run`, `${$.plugin.root}/scripts/workflow/git-push.sh`, args, {}, hook.limitMs))
+  if (r.stoppedAfterMs === undefined) return r
+  const log = `${gitDir}/ndev-git-push.log`
+  await $.fs.write(log, `$ git push ${args.join(' ')}\nstopped after ${r.stoppedAfterMs} ms\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`)
+  const hookLog = [...`${r.stdout}\n${r.stderr}`.matchAll(/\(log: ([^)\n]+)\)/g)].at(-1)?.[1]
+  const cause = (await $.fs.exists(hook.path))
+    ? `The pre-push hook ${hook.path} may run for guard.timeoutSeconds ${hook.seconds} s, and the push had ${PUSH_MS / 1000} s more for the network.${hookLog ? ` The hook's log: ${hookLog}.` : ''}`
+    : `There is no pre-push hook at ${hook.path}, so the push itself did not finish.`
+  throw new Refuse(`git push of ${branch} was stopped after ${Math.round(r.stoppedAfterMs / 1000)} s. ${cause} The push output: ${log}. Repair: read the log for the step that hung; if the hook needs longer on this machine, raise git -C ${root} config guard.timeoutSeconds, then call the tool again. The commit is local.`)
 }
 
 // The keys of the worktree's .neil-dev.env that checkEnv in .ndev.json names, such as the URL of a local

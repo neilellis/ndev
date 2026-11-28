@@ -36,6 +36,8 @@ const CHECK_DIR = 'scripts/ndev/workflow'
 const CHECKS = ['fast-checks.sh', 'pre-commit-check.sh', 'pre-push-check.sh', 'pre-ready-check.sh']
 const CHECK_MAX_MS = 60 * 60_000
 const CHECK_WAIT_SECONDS = 30
+const PUSH_MS = 300_000
+const HOOK_SECONDS = 2700
 const RUN_CHECK = `${HOME}/scripts/workflow/run-check.sh`
 const waitChecks = (pr: number | string) => standalone ? `gh pr checks ${pr} --watch --interval 60` : `ndev wait checks ${pr}`
 const WAIT_PID = `${HOME}/scripts/work/wait_for_process_end.sh`
@@ -351,10 +353,34 @@ function commit(wf: Workflow, message: string, op: string, empty = false) {
   const r = git(wf.root, 'commit', ...(empty ? ['--allow-empty'] : []), '-m', message, '--trailer', `Ndev-Op: ${op}`)
   if (r.status !== 0) throw new Fail(1, `git commit exited ${r.status}: ${said(r)}. Nothing was pushed.`)
 }
+type PrePushHook = { path: string; seconds: number; limitMs: number }
+function prePushHook(root: string): PrePushHook {
+  const read = git(root, 'config', '--get', 'guard.timeoutSeconds')
+  if (read.status > 1) throw new Fail(1, `git config --get guard.timeoutSeconds exited ${read.status} in ${root}: ${said(read)}. Nothing was pushed.`)
+  const value = read.stdout.trim()
+  if (read.status === 0 && !/^\d+$/.test(value)) throw new Fail(1, `guard.timeoutSeconds is '${value}', not a whole number of seconds, so ndev-flow cannot tell how long the pre-push hook may run. Nothing was pushed; the commit is local. Repair: git -C ${root} config guard.timeoutSeconds ${HOOK_SECONDS}`)
+  const seconds = read.status === 0 ? Number(value) : HOOK_SECONDS
+  const path = resolve(root, gitOk(root, 'rev-parse', '--git-path', 'hooks/pre-push'))
+  return { path, seconds, limitMs: seconds * 1000 + envMs('NDEV_FLOW_PUSH_MS', PUSH_MS) }
+}
+function pushTimedOut(wf: Workflow, hook: PrePushHook, r: Run): string {
+  const log = join(gitDir(wf.root), 'ndev-git-push.log')
+  writeFileSync(log, `$ git push origin ${wf.branch}\nstopped after ${hook.limitMs} ms\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`)
+  const hookLog = [...`${r.stdout}\n${r.stderr}`.matchAll(/\(log: ([^)\n]+)\)/g)].at(-1)?.[1]
+  const cause = existsSync(hook.path)
+    ? `The pre-push hook ${hook.path} may run for guard.timeoutSeconds ${hook.seconds} s, and the push had ${(hook.limitMs / 1000) - hook.seconds} s more for the network.${hookLog ? ` The hook's log: ${hookLog}.` : ''}`
+    : `There is no pre-push hook at ${hook.path}, so the push itself did not finish.`
+  return `git push to origin ${wf.branch} was stopped after ${hook.limitMs / 1000} s. ${cause} The push output: ${log}. Repair: read the log for the step that hung; if the hook needs longer on this machine, raise git -C ${wf.root} config guard.timeoutSeconds, then retry. The commit is local.`
+}
 function push(wf: Workflow, retryRebase = false, source = 'HEAD', options: string[] = [], refused = 'Repair: resolve the push error and retry. The commit is local.'): string | undefined {
   const ref = `refs/heads/${wf.branch}`
   const pushArgs = ['origin', `${source}:${ref}`]
-  const push = (options: string[]) => run('git', ['push', '-u', ...options, ...pushArgs], { cwd: wf.root, timeout: 300_000 })
+  const hook = prePushHook(wf.root)
+  const push = (options: string[]) => {
+    const r = run('git', ['push', '-u', ...options, ...pushArgs], { cwd: wf.root, timeout: hook.limitMs })
+    if (r.status === 124) throw new Fail(1, pushTimedOut(wf, hook, r))
+    return r
+  }
   const result = push(options)
   if (result.status === 0) return
   const problem = `git push to origin ${wf.branch} exited ${result.status}: ${said(result)}`
