@@ -19,7 +19,8 @@ you can choose, batch siblings, not strangers.
 
 - **Branch and PR:** name the branch after the **lead** issue (`claude/issue-<lead>`) so that
   branch-keyed tools keep working. The title names the epic or cluster. The body has one
-  `Closes #<k>` line per issue.
+  `Closes #<k>` line per issue, and one `## Lessons` section for the whole PR: what the work taught,
+  or that there is none and why (`${CLAUDE_PLUGIN_ROOT}/kb/proof.md`).
 - **One teammate per member issue** when the batch is complex. Each teammate works its issue on the
   shared branch. This keeps each issue's context separate and the top-level thread small.
 - **In the PR**, do the issues in dependency order, each with its own body section, TDD tasks, pinned

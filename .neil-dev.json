@@ -3,5 +3,17 @@
     "repo": "neilellis/ndev",
     "board": null
   },
-  "workflow": false
+  "workflow": false,
+  "devServers": {
+    "docs-site": {
+      "command": "pnpm run dev",
+      "cwd": "docs-site",
+      "port": 3000,
+      "ready": "http://localhost:3000/",
+      "routes": [
+        "/"
+      ]
+    }
+  },
+  "proof": {}
 }
