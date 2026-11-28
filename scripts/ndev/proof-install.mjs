@@ -136,8 +136,8 @@ function step(name, lines, dir) {
   ]
 }
 
-function workflow({ ref, servers }) {
-  const installs = [...new Map(servers.map(server => [server.install, server.manager])).entries()]
+function workflow({ ref, servers, root }) {
+  const installs = [...new Map([...(root ? [['.', root]] : []), ...servers.map(server => [server.install, server.manager])]).entries()]
   const browsers = [...new Set(servers.map(server => server.dir))]
   const install = [
     ...installs.flatMap(([dir, manager]) => step(`Install the dependencies${dir === '.' ? '' : ` in ${dir}`}`, INSTALL[manager], dir)),
@@ -253,7 +253,7 @@ export function proofInstall(path, values) {
   const manager = packageManager(root)
   const found = detect(root, manager)
   const slug = slugOf(root)
-  const file = planWorkflow(root, workflow({ ref, servers: found }), values.force, values['dry-run'])
+  const file = planWorkflow(root, workflow({ ref, servers: found, root: existsSync(join(root, 'package.json')) ? manager : null }), values.force, values['dry-run'])
   const config = planConfig(root, found, values.yes)
   const playwright = { missing: found.filter(server => !server.playwright).map(server => server.dir) }
   const secret = secretState(slug)

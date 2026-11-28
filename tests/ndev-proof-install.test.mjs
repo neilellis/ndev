@@ -116,15 +116,23 @@ test('a Vite project with pnpm gets its port from the script, and the missing Pl
   assert.match(result.json.result.text, /gh secret set ANTHROPIC_API_KEY --repo acme\/web/)
 })
 
-test('a project with no web app gets the workflow with no dev server, install or browser step', t => {
+test('a project with no web app installs its dependencies for the tests and the model check, with no dev server or browser step', t => {
   const repo = project(t, library)
   const result = install(repo, ['--yes'])
   assert.equal(result.status, 0, JSON.stringify(result.json))
   assert.equal(config(repo.root).devServers, undefined)
   assert.deepEqual(config(repo.root).proof, {})
   const workflow = read(repo.root, WORKFLOW)
-  assert.doesNotMatch(workflow, /npm ci|playwright/)
+  assert.match(workflow, /run: npm ci\n/)
+  assert.doesNotMatch(workflow, /playwright/)
   assert.deepEqual(result.json.result.servers, [])
+})
+
+test('a project with no package.json gets no install step', t => {
+  const repo = project(t, { 'main.py': 'print(1)\n' })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.doesNotMatch(read(repo.root, WORKFLOW), /Install the dependencies|playwright/)
 })
 
 test('--dry-run writes nothing and says what it would write', t => {
@@ -281,5 +289,6 @@ test('a web app in a subfolder with its own lockfile is found and installed in t
   const workflow = read(repo.root, WORKFLOW)
   assert.match(workflow, /pnpm install --frozen-lockfile\n\s+working-directory: site/)
   assert.match(workflow, /npx playwright install --with-deps chromium\n\s+working-directory: site/)
-  assert.doesNotMatch(workflow, /npm ci/)
+  assert.match(workflow, /run: npm ci\n(?!\s+working-directory)/)
+  assert.equal(workflow.match(/playwright install/g).length, 1)
 })
