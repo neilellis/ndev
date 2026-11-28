@@ -163,6 +163,7 @@ const groups = {
       snapshots: '--out <dir> (--pr <n> | --local) [--routes <list>] [--base <ref>]',
       report: '--plan <file> [--verdict <file> --evidence <file>] [--grid <file>] (--pr <n> | --local)',
       run: '(--pr <n> | --local) [--base <ref>] [--out <dir>] [--body <file>]',
+      install: '<project-path> [--dry-run] [--yes] [--force] [--ref <ndev commit>]',
     },
   },
   requirements: {

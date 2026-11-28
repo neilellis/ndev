@@ -9,6 +9,8 @@ import { readConfigObject } from './config-file.mjs'
 
 const DEFAULT_TIMEOUT = 60
 const LOG_TAIL = 20
+const JOB_CREDENTIALS = new Set(['ANTHROPIC_API_KEY', 'GH_TOKEN', 'GITHUB_TOKEN', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN', 'ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'GIT_CONFIG_COUNT'])
+const withoutCredentials = env => env.GITHUB_ACTIONS !== 'true' ? env : Object.fromEntries(Object.entries(env).filter(([name]) => !JOB_CREDENTIALS.has(name) && !/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(name)))
 
 export function devServers(root) {
   const { path, config } = readConfigObject(root)
@@ -75,7 +77,7 @@ export async function start(root, name, { record = true } = {}) {
   const log = logFile(root, name)
   mkdirSync(dirname(log), { recursive: true })
   const fd = openSync(log, 'w')
-  const child = spawn('sh', ['-c', server.command], { cwd, env: { ...process.env, ...server.env }, detached: true, stdio: ['ignore', fd, fd] })
+  const child = spawn('sh', ['-c', server.command], { cwd, env: { ...withoutCredentials(process.env), ...server.env }, detached: true, stdio: ['ignore', fd, fd] })
   closeSync(fd)
   let exit
   child.on('exit', (code, signal) => { exit = signal ? `was stopped by ${signal}` : `exited ${code}` })
