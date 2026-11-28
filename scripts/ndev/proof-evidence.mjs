@@ -55,7 +55,15 @@ function ghRead(args) {
   const result = run('bash', [ghScript(), ...args])
   const output = `${result.stdout}${result.stderr}`.trim()
   if (result.status !== 0) return { failed: { state: 'not-run', command: `gh.sh ${args.join(' ')}`, output } }
-  const parsed = JSON.parse(result.stdout)
+  let parsed
+  try {
+    parsed = JSON.parse(result.stdout)
+  } catch (error) {
+    throw new CliError(1, `gh.sh ${args.join(' ')} exited 0 with output that is not JSON (${error.message}): ${output.slice(0, 500) || 'no output'}`, {
+      repair: `Run bash ${ghScript()} ${args.join(' ')} and check that it prints JSON; check gh auth status and gh --version.`,
+      details: { command: `gh.sh ${args.join(' ')}`, output },
+    })
+  }
   return { body: parsed.body ?? '', title: parsed.title ?? '' }
 }
 
@@ -68,7 +76,7 @@ function request({ body, failed }) {
     const issue = ghRead(['issue-read', number])
     if (issue.failed) {
       throw new CliError(1, `The pull request body closes issue #${number}, and ${issue.failed.command} failed: ${issue.failed.output || 'no output'}`, {
-        repair: `Check gh auth status, and that issue #${number} exists in this repository; or take "#${number}" out of the closing words of the body.`,
+        repair: `Check gh auth status, and that issue #${number} exists in this repository; or take "#${number}" out of the closing words of the body. The evidence stops at issue #${number}, so no later issue was read.`,
       })
     }
     return { number: Number(number), title: issue.title, body: issue.body }

@@ -91,7 +91,7 @@ test('a Next.js project gets the workflow and its dev server after you confirm',
   assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/)
   assert.match(workflow, /persist-credentials: false/)
   assert.match(workflow, /^permissions: \{\}$/m)
-  assert.match(workflow, /contents: write\n\s+pull-requests: write\n\s+checks: write/)
+  assert.match(workflow, /contents: write\n\s+pull-requests: write\n\s+checks: write\n\s+issues: read\n/)
   assert.match(workflow, /group: ndev-proof-\$\{\{ github\.event\.pull_request\.number \}\}/)
   assert.match(workflow, /run: npm ci/)
   assert.match(workflow, /npx playwright install --with-deps chromium/)
@@ -420,6 +420,30 @@ test('a Vite or Astro app with no port in its script takes the literal server po
     assert.equal(config(repo.root).devServers.web.port, port, JSON.stringify(files))
     assert.equal(config(repo.root).devServers.web.ready, `http://localhost:${port}/`)
   }
+})
+
+test('a port in a commented-out line of the framework config does not count', t => {
+  const cases = [
+    "export default {\n  // server: { port: 4100 },\n}\n",
+    "export default {\n  /* server: { port: 4100 } */\n}\n",
+    "const config = {}\n// config.server.port = 4200\nexport default config\n",
+  ]
+  for (const text of cases) {
+    const repo = project(t, { 'package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } }, 'vite.config.js': text, 'package-lock.json': { lockfileVersion: 3 } })
+    const result = install(repo, ['--yes'])
+    assert.equal(result.status, 0, JSON.stringify(result.json))
+    assert.equal(config(repo.root).devServers.web.port, 5173, text)
+  }
+})
+
+test('the install says that the port is the framework default when the framework config has no literal port', t => {
+  const repo = project(t, { 'package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } }, 'vite.config.js': 'export default { server: { port: Number(process.env.PORT) } }\n', 'package-lock.json': { lockfileVersion: 3 } })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  const line = result.json.result.text.split('\n').find(entry => entry.startsWith('Dev server web '))
+  assert.match(line, new RegExp(`port 5173 is the vite default, because ${join(repo.root, 'vite.config.js').replaceAll('/', '\\/').replaceAll('.', '\\.')} has no literal port`))
+  const literal = project(t, { 'package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } }, 'vite.config.js': 'export default { server: { port: 4100 } }\n', 'package-lock.json': { lockfileVersion: 3 } })
+  assert.doesNotMatch(install(literal, ['--yes']).json.result.text, /default/)
 })
 
 test('the proof-install skill names no path of one machine', () => {

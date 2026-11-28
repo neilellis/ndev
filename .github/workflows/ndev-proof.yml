@@ -20,6 +20,7 @@ jobs:
       contents: write
       pull-requests: write
       checks: write
+      issues: read
     env:
       NDEV_REF: 4c1eb81b95b52e76058bed34ebac2459fa67ddee
       CLAUDE_CODE_VERSION: 2.1.331

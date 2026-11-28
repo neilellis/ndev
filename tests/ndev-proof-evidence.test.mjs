@@ -247,6 +247,21 @@ test('request: an issue that gh.sh cannot read fails fast, with the number, the 
   assert.match(error.message, /Could not resolve to an issue/)
   assert.match(error.repair, /gh auth status/)
   assert.match(error.repair, /#12/)
+  assert.match(error.repair, /The evidence stops at issue #12/)
+})
+
+test('request: an issue read whose output is not JSON fails, with the gh command and the start of the output', t => {
+  const { base, root } = repository(t)
+  commit(root, { 'src/util.js': 'function add(a, b) {\n  return b + a\n}\n'.repeat(30) })
+  const script = join(base, 'gh.sh')
+  writeFileSync(script, 'echo "<html>rate limited</html>"\n')
+  const result = ndev(root, ['proof', 'evidence', '--plan', planFile(base, root), '--body', bodyFile(base, `Closes #12.\n\n${LESSONS}`)], { NDEV_FLOW_GH: script })
+  assert.equal(result.status, 1, `${result.stdout}${result.stderr}`)
+  const { error } = JSON.parse(result.stdout)
+  assert.match(error.message, /gh\.sh issue-read 12/)
+  assert.match(error.message, /<html>rate limited<\/html>/)
+  assert.doesNotMatch(error.message, /^Unexpected token/)
+  assert.match(error.repair, /gh/)
 })
 
 test('tests: a test whose name only contains the source name is not near it', t => {

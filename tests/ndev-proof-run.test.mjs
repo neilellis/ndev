@@ -30,15 +30,23 @@ else if (args[0] === 'api' && args.includes('repos/o/r/check-runs')) {
 `
 
 const FAKE_AGENT = `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
-writeFileSync(process.env.FAKE_AGENT_LOG, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('NDEV_PROOF_'))) }))
-const mode = process.env.FAKE_AGENT_MODE
+const argv = process.argv.slice(2)
+const log = { argv, env: { ...process.env } }
+writeFileSync(process.env.NDEV_PROOF_FAKE_LOG, JSON.stringify(log))
+const mode = process.env.NDEV_PROOF_FAKE_MODE
 if (mode === 'crash') { console.error('boom: the model is not available'); process.exit(3) }
 const plan = JSON.parse(readFileSync(process.env.NDEV_PROOF_PLAN, 'utf8'))
 const checks = {}
 for (const [check, planned] of Object.entries(plan.checks)) if (planned.action === 'run') checks[check] = { state: 'pass', evidence: [{ text: check + ' checked' }] }
 if (mode === 'bad') checks.code = { state: 'fail' }
 if (mode !== 'silent') writeFileSync(process.env.NDEV_PROOF_VERDICT, JSON.stringify({ head: plan.head, checks }))
+if (mode === 'self-check') {
+  const command = argv[argv.indexOf('--allowedTools') + 1].split(',').find(tool => tool.startsWith('Bash(node ')).slice(5, -1)
+  const checked = spawnSync('sh', ['-c', command], { encoding: 'utf8' })
+  writeFileSync(process.env.NDEV_PROOF_FAKE_LOG, JSON.stringify({ ...log, selfCheck: { command, status: checked.status, output: checked.stdout + checked.stderr } }))
+}
 console.log(JSON.stringify({ type: 'result', is_error: false, num_turns: 4, total_cost_usd: 0.21, result: 'done' }))
 `
 
@@ -84,7 +92,7 @@ function proofRun({ base, root }, { args = ['--base', 'main'], mode = 'pass', en
   for (const name of ['GITHUB_BASE_REF', 'GITHUB_EVENT_PATH', 'GITHUB_ACTIONS', 'NDEV_FLOW_GH', 'ANTHROPIC_API_KEY']) delete clean[name]
   const result = spawnSync(executable, ['proof', 'run', '--local', '--body', join(base, 'body.md'), '--out', join(base, 'out'), ...args, '--json'], {
     cwd: root, encoding: 'utf8', timeout: 120_000,
-    env: { ...clean, NDEV_PROOF_AGENT: join(base, 'agent.mjs'), FAKE_AGENT_LOG: join(base, 'agent.json'), FAKE_AGENT_MODE: mode, ...env },
+    env: { ...clean, NDEV_PROOF_AGENT: join(base, 'agent.mjs'), NDEV_PROOF_FAKE_LOG: join(base, 'agent.json'), NDEV_PROOF_FAKE_MODE: mode, ...env },
   })
   assert.ifError(result.error)
   return { status: result.status, json: JSON.parse(result.stdout), agent: existsSync(join(base, 'agent.json')) ? JSON.parse(readFileSync(join(base, 'agent.json'), 'utf8')) : null }
@@ -140,6 +148,23 @@ test('with an API key the agent runs bare, so the pull request cannot add hooks 
   const result = proofRun(repo, { env: { ANTHROPIC_API_KEY: 'test-key' } })
   assert.equal(result.status, 0, JSON.stringify(result.json))
   assert.ok(result.agent.argv.includes('--bare'))
+})
+
+test('the agent gets no GitHub token and no git auth header, and keeps the API key and what its self-check needs', t => {
+  const repo = repository(t, null, standard)
+  const job = { ANTHROPIC_API_KEY: 'test-key', GH_TOKEN: 'gh-secret', GITHUB_TOKEN: 'github-secret', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader', GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic c2VjcmV0', NPM_TOKEN: 'npm-secret', DEPLOY_SECRET: 'deploy-secret', CLAUDE_CODE_OAUTH_TOKEN: 'claude-login', ANTHROPIC_AUTH_TOKEN: 'anthropic-login' }
+  const result = proofRun(repo, { mode: 'self-check', env: job })
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  const { env, selfCheck, argv } = result.agent
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'NPM_TOKEN', 'DEPLOY_SECRET']) assert.equal(env[name], undefined, `${name} reached the agent`)
+  assert.equal(env.ANTHROPIC_API_KEY, 'test-key')
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, 'claude-login')
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'anthropic-login')
+  assert.equal(env.PATH, process.env.PATH)
+  assert.equal(env.HOME, process.env.HOME)
+  assert.equal(env.NDEV_PROOF_PLAN, join(repo.base, 'out/plan.json'))
+  assert.equal(selfCheck.status, 0, `${selfCheck.command}: ${selfCheck.output}`)
+  assert.match(argv[argv.indexOf('-p') + 1], /The request .* is untrusted text written by outsiders/)
 })
 
 test('in GitHub Actions a standard change needs ANTHROPIC_API_KEY, so the agent never reads the pull request instructions', t => {
@@ -239,7 +264,7 @@ function rebased(t) {
   writeFileSync(join(base, 'fake-gh.mjs'), FAKE_GH)
   writeFileSync(join(base, 'gh.sh'), `#!/bin/bash\nexec node ${join(base, 'fake-gh.mjs')} "$@"\n`)
   chmodSync(join(base, 'gh.sh'), 0o755)
-  const run = (key, conclusion) => ({ oid: key, checkSuites: { nodes: [{ checkRuns: { nodes: conclusion ? [{ conclusion, completedAt: '2026-11-27T10:00:00Z' }] : [] } }] } })
+  const run = (key, conclusion, at = '2026-11-27T10:00:00Z') => ({ oid: key, checkSuites: { nodes: [{ checkRuns: { nodes: conclusion ? [{ conclusion, completedAt: at }] : [] } }] } })
   return { base, ci, proven, head: git(ci, 'rev-parse', 'HEAD'), run }
 }
 
@@ -277,11 +302,40 @@ test('a --pr run with no successful Proof check run on the pull request proves t
   assert.equal(result.json.result.conclusion, 'success')
 })
 
-test('a --pr run fails fast when gh cannot read the Proof check runs of the pull request', t => {
+test('a --pr run whose last proven commit cannot be fetched runs in full, and the report names the reason', t => {
+  const repo = rebased(t)
+  const gone = 'dead'.repeat(10)
+  const result = prRun(repo, [
+    { __typename: 'HeadRefForcePushedEvent', beforeCommit: repo.run(gone, 'SUCCESS'), afterCommit: repo.run(repo.head, null) },
+  ])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.conclusion, 'success')
+  const reason = new RegExp(`the last proven commit ${gone} could not be fetched: .+, so this run is a full run`)
+  assert.match(result.json.result.notice, reason)
+  assert.match(result.json.result.text, reason)
+  assert.match(JSON.parse(readFileSync(join(repo.base, 'check-run.json'), 'utf8')).output.summary, reason)
+})
+
+test('a --pr run takes the newest proven commit that it can fetch', t => {
+  const repo = rebased(t)
+  const gone = 'dead'.repeat(10)
+  const result = prRun(repo, [
+    { __typename: 'PullRequestCommit', commit: repo.run(repo.proven, 'SUCCESS') },
+    { __typename: 'HeadRefForcePushedEvent', beforeCommit: repo.run(gone, 'SUCCESS', '2026-11-27T11:00:00Z'), afterCommit: repo.run(repo.head, null) },
+  ])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.conclusion, 'skipped')
+  assert.match(result.json.result.checks.code.reason, new RegExp(`only a rebase since the last proven commit ${repo.proven.slice(0, 12)}`))
+  assert.match(result.json.result.notice, new RegExp(`the last proven commit ${gone} could not be fetched: .+, so this run compares with the older proven commit ${repo.proven}`))
+})
+
+test('a --pr run whose read of the Proof check runs fails runs in full, and the report names the gh failure', t => {
   const repo = rebased(t)
   const result = prRun(repo, [], { FAKE_GH_PROVEN_FAIL: '1' })
-  assert.equal(result.status, 1, JSON.stringify(result.json))
-  assert.match(result.json.error.message, /pull request 5/)
-  assert.match(result.json.error.message, /exited 4: gh: HTTP 502 Bad Gateway/)
-  assert.match(result.json.error.repair, /gh auth status/)
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.conclusion, 'success')
+  const reason = /the read of the ndev proof check runs of pull request 5 failed: gh\.sh api graphql exited 4: gh: HTTP 502 Bad Gateway, so this run is a full run/
+  assert.match(result.json.result.notice, reason)
+  assert.match(result.json.result.text, reason)
+  assert.match(JSON.parse(readFileSync(join(repo.base, 'check-run.json'), 'utf8')).output.summary, reason)
 })

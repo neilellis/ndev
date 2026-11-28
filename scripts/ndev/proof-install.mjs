@@ -84,16 +84,18 @@ function packageManager(root) {
   return found[1]
 }
 
+const withoutComments = text => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:\\])\/\/.*$/gm, '$1')
+
 function configPort(appDir, prefix) {
-  if (!prefix) return undefined
+  if (!prefix) return {}
   for (const extension of CONFIG_EXTENSIONS) {
     const file = join(appDir, `${prefix}.config.${extension}`)
     if (!existsSync(file)) continue
-    const text = readFileSync(file, 'utf8')
+    const text = withoutComments(readFileSync(file, 'utf8'))
     const port = text.match(/\bserver\s*:\s*\{[^{}]*?\bport\s*:\s*(\d+)\s*[,}\n]/)?.[1] ?? text.match(/\bserver\.port\s*=\s*(\d+)\s*[;\n]/)?.[1]
-    return port === undefined ? undefined : Number(port)
+    return { file, port: port === undefined ? undefined : Number(port) }
   }
-  return undefined
+  return {}
 }
 
 function serverIn(root, dir, manifest, manager, installDir) {
@@ -102,9 +104,12 @@ function serverIn(root, dir, manifest, manager, installDir) {
   if (!framework) return null
   const script = manifest.scripts?.dev ? 'dev' : manifest.scripts?.start ? 'start' : null
   if (!script) return null
-  const port = Number(manifest.scripts[script].match(/(?:--port|-p)[ =](\d+)/)?.[1] ?? configPort(join(root, dir), framework[2]) ?? framework[1])
+  const flag = manifest.scripts[script].match(/(?:--port|-p)[ =](\d+)/)?.[1]
+  const configured = flag === undefined ? configPort(join(root, dir), framework[2]) : {}
+  const port = Number(flag ?? configured.port ?? framework[1])
+  const portNote = configured.file && configured.port === undefined ? `port ${port} is the ${framework[2]} default, because ${configured.file} has no literal port` : null
   const server = { command: `${{ berry: 'yarn', unlocked: 'npm' }[manager] ?? manager} run ${script}`, ...(dir === '.' ? {} : { cwd: dir }), port, ready: `http://localhost:${port}/`, routes: ['/'] }
-  return { name: dir === '.' ? 'web' : basename(dir), dir, framework: framework[0], server, manager, install: installDir, playwright: Boolean(deps.playwright || deps['@playwright/test']) }
+  return { name: dir === '.' ? 'web' : basename(dir), dir, framework: framework[0], server, manager, install: installDir, playwright: Boolean(deps.playwright || deps['@playwright/test']), portNote }
 }
 
 function standaloneDirs(root, members) {
@@ -182,6 +187,7 @@ function workflow({ ref, servers, root }) {
     '      contents: write',
     '      pull-requests: write',
     '      checks: write',
+    '      issues: read',
     '    env:',
     `      NDEV_REF: ${ref}`,
     `      CLAUDE_CODE_VERSION: ${CLAUDE_CODE.version}`,
@@ -268,7 +274,7 @@ function describe({ root, slug, servers, config, file, secret, playwright, unloc
   lines.push(file.action === 'differs' ? `${file.path}: differs from the workflow that this ndev writes; --force would replace it.` : `${file.path}: ${file.action}${dryRun && file.action !== 'unchanged' ? ' (dry run)' : ''}.`)
   for (const dir of unlocked) lines.push(`${dir === '.' ? root : join(root, dir)} has no lockfile, so the workflow runs npm install, and each run can get other versions. Commit a lockfile to pin them: npm install${dir === '.' ? '' : ` in ${dir}`}, then commit package-lock.json.`)
   if (servers.length === 0) lines.push('No dev server found: no package.json script runs a known web framework, so the visual check is skipped.')
-  for (const found of servers) lines.push(`Dev server ${found.name} (${found.framework}): ${found.server.command}${found.server.cwd ? ` in ${found.server.cwd}` : ''}, ready at ${found.server.ready}, routes ${found.server.routes.join(', ')}.`)
+  for (const found of servers) lines.push(`Dev server ${found.name} (${found.framework}): ${found.server.command}${found.server.cwd ? ` in ${found.server.cwd}` : ''}, ready at ${found.server.ready}, routes ${found.server.routes.join(', ')}${found.portNote ? `; ${found.portNote}` : ''}.`)
   if (config.moved?.moved) lines.push(`Moved ${config.moved.from} to ${config.moved.to}, the new name of the project config. Commit the rename.`)
   if (config.kept) lines.push(`${config.path} already has devServers, so they were kept.`)
   if (config.action === 'pending') lines.push(`${config.path}: pending. Confirm the dev servers above, then run ndev proof install ${root} --yes to write them and the proof section.`)
