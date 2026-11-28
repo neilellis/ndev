@@ -200,6 +200,14 @@ for (const path of ['db/migrations/0002_add.sql', 'src/auth/session.js', 'src/sc
   })
 }
 
+test('a GitHub Actions workflow file is CI config, not workflow state, so it is no risk path', t => {
+  const { root } = repository(t)
+  commit(root, { '.github/workflows/ci.yml': 'name: ci\n' })
+  const result = planned(root)
+  assert.deepEqual(result.stats.risk, [])
+  assert.equal(result.tier, 'trivial')
+})
+
 test('the proof:complex label raises the tier', t => {
   const { base, root } = repository(t)
   commit(root, { 'README.md': '# Project\n\nMore.\n' })

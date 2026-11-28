@@ -12,7 +12,7 @@ Proof is a GitHub Actions job that checks each pull request and gates the merge.
 | tests | Each changed source file has a test in the same folder, or a test with the same name. |
 | model | A complex change has a Quint model, and `ndev requirements model-check` passes. |
 | docs | A change that users can see changes the docs site too. |
-| lessons | The body has a `## Lessons` section. |
+| lessons | The body has a `## Lessons` section, and the agent finds that it states a lesson, or says that there is none and why. |
 
 A check that fails fails Proof. A check that the plan runs and that then gets no result (`not-run`) also fails Proof. `ndev proof plan --base <ref>` shows the tier and each check that runs, with no agent and no cost.
 

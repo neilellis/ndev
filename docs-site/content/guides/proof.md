@@ -34,7 +34,7 @@ After the install, do these steps:
 | tests | Each changed source file has a test. |
 | model | A complex change has a Quint model, and `ndev requirements model-check` passes. |
 | docs | A change that users can see changes the docs site too. |
-| lessons | The pull request body has a `## Lessons` section that states a lesson, or says that there is none and why. |
+| lessons | The pull request body has a `## Lessons` section. The agent reads it: it must state a lesson, or say that there is none and why. An empty section fails. |
 
 A check that fails fails Proof. A check that the plan runs and that then gets no result also fails Proof. A check that the plan skips does not fail Proof. The comment gives the reason for each skip.
 
@@ -44,7 +44,7 @@ The tier sets how deep Proof goes. `ndev proof plan` chooses the tier from the d
 
 | Tier | When | What runs |
 |---|---|---|
-| trivial | Fewer than 50 changed lines, with no new export, risk path, requirement record or deleted file. A change of docs only is also trivial. | No agent. Proof judges the facts only. The requirements, code and lessons checks are skipped. |
+| trivial | Fewer than 50 changed lines, with no new export, risk path, requirement record or deleted file. A change of docs only, of any size, is also trivial when it has no risk path, requirement record or deleted file. | No agent. Proof judges the facts only. The requirements, code and lessons checks are skipped. |
 | standard | 50 changed lines or more, a new export, a touched requirement record, or a deleted file. | The agent, with a limit of 40 turns and 3 US dollars. |
 | complex | 400 changed lines or more, a risk path (migrations, schema, auth, locks, workflows), or the label `proof:complex`. | The agent, with a limit of 100 turns and 10 US dollars. Only this tier runs the model check. |
 
@@ -69,7 +69,7 @@ Proof is on by default. These settings turn it off:
 | One check | Set the check to false, for example `"proof": { "checks": { "visual": false } }`. |
 | Proof on one pull request | Add the label `no-proof`. Set a different label with `"proof": { "label": "<name>" }`. |
 
-Proof reads these settings from the base branch, not from the pull request. A pull request cannot turn Proof off for itself. A draft pull request gets no run.
+Proof reads these settings from the base branch, not from the pull request. A pull request cannot turn Proof off for itself. Proof also skips a draft pull request. A skipped run posts the `ndev proof` check as skipped, with the reason. A skipped check does not block the merge.
 
 ## Cost
 
