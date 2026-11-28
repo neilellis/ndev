@@ -38,6 +38,8 @@ After the install, do these steps:
 
 A check that fails fails Proof. A check that the plan runs and that then gets no result also fails Proof. A check that the plan skips does not fail Proof. The comment gives the reason for each skip.
 
+The visual check starts only the dev servers whose `cwd` holds a changed UI file. A server with no `cwd` serves the whole repository. When no server holds the changed files, the visual check is skipped. The reason names the files.
+
 ## The tiers
 
 The tier sets how deep Proof goes. `ndev proof plan` chooses the tier from the diff against the base branch.
@@ -75,6 +77,8 @@ Proof reads these settings from the base branch, not from the pull request. A pu
 
 Each run of the agent has the budget of its tier. A standard change has 3 US dollars, and a complex change has 10 US dollars. A trivial change starts no agent and costs nothing for the model. Each new push to a pull request starts a new run. The new run cancels the run that is in progress. Each run also uses GitHub Actions minutes, for up to 90 minutes.
 
+On a pull request, Proof finds the newest commit that it passed and that it can fetch. When the new commits only rebase that commit or change formatting, Proof skips the run. When Proof cannot use such a commit, it runs in full. Examples are a force push, or a failed read of the check runs. A `Notice:` line in the comment gives the reason.
+
 ## Run Proof on your computer
 
 Run Proof on your branch before you push:
@@ -83,7 +87,9 @@ Run Proof on your branch before you push:
 ndev proof run --local --base origin/main --body <file>
 ```
 
-`--body` gives the text of the pull request body, for the lessons check. The local run posts nothing. It prints the table and the tier.
+`--body` gives the text of the pull request body, for the lessons check. The local run posts nothing. It prints the comment, with the table and the tier, in every outcome, not only on a failure.
+
+To snapshot only some dev servers, run `ndev proof snapshots --servers <list>`. Separate the names with commas. The command refuses a name that `.ndev.json` does not list under `devServers`.
 
 ## Security limits
 

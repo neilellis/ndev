@@ -26,7 +26,9 @@ Put a `## Lessons` section in each pull request body. State what the work taught
 ndev proof run --local --base origin/<base branch> --body <file with the pull request body>
 ```
 
-Run it after the last change and before the push. Read the table. Fix each check that fails, then run it again. A check that is `not-run` is not a pass: the result says what to install or set. The local run posts nothing.
+Run it after the last change and before the push. Read the table. Fix each check that fails, then run it again. A check that is `not-run` is not a pass: the result says what to install or set. The local run posts nothing. It prints the comment in every outcome, not only on a failure. A `Notice:` line gives the reason when Proof runs in full because it cannot use an earlier passed commit.
+
+The visual check starts only the dev servers whose `cwd` holds a changed UI file. A server with no `cwd` serves the whole repository. `ndev proof snapshots --servers <list>` snapshots only the named servers, and refuses a name that `.ndev.json` does not list.
 
 ## Rules
 
