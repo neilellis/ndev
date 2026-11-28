@@ -370,7 +370,7 @@ function pushTimedOut(wf: Workflow, hook: PrePushHook, r: Run): string {
   const cause = existsSync(hook.path)
     ? `The pre-push hook ${hook.path} may run for guard.timeoutSeconds ${hook.seconds} s, and the push had ${(hook.limitMs / 1000) - hook.seconds} s more for the network.${hookLog ? ` The hook's log: ${hookLog}.` : ''}`
     : `There is no pre-push hook at ${hook.path}, so the push itself did not finish.`
-  return `git push to origin ${wf.branch} was stopped after ${hook.limitMs / 1000} s. ${cause} The push output: ${log}. Repair: read the log for the step that hung; if the hook needs longer on this machine, raise git -C ${wf.root} config guard.timeoutSeconds, then retry. The commit is local.`
+  return `git push to origin ${wf.branch} was stopped after ${hook.limitMs / 1000} s. ${cause} The push output: ${log}. Only git was stopped, so processes that the hook started can still run: find them with pgrep -fl ${hook.path} and the checks it names, and stop them. Repair: read the log for the step that hung; if the hook needs longer on this machine, raise git -C ${wf.root} config guard.timeoutSeconds, then run the same ndev flow command again. The commit is local.`
 }
 function push(wf: Workflow, retryRebase = false, source = 'HEAD', options: string[] = [], refused = 'Repair: resolve the push error and retry. The commit is local.'): string | undefined {
   const ref = `refs/heads/${wf.branch}`

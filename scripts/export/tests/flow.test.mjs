@@ -701,6 +701,7 @@ test('a push stopped past the hook limit names the pre-push hook, its limit and 
   assert.match(r.all, /guard\.timeoutSeconds 1\b/)
   assert.ok(r.all.includes(log), `names the hook's log ${log}:\n${r.all}`)
   assert.match(r.all, /ndev-git-push\.log/)
+  assert.match(r.all, /Only git was stopped/)
 })
 
 test('checkpoint refuses a guard.timeoutSeconds that is not a whole number and names the repair', () => {
