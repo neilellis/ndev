@@ -185,5 +185,5 @@ export function report(root, values) {
       repair: 'Fix each failed check, or say in the pull request why it does not apply, then push again.', details: result,
     })
   }
-  return { ...result, text: `Proof ${conclusion} for ${plan.head.slice(0, 12)}: ${states}.${posted}` }
+  return { ...result, text: `Proof ${conclusion} for ${plan.head.slice(0, 12)}: ${states}.${posted}${values.local ? `\n\n${body}` : ''}` }
 }

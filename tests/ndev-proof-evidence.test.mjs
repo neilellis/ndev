@@ -189,12 +189,12 @@ test('requirements: a closing reference in a commit message reads that issue', t
   assert.deepEqual(evidence(base, root, { body: LESSONS, env: { NDEV_FLOW_GH: script } }).evidence.requirements.cited, ['REQ-0001'])
 })
 
-test('requirements: an issue that gh.sh cannot read is not-run, and the other checks still run', t => {
+test('requirements: an issue of a commit message that gh.sh cannot read is not-run, and the other checks still run', t => {
   const { base, root } = repository(t, withRecords)
-  commit(root, { 'src/report.js': 'function report() {\n  return ["guide"]\n}\n' })
+  commit(root, { 'src/report.js': 'function report() {\n  return ["guide"]\n}\n' }, 'Name the sources\n\nCloses #12.')
   const script = join(base, 'gh.sh')
   writeFileSync(script, 'echo "HTTP 404: Could not resolve to an issue" >&2\nexit 1\n')
-  const result = evidence(base, root, { body: `Closes #12.\n\n${LESSONS}`, env: { NDEV_FLOW_GH: script } })
+  const result = evidence(base, root, { body: LESSONS, env: { NDEV_FLOW_GH: script } })
   assert.equal(result.evidence.requirements.state, 'not-run')
   assert.equal(result.evidence.requirements.command, 'gh.sh issue-read 12')
   assert.match(result.evidence.requirements.output, /Could not resolve to an issue/)
@@ -222,6 +222,31 @@ test('lessons: a body that gh.sh cannot read is not-run, with the command and it
   const found = evidence(base, root, { plan, env }).evidence.lessons
   assert.deepEqual({ ...found, output: undefined }, { state: 'not-run', command: 'gh.sh pr-read 7', output: undefined })
   assert.match(found.output, /not logged in/)
+})
+
+test('request: the pull request body, and the number, title and body of each issue that it closes', t => {
+  const { base, root } = repository(t)
+  commit(root, { 'src/util.js': 'function add(a, b) {\n  return b + a\n}\n'.repeat(30) })
+  const script = join(base, 'gh.sh')
+  writeFileSync(script, 'case "$*" in "issue-read 12") echo \'{"number":12,"title":"Add sub","state":"open","body":"Sub subtracts.","url":"u"}\' ;; "issue-read 13") echo \'{"number":13,"title":"Fix add","state":"open","body":"Add adds.","url":"u"}\' ;; *) echo "unexpected: $*" >&2; exit 9 ;; esac\n')
+  const body = `Fixes #12 and resolves #13. Closes #12.\n\n${LESSONS}`
+  const result = evidence(base, root, { body, env: { NDEV_FLOW_GH: script } })
+  assert.equal(result.tier, 'standard')
+  assert.deepEqual(result.request, { state: 'present', body, issues: [{ number: 12, title: 'Add sub', body: 'Sub subtracts.' }, { number: 13, title: 'Fix add', body: 'Add adds.' }] })
+})
+
+test('request: an issue that gh.sh cannot read fails fast, with the number, the gh output and the repair', t => {
+  const { base, root } = repository(t)
+  commit(root, { 'src/util.js': 'function add(a, b) {\n  return b + a\n}\n'.repeat(30) })
+  const script = join(base, 'gh.sh')
+  writeFileSync(script, 'echo "HTTP 404: Could not resolve to an issue" >&2\nexit 1\n')
+  const result = ndev(root, ['proof', 'evidence', '--plan', planFile(base, root), '--body', bodyFile(base, `Closes #12.\n\n${LESSONS}`)], { NDEV_FLOW_GH: script })
+  assert.equal(result.status, 1, `${result.stdout}${result.stderr}`)
+  const { error } = JSON.parse(result.stdout)
+  assert.match(error.message, /issue #12/)
+  assert.match(error.message, /Could not resolve to an issue/)
+  assert.match(error.repair, /gh auth status/)
+  assert.match(error.repair, /#12/)
 })
 
 test('tests: a test whose name only contains the source name is not near it', t => {

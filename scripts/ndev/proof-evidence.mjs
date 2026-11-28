@@ -55,7 +55,25 @@ function ghRead(args) {
   const result = run('bash', [ghScript(), ...args])
   const output = `${result.stdout}${result.stderr}`.trim()
   if (result.status !== 0) return { failed: { state: 'not-run', command: `gh.sh ${args.join(' ')}`, output } }
-  return { body: JSON.parse(result.stdout).body ?? '' }
+  const parsed = JSON.parse(result.stdout)
+  return { body: parsed.body ?? '', title: parsed.title ?? '' }
+}
+
+const closedBy = text => [...new Set([...text.matchAll(CLOSING)].map(match => match[1]))]
+
+function request({ body, failed }) {
+  if (failed) return failed
+  if (body === undefined) return { state: 'not-run', reason: NO_BODY }
+  const issues = closedBy(body).map(number => {
+    const issue = ghRead(['issue-read', number])
+    if (issue.failed) {
+      throw new CliError(1, `The pull request body closes issue #${number}, and ${issue.failed.command} failed: ${issue.failed.output || 'no output'}`, {
+        repair: `Check gh auth status, and that issue #${number} exists in this repository; or take "#${number}" out of the closing words of the body.`,
+      })
+    }
+    return { number: Number(number), title: issue.title, body: issue.body }
+  })
+  return { state: 'present', body, issues }
 }
 
 function bodyOf(plan, values) {
@@ -77,12 +95,13 @@ function ndev(root, args) {
 
 const NO_BODY = 'no pull request body: give --body <file>, a plan made with --pr <n>, or GITHUB_EVENT_PATH'
 
-function requirements(root, plan, { body, failed }, records) {
+function requirements(root, plan, { body, failed }, asked, records) {
   if (failed) return failed
   if (body === undefined) return { state: 'not-run', reason: NO_BODY }
-  const texts = [body, git(root, ['log', '--format=%B', `${plan.base}..HEAD`]).output]
-  const closed = [...new Set(texts.flatMap(text => [...text.matchAll(CLOSING)].map(match => match[1])))]
-  for (const number of closed) {
+  const log = git(root, ['log', '--format=%B', `${plan.base}..HEAD`]).output
+  const texts = [body, log, ...asked.issues.map(issue => issue.body)]
+  const read = new Set(asked.issues.map(issue => String(issue.number)))
+  for (const number of closedBy(log).filter(number => !read.has(number))) {
     const issue = ghRead(['issue-read', number])
     if (issue.failed) return issue.failed
     texts.push(issue.body)
@@ -160,12 +179,13 @@ export function evidence(root, values) {
   const result = { base: plan.base, head, tier: plan.tier, skip: plan.skip }
   if (plan.skip) return { ...result, evidence: {}, text: `Proof evidence for ${head.slice(0, 12)}: none, the run is skipped: ${plan.skip.reason}.` }
   const wanted = check => plan.checks[check]?.action === 'run'
-  const needsBody = wanted('requirements') || wanted('lessons')
+  const needsBody = ['requirements', 'lessons', 'code', 'visual'].some(wanted)
   const body = needsBody ? bodyOf(plan, values) : {}
+  const asked = needsBody ? request(body) : undefined
   const diff = ['tests', 'model', 'docs'].some(wanted) ? diffOf(root, plan.base) : undefined
   const records = wanted('requirements') || wanted('model') ? recordsAt(root) : new Map()
   const collectors = {
-    requirements: () => requirements(root, plan, body, records),
+    requirements: () => requirements(root, plan, body, asked, records),
     tests: () => diff.failed ?? tests(diff),
     model: () => diff.failed ?? model(root, plan, diff, records),
     docs: () => diff.failed ?? docs(diff),
@@ -177,5 +197,5 @@ export function evidence(root, values) {
     found[check] = planned?.action === 'run' ? collect() : { state: 'skipped', reason: planned?.reason ?? 'not in the plan' }
   }
   const text = [`Proof evidence for ${head.slice(0, 12)} against ${plan.base}:`, ...Object.entries(found).map(([check, entry]) => `  ${check.padEnd(12)} ${entry.state}${entry.reason ? `: ${entry.reason}` : ''}`)].join('\n')
-  return { ...result, evidence: found, text }
+  return { ...result, ...(asked ? { request: asked } : {}), evidence: found, text }
 }

@@ -144,6 +144,18 @@ for (const [name, change, status] of [
   })
 }
 
+for (const [name, plan] of [['passes', planOf()], ['is skipped', planOf({ skip: { reason: 'the pull request is a draft' } })]]) {
+  test(`--local prints the comment when the run ${name}`, t => {
+    const base = setup(t)
+    const files = ['--plan', write(base, 'plan.json', plan), '--verdict', write(base, 'verdict.json', passing()), '--evidence', write(base, 'evidence.json', EVIDENCE)]
+    const result = spawnSync(executable, ['proof', 'report', '--local', ...files], { cwd: base, encoding: 'utf8', timeout: 60_000, env: { ...process.env, NDEV_FLOW_GH: join(base, 'gh.sh'), FAKE_GH_STATE: base } })
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`)
+    assert.match(result.stdout, /<!-- ndev-proof -->\n## Proof of a{12}/)
+    assert.match(result.stdout, /\| B \| Code \| (✅ pass|⏭️ skipped) \|/)
+    assert.ok(!existsSync(join(base, 'calls.log')), '--local made a gh call')
+  })
+}
+
 test('a check the plan skips shows its reason and needs no verdict entry', t => {
   const base = setup(t)
   const result = report(base, { plan: planOf({ run: ['code', 'tests'] }), verdict: passing(['code', 'tests']), args: ['--local'] })

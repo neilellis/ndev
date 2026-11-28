@@ -8,6 +8,26 @@ import { fileURLToPath } from 'node:url'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 const executable = join(repoRoot, 'bin/ndev')
+const site = join(repoRoot, 'tests/fixtures/proof-site.mjs')
+const matrix = join(repoRoot, 'tests/fixtures/proof-matrix.mjs')
+
+const FAKE_GH = `import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const state = process.env.FAKE_GH_STATE
+const args = process.argv.slice(2)
+appendFileSync(join(state, 'calls.log'), JSON.stringify(args) + '\\n')
+const joined = args.join(' ')
+if (joined.startsWith('view-json pr 5 ')) console.log(JSON.stringify({ labels: [], isDraft: false, isCrossRepository: false }))
+else if (args[0] === 'api' && args[1] === 'graphql') {
+  if (process.env.FAKE_GH_PROVEN_FAIL) { console.error('gh: HTTP 502 Bad Gateway'); process.exit(4) }
+  console.log(readFileSync(join(state, 'timeline.json'), 'utf8'))
+} else if (args[0] === 'api' && args.includes('--paginate')) {
+} else if (args[0] === 'comment') console.log('https://github.com/o/r/pull/5#issuecomment-1')
+else if (args[0] === 'api' && args.includes('repos/o/r/check-runs')) {
+  writeFileSync(join(state, 'check-run.json'), readFileSync(args[args.indexOf('--input') + 1], 'utf8'))
+  console.log(JSON.stringify({ id: 9, html_url: 'https://github.com/o/r/runs/9' }))
+} else { console.error('fake gh: unexpected ' + joined); process.exit(9) }
+`
 
 const FAKE_AGENT = `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -37,12 +57,17 @@ function commit(root, files, message) {
   git(root, 'commit', '-qm', message)
 }
 
-function repository(t, config, change) {
+function freePort() {
+  const result = spawnSync(process.execPath, ['-e', "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})"], { encoding: 'utf8' })
+  return Number(result.stdout.trim())
+}
+
+function repository(t, config, change, baseFiles = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'ndev-proof-run-')))
   t.after(() => rmSync(base, { recursive: true, force: true }))
   const root = join(base, 'repo')
   git(base, 'init', '-q', '-b', 'main', root)
-  commit(root, { 'src/util.js': 'function add(a, b) {\n  return a + b\n}\n', ...(config ? { '.ndev.json': `${JSON.stringify(config)}\n` } : {}) }, 'base')
+  commit(root, { 'src/util.js': 'function add(a, b) {\n  return a + b\n}\n', ...baseFiles, ...(config ? { '.ndev.json': `${JSON.stringify(config)}\n` } : {}) }, 'base')
   git(root, 'checkout', '-qb', 'work')
   commit(root, change, 'change')
   writeFileSync(join(base, 'agent.mjs'), FAKE_AGENT)
@@ -94,6 +119,8 @@ test('a standard change runs the agent with the caps for its tier from the base 
   assert.equal(argv[argv.indexOf('--max-budget-usd') + 1], '1.5')
   assert.ok(argv.includes('-p'))
   assert.match(argv[argv.indexOf('-p') + 1], /skills\/proof\/SKILL\.md/)
+  assert.match(argv[argv.indexOf('-p') + 1], /The request is in the evidence under "request": the pull request body, and each issue that it closes/)
+  assert.equal(JSON.parse(readFileSync(join(repo.base, 'out/evidence.json'), 'utf8')).request.body, readFileSync(join(repo.base, 'body.md'), 'utf8'))
   assert.equal(env.NDEV_PROOF_VERDICT, join(repo.base, 'out/verdict.json'))
   assert.equal(env.NDEV_PROOF_PLAN, join(repo.base, 'out/plan.json'))
   assert.equal(env.NDEV_PROOF_EVIDENCE, join(repo.base, 'out/evidence.json'))
@@ -159,4 +186,102 @@ test('run needs a base: --base, or GITHUB_BASE_REF in GitHub Actions', t => {
   const result = proofRun(repo, { args: [] })
   assert.equal(result.status, 2)
   assert.match(result.json.error.message, /--base <ref>/)
+})
+
+function servers(ports) {
+  const server = (port, cwd) => ({ command: `node ${site}`, port, ready: `http://127.0.0.1:${port}/`, env: { FIXTURE_PORT: String(port), FIXTURE_ROUTES: '/' }, routes: ['/'], cwd })
+  return { devServers: { web: server(ports[0], 'web'), admin: server(ports[1], 'admin') } }
+}
+
+const serverFolders = { 'web/index.html': '<p>web</p>\n', 'admin/index.html': '<p>admin</p>\n' }
+
+test('the visual check starts only the dev servers whose folder holds a changed UI file', t => {
+  const repo = repository(t, servers([freePort(), freePort()]), { 'web/App.tsx': 'export const App = () => null\n', 'web/App.test.tsx': 'test()\n' }, serverFolders)
+  const result = proofRun(repo, { env: { NDEV_PROOF_MATRIX: matrix } })
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.checks.visual.state, 'pass')
+  assert.ok(existsSync(join(repo.base, 'out/snapshots/head/web/argv.json')))
+  assert.ok(!existsSync(join(repo.base, 'out/snapshots/head/admin')), 'the admin server was started for a change in web/')
+})
+
+test('the visual check is skipped, naming the changed UI files, when no dev server holds them', t => {
+  const repo = repository(t, servers([freePort(), freePort()]), { 'other/Thing.tsx': 'export const Thing = () => null\n', 'other/Thing.test.tsx': 'test()\n' }, serverFolders)
+  const result = proofRun(repo, { env: { NDEV_PROOF_MATRIX: matrix } })
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.checks.visual.state, 'skipped')
+  assert.match(result.json.result.checks.visual.reason, /other\/Thing\.tsx/)
+  assert.ok(!existsSync(join(repo.base, 'out/snapshots')))
+})
+
+function rebased(t) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'ndev-proof-run-')))
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const origin = join(base, 'origin.git')
+  git(base, 'init', '-q', '--bare', '-b', 'main', origin)
+  git(origin, 'config', 'uploadpack.allowAnySHA1InWant', 'true')
+  const root = join(base, 'repo')
+  git(base, 'init', '-q', '-b', 'main', root)
+  git(root, 'remote', 'add', 'origin', origin)
+  commit(root, { 'src/util.js': 'function add(a, b) {\n  return a + b\n}\n' }, 'base')
+  git(root, 'push', '-q', 'origin', 'main')
+  git(root, 'checkout', '-qb', 'work')
+  commit(root, trivial, 'change')
+  const proven = git(root, 'rev-parse', 'HEAD')
+  git(root, 'push', '-q', 'origin', 'work')
+  git(root, 'checkout', '-q', 'main')
+  commit(root, { 'README.md': '# Project\n' }, 'readme')
+  git(root, 'push', '-q', 'origin', 'main')
+  git(root, 'checkout', '-q', 'work')
+  git(root, 'rebase', '-q', 'main')
+  git(root, 'push', '-qf', 'origin', 'work')
+  const ci = join(base, 'ci')
+  git(base, 'clone', '-q', '--no-local', '-b', 'work', `file://${origin}`, ci)
+  writeFileSync(join(base, 'fake-gh.mjs'), FAKE_GH)
+  writeFileSync(join(base, 'gh.sh'), `#!/bin/bash\nexec node ${join(base, 'fake-gh.mjs')} "$@"\n`)
+  chmodSync(join(base, 'gh.sh'), 0o755)
+  const run = (key, conclusion) => ({ oid: key, checkSuites: { nodes: [{ checkRuns: { nodes: conclusion ? [{ conclusion, completedAt: '2026-11-27T10:00:00Z' }] : [] } }] } })
+  return { base, ci, proven, head: git(ci, 'rev-parse', 'HEAD'), run }
+}
+
+function prRun({ base, ci }, timeline, env = {}) {
+  writeFileSync(join(base, 'timeline.json'), JSON.stringify({ data: { repository: { pullRequest: { timelineItems: { nodes: timeline } } } } }))
+  const clean = { ...process.env }
+  for (const name of ['GITHUB_BASE_REF', 'GITHUB_EVENT_PATH', 'GITHUB_ACTIONS', 'ANTHROPIC_API_KEY']) delete clean[name]
+  const result = spawnSync(executable, ['proof', 'run', '--pr', '5', '--base', 'origin/main', '--out', join(base, 'out'), '--json'], {
+    cwd: ci, encoding: 'utf8', timeout: 120_000,
+    env: { ...clean, NDEV_FLOW_GH: join(base, 'gh.sh'), FAKE_GH_STATE: base, GITHUB_REPOSITORY: 'o/r', NDEV_PROOF_COMMENTER: 'bot', NDEV_PROOF_AGENT: join(base, 'no-agent'), ...env },
+  })
+  assert.ifError(result.error)
+  const calls = readFileSync(join(base, 'calls.log'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  return { status: result.status, json: JSON.parse(result.stdout), calls }
+}
+
+test('a --pr run skips a commit that only rebases the last commit that Proof passed, and fetches that commit', t => {
+  const repo = rebased(t)
+  assert.notEqual(spawnSync('git', ['-C', repo.ci, 'cat-file', '-e', `${repo.proven}^{commit}`]).status, 0, 'the clone already has the proven commit')
+  const result = prRun(repo, [
+    { __typename: 'PullRequestCommit', commit: repo.run(repo.proven, 'SUCCESS') },
+    { __typename: 'HeadRefForcePushedEvent', beforeCommit: repo.run(repo.proven, 'SUCCESS'), afterCommit: repo.run(repo.head, null) },
+  ])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.conclusion, 'skipped')
+  assert.match(result.json.result.checks.code.reason, new RegExp(`only a rebase since the last proven commit ${repo.proven.slice(0, 12)}`))
+  const query = result.calls.find(args => args[0] === 'api' && args[1] === 'graphql')
+  assert.ok(query.join(' ').includes('ndev proof') && query.includes('number=5'), query.join(' '))
+})
+
+test('a --pr run with no successful Proof check run on the pull request proves the commit', t => {
+  const repo = rebased(t)
+  const result = prRun(repo, [{ __typename: 'PullRequestCommit', commit: repo.run(repo.head, null) }, { __typename: 'PullRequestCommit', commit: repo.run(repo.proven, 'FAILURE') }])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.conclusion, 'success')
+})
+
+test('a --pr run fails fast when gh cannot read the Proof check runs of the pull request', t => {
+  const repo = rebased(t)
+  const result = prRun(repo, [], { FAKE_GH_PROVEN_FAIL: '1' })
+  assert.equal(result.status, 1, JSON.stringify(result.json))
+  assert.match(result.json.error.message, /pull request 5/)
+  assert.match(result.json.error.message, /exited 4: gh: HTTP 502 Bad Gateway/)
+  assert.match(result.json.error.repair, /gh auth status/)
 })

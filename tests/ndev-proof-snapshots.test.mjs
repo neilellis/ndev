@@ -214,3 +214,17 @@ test('without --pr or --local the command refuses to guess where the images go',
   assert.equal(result.status, 2, result.all)
   assert.match(result.json.error.message, /Give --pr <n> to push the images, or --local to keep them in --out\./)
 })
+
+test('--servers starts only the named dev servers, and refuses a name that .ndev.json does not list', t => {
+  const [one, two] = [freePort(), freePort()]
+  const both = { devServers: { ...config(one, { routes: ['/'] }).devServers, admin: config(two, { routes: ['/'] }).devServers.web }, proof: { viewports: VIEWPORTS } }
+  const { base, root } = repository(t, { base: both, head: both })
+  const out = join(base, 'out')
+  const result = snapshots(root, ['--local', '--servers', 'admin', '--out', out])
+  assert.equal(result.status, 0, result.all)
+  assert.deepEqual(result.json.result.servers, ['admin'])
+  assert.ok(!existsSync(join(out, 'head/web')))
+  const unknown = snapshots(root, ['--local', '--servers', 'nope', '--out', out])
+  assert.equal(unknown.status, 2, unknown.all)
+  assert.match(unknown.json.error.message, /No dev server is named nope in \.ndev\.json\. Listed: web, admin\./)
+})

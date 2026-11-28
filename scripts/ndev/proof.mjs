@@ -6,7 +6,7 @@ import { evidence } from './proof-evidence.mjs'
 import { report } from './proof-report.mjs'
 import { proofInstall } from './proof-install.mjs'
 import { proofRun } from './proof-run.mjs'
-import { snapshots } from './proof-snapshots.mjs'
+import { serving, snapshots } from './proof-snapshots.mjs'
 import { CODE_FILE, DOCS_SITES, REQUIREMENTS, UI_FILE } from './proof-paths.mjs'
 import { proofSettingsAt } from './proof-settings.mjs'
 
@@ -157,7 +157,8 @@ function checksFor({ settings, short, tier, stats, root }) {
   const reasons = {
     requirements: !exists(root, 'HEAD', 'docs/formal') ? 'no docs/formal' : tier === 'trivial' ? 'trivial tier' : undefined,
     code: tier !== 'trivial' ? undefined : stats.docsOnly ? 'trivial tier: docs-only change' : 'trivial tier: no agent reads the diff',
-    visual: stats.ui.length === 0 ? 'no UI files changed' : !hasServers ? `no devServers in .ndev.json at ${short}` : undefined,
+    visual: stats.ui.length === 0 ? 'no UI files changed' : !hasServers ? `no devServers in .ndev.json at ${short}`
+      : serving(settings.devServers, stats.ui).length === 0 ? `no dev server in .ndev.json at ${short} has a cwd that holds the changed UI files ${stats.ui.join(', ')}` : undefined,
     tests: stats.code.length === 0 ? 'no code files changed' : undefined,
     model: tier === 'complex' ? undefined : `only the complex tier needs a model; this change is ${tier}`,
     docs: !site ? 'no docs site' : stats.code.length === 0 ? 'no code files changed' : undefined,
@@ -228,7 +229,7 @@ export function runProof([verb, ...argv]) {
     return evidence(gitWorkspace().root, values)
   }
   if (verb === 'snapshots') {
-    const { values } = argsFor(argv, { pr: { type: 'string' }, routes: { type: 'string' }, out: { type: 'string' }, base: { type: 'string' }, local: { type: 'boolean' } }, repair)
+    const { values } = argsFor(argv, { pr: { type: 'string' }, routes: { type: 'string' }, servers: { type: 'string' }, out: { type: 'string' }, base: { type: 'string' }, local: { type: 'boolean' } }, repair)
     return snapshots(gitWorkspace().root, values)
   }
   if (verb === 'report') {
