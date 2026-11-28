@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, relative, resolve } from 'node:path'
 
 import { checked, CliError, releaseRoot, run } from './common.mjs'
 import { devServers, start, stopAndWait, tail } from './dev-servers.mjs'
@@ -18,9 +18,27 @@ const matrixScript = () => process.env.NDEV_PROOF_MATRIX || join(releaseRoot, 's
 
 const git = (root, args, options = {}) => checked('git', ['-C', root, ...args], { repair: `Run git ${args.join(' ')} in ${root} to see the fault.`, ...options })
 
-function selected(servers, wanted) {
-  const listed = Object.entries(servers).map(([name, server]) => ({ name, routes: server.routes ?? ['/'] }))
-  if (listed.length === 0) throw new CliError(1, 'There are no devServers in .ndev.json, so there is nothing to snapshot.', { repair: 'Add the servers under "devServers", each with the "routes" it serves, to .ndev.json.' })
+export function serving(servers, files) {
+  return Object.entries(servers).filter(([, server]) => {
+    const folder = posix.normalize(server.cwd ?? '.').replace(/\/+$/, '')
+    return folder === '.' || files.some(file => file.startsWith(`${folder}/`))
+  }).map(([name]) => name)
+}
+
+export function proofServers(root, base) {
+  return { ...devServers(root).servers, ...proofSettingsAt(root, base).devServers }
+}
+
+function selected(servers, wanted, names) {
+  const all = Object.entries(servers).map(([name, server]) => ({ name, routes: server.routes ?? ['/'] }))
+  if (all.length === 0) throw new CliError(1, 'There are no devServers in .ndev.json, so there is nothing to snapshot.', { repair: 'Add the servers under "devServers", each with the "routes" it serves, to .ndev.json.' })
+  const unknown = (names ?? []).filter(name => !all.some(server => server.name === name))
+  if (unknown.length > 0) {
+    throw new CliError(2, `No dev server is named ${unknown.join(', ')} in .ndev.json. Listed: ${all.map(server => server.name).join(', ')}.`, {
+      repair: 'Pass a listed server to --servers, or add it under "devServers" in .ndev.json.',
+    })
+  }
+  const listed = names ? all.filter(server => names.includes(server.name)) : all
   if (!wanted) return listed
   const missing = wanted.filter(route => !listed.some(server => server.routes.includes(route)))
   if (missing.length > 0) {
@@ -204,7 +222,8 @@ export async function snapshots(root, values) {
   }
   const settings = proofSettingsAt(root, values.base ?? 'HEAD')
   const wanted = values.routes?.split(',').map(route => route.trim()).filter(Boolean)
-  const servers = selected(devServers(root).servers, wanted)
+  const names = values.servers?.split(',').map(name => name.trim()).filter(Boolean)
+  const servers = selected(devServers(root).servers, wanted, names)
   const cells = []
   for (const server of servers) {
     for (const cell of await shoot(root, server.name, server.routes, settings, join(out, 'head', server.name))) {

@@ -16,13 +16,13 @@ The environment gives each path:
 | Variable | Content |
 |---|---|
 | `NDEV_PROOF_PLAN` | The output of `ndev proof plan`: the tier, its reasons, and `checks.<check>.action` (`run` or `skip`). |
-| `NDEV_PROOF_EVIDENCE` | The output of `ndev proof evidence`: the facts for requirements, tests, model, docs and lessons. |
+| `NDEV_PROOF_EVIDENCE` | The output of `ndev proof evidence`: the request, and the facts for requirements, tests, model, docs and lessons. Under `request` are the pull request `body`, and the `number`, `title` and `body` of each issue that the body closes (`Closes`, `Fixes` or `Resolves #n`). |
 | `NDEV_PROOF_GRID` | The snapshot grid, when the visual check runs. The images are beside it. |
 | `NDEV_PROOF_VERDICT` | The file that you write. |
 
 ## Read to the depth of the tier
 
-- **Standard:** read the whole diff against the base (`git diff <base>...HEAD`), the pull request body in the evidence, and each requirement record that the evidence cites.
+- **Standard:** read the whole diff against the base (`git diff <base>...HEAD`), the request in the evidence (the pull request body and the issues that it closes), and each requirement record that the evidence cites.
 - **Complex:** do the standard reading. Then read the code paths that the change touches: callers, callees and the tests of each changed function. Read the Quint models that the evidence names.
 
 Stop at the limits that the run gives you. If you cannot finish a check, mark it `not-run` with the reason. Do not guess a pass.
@@ -32,8 +32,8 @@ Stop at the limits that the run gives you. If you cannot finish a check, mark it
 | Check | Pass when |
 |---|---|
 | A requirements | Each requirement that the change claims is cited, in force, and met by the diff. `requirements verify` exited 0. |
-| B code | The diff does what the pull request and its issue say, with no defect that you can name: wrong logic, a lost error, an unsafe input, dead code, a broken contract. |
-| C visual | The snapshots show no broken layout, overlap, cut text or unreadable contrast in light or dark, at each viewport. Compare with the base images when they exist. |
+| B code | The diff does what the request says (the pull request body and each issue that it closes), with no defect that you can name: wrong logic, a lost error, an unsafe input, dead code, a broken contract. When the request is `not-run`, B is `not-run` with its reason. |
+| C visual | The after images show the change that the request describes. If they do not show it, C fails. The snapshots also show no broken layout, overlap, cut text or unreadable contrast in light or dark, at each viewport, in a cell that the change touches. Compare with the base images when they exist. |
 | D tests | Each changed behaviour has a test that fails without the change. A test that only runs the code is not enough. |
 | E model | The change keeps the Quint model true, or the model changes with it, and the model check passes. |
 | F docs | The documentation site says what a user now sees or does differently. |

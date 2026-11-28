@@ -28,7 +28,7 @@ Hack mode has no interview and no plan. `started` goes straight to `developing`.
 
 The aim is a solution that works. Try ideas, throw them away, and follow the human's lead.
 
-- Write the goal of the issue in one line in the PR body. A hack with no goal has no end.
+- Write the goal of the issue in one line in the PR body. A hack with no goal has no end. The PR body also has a `## Lessons` section. The `## Lessons` section states what the work taught, or says that there is none and why (`${CLAUDE_PLUGIN_ROOT}/kb/proof.md`).
 - Commit through `mcp__ndev__checkpoint` as often as is useful. In hack mode it commits on this computer only: it does not push, and no CI runs. `fast-checks.sh` runs and reports, and a failure does not stop the commit.
 - Test first is not required here. Spike code, debug output and dead ends are allowed.
 - Do not push with `git push`, and do not merge. Nothing leaves this computer before the review.

@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 import { validate } from '../../hooks/config.ts'
 import { CliError, releaseRoot, run } from './common.mjs'
-import { readConfigObject } from './config-file.mjs'
+import { CONFIG_FILE, moveLegacyConfig, readConfigObject } from './config-file.mjs'
 
 export const CLAUDE_CODE = { package: '@anthropic-ai/claude-code', version: '2.1.331' }
 export const WORKFLOW_FILE = '.github/workflows/ndev-proof.yml'
@@ -13,7 +13,8 @@ const ACTIONS = {
   setupNode: 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0',
   upload: 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2',
 }
-const FRAMEWORKS = [['next', 3000], ['nuxt', 3000], ['astro', 4321], ['@sveltejs/kit', 5173], ['vite', 5173], ['react-scripts', 3000]]
+const FRAMEWORKS = [['next', 3000], ['nuxt', 3000], ['astro', 4321, 'astro'], ['@sveltejs/kit', 5173, 'vite'], ['vite', 5173, 'vite'], ['react-scripts', 3000]]
+const CONFIG_EXTENSIONS = ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts']
 const LOCKFILES = [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['package-lock.json', 'npm'], ['npm-shrinkwrap.json', 'npm']]
 const BUN_LOCKFILES = ['bun.lockb', 'bun.lock']
 const INSTALL = {
@@ -83,15 +84,32 @@ function packageManager(root) {
   return found[1]
 }
 
-function serverIn(dir, manifest, manager, installDir) {
+const withoutComments = text => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:\\])\/\/.*$/gm, '$1')
+
+function configPort(appDir, prefix) {
+  if (!prefix) return {}
+  for (const extension of CONFIG_EXTENSIONS) {
+    const file = join(appDir, `${prefix}.config.${extension}`)
+    if (!existsSync(file)) continue
+    const text = withoutComments(readFileSync(file, 'utf8'))
+    const port = text.match(/\bserver\s*:\s*\{[^{}]*?\bport\s*:\s*(\d+)\s*[,}\n]/)?.[1] ?? text.match(/\bserver\.port\s*=\s*(\d+)\s*[;\n]/)?.[1]
+    return { file, port: port === undefined ? undefined : Number(port) }
+  }
+  return {}
+}
+
+function serverIn(root, dir, manifest, manager, installDir) {
   const deps = { ...manifest.dependencies, ...manifest.devDependencies }
   const framework = FRAMEWORKS.find(([name]) => deps[name])
   if (!framework) return null
   const script = manifest.scripts?.dev ? 'dev' : manifest.scripts?.start ? 'start' : null
   if (!script) return null
-  const port = Number(manifest.scripts[script].match(/(?:--port|-p)[ =](\d+)/)?.[1] ?? framework[1])
+  const flag = manifest.scripts[script].match(/(?:--port|-p)[ =](\d+)/)?.[1]
+  const configured = flag === undefined ? configPort(join(root, dir), framework[2]) : {}
+  const port = Number(flag ?? configured.port ?? framework[1])
+  const portNote = configured.file && configured.port === undefined ? `port ${port} is the ${framework[2]} default, because ${configured.file} has no literal port` : null
   const server = { command: `${{ berry: 'yarn', unlocked: 'npm' }[manager] ?? manager} run ${script}`, ...(dir === '.' ? {} : { cwd: dir }), port, ready: `http://localhost:${port}/`, routes: ['/'] }
-  return { name: dir === '.' ? 'web' : basename(dir), dir, framework: framework[0], server, manager, install: installDir, playwright: Boolean(deps.playwright || deps['@playwright/test']) }
+  return { name: dir === '.' ? 'web' : basename(dir), dir, framework: framework[0], server, manager, install: installDir, playwright: Boolean(deps.playwright || deps['@playwright/test']), portNote }
 }
 
 function standaloneDirs(root, members) {
@@ -106,9 +124,9 @@ function detect(root, manager) {
   const file = join(root, 'package.json')
   const manifest = existsSync(file) ? readJson(file) : {}
   const members = existsSync(file) ? workspaceDirs(root, manifest) : []
-  const found = existsSync(file) ? [serverIn('.', manifest, manager, '.')] : []
-  for (const dir of members) found.push(serverIn(dir, readJson(join(root, dir, 'package.json')), manager, '.'))
-  for (const dir of standaloneDirs(root, members)) found.push(serverIn(dir, readJson(join(root, dir, 'package.json')), packageManager(join(root, dir)), dir))
+  const found = existsSync(file) ? [serverIn(root, '.', manifest, manager, '.')] : []
+  for (const dir of members) found.push(serverIn(root, dir, readJson(join(root, dir, 'package.json')), manager, '.'))
+  for (const dir of standaloneDirs(root, members)) found.push(serverIn(root, dir, readJson(join(root, dir, 'package.json')), packageManager(join(root, dir)), dir))
   const servers = found.filter(Boolean)
   for (const server of servers) {
     const same = servers.filter(other => other.name === server.name)
@@ -169,6 +187,7 @@ function workflow({ ref, servers, root }) {
     '      contents: write',
     '      pull-requests: write',
     '      checks: write',
+    '      issues: read',
     '    env:',
     `      NDEV_REF: ${ref}`,
     `      CLAUDE_CODE_VERSION: ${CLAUDE_CODE.version}`,
@@ -207,6 +226,22 @@ function workflow({ ref, servers, root }) {
     '          path: ${{ runner.temp }}/proof',
     '          if-no-files-found: ignore',
     '',
+    '  fork:',
+    '    name: ndev proof skipped for a fork',
+    '    if: github.event.pull_request.head.repo.full_name != github.repository',
+    '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 5',
+    '    permissions: {}',
+    '    steps:',
+    '      - name: Say why Proof skipped this pull request',
+    '        run: |',
+    '          {',
+    '            echo "## ndev proof skipped"',
+    '            echo',
+    '            echo "This pull request comes from a fork, so GitHub gives its workflow no ANTHROPIC_API_KEY, and Proof cannot run."',
+    '            echo "To run Proof, a maintainer can push the branch to this repository and open the pull request from there."',
+    '          } >> "$GITHUB_STEP_SUMMARY"',
+    '',
   ].join('\n')
 }
 
@@ -221,7 +256,7 @@ function planConfig(root, servers, confirmed) {
   const current = existsSync(path) ? readFileSync(path, 'utf8') : undefined
   const changed = current === undefined ? true : JSON.stringify(JSON.parse(current)) !== JSON.stringify(next)
   const action = !changed ? 'unchanged' : !confirmed ? 'pending' : current === undefined ? 'create' : 'update'
-  return { path, text, action, kept: config.devServers !== undefined }
+  return { path: action === 'create' || action === 'update' ? join(root, CONFIG_FILE) : path, text, action, kept: config.devServers !== undefined }
 }
 
 function planWorkflow(root, text, force, dryRun) {
@@ -239,7 +274,8 @@ function describe({ root, slug, servers, config, file, secret, playwright, unloc
   lines.push(file.action === 'differs' ? `${file.path}: differs from the workflow that this ndev writes; --force would replace it.` : `${file.path}: ${file.action}${dryRun && file.action !== 'unchanged' ? ' (dry run)' : ''}.`)
   for (const dir of unlocked) lines.push(`${dir === '.' ? root : join(root, dir)} has no lockfile, so the workflow runs npm install, and each run can get other versions. Commit a lockfile to pin them: npm install${dir === '.' ? '' : ` in ${dir}`}, then commit package-lock.json.`)
   if (servers.length === 0) lines.push('No dev server found: no package.json script runs a known web framework, so the visual check is skipped.')
-  for (const found of servers) lines.push(`Dev server ${found.name} (${found.framework}): ${found.server.command}${found.server.cwd ? ` in ${found.server.cwd}` : ''}, ready at ${found.server.ready}, routes ${found.server.routes.join(', ')}.`)
+  for (const found of servers) lines.push(`Dev server ${found.name} (${found.framework}): ${found.server.command}${found.server.cwd ? ` in ${found.server.cwd}` : ''}, ready at ${found.server.ready}, routes ${found.server.routes.join(', ')}${found.portNote ? `; ${found.portNote}` : ''}.`)
+  if (config.moved?.moved) lines.push(`Moved ${config.moved.from} to ${config.moved.to}, the new name of the project config. Commit the rename.`)
   if (config.kept) lines.push(`${config.path} already has devServers, so they were kept.`)
   if (config.action === 'pending') lines.push(`${config.path}: pending. Confirm the dev servers above, then run ndev proof install ${root} --yes to write them and the proof section.`)
   else lines.push(`${config.path}: ${config.action}${dryRun && config.action !== 'unchanged' ? ' (dry run)' : ''}.`)
@@ -247,7 +283,7 @@ function describe({ root, slug, servers, config, file, secret, playwright, unloc
   if (secret.state === 'set') lines.push('The ANTHROPIC_API_KEY secret is set.')
   else if (secret.state === 'missing') lines.push(`The ANTHROPIC_API_KEY secret is not a repository secret of ${slug}. An organization secret is not listed here; if there is none, set it: gh secret set ANTHROPIC_API_KEY --repo ${slug}`)
   else lines.push(`The ANTHROPIC_API_KEY secret could not be checked: ${secret.reason}. Check it: gh secret list${slug ? ` --repo ${slug}` : ''}`)
-  lines.push(`To make Proof gate the merge, add "ndev proof" as a required status check: ${slug ? `https://github.com/${slug}/settings/rules` : 'the repository settings, Rules'}. A pull request from a fork gets no run, so it gets no ndev proof check and cannot merge until a maintainer runs Proof on it.`)
+  lines.push(`To make Proof gate the merge, add "ndev proof" as a required status check: ${slug ? `https://github.com/${slug}/settings/rules` : 'the repository settings, Rules'}. A pull request from a fork gets no secret, so Proof skips it, and the job summary of the fork job says why. It gets no ndev proof check and cannot merge until a maintainer pushes its branch to ${slug ?? 'the repository'} and Proof runs there.`)
   return lines.join('\n')
 }
 
@@ -267,13 +303,16 @@ export function proofInstall(path, values) {
       mkdirSync(dirname(file.path), { recursive: true })
       writeFileSync(file.path, file.text)
     }
-    if (config.action === 'create' || config.action === 'update') writeFileSync(config.path, config.text)
+    if (config.action === 'create' || config.action === 'update') {
+      config.moved = moveLegacyConfig(root)
+      writeFileSync(config.path, config.text)
+    }
   }
   const servers = found.map(({ name, framework, server }) => ({ name, framework, ...server }))
   return {
     root, ref, slug, servers, secret, playwright,
     workflow: { path: file.path, action: file.action },
-    config: { path: config.path, action: config.action },
+    config: { path: config.path, action: config.action, moved: Boolean(config.moved?.moved) },
     dryRun: Boolean(values['dry-run']),
     text: describe({ root, slug, servers: found, config, file, secret, playwright, unlocked, dryRun: values['dry-run'] }),
   }

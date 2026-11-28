@@ -233,7 +233,7 @@ test('a deleted file does not stop the requirement lookup', t => {
   assert.deepEqual(planned(root).stats.records, ['REQ-0001'])
 })
 
-test('a UI change runs the visual check only when the base names dev servers', t => {
+test('a UI change runs the visual check when the base or the pull request names dev servers', t => {
   const server = { web: { command: 'npm run dev', port: 3000, ready: 'http://localhost:3000/' } }
   const withServers = repository(t, { '.ndev.json': { devServers: server } })
   commit(withServers.root, { 'src/Button.tsx': 'export const Button = () => null\n' })
@@ -241,9 +241,13 @@ test('a UI change runs the visual check only when the base names dev servers', t
   assert.deepEqual(result.checks.visual, ran)
   assert.deepEqual(result.stats.ui, ['src/Button.tsx'])
 
-  const without = repository(t)
-  commit(without.root, { '.ndev.json': { devServers: server }, 'src/Button.tsx': 'export const Button = () => null\n' })
-  assert.deepEqual(planned(without.root).checks.visual, skipped(`no devServers in .ndev.json at ${without.baseSha.slice(0, 12)}`))
+  const added = repository(t)
+  commit(added.root, { '.ndev.json': { devServers: server }, 'src/Button.tsx': 'export const Button = () => null\n' })
+  assert.deepEqual(planned(added.root).checks.visual, ran)
+
+  const none = repository(t)
+  commit(none.root, { 'src/Button.tsx': 'export const Button = () => null\n' })
+  assert.deepEqual(planned(none.root).checks.visual, skipped(`no devServers in .ndev.json at ${none.baseSha.slice(0, 12)} or in the pull request`))
 })
 
 test('a code change with a docs site runs the docs check', t => {

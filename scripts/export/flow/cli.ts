@@ -53,12 +53,12 @@ function run(cmd: string, args: string[], opts: { cwd?: string; env?: Record<str
   if (r.error) return { status: r.error.code === 'ETIMEDOUT' ? 124 : 127, stdout: r.stdout || '', stderr: [r.stderr, r.error.message].filter(Boolean).join('\n') }
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
-function runBounded(script: string, args: string[], cwd: string, env: Record<string, string>, runDir: string, label: string, capMs: number): Run {
+function runBounded(script: string, args: string[], cwd: string, env: Record<string, string>, runDir: string, label: string, capMs: number, issue: number): Run {
   const started = run('bash', [RUN_CHECK, 'start', runDir, script, ...args], { cwd, env })
   const pid = started.stdout.trim()
   if (started.status !== 0 || !/^\d+$/.test(pid)) throw new Fail(1, `${label} did not start (run-check.sh start exited ${started.status}): ${said(started)}`)
   const begun = now()
-  writeFileSync(join(runDir, 'progress.json.tmp'), JSON.stringify({ label, pid: Number(pid), startedAt: begun, limitMs: capMs }))
+  writeFileSync(join(runDir, 'progress.json.tmp'), JSON.stringify({ label, pid: Number(pid), startedAt: begun, limitMs: capMs, issue, flowPid: process.pid }))
   renameSync(join(runDir, 'progress.json.tmp'), join(runDir, 'progress.json'))
   const deadline = begun + capMs
   const progressSeconds = Math.max(1, Math.round(envMs('NDEV_FLOW_PROGRESS_MS', CHECK_WAIT_SECONDS * 1000) / 1000))
@@ -203,6 +203,7 @@ function save(wf: Workflow) {
   const r = run('bash', [`${HOME}/scripts/work/worktree-env.sh`, 'set-workflow', '--expect-rev', String(rev ?? 0), '--worktree', wf.root], { cwd: wf.root, input: JSON.stringify(rest) })
   if (r.status !== 0) throw new Fail(r.status === 5 ? 5 : 1, `ndev-flow: could not save the workflow of #${wf.issue}: worktree-env.sh set-workflow exited ${r.status}: ${said(r)}`)
   wf.rev = Number(r.stdout.trim().split('\n').pop())
+  forgetPassedChecks(wf.root)
 }
 
 function ghRun(root: string, repo: string | undefined, args: string[]): string {
@@ -272,6 +273,17 @@ function changeTypesEnv(root: string, mergeBase: string, declared: readonly stri
   const names = r.status === 0 ? r.stdout.split('\n').filter(Boolean) : []
   return [...new Set([...inferChangeTypes(names), ...declared])].join(',')
 }
+function readPassed(file: string): { key: string; at: number } {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw new Fail(1, `ndev-flow: the saved check result ${file} is unreadable: ${(error as Error).message}. Repair: delete ${file} and run the command again.`)
+  }
+}
+const forgetPassedChecks = (root: string) => {
+  const dir = gitDir(root)
+  for (const name of readdirSync(dir).filter(name => name.endsWith('.passed.json'))) rmSync(join(dir, name), { force: true })
+}
 function runCheck(wf: Workflow, check: string, args: string[] = [], declared: readonly string[] = []): string | undefined {
   const path = `${CHECK_DIR}/${check}`
   const dir = gitDir(wf.root)
@@ -298,7 +310,12 @@ function runCheck(wf: Workflow, check: string, args: string[] = [], declared: re
   const types = changeTypesEnv(wf.root, baseSha, declared)
   const env = { NDEV_WORKTREE_ROOT: wf.root, ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types ? { NDEV_CHANGE_TYPES: types } : {}) }
   const before = git(wf.root, 'status', '--porcelain').stdout
-  const r = runBounded(script, args, wf.root, env, join(dir, `ndev-${check}.run`), path, envMs('NDEV_FLOW_CHECK_MAX_MS', CHECK_MAX_MS))
+  const passedFile = join(dir, `ndev-${check}.passed.json`)
+  const sha = headSha(wf.root)
+  const key = before ? undefined : digestOf(JSON.stringify([wf.issue, sha, digestOf(readFileSync(script, 'utf8')), args, env]))
+  const passed = key && existsSync(passedFile) ? readPassed(passedFile) : undefined
+  if (key && passed?.key === key) return [`${path} passed on ${sha.slice(0, 8)} at ${new Date(passed.at).toISOString()}, and the commit, the script and the clean tree have not changed, so it did not run again.`, note].filter(Boolean).join(' ')
+  const r = runBounded(script, args, wf.root, env, join(dir, `ndev-${check}.run`), path, envMs('NDEV_FLOW_CHECK_MAX_MS', CHECK_MAX_MS), wf.issue)
   const log = join(dir, `ndev-${check}.log`)
   writeFileSync(log, `$ ${path} ${args.join(' ')}\nexit ${r.status}\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`)
   if (r.status !== 0) {
@@ -309,6 +326,10 @@ function runCheck(wf: Workflow, check: string, args: string[] = [], declared: re
   }
   const after = git(wf.root, 'status', '--porcelain').stdout
   if (after !== before) throw new Fail(1, `${path} passed but changed the working tree. Name the changed files in --files and run the command again:\n${after}`)
+  if (key) {
+    writeFileSync(`${passedFile}.tmp`, JSON.stringify({ key, at: now() }))
+    renameSync(`${passedFile}.tmp`, passedFile)
+  }
   return [note, outside].filter(Boolean).join(' ') || undefined
 }
 

@@ -37,7 +37,7 @@ Under `--dry-run`, report the ordered units and stop. Under `--issue <n>`, do th
 Dispatch one `issue-implementer` agent per unit (named `issue-<lead>`). Size the model: a trivial unit can use a smaller model; when you are not sure, size up. A worker in its own session follows the answers of the workflow, which does these stages. A subagent worker cannot move a workflow, so this list is its brief. It loads `work-heavy` and `testing` and runs F0 → F6:
 
 - Worktree `.claude/worktrees/issue-<lead>`, branch `claude/issue-<lead>`, one draft PR based on the base branch.
-- One body section and one `Closes #<n>` per member, each with a `Test entry point:`.
+- One body section and one `Closes #<n>` per member, each with a `Test entry point:`. The body also has a `## Lessons` section. The `## Lessons` section states what the work taught, or says that there is none and why (`${CLAUDE_PLUGIN_ROOT}/kb/proof.md`). When the project has `.github/workflows/ndev-proof.yml`, run `ndev proof run --local --base origin/<base> --body <body file>` before the PR leaves draft, and fix each check that fails.
 - Focused checks, typecheck and lint from the project's `CLAUDE.md`; the `deadcode` skill's sweep for code changes; preview and smoke test where the project has one.
 - `gates.sh` (the `work-heavy-auto` skill) passes before the PR leaves draft.
 - Card to progress after the plan; to review only after verification.
