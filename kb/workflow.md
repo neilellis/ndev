@@ -277,7 +277,7 @@ The engine runs git with the repository's hooks off, so the tools run the checks
 
 **The formal check.** A project with Quint models runs its formal check from `pre-commit-check.sh`, so each checkpoint typechecks and tests the models. The workflow does not run Quint itself, because the version of Quint and the folder of the models belong to the project. [Add a formal check to a project](requirements.md#add-a-formal-check-to-a-project) has the pattern.
 
-Each other failed script stops the tool. The message gives the script, the exit code and the last lines of output. When the base branch has the script, the tool runs the base version, so a branch cannot weaken its own check.
+Each other failed script stops the tool. The message gives the script, the exit code and the last lines of output. When the base branch has the script, the tool runs the base version, so a branch cannot weaken its own check. Each script runs with the worktree as its working directory and gets `NDEV_WORKTREE_ROOT`, the worktree's path. When the worktree's copy is the same as the base version, the tool runs that copy in place, so a script that finds the project root from its own path finds the worktree. When the copy differs, the tool runs the base version from a folder in the Git directory, and a script that finds the root from its own path does not find the project: read `NDEV_WORKTREE_ROOT` or the working directory instead.
 
 ## What the workflow took over from the hooks
 

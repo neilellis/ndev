@@ -655,7 +655,7 @@ async function afterHumanMerge($: EngineInterface, wf: Workflow, pr: Pr, sha: st
   return notes
 }
 
-async function setUpPr($: EngineInterface, wf: Workflow, title: string, shared?: number): Promise<void> {
+async function setUpPr($: EngineInterface, wf: Workflow, title: string, shared?: number): Promise<string | undefined> {
   if (wf.direct || wf.prs.length) return
   const open = shared ? [] : await ghLines<{ number: number }>($, wf.root, wf.repo, ['pr-list', '--head', wf.branch, '--state', 'open'])
   if (shared ?? open[0]) {
@@ -675,8 +675,9 @@ async function setUpPr($: EngineInterface, wf: Workflow, title: string, shared?:
     return
   }
   const remote = await git(wf.root, $, 'rev-parse', `origin/${wf.branch}`)
+  let note: string | undefined
   if (remote.exitCode !== 0 || remote.stdout.trim() !== await head(wf.root, $)) {
-    await checked($, wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
+    note = await checked($, wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
     await must($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${wf.branch}`], { cwd: wf.root, timeoutMs: 300_000 })
   }
   const { gitDir } = await paths($, wf.root)
@@ -687,14 +688,15 @@ async function setUpPr($: EngineInterface, wf: Workflow, title: string, shared?:
   if (!number) throw new Error(`gh.sh pr-new printed no pull request URL: ${made.slice(0, 200)}`)
   wf.prs = [Number(number)]
   wf.prTitle = wf.prBody = undefined
+  return note
 }
 
 async function openPendingPr($: EngineInterface, wf: Workflow): Promise<string | undefined> {
   if (!wf.prTitle || wf.prs.length) return undefined
-  await setUpPr($, wf, wf.prTitle)
+  const note = await setUpPr($, wf, wf.prTitle)
   if (!wf.prs.length) throw new Refuse(`Issue #${wf.issue} on ${wf.branch} has no commits beyond ${wf.base}. Repair: make a real change and call checkpoint before opening its draft PR.`)
   await saveWorkflow($, wf)
-  return `Opened draft PR #${wf.prs[0]}: https://github.com/${wf.repo}/pull/${wf.prs[0]}`
+  return `${note ? `${note}\n` : ''}Opened draft PR #${wf.prs[0]}: https://github.com/${wf.repo}/pull/${wf.prs[0]}`
 }
 
 async function editBody($: EngineInterface, wf: Workflow, edit: (body: string) => string) {
