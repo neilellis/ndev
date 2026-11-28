@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -641,9 +641,9 @@ function recordsFixture(t) {
   writeFileSync(recordFile, record('- File: src/report.js'))
   git('add', '-A')
   git('commit', '-q', '-m', 'fixture')
-  const call = (event, toolName, input, response = {}) => {
+  const call = (event, toolName, input, response = {}, extra = {}) => {
     const result = spawnSync(ndev, ['hook', event, '--harness', 'claude'], {
-      cwd: root, encoding: 'utf8', env,
+      cwd: root, encoding: 'utf8', env: { ...env, ...extra },
       input: JSON.stringify({ session_id: 'fixture', cwd: root, tool_name: toolName, tool_input: input, tool_response: response }),
     })
     assert.equal(result.status, 0, result.stderr)
@@ -810,6 +810,74 @@ test('a pass saved during a merge is not reused for a squash of the same records
   git('merge', '-q', '--squash', 'incoming')
   const reason = call('pre-tool-use', 'Bash', { command: 'git commit -m squash' })?.hookSpecificOutput?.permissionDecisionReason ?? ''
   assert.match(reason, /this commit is refused:[\s\S]*REQ-0002: no "type"[\s\S]*ndev requirements types --base HEAD/)
+})
+
+test('a changed record lists the records to compare it with once after the edit', t => {
+  const { recordFile, record, call, git } = recordsFixture(t)
+  writeFileSync(recordFile.replace('0001-the-report-names-each-source', '0002-the-report-has-a-title'), record('- File: src/report.js').replace('REQ-0001', 'REQ-0002').replace('"The report names each source"', '"The report has a title"'))
+  git('add', '-A')
+  git('commit', '-q', '-m', 'second record')
+  writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
+  const note = contextOf(call('post-tool-use', 'Edit', { file_path: recordFile }))
+  assert.match(note, /Before you commit, compare each changed record with the records listed:\nCheck REQ-0001 against:\n  REQ-0002 \(shares src\/report\.js \(Trace File here, Trace File in REQ-0002; 2 records trace it\)\)\nsemantic index not built: run ndev requirements index/)
+  assert.equal(call('post-tool-use', 'Bash', { command: 'ls' }, { exitCode: 0 }), null)
+})
+
+test('a changed record with no related record gets no list of records to compare', t => {
+  const { recordFile, record, call } = recordsFixture(t)
+  writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
+  assert.equal(call('post-tool-use', 'Edit', { file_path: recordFile }), null)
+})
+
+async function embeddingsLog(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'ndev-embeddings-'))
+  const log = join(dir, 'requests.jsonl')
+  writeFileSync(join(dir, 'rules.json'), '{}')
+  writeFileSync(log, '')
+  const server = spawn(process.execPath, [fileURLToPath(new URL('../scripts/requirements/tests/fake-embeddings.mjs', import.meta.url)), join(dir, 'rules.json'), log], { stdio: ['ignore', 'pipe', 'inherit'] })
+  t.after(() => {
+    server.kill()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const port = await new Promise((resolve, reject) => {
+    server.stdout.once('data', data => resolve(Number(String(data).trim())))
+    server.once('exit', code => reject(new Error(`the fake embeddings server exited ${code}`)))
+  })
+  return {
+    env: { OPENROUTER_API_KEY: 'test-key', NDEV_EMBEDDINGS_URL: `http://127.0.0.1:${port}/hook/v1` },
+    inputs: () => readFileSync(log, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line).input),
+  }
+}
+
+const EMPTY_INDEX = '{"model":"openai/text-embedding-3-small","dimensions":512,"encoding":"int8-base64","records":{\n}}\n'
+
+test('a record that fails its check gets no related search until it passes', async t => {
+  const { root, recordFile, record, call } = recordsFixture(t)
+  const fake = await embeddingsLog(t)
+  mkdirSync(join(root, 'docs/formal/requirements/generated'))
+  writeFileSync(join(root, 'docs/formal/requirements/generated/embeddings.json'), EMPTY_INDEX)
+  writeFileSync(recordFile, record('- File: src/report.js', ''))
+  const failing = contextOf(call('post-tool-use', 'Edit', { file_path: recordFile }, {}, fake.env))
+  assert.match(failing, /The changed requirement records have problems/)
+  assert.doesNotMatch(failing, /compare each changed record/)
+  assert.deepEqual(fake.inputs(), [])
+  writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
+  call('post-tool-use', 'Edit', { file_path: recordFile }, {}, fake.env)
+  assert.deepEqual(fake.inputs(), [['The report names each source.']])
+})
+
+test('a commit runs no related search', async t => {
+  const { root, recordFile, record, call, git } = recordsFixture(t)
+  const fake = await embeddingsLog(t)
+  mkdirSync(join(root, 'docs/formal/requirements/generated'))
+  writeFileSync(join(root, 'docs/formal/requirements/generated/embeddings.json'), EMPTY_INDEX)
+  writeFileSync(recordFile, record('- File: src/report.js', 'Each document that the report reads is named in it.'))
+  git('add', '-A')
+  const result = call('pre-tool-use', 'Bash', { command: 'git commit -m change' }, {}, fake.env)
+  assert.equal(result?.hookSpecificOutput?.permissionDecision, undefined)
+  assert.deepEqual(fake.inputs(), [])
+  call('post-tool-use', 'Bash', { command: 'git status' }, { exitCode: 0 }, fake.env)
+  assert.deepEqual(fake.inputs(), [['The report names each source.']])
 })
 
 test('a commit is checked again after a link problem is repaired outside the record', t => {

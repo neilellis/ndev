@@ -11,7 +11,7 @@ import { binding } from '../export/flow/public.ts'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, isAlive, locked, readObject, releaseRoot, run, stateRoot, worktreeScript } from './common.mjs'
 import { readConfigText } from './config-file.mjs'
 import { readProject } from './project.mjs'
-import { commitFiles, fixedEditReason, hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, requirementsList, savesCommit } from './requirement-hooks.mjs'
+import { commitFiles, fixedEditReason, hasRecords, rawCreateReason, recordCheck, recordCommitReason, recordProblemNote, relatedNote, requirementsList, savesCommit } from './requirement-hooks.mjs'
 import { effectiveWorkflowRecords, readWorkflowRecords, recoverDeadWaits, saveWorkflowRecord } from './waits.mjs'
 
 const events = new Set(['session-start', 'prompt-submit', 'prompt-context', 'pre-tool-use', 'post-tool-use', 'turn-start', 'turn-complete', 'session-end', 'compact'])
@@ -133,8 +133,9 @@ function toolCall(payload) {
 
 function changedRecordCheck(root, id, { commit = false } = {}) {
   const saved = id ? readObject(hookSessionFile(root, id), { missing: {} }).recordChecks : undefined
-  const check = recordCheck(root, commit && !saved?.ok ? undefined : saved)
-  if (check?.fresh) changeSession(root, id, { recordChecks: { key: check.key, ok: check.ok, output: check.output, commands: check.commands } })
+  const stale = commit ? !saved?.ok : saved?.ok && !saved.searched
+  const check = recordCheck(root, stale ? undefined : saved, { related: !commit })
+  if (check?.fresh) changeSession(root, id, { recordChecks: { key: check.key, ok: check.ok, output: check.output, commands: check.commands, related: check.related, searched: !commit } })
   return check
 }
 
@@ -565,6 +566,7 @@ export async function runHook([event, ...argv], supplied) {
   if (event === 'post-tool-use' && (call.shell || call.edit) && successful(payload) && hasRecords(root)) {
     const check = changedRecordCheck(root, id)
     if (check?.fresh && !check.ok) notes.push(recordProblemNote(check))
+    if (check?.fresh && check.related) notes.push(relatedNote(check))
   }
   if (event === 'session-start') {
     const note = sessionStart(root, id, harness)

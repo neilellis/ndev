@@ -4,6 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import path from "node:path";
 import { CliError } from "../ndev/common.mjs";
 import { modelCheck, modelPin } from "./models.mjs";
+import { buildIndex, relatedRecords } from "./related.mjs";
 import { discardReport, verify, verifyBrief, verifyJudge } from "./verify.mjs";
 
 const DIR = "docs/formal/requirements";
@@ -27,7 +28,7 @@ const LOG_ENTRY = /^- \d{4}-\d{2}-\d{2}: \S.*$/;
 const CITATION = /^(.+)#L(\d+)-L(\d+)$/;
 const LINK = /\[([^\]]+)\]\(([^()\s]+(?:\([^()\s]*\)[^()\s]*)*)\)/g;
 const FLAGS = new Set(["check", "clear", "flagged", "all"]);
-const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, type, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, types, cites, for, narrate, narrative, publish, references, retire, deprecate, fixed, model-check, model-pin, verify, verify-brief, verify-judge";
+const COMMANDS = "new, list, search, quote, check, render, guard, agree, flag, level, type, author, model, sync, log, sources, ledger, uncovered, untraced, link, file, decision, trace, links, explained, levels, types, cites, for, related, index, narrate, narrative, publish, references, retire, deprecate, fixed, model-check, model-pin, verify, verify-brief, verify-judge";
 const PUBLISH = `${DIR}/extra/publish.json`;
 const PUBLISH_KEYS = ["to", "format", "source", "route", "frontMatter", "meta", "groupBy"];
 const TYPE_PAGES = {
@@ -470,9 +471,23 @@ function valid(root) {
   return records;
 }
 
-function check(root) {
-  const count = valid(root).length;
-  return `${count} record${count === 1 ? "" : "s"} checked: no problems\n`;
+function check(root, ids, options) {
+  const scoped = Boolean(ids.length || options.base);
+  if (scoped) relatedIds(ids, "check");
+  const known = new Set(entries(root).filter((e) => NAME.test(e.file)).map((e) => e.id));
+  const unknown = ids.filter((id) => !known.has(id));
+  if (unknown.length) throw new Usage(`${unknown.join(", ")} ${unknown.length === 1 ? "is not a record" : "are not records"} in ${DIR}. Run: ${SCRIPT} search <term> to find the ID`);
+  let count;
+  try {
+    count = valid(root).length;
+  } catch (error) {
+    if (scoped && error instanceof Failure) throw new Failure(`${error.message}\nRelated records are listed when the records pass the check.`);
+    throw error;
+  }
+  const checked = `${count} record${count === 1 ? "" : "s"} checked: no problems\n`;
+  if (!scoped) return checked;
+  const related = relatedFor(root, ids, options);
+  return { text: checked + related.text, related };
 }
 
 function row(records, { flags = false } = {}) {
@@ -2051,27 +2066,29 @@ const githubKey = (url) => {
   return parts ? `${parts[1].toLowerCase()}#${parts[3]}` : undefined;
 };
 
-function fileMatches(record, rel) {
-  const lines = [];
-  for (const line of (record.sections.Trace ?? "").split("\n").map((l) => l.trim())) {
+function recordMatchers(record) {
+  const files = [];
+  const links = [];
+  const exact = (rel) => (file) => file === rel;
+  for (const line of traceLines(record)) {
     const link = line.match(TRACE_LINK);
-    if (link?.[1] === "File" && filePattern(link[2].trim())?.test(rel)) lines.push(line);
-    if (line.match(TRACE_DECISION)?.[2].trim() === rel) lines.push(line);
+    const target = link?.[2].trim();
+    const regex = link?.[1] === "File" ? filePattern(target) : undefined;
+    if (regex) files.push({ line, field: "Trace File", raw: target, test: (file) => regex.test(file) });
+    if (link && link[1] !== "File" && githubKey(target)) links.push({ line, field: `Trace ${link[1]}`, url: target, key: githubKey(target) });
+    const decision = line.match(TRACE_DECISION);
+    if (decision) files.push({ line, field: `Trace ${decision[1]}`, raw: decision[2].trim(), test: exact(decision[2].trim()) });
   }
-  for (const source of sourceText(record.sections["Source text"]).sources) if (source.rel === rel) lines.push(`- ${source.citation}`);
-  for (const model of modelEntries(record)) if (model.split("#")[0] === rel) lines.push(`model: ${model}`);
-  return lines;
+  for (const source of sourceText(record.sections["Source text"]).sources) {
+    if (source.rel) files.push({ line: `- ${source.citation}`, field: "Source", raw: source.rel, test: exact(source.rel) });
+    if (source.url && githubKey(source.url)) links.push({ line: `- ${source.citation}`, field: "Source", url: source.url, key: githubKey(source.url) });
+  }
+  for (const model of modelEntries(record)) files.push({ line: `model: ${model}`, field: "model", raw: model.split("#")[0], test: exact(model.split("#")[0]) });
+  return { files, links };
 }
 
-function linkMatches(record, key) {
-  const lines = [];
-  for (const line of (record.sections.Trace ?? "").split("\n").map((l) => l.trim())) {
-    const link = line.match(TRACE_LINK);
-    if (link && link[1] !== "File" && githubKey(link[2].trim()) === key) lines.push(line);
-  }
-  for (const source of sourceText(record.sections["Source text"]).sources) if (source.url && githubKey(source.url) === key) lines.push(`- ${source.citation}`);
-  return lines;
-}
+const fileMatches = (record, rel) => recordMatchers(record).files.filter((m) => m.test(rel)).map((m) => m.line);
+const linkMatches = (record, key) => recordMatchers(record).links.filter((m) => m.key === key).map((m) => m.line);
 
 function forTargets(root, targets, options) {
   if (options.all && options.status !== undefined) throw new Usage(`--all and --status cannot go together: --all gives each status`);
@@ -2125,6 +2142,21 @@ function forTargets(root, targets, options) {
   return { text, targets: results };
 }
 
+function relatedIds(ids, command) {
+  for (const id of ids) if (!/^REQ-\d{4}$/.test(id)) throw new Usage(`${command} takes record IDs, for example: ${command} REQ-0001. Got "${id}"`);
+}
+
+function relatedFor(root, ids, options) {
+  if (!ids.length && !options.base) throw new Usage(`related needs record IDs, or --base <ref> for the records that changed since that ref`);
+  relatedIds(ids, "related");
+  if (options.base) git(root, ["rev-parse", "--verify", `${options.base}^{commit}`]);
+  const chosen = options.base ? changedRecords(root, options.base) : ids.map((id) => recordEntry(root, id));
+  const all = entries(root).filter((e) => NAME.test(e.file)).map(read);
+  const byRel = new Map(all.map((record) => [record.rel, record]));
+  let tracked;
+  return relatedRecords(root, chosen.map((entry) => byRel.get(entry.rel)), all, { base: options.base, matchers: recordMatchers, tracked: () => (tracked ??= trackedFiles(root)), sourceText });
+}
+
 const project = {
   folders: [DIR, DEPRECATED],
   name: NAME,
@@ -2152,7 +2184,7 @@ export function runRequirements(argv, { json } = {}) {
       list: () => list(root(), options),
       search: () => search(root(), rest),
       quote: () => quote(root(), rest[0], rest[1], rest[2]),
-      check: () => check(root()),
+      check: () => check(root(), rest, options),
       render: () => render(root(), options),
       guard: () => guard(root(), options),
       agree: () => agree(root(), rest[0], options),
@@ -2177,6 +2209,8 @@ export function runRequirements(argv, { json } = {}) {
       types: () => types(root(), rest, options),
       cites: () => bodyCites(root(), rest[0], options),
       for: () => forTargets(root(), rest, options),
+      related: () => relatedFor(root(), rest, options),
+      index: () => buildIndex(root(), entries(root()).filter((e) => NAME.test(e.file)).map(read), sourceText),
       narrate: () => narrate(root(), rest[0], options),
       narrative: () => narrative(root()),
       publish: () => publish(root(), options),

@@ -9,6 +9,7 @@ Choose the operation here, then consult its current `--help` for flags and input
 | `ndev project status` | Read project identity, mode, steering, and missing setup before work. |
 | `ndev project setup --repo <owner/name>` | Configure the repository. Use `--board` when a project board applies. |
 | `ndev project migrate-config` | Move the old `.neil-dev.json` to `.ndev.json`, with `git mv` when Git tracks it. It refuses when both files exist and differ. |
+| `ndev project dev-servers [start <name>]` | List the dev servers in `.ndev.json` (`devServers`). `start` boots one, waits until its `ready` URL answers or path exists, and records it so the session end stops it. A server that exits or is not ready in time fails with its command, exit code and the end of its log. |
 | `ndev project init` | Initialize the project's ndev setup. |
 | `ndev project mode` / `steering` | Read the setting. Supply a supported value only when changing it is intended. |
 | `ndev project credentials --copy-from-main` | Copy the project's credential file into its worktree through the guarded path. Use `--init` to create one. |
@@ -46,6 +47,16 @@ Use the entrypoint's stage table for the normal sequence. These commands handle 
 `finished-development` starts review and the dead-code sweep. Do not launch duplicate reviewers. `finished-review` needs the review, sweep rulings, and remember result. `finished-smoke --skipped` and `finished-review --waive-review` apply only where the workflow permits the specific omission. Never invent confirmation or evidence.
 
 After three review rounds no more reviews start. For a substantive finding, commit the fix and ask the human to run `ndev flow authorise-review`. Then wait with `ndev wait agent dispatch:<id>` and run `finished-review`. It passes only in a clean worktree, when each of those reviewers succeeded, its chat has no gaps, and every line with `ndev-review-verdict` in its assistant messages is exactly `ndev-review-verdict: approve <full HEAD commit id>`. An objection that was read stays with the commit. A later commit needs a new authorisation. Do not message a reviewer about its verdict, and do not edit the worktree while it runs.
+
+## Requirement records
+
+The `requirements` skill lists each command. These two find the records that a changed record can contradict.
+
+| Command | When to use it |
+| --- | --- |
+| `ndev requirements check [<REQ-NNNN>... \| --base <git ref>]` | Check each record. With record IDs or `--base`, it also lists the related records of those records when the check passes. The list is advice and does not change the exit status. |
+| `ndev requirements related <REQ-NNNN>... \| --base <git ref>` | List the records to compare with each record: cited IDs, shared files and links, and the records closest in meaning. |
+| `ndev requirements index` | Write the semantic index `docs/formal/requirements/generated/embeddings.json` for `related`. It needs `OPENROUTER_API_KEY`, and sends only changed text. |
 
 ## Requirement models
 
@@ -162,6 +173,17 @@ Use `ndev remote status` and `list` to inspect saved servers. `set <server>` sel
 Start with `ndev walk-doc start <path-or-url>`, then inspect `status`. Use `ask`, `answer <ask-number> "<text>"`, or `tip` to exchange reader guidance. `restart` starts another attempt, `stop` stops the walk, and `finish` closes it with a summary.
 
 Reader-side `report`, `enhance`, `record`, `reply`, and `escalate` take JSON files. `done <summary>` reports the reader's completion. Follow the walk's role and attempt boundaries instead of submitting a report as another reader.
+
+## Proof
+
+| Command | When to use it |
+| --- | --- |
+| `ndev proof plan --base <ref> [--pr <n> \| --event <file>] [--proven <sha>]` | Show what Proof checks for this branch: the tier and its reasons, `run` or `skip` for each check, and whether the whole run is skipped. It reads the settings from the base ref and runs no agent. |
+| `ndev proof snapshots --out <dir> (--pr <n> \| --local) [--routes <a,b>] [--base <ref>]` | Start each dev server with `routes`, take a screenshot of each route at each Proof viewport and scheme, then stop the server. It writes `grid.md` in `--out`. With `--pr`, it pushes the images to the `ndev-proof-assets` branch under `pr-<n>/<sha>/` and the grid links them; with `--local`, it pushes nothing. With `--base`, it also takes a before image of each route that the base serves. A route that does not load, a server that does not start, or a matrix that cannot run stops the command with the log. |
+| `ndev proof evidence --plan <file> [--body <file>]` | Collect the facts for each check that the plan runs: the cited requirement records and the verify report, the untested source files, the models and model-check, the docs-site changes, and the `## Lessons` section. Each check gets a state; a collector that cannot run gives `not-run` with the command and its output. It makes no judgement. |
+| `ndev proof report --plan <file> [--verdict <file> --evidence <file>] [--grid <file>] (--pr <n> \| --local)` | Check the verdict against the plan and the evidence; a malformed verdict lists every problem and exits 2. With `--pr`, write or edit the one Proof comment (the checks A to G, the tier and the grid) and set the `ndev proof` check run on the plan's commit. Exit 1 when a planned check fails or did not run. With `--local`, post nothing. |
+| `ndev proof run (--pr <n> \| --local) [--base <ref>] [--out <dir>] [--body <file>]` | Run plan, evidence, snapshots and report in turn. A trivial tier gets a verdict from the evidence; a standard or complex tier runs the Proof agent (`NDEV_PROOF_AGENT`, default `claude`) inside the `proof.limits` of its tier. The agent runs isolated from the pull request's settings, hooks and MCP servers (`--bare` when `ANTHROPIC_API_KEY` is set), and can write only the verdict. An agent that fails or writes no valid verdict leaves its checks `not-run`. |
+| `ndev proof install <project-path> [--dry-run] [--yes] [--force] [--ref <ndev commit>]` | Write the Proof workflow `.github/workflows/ndev-proof.yml` (ndev, the actions and Claude Code pinned), find the dev servers in `package.json`, and with `--yes` add `devServers` and `proof` to `.ndev.json`. It reports the `ANTHROPIC_API_KEY` secret and how to make `ndev proof` a required check. `--dry-run` writes nothing; a changed workflow needs `--force`. Load the `proof-install` skill to confirm the servers and try a run. |
 
 ## Installation and harness integration
 

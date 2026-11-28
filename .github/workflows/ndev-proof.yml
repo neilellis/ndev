@@ -1,0 +1,68 @@
+name: ndev proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: ndev-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    name: ndev proof run
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+    env:
+      NDEV_REF: 4c1eb81b95b52e76058bed34ebac2459fa67ddee
+      CLAUDE_CODE_VERSION: 2.1.331
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install the dependencies
+        run: npm ci
+      - name: Install the dependencies in docs-site
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+        working-directory: docs-site
+      - name: Install the browser for the snapshots of docs-site
+        run: npx playwright install --with-deps chromium
+        working-directory: docs-site
+      - name: Install ndev and Claude Code
+        run: |
+          git clone --quiet https://github.com/neilellis/ndev.git "$RUNNER_TEMP/ndev"
+          git -C "$RUNNER_TEMP/ndev" checkout --quiet "$NDEV_REF"
+          npm install --global "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+      - name: Run Proof
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$GIT_CONFIG_VALUE_0"
+          export GIT_CONFIG_VALUE_0
+          "$RUNNER_TEMP/ndev/bin/ndev" proof run --pr "$PR" --base "origin/$BASE_REF" --out "$RUNNER_TEMP/proof"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ndev-proof
+          path: ${{ runner.temp }}/proof
+          if-no-files-found: ignore

@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CONFIG_FILE, missingGitHub, REPO, validate } from '../../hooks/config.ts'
+import { runDevServers } from './dev-servers.mjs'
 import { migrateConfig, moveLegacyConfig, readConfigObject } from './config-file.mjs'
 import { argsFor, atomicJson, checked, CliError, gitWorkspace, locked, readObject, releaseRoot, stateRoot, worktreeScript } from './common.mjs'
 
@@ -237,6 +238,7 @@ export function runProject([verb, ...argv]) {
     }
     return { ...result, text: result.file ? `${result.file}\nKeys: ${result.keys.join(', ') || 'none'}` : 'No credentials file. Run ndev project credentials --init.' }
   }
+  if (verb === 'dev-servers') return runDevServers(workspace.root, argv, repair)
   argsFor(argv, {}, repair)
   if (verb === 'status') return setupStatus(workspace)
   if (verb === 'init') return initialize(workspace)
