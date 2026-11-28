@@ -7,7 +7,7 @@ import { evidence } from './proof-evidence.mjs'
 import { plan } from './proof.mjs'
 import { report, VERDICT_GUIDE, verdictProblems } from './proof-report.mjs'
 import { proofSettingsAt } from './proof-settings.mjs'
-import { repository, serving, snapshots } from './proof-snapshots.mjs'
+import { proofServers, repository, serving, snapshots } from './proof-snapshots.mjs'
 
 const SKILL = join(releaseRoot, 'skills/proof/SKILL.md')
 const CLI = join(releaseRoot, 'scripts/cli.mjs')
@@ -187,7 +187,7 @@ export async function proofRun(root, values) {
   let shots = null
   if (planned.checks.visual?.action === 'run') {
     try {
-      const servers = serving(proofSettingsAt(root, base).devServers, planned.stats.ui).join(',')
+      const servers = serving(proofServers(root, base), planned.stats.ui).join(',')
       shots = { result: await snapshots(root, { ...target, out: join(out, 'snapshots'), base, servers }) }
       files.grid = shots.result.grid
     } catch (error) {

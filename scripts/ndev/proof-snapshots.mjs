@@ -23,6 +23,10 @@ export function serving(servers, files) {
   }).map(([name]) => name)
 }
 
+export function proofServers(root, base) {
+  return { ...proofSettingsAt(root, base).devServers, ...devServers(root).servers }
+}
+
 function selected(servers, wanted, names) {
   const all = Object.entries(servers).map(([name, server]) => ({ name, routes: server.routes ?? ['/'] }))
   if (all.length === 0) throw new CliError(1, 'There are no devServers in .ndev.json, so there is nothing to snapshot.', { repair: 'Add the servers under "devServers", each with the "routes" it serves, to .ndev.json.' })

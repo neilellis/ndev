@@ -229,6 +229,29 @@ test('the visual check starts only the dev servers whose folder holds a changed 
   assert.ok(!existsSync(join(repo.base, 'out/snapshots/head/admin')), 'the admin server was started for a change in web/')
 })
 
+test('the visual check starts a dev server that the pull request adds to .ndev.json', t => {
+  const ports = [freePort(), freePort()]
+  const both = servers(ports)
+  const webOnly = { devServers: { web: both.devServers.web } }
+  const repo = repository(t, webOnly, { '.ndev.json': `${JSON.stringify(both)}\n`, 'admin/App.tsx': 'export const App = () => null\n', 'admin/App.test.tsx': 'test()\n' }, serverFolders)
+  const result = proofRun(repo, { env: { NDEV_PROOF_MATRIX: matrix } })
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.equal(result.json.result.checks.visual.state, 'pass', JSON.stringify(result.json.result.checks.visual))
+  assert.ok(existsSync(join(repo.base, 'out/snapshots/head/admin/argv.json')), 'the admin server that the pull request adds was not started')
+  assert.ok(!existsSync(join(repo.base, 'out/snapshots/head/web')), 'the web server was started for a change in admin/')
+})
+
+test('a pull request that removes the dev server of its changed UI files fails the visual check, not skips it', t => {
+  const both = servers([freePort(), freePort()])
+  const webOnly = { devServers: { web: both.devServers.web } }
+  const repo = repository(t, both, { '.ndev.json': `${JSON.stringify(webOnly)}\n`, 'admin/App.tsx': 'export const App = () => null\n', 'admin/App.test.tsx': 'test()\n' }, serverFolders)
+  const result = proofRun(repo, { env: { NDEV_PROOF_MATRIX: matrix } })
+  const visual = (result.json.result ?? result.json.error.details).checks.visual
+  assert.notEqual(result.status, 0, JSON.stringify(result.json))
+  assert.ok(['fail', 'not-run'].includes(visual.state), JSON.stringify(visual))
+  assert.match(visual.reason, /admin/)
+})
+
 test('the visual check is skipped, naming the changed UI files, when no dev server holds them', t => {
   const repo = repository(t, servers([freePort(), freePort()]), { 'other/Thing.tsx': 'export const Thing = () => null\n', 'other/Thing.test.tsx': 'test()\n' }, serverFolders)
   const result = proofRun(repo, { env: { NDEV_PROOF_MATRIX: matrix } })

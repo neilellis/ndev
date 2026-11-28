@@ -38,7 +38,7 @@ After the install, do these steps:
 
 A check that fails fails Proof. A check that the plan runs and that then gets no result also fails Proof. A check that the plan skips does not fail Proof. The comment gives the reason for each skip.
 
-The visual check starts only the dev servers whose `cwd` holds a changed UI file. A server with no `cwd` serves the whole repository. When no server holds the changed files, the visual check is skipped. The reason names the files.
+The visual check starts only the dev servers whose `cwd` holds a changed UI file. A server with no `cwd` serves the whole repository. Proof reads the servers from `.ndev.json` on the base branch and in the pull request. When the pull request removes the server of a changed UI file, the visual check fails. When no server holds the changed files, the visual check is skipped. The reason names the files.
 
 ## The tiers
 
