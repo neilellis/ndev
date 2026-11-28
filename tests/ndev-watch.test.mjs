@@ -159,6 +159,37 @@ test('a turn that ends early gets the next step once per turn end, and the fourt
   assert.deepEqual(s.watch().notices, [])
 })
 
+function runningCheck(root, issue, { ended = false, startedAt = Date.now(), flowPid = process.pid } = {}) {
+  const dir = join(root, '.git', 'ndev-pre-commit-check.sh.run')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'progress.json'), JSON.stringify({ label: 'scripts/ndev/workflow/pre-commit-check.sh', pid: process.pid, flowPid, startedAt, limitMs: 3_600_000, issue }))
+  if (ended) writeFileSync(join(dir, 'exit'), '0\n')
+}
+
+test('turn ends while a transition of the issue runs its check send no notice and do not count toward a block', t => {
+  const s = session(t, { workflow: developing })
+  runningCheck(s.root, 17)
+  for (const turn of ['t1', 't2', 't3', 't4', 't5']) {
+    s.hook('turn-start', { turn_id: turn })
+    s.hook('turn-complete', { turn_id: turn })
+    assert.deepEqual(s.watch().notices, [], turn)
+  }
+  assert.equal(s.record().state, 'developing')
+  assert.equal(s.sent(), 0)
+})
+
+test('a finished check, a check past its limit, a check whose flow command died, or a check of another issue does not hold back the notices', t => {
+  const dead = spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], { encoding: 'utf8' }).stdout.trim()
+  const runs = { ended: [17, { ended: true }], expired: [17, { startedAt: Date.now() - 3_600_001 }], orphaned: [17, { flowPid: Number(dead) }], other: [18, {}] }
+  for (const [name, [issue, options]] of Object.entries(runs)) {
+    const s = session(t, { workflow: developing })
+    runningCheck(s.root, issue, options)
+    s.hook('turn-start', { turn_id: 't1' })
+    s.hook('turn-complete', { turn_id: 't1' })
+    assert.equal(s.watch().notices.length, 1, name)
+  }
+})
+
 test('a new turn suppresses the nudge, and a late end of an older turn does not release it', t => {
   const s = session(t, { workflow: developing })
   s.hook('turn-start', { turn_id: 't1' })

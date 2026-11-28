@@ -51,12 +51,12 @@ function run(cmd: string, args: string[], opts: { cwd?: string; env?: Record<str
   if (r.error) return { status: r.error.code === 'ETIMEDOUT' ? 124 : 127, stdout: r.stdout || '', stderr: [r.stderr, r.error.message].filter(Boolean).join('\n') }
   return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
-function runBounded(script: string, args: string[], cwd: string, env: Record<string, string>, runDir: string, label: string, capMs: number): Run {
+function runBounded(script: string, args: string[], cwd: string, env: Record<string, string>, runDir: string, label: string, capMs: number, issue: number): Run {
   const started = run('bash', [RUN_CHECK, 'start', runDir, script, ...args], { cwd, env })
   const pid = started.stdout.trim()
   if (started.status !== 0 || !/^\d+$/.test(pid)) throw new Fail(1, `${label} did not start (run-check.sh start exited ${started.status}): ${said(started)}`)
   const begun = now()
-  writeFileSync(join(runDir, 'progress.json.tmp'), JSON.stringify({ label, pid: Number(pid), startedAt: begun, limitMs: capMs }))
+  writeFileSync(join(runDir, 'progress.json.tmp'), JSON.stringify({ label, pid: Number(pid), startedAt: begun, limitMs: capMs, issue, flowPid: process.pid }))
   renameSync(join(runDir, 'progress.json.tmp'), join(runDir, 'progress.json'))
   const deadline = begun + capMs
   const progressSeconds = Math.max(1, Math.round(envMs('NDEV_FLOW_PROGRESS_MS', CHECK_WAIT_SECONDS * 1000) / 1000))
@@ -201,6 +201,7 @@ function save(wf: Workflow) {
   const r = run('bash', [`${HOME}/scripts/work/worktree-env.sh`, 'set-workflow', '--expect-rev', String(rev ?? 0), '--worktree', wf.root], { cwd: wf.root, input: JSON.stringify(rest) })
   if (r.status !== 0) throw new Fail(r.status === 5 ? 5 : 1, `ndev-flow: could not save the workflow of #${wf.issue}: worktree-env.sh set-workflow exited ${r.status}: ${said(r)}`)
   wf.rev = Number(r.stdout.trim().split('\n').pop())
+  forgetPassedChecks(wf.root)
 }
 
 function ghRun(root: string, repo: string | undefined, args: string[]): string {
@@ -270,36 +271,64 @@ function changeTypesEnv(root: string, mergeBase: string, declared: readonly stri
   const names = r.status === 0 ? r.stdout.split('\n').filter(Boolean) : []
   return [...new Set([...inferChangeTypes(names), ...declared])].join(',')
 }
+function readPassed(file: string): { key: string; at: number } {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    throw new Fail(1, `ndev-flow: the saved check result ${file} is unreadable: ${(error as Error).message}. Repair: delete ${file} and run the command again.`)
+  }
+}
+const forgetPassedChecks = (root: string) => {
+  const dir = gitDir(root)
+  for (const name of readdirSync(dir).filter(name => name.endsWith('.passed.json'))) rmSync(join(dir, name), { force: true })
+}
 function runCheck(wf: Workflow, check: string, args: string[] = [], declared: readonly string[] = []): string | undefined {
   const path = `${CHECK_DIR}/${check}`
   const dir = gitDir(wf.root)
   if (wf.noChecks && !existsSync(join(wf.root, path))) return `${path} did not run: the human skipped the set-up.`
   const onBase = git(wf.root, 'cat-file', '-e', `origin/${wf.base}:${path}`).status === 0
   let script = join(wf.root, path)
+  let outside: string | undefined
   let note: string | undefined = `${path} is not on ${wf.base} yet, so a human must read it in this PR.`
   if (onBase) {
-    script = join(dir, `ndev-${check}`)
-    writeFileSync(script, git(wf.root, 'show', `origin/${wf.base}:${path}`).stdout)
-    chmodSync(script, 0o755)
+    const shown = git(wf.root, 'show', `origin/${wf.base}:${path}`)
+    if (shown.status !== 0) throw new Fail(1, `git show origin/${wf.base}:${path} exited ${shown.status} in ${wf.root}: ${said(shown)}`)
+    if (!existsSync(script) || readFileSync(script, 'utf8') !== shown.stdout) {
+      const copies = join(dir, 'ndev-base-checks')
+      script = join(copies, path)
+      mkdirSync(dirname(script), { recursive: true })
+      writeFileSync(script, shown.stdout)
+      chmodSync(script, 0o755)
+      outside = `The worktree's ${path} differs from the version on ${wf.base}, so ndev-flow ran the version on ${wf.base} from ${script}, with ${wf.root} as the working directory. A script that finds the project root from its own path found ${copies} instead. Repair: find the root from NDEV_WORKTREE_ROOT or the working directory, or bring the worktree's ${path} level with origin/${wf.base}.`
+    }
     note = git(wf.root, 'diff', '--quiet', `origin/${wf.base}...HEAD`, '--', path).status !== 0 ? `This branch changes ${path}. ndev-flow ran the version on ${wf.base}, and a human must read the change in this PR.` : undefined
   }
   const mergeBase = git(wf.root, 'merge-base', `origin/${wf.base}`, 'HEAD')
   const baseSha = mergeBase.status === 0 ? mergeBase.stdout.trim() : ''
   const types = changeTypesEnv(wf.root, baseSha, declared)
-  const env = { ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types ? { NDEV_CHANGE_TYPES: types } : {}) }
+  const env = { NDEV_WORKTREE_ROOT: wf.root, ...(baseSha ? { NDEV_MERGE_BASE: baseSha } : {}), ...(types ? { NDEV_CHANGE_TYPES: types } : {}) }
   const before = git(wf.root, 'status', '--porcelain').stdout
-  const r = runBounded(script, args, wf.root, env, join(dir, `ndev-${check}.run`), path, envMs('NDEV_FLOW_CHECK_MAX_MS', CHECK_MAX_MS))
+  const passedFile = join(dir, `ndev-${check}.passed.json`)
+  const sha = headSha(wf.root)
+  const key = before ? undefined : digestOf(JSON.stringify([wf.issue, sha, digestOf(readFileSync(script, 'utf8')), args, env]))
+  const passed = key && existsSync(passedFile) ? readPassed(passedFile) : undefined
+  if (key && passed?.key === key) return [`${path} passed on ${sha.slice(0, 8)} at ${new Date(passed.at).toISOString()}, and the commit, the script and the clean tree have not changed, so it did not run again.`, note].filter(Boolean).join(' ')
+  const r = runBounded(script, args, wf.root, env, join(dir, `ndev-${check}.run`), path, envMs('NDEV_FLOW_CHECK_MAX_MS', CHECK_MAX_MS), wf.issue)
   const log = join(dir, `ndev-${check}.log`)
   writeFileSync(log, `$ ${path} ${args.join(' ')}\nexit ${r.status}\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`)
   if (r.status !== 0) {
     const tail = `${r.stdout}\n${r.stderr}`.trim().split('\n').slice(-20).join('\n').slice(-4000)
-    const error = new Fail(1, `${path} exited ${r.status}. Nothing was pushed. Fix the cause and run the command again. Log: ${log}\n${tail}`)
+    const error = new Fail(1, `${path} exited ${r.status}. Nothing was pushed. Fix the cause and run the command again. Log: ${log}${outside ? `\n${outside}` : ''}\n${tail}`)
     error.name = CHECK_FAILED
     throw error
   }
   const after = git(wf.root, 'status', '--porcelain').stdout
   if (after !== before) throw new Fail(1, `${path} passed but changed the working tree. Name the changed files in --files and run the command again:\n${after}`)
-  return note
+  if (key) {
+    writeFileSync(`${passedFile}.tmp`, JSON.stringify({ key, at: now() }))
+    renameSync(`${passedFile}.tmp`, passedFile)
+  }
+  return [note, outside].filter(Boolean).join(' ') || undefined
 }
 
 function runBaseCheck(wf: Workflow, notes: string[]) {
@@ -636,7 +665,7 @@ function resolveRepo(root: string, config: Config): string {
   return ghJson<{ repo: string }>(root, undefined, ['repo']).repo
 }
 
-function setUpPr(wf: Workflow, title: string) {
+function setUpPr(wf: Workflow, title: string): string | undefined {
   if (wf.direct || wf.prs.length) return
   const open = ghRun(wf.root, wf.repo, ['pr-list', '--head', wf.branch, '--state', 'open']).split('\n').filter(Boolean).map(line => JSON.parse(line) as { number: number })
   if (open[0]) {
@@ -652,8 +681,9 @@ function setUpPr(wf: Workflow, title: string) {
     wf.prTitle = title
     return
   }
+  let note: string | undefined
   if (git(wf.root, 'rev-parse', `origin/${wf.branch}`).stdout.trim() !== headSha(wf.root)) {
-    runCheck(wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
+    note = runCheck(wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
     push(wf)
   }
   const body = writeTemp(wf, 'pr-body.md', wf.prBody ?? `Plan incoming.\n\nCloses #${wf.issue}\n`)
@@ -663,13 +693,15 @@ function setUpPr(wf: Workflow, title: string) {
   wf.prs = [Number(number)]
   delete wf.prTitle
   delete wf.prBody
+  return note
 }
 
-function openPendingPr(wf: Workflow) {
-  if (!wf.prTitle || wf.prs.length) return
-  setUpPr(wf, wf.prTitle)
+function openPendingPr(wf: Workflow): string | undefined {
+  if (!wf.prTitle || wf.prs.length) return undefined
+  const note = setUpPr(wf, wf.prTitle)
   if (!wf.prs.length) throw new Fail(1, `Issue #${wf.issue} on ${wf.branch} has no commits beyond ${wf.base}. Repair: make a real change and run ndev flow checkpoint.`)
   save(wf)
+  return note
 }
 
 function started(root: string, config: Config, args: Args) {
@@ -724,7 +756,8 @@ function started(root: string, config: Config, args: Args) {
     return report(wf, config, [`Missing check scripts in ${root}/${CHECK_DIR}: ${missing.join(', ')}. Start each from the template ${HOME}/scripts/workflow/fast-checks-template.sh.`])
   }
   if (!standalone) save(wf)
-  setUpPr(wf, info.title)
+  const opened = setUpPr(wf, info.title)
+  if (opened) notes.push(opened)
   apply(wf, afterStarted(undefined, { mode: wf.mode as any, steering: wf.steering as any }), 'started', notes)
   save(wf)
   return report(wf, config, [`Issue #${issue}: ${info.title}`, ...notes])
@@ -775,7 +808,8 @@ function checkpoint(wf: Workflow, config: Config, args: Args) {
     if (note) notes.push(note)
     const lease = push(wf, true)
     if (lease) notes.push(lease)
-    openPendingPr(wf)
+    const opened = openPendingPr(wf)
+    if (opened) notes.push(opened)
     notes.push(`Committed and pushed ${headSha(wf.root).slice(0, 8)}.`)
   } else notes.push(`Committed ${headSha(wf.root).slice(0, 8)} on this computer only: in the state "${wf.state}" nothing is pushed.`)
   delete wf.op
@@ -801,15 +835,13 @@ function finishedDevelopment(wf: Workflow, config: Config, args: Args, member = 
   if (machine.hardens && !args.hardening?.trim()) throw new Fail(2, 'ndev-flow: hack mode needs --hardening: each test that pins the change, the command and the failing line on the base, and its pass on HEAD.')
   const notes: string[] = []
   if (stage(wf, files)) {
-    runCheck(wf, 'fast-checks.sh', files, declared)
-    runCheck(wf, 'pre-commit-check.sh', [], declared)
+    for (const note of [runCheck(wf, 'fast-checks.sh', files, declared), runCheck(wf, 'pre-commit-check.sh', [], declared)]) if (note) notes.push(note)
     commit(wf, need(args, 'message'), opId(wf, 'finishedDevelopment'))
     notes.push(`Committed ${headSha(wf.root).slice(0, 8)}. It is not pushed until finishedReview.`)
   }
   if ((wf.steering ?? config.steering ?? 'interactive') === 'interactive') wf.developmentConfirmation = args['human-confirmation'].trim()
   addTypes(wf, files, declared)
-  if (machine.hardens) runCheck(wf, 'pre-push-check.sh', [], declared)
-  openPendingPr(wf)
+  for (const note of [machine.hardens ? runCheck(wf, 'pre-push-check.sh', [], declared) : undefined, openPendingPr(wf)]) if (note) notes.push(note)
   if (machine.gates && !wf.direct) {
     const gates = run('bash', [`${HOME}/scripts/work/gates.sh`, String(wf.issue), 'HEAD', String(prOf(wf))], { cwd: wf.root, env: { GH_REPO: wf.repo } })
     if (gates.status !== 0) throw new Fail(1, `gates.sh exited ${gates.status} for #${wf.issue}: ${said(gates)}\nThe commit is held here and not pushed. Add what is missing, then run ndev-flow finishedDevelopment again.`)
