@@ -8,7 +8,7 @@ const groups = {
     module: './ndev/project.mjs', run: 'runProject',
     commands: {
       status: '', setup: '[--repo <owner/name>|--no-repo] [--board <owner/number>|--no-board]',
-      mode: '[light|heavy|hack]', steering: '[interactive|auto]', init: '', 'migrate-config': '',
+      mode: '[light|heavy|hack]', steering: '[interactive|auto]', init: '', 'migrate-config': '', 'dev-servers': '[start <name>] [--json]',
       credentials: '[--copy-from-main|--init]', learn: '', guidance: '<kind> <description>',
       'report-workflow-bug': '--title <title> --details <text>',
       'pr-new': '--title <title> --body-file <file> [--base <branch>] [--head <branch>] [--ready]',
@@ -152,6 +152,18 @@ const groups = {
     commands: {
       'session-start': '', 'prompt-submit': '', 'prompt-context': '', 'pre-tool-use': '',
       'post-tool-use': '', 'turn-start': '', 'turn-complete': '', 'session-end': '', compact: '',
+    },
+  },
+  proof: {
+    description: 'Plan and run Proof, the check of a pull request before merge',
+    module: './ndev/proof.mjs', run: 'runProof',
+    commands: {
+      plan: '--base <ref> [--pr <n> | --event <file>] [--proven <sha>]',
+      evidence: '--plan <file> [--body <file>]',
+      snapshots: '--out <dir> (--pr <n> | --local) [--routes <list>] [--base <ref>]',
+      report: '--plan <file> [--verdict <file> --evidence <file>] [--grid <file>] (--pr <n> | --local)',
+      run: '(--pr <n> | --local) [--base <ref>] [--out <dir>] [--body <file>]',
+      install: '<project-path> [--dry-run] [--yes] [--force] [--ref <ndev commit>]',
     },
   },
   requirements: {

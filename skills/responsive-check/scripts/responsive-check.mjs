@@ -6,7 +6,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
 import { probe } from './probes.mjs'
-import { USAGE, UsageError, cellsFor, findingsFor, parseArgs, slug, stateDir, statusOf, viewportsFor, writeJson } from './responsive-lib.mjs'
+import { USAGE, UsageError, cellsFor, findingsFor, parseArgs, shotFor, stateDir, statusOf, viewportsFor, writeJson } from './responsive-lib.mjs'
 
 function die(message, fix) {
   console.error(`responsive-check: ${message}${fix ? `\nfix: ${fix}` : ''}`)
@@ -119,8 +119,9 @@ for (const v of viewports) {
           entry.measured = { width: raw.clientWidth, innerWidth: raw.innerWidth, scrollWidth: raw.scrollWidth }
           entry.findings = findingsFor(raw, v, o)
           if (o.hasShots) {
-            entry.screenshot = join(out, 'shots', slug(route), `${slug(v.name)}-${scheme}.png`)
-            await page.screenshot({ path: entry.screenshot, fullPage: o.isFullPage })
+            const shot = shotFor(o, out, route, v, scheme)
+            entry.screenshot = shot.path
+            await page.screenshot({ path: shot.path, fullPage: o.isFullPage, ...shot.options })
           }
           cell.status = statusOf(entry.findings)
         } catch (e) {

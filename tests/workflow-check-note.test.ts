@@ -9,8 +9,7 @@ const engine = (opts: { mainMoved: boolean; branchEdited: boolean }) => {
   const ok = (stdout = '', exitCode = 0) => ({ exitCode, stdout, stderr: '' })
   return {
     plugin: { root: '/plugin' },
-    // No .ndev.json and no .neil-dev.env: the check gets no project env.
-    fs: { write: async () => {}, exists: async () => false },
+    fs: { write: async () => {}, exists: async (p: string) => p.endsWith('.sh'), read: async () => (opts.mainMoved || opts.branchEdited ? '#!/bin/sh\nold\n' : '#!/bin/sh\n') },
     clock: { now: async () => 0 },
     ui: { log: () => {}, status: () => {} },
     process: {
@@ -37,8 +36,14 @@ const engine = (opts: { mainMoved: boolean; branchEdited: boolean }) => {
   } as unknown as EngineInterface
 }
 
-test('a check script that only main changed gives no warning', async () => {
-  expect(await runCheck(engine({ mainMoved: true, branchEdited: false }), '/r', 'main', 'pre-commit-check.sh')).toBeUndefined()
+test('a check script that nobody changed gives no note', async () => {
+  expect(await runCheck(engine({ mainMoved: false, branchEdited: false }), '/r', 'main', 'pre-commit-check.sh')).toBeUndefined()
+})
+
+test('a check script that only main changed does not blame the branch', async () => {
+  const note = await runCheck(engine({ mainMoved: true, branchEdited: false }), '/r', 'main', 'pre-commit-check.sh')
+  expect(note).not.toContain('This branch changes')
+  expect(note).toContain('differs from the version on main')
 })
 
 test('a check script that the branch changed still gives the warning', async () => {

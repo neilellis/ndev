@@ -27,6 +27,7 @@ The page has a dark design when it has a `prefers-color-scheme: dark` rule, a `c
 - `--widths 360,600,1024` adds Chromium rows at these widths (height 900), named `360px`, `600px` and `1024px`. `--only` removes them unless it names them.
 - Add a row 1 px each side of each breakpoint in the project CSS (for example 767 and 768). Most breakpoint defects are at the edge.
 - Add 600 for a large phone in landscape or a small foldable.
+- `--viewports phone:390x844,desktop:1440x900` replaces the default rows with these Chromium rows. Proof uses it with its `viewports` setting, `--scale 1` and `--jpeg 60`, so that each image is small.
 - For a quick run, use `--only "iPhone SE,iPad Mini,Laptop"`: the narrowest phone, the first tablet and one desktop.
 
 ## Routes

@@ -22,6 +22,7 @@ You implement **one self-contained task** end to end, in the temporary worktree 
 - **Do not write comments in code.** The only exception is a fact that took a lot of research or trial and error to find; if you are not sure, leave it out. The rule is `${CLAUDE_PLUGIN_ROOT}/kb/comments.md`.
 - **Verify before you claim done.** Run the relevant suites again, fresh, with 0 failures. Read the exit status yourself.
 - **Finish as a PR.** Never merge. Never push to the default branch. Every commit carries the commit trailer that the repository or session requires.
+- **The PR body has a `## Lessons` section.** State what the work taught, or say that there is none and why. Proof fails a PR without it (`${CLAUDE_PLUGIN_ROOT}/kb/proof.md`). When the project has `.github/workflows/ndev-proof.yml`, run `ndev proof run --local` before the PR goes ready.
 - **Open ONE PR, never a second.** A related discovery of any size becomes a sub-issue that your PR carries: comment `Carried by #<pr>` on it, move its card to In progress, add `Closes #<child>` to your PR body, and give it to a `tdd-implementer` teammate on your branch. An unrelated discovery becomes a plain issue with no PR.
 - Follow the repository's `CLAUDE.md` for the build, test, typecheck and lint commands.
 

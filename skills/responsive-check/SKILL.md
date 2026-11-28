@@ -27,6 +27,9 @@ WEB_DIR=<web app dir> node <this skill>/scripts/responsive-check.mjs --base http
 | `--out DIR` | The output folder. Default `.responsive-check`. Add it to `.gitignore`. |
 | `--only "iPhone SE,iPad Mini"` | Run only the viewports with these names. |
 | `--widths 360,768,1440` | Add Chromium rows at these widths, named `360px` and so on. With `--only`, name them there too. |
+| `--viewports phone:390x844,desktop:1440x900` | Run only these Chromium rows, in place of the defaults. `--widths` still adds its rows. |
+| `--scale 1` | The device scale of every row. Use 1 for small screenshots. |
+| `--jpeg 60` | JPEG screenshots at this quality (1 to 100), in place of PNG. |
 | `--schemes light` | Run one scheme. Default `light,dark`. |
 | `--engine chromium` | Run every row in Chromium (when WebKit is not available). Say so in the result. |
 | `--target 24` / `--target-warn 44` | The touch target error and warning sizes in px. |
