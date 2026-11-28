@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -213,6 +213,33 @@ test('without --pr or --local the command refuses to guess where the images go',
   const result = snapshots(root, ['--out', join(base, 'out')])
   assert.equal(result.status, 2, result.all)
   assert.match(result.json.error.message, /Give --pr <n> to push the images, or --local to keep them in --out\./)
+})
+
+test('--pr waits for a pre-push hook that runs past the network allowance and within its guard.timeoutSeconds (#317)', t => {
+  const port = freePort()
+  const both = config(port, { routes: ['/'] })
+  const { base, root, origin } = repository(t, { base: both, head: both })
+  const hook = join(root, '.git/hooks/pre-push')
+  writeFileSync(hook, '#!/bin/sh\nsleep 3\n')
+  chmodSync(hook, 0o755)
+  git(root, 'config', 'guard.timeoutSeconds', '10')
+  const result = snapshots(root, ['--pr', '7', '--out', join(base, 'out7')], { NDEV_PROOF_PUSH_MS: '1000' })
+  assert.equal(result.status, 0, result.all)
+  assert.equal(spawnSync('git', ['--git-dir', origin, 'rev-parse', 'ndev-proof-assets'], { encoding: 'utf8' }).stdout.trim(), result.json.result.assets.commit)
+})
+
+test('--pr stopped past the limit of the pre-push hook names the hook and its guard.timeoutSeconds', t => {
+  const port = freePort()
+  const both = config(port, { routes: ['/'] })
+  const { base, root } = repository(t, { base: both, head: both })
+  const hook = join(root, '.git/hooks/pre-push')
+  writeFileSync(hook, '#!/bin/sh\nsleep 4\n')
+  chmodSync(hook, 0o755)
+  git(root, 'config', 'guard.timeoutSeconds', '1')
+  const result = snapshots(root, ['--pr', '7', '--out', join(base, 'out7')], { NDEV_PROOF_PUSH_MS: '500' })
+  assert.equal(result.status, 1, result.all)
+  assert.ok(result.all.includes(hook), result.all)
+  assert.match(result.all, /guard\.timeoutSeconds 1\b/)
 })
 
 test('--servers starts only the named dev servers, and refuses a name that .ndev.json does not list', t => {

@@ -670,3 +670,66 @@ test('a human goto out of the interview drops the open chat round, and refuses w
   assert.equal(after.rounds.length, 1)
   assert.equal(after.interviewRev, 4)
 })
+
+function slowPrePushHook(p, seconds, timeoutSeconds) {
+  const hook = join(p.work, '.git/hooks/pre-push')
+  const log = join(p.work, '..', 'hook-checks.log')
+  writeFileSync(hook, `#!/bin/sh\necho "INFO: running scripts/whole-tree-checks.sh (log: ${log})"\nsleep ${seconds}\n`)
+  chmodSync(hook, 0o755)
+  if (timeoutSeconds !== undefined) git(p.work, 'config', 'guard.timeoutSeconds', String(timeoutSeconds))
+  return { hook, log }
+}
+
+test('checkpoint waits for a pre-push hook that runs past the push time but within guard.timeoutSeconds', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  slowPrePushHook(p, 3, 10)
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  const saved = p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py'], { NDEV_FLOW_PUSH_MS: '1000' })
+  ok(saved, 'checkpoint')
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), git(p.work, 'rev-parse', 'origin/12-add-thing'), 'checkpoint pushed')
+})
+
+test('a push stopped past the hook limit names the pre-push hook, its limit and its log', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  const { hook, log } = slowPrePushHook(p, 4, 1)
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  const r = p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py'], { NDEV_FLOW_PUSH_MS: '500' })
+  assert.equal(r.status, 1, r.all)
+  assert.ok(r.all.includes(hook), `names the hook ${hook}:\n${r.all}`)
+  assert.match(r.all, /guard\.timeoutSeconds 1\b/)
+  assert.ok(r.all.includes(log), `names the hook's log ${log}:\n${r.all}`)
+  assert.match(r.all, /ndev-git-push\.log/)
+  assert.match(r.all, /Only git was stopped/)
+})
+
+test('checkpoint refuses a guard.timeoutSeconds that is not a whole number and names the repair', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  git(p.work, 'config', 'guard.timeoutSeconds', 'soon')
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  const r = p.flow(['checkpoint', '--message', 'Add a', '--files', 'a.py'])
+  assert.equal(r.status, 1, r.all)
+  assert.match(r.all, /guard\.timeoutSeconds is 'soon'/)
+  assert.match(r.all, /config guard\.timeoutSeconds 2700/)
+})
+
+test('finishedDevelopment whose push was stopped resumes when run again with the same arguments, with no second commit', () => {
+  const p = project()
+  ok(p.flow(['started', '--issue', '12', '--short-name', 'add-thing']), 'started')
+  ok(p.flow(['finishedInterview']), 'finishedInterview')
+  slowPrePushHook(p, 3, 1)
+  writeFileSync(join(p.work, 'a.py'), 'a = 1\n')
+  const args = ['finishedDevelopment', '--message', 'Add a', '--files', 'a.py']
+  const stopped = p.flow(args, { NDEV_FLOW_PUSH_MS: '500' })
+  assert.equal(stopped.status, 1, stopped.all)
+  assert.match(stopped.all, /was stopped after/)
+  const made = git(p.work, 'rev-parse', 'HEAD')
+  assert.equal(p.record().state, 'developing')
+  git(p.work, 'config', 'guard.timeoutSeconds', '10')
+  ok(p.flow(args, { NDEV_FLOW_PUSH_MS: '1000' }), 'finishedDevelopment again')
+  assert.equal(git(p.work, 'rev-parse', 'HEAD'), made, 'no second commit')
+  assert.equal(git(p.work, 'rev-parse', 'origin/12-add-thing'), made, 'the commit is pushed')
+  assert.equal(p.record().state, 'reviewing')
+})

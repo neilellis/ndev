@@ -10,6 +10,8 @@ const BRANCH = 'ndev-proof-assets'
 const FETCHED = 'refs/ndev-proof/assets'
 const QUALITY = 60
 const PUSH_ATTEMPTS = 3
+const PUSH_MS = 300_000
+const HOOK_SECONDS = 2700
 const REJECTED = /\[rejected\]|non-fast-forward|fetch first|stale info|cannot lock ref/
 const AUTHOR = { GIT_AUTHOR_NAME: 'ndev proof', GIT_AUTHOR_EMAIL: 'ndev-proof@users.noreply.github.com', GIT_COMMITTER_NAME: 'ndev proof', GIT_COMMITTER_EMAIL: 'ndev-proof@users.noreply.github.com' }
 const matrixScript = () => process.env.NDEV_PROOF_MATRIX || join(releaseRoot, 'skills/responsive-check/scripts/responsive-check.mjs')
@@ -137,7 +139,20 @@ export function repository() {
   return match[1]
 }
 
+function prePushHook(root) {
+  const read = run('git', ['-C', root, 'config', '--get', 'guard.timeoutSeconds'])
+  if (read.status > 1) throw new CliError(1, `git config --get guard.timeoutSeconds exited ${read.status} in ${root}: ${`${read.stdout}${read.stderr}`.trim()}. Nothing was pushed.`)
+  const value = read.stdout.trim()
+  if (read.status === 0 && !/^\d+$/.test(value)) throw new CliError(1, `guard.timeoutSeconds is '${value}', not a whole number of seconds, so ndev proof snapshots cannot tell how long the pre-push hook may run. Nothing was pushed.`, { repair: `git -C ${root} config guard.timeoutSeconds ${HOOK_SECONDS}` })
+  const seconds = read.status === 0 ? Number(value) : HOOK_SECONDS
+  const allowance = process.env.NDEV_PROOF_PUSH_MS ? Number(process.env.NDEV_PROOF_PUSH_MS) : PUSH_MS
+  if (!Number.isInteger(allowance) || allowance <= 0) throw new CliError(1, `NDEV_PROOF_PUSH_MS is '${process.env.NDEV_PROOF_PUSH_MS}', not a whole number of milliseconds above 0.`, { repair: 'Unset NDEV_PROOF_PUSH_MS, or set it to a whole number of milliseconds.' })
+  const path = resolve(root, git(root, ['rev-parse', '--git-path', 'hooks/pre-push']))
+  return { path, seconds, limitMs: seconds * 1000 + allowance }
+}
+
 function pushAssets(root, prefix, files, message) {
+  const hook = prePushHook(root)
   for (let attempt = 1; ; attempt++) {
     const remote = run('git', ['-C', root, 'ls-remote', '--heads', 'origin', BRANCH])
     if (remote.status !== 0) throw new CliError(1, `git ls-remote --heads origin ${BRANCH} exited ${remote.status}: ${`${remote.stdout}${remote.stderr}`.trim()}`, { repair: `Check the origin remote and its credentials: git -C ${root} remote -v` })
@@ -152,8 +167,9 @@ function pushAssets(root, prefix, files, message) {
       git(root, ['update-index', '--add', '--index-info'], { env, input: files.map((file, index) => `100644 blob ${blobs[index]}\t${prefix}${file.path}`).join('\n') })
       const tree = git(root, ['write-tree'], { env })
       const commit = git(root, ['commit-tree', tree, ...(parent ? ['-p', parent] : []), '-m', message], { env: { ...process.env, ...AUTHOR } })
-      const push = run('git', ['-C', root, 'push', '--quiet', 'origin', `${commit}:refs/heads/${BRANCH}`], { timeout: 300_000 })
+      const push = run('git', ['-C', root, 'push', '--quiet', 'origin', `${commit}:refs/heads/${BRANCH}`], { timeout: hook.limitMs })
       if (push.status === 0) return commit
+      if (push.status === 124) throw new CliError(1, `git push origin ${commit}:refs/heads/${BRANCH} was stopped after ${hook.limitMs / 1000} s. ${existsSync(hook.path) ? `The pre-push hook ${hook.path} may run for guard.timeoutSeconds ${hook.seconds} s, and the push had ${hook.limitMs / 1000 - hook.seconds} s more for the network.` : `There is no pre-push hook at ${hook.path}, so the push itself did not finish.`} Its output: ${`${push.stdout}${push.stderr}`.trim() || '(none)'}`, { repair: `If the hook needs longer on this machine, raise git -C ${root} config guard.timeoutSeconds. Stop any process of the hook that still runs, then run ndev proof snapshots again.` })
       const output = `${push.stdout}${push.stderr}`.trim()
       if (attempt < PUSH_ATTEMPTS && REJECTED.test(output)) continue
       throw new CliError(1, `git push origin ${commit}:refs/heads/${BRANCH} exited ${push.status} (attempt ${attempt} of ${PUSH_ATTEMPTS}): ${output}`, {

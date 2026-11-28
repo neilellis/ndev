@@ -12,7 +12,7 @@ import type { Mode, WorkflowLive } from '../../types'
 import { readSettings } from '../worktree-settings'
 import { RECORD } from '../worktree-stacks'
 import { isComponent, reviewText } from '../component-files'
-import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, isOrcaChat, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
+import { type Pr, CHECK_DIR, CheckFailed, MARKER, Refuse, defaultBranch, isOrcaChat, markReady, repoFromOrigin, gh, ghLines, ghOne, changedPaths, comment, git, gitOut, head, missingChecks, must, newFeedback, orca, paths, porcelain, pushBranch, raiseAlert, readChecks, readPr, readPrHealth, run, runCheck, said, withdrawAlert } from './effects'
 import type { Check, PrHealth, Ran } from './effects'
 import { runningNow, withStep, withToolProgress } from './progress'
 import { CHANGE_TYPES, inferChangeTypes, isDocsOnly, isDocsPath, isUserProsePath, isWebPath, requiredSmokeTypes, reviewerBrief, type ChangeType } from './change-types'
@@ -512,7 +512,7 @@ async function commitAndPush($: EngineInterface, wf: Workflow, tool: string, mes
     if (note) notes.push(note)
     const mapNote = await writeChangeMap($, wf, declared)
     if (mapNote) notes.push(mapNote)
-    const pushed = await withStep($, 'git push', 300_000, () => run($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 }))
+    const pushed = await pushBranch($, root, branch, ['-u', 'origin', `HEAD:refs/heads/${branch}`])
     if (pushed.exitCode !== 0) {
       if (!/\[rejected\]|non-fast-forward|fetch first/.test(`${pushed.stdout}\n${pushed.stderr}`)) throw new Refuse(`git push of ${branch} exited ${pushed.exitCode}: ${said(pushed)}\nThe commit is local. Fix the cause and call the tool again.`)
       notes.push(await pushRebased($, root, branch, said(pushed)))
@@ -547,7 +547,7 @@ async function pushRebased($: EngineInterface, root: string, branch: string, rej
     const subjects = (await read('log', '--no-walk', '--format=%H %s', ...kept)).trim()
     throw new Refuse(`git push of ${branch} was rejected: the remote branch is at ${lease.slice(0, 8)} and holds ${kept.length} commit(s) that HEAD lacks, whose change is not in HEAD and that no other remote branch holds:\n${subjects}\nThe commit is local, and nothing was forced. Repair: git -C ${root} pull --rebase origin ${branch} to take them, then call the tool again. If they are meant to go, ask the human.`)
   }
-  const forced = await withStep($, 'git push', 300_000, () => run($, ['git', 'push', '-u', `--force-with-lease=refs/heads/${branch}:${lease}`, 'origin', `HEAD:refs/heads/${branch}`], { cwd: root, timeoutMs: 300_000 }))
+  const forced = await pushBranch($, root, branch, ['-u', `--force-with-lease=refs/heads/${branch}:${lease}`, 'origin', `HEAD:refs/heads/${branch}`])
   if (forced.exitCode !== 0) throw new Refuse(`git push --force-with-lease of ${branch} (expected remote ${lease.slice(0, 8)}) exited ${forced.exitCode}: ${said(forced)}\nThe commit is local. The remote branch may have moved since the fetch: call the tool again.`)
   return `The remote branch ${branch} was behind a rebase: each of its ${only.length} commit(s) that HEAD lacks (${only.map(c => c.slice(0, 8)).join(', ') || 'none'}) has its change in HEAD or stays on another remote branch, so the push replaced ${lease.slice(0, 8)} with --force-with-lease.`
 }
@@ -678,7 +678,8 @@ async function setUpPr($: EngineInterface, wf: Workflow, title: string, shared?:
   let note: string | undefined
   if (remote.exitCode !== 0 || remote.stdout.trim() !== await head(wf.root, $)) {
     note = await checked($, wf, 'pre-push-check.sh', [], wf.changeTypes ?? [])
-    await must($, ['git', 'push', '-u', 'origin', `HEAD:refs/heads/${wf.branch}`], { cwd: wf.root, timeoutMs: 300_000 })
+    const pushed = await pushBranch($, wf.root, wf.branch, ['-u', 'origin', `HEAD:refs/heads/${wf.branch}`])
+    if (pushed.exitCode !== 0) throw new Refuse(`git push of ${wf.branch} exited ${pushed.exitCode} in ${wf.root}: ${said(pushed)}\nThe commit is local. Fix the cause and call the tool again.`)
   }
   const { gitDir } = await paths($, wf.root)
   const bodyFile = `${gitDir}/ndev-pr-body.md`
