@@ -79,6 +79,7 @@ export interface ArchitectureMeta {
 export const GUIDE_ORDER = [
   "installation",
   "project-setup",
+  "proof",
   "workflows",
   "cli",
   "hooks-and-guards",

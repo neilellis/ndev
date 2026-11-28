@@ -12,6 +12,7 @@ import { proofSettingsAt } from './proof-settings.mjs'
 
 const COMPLEX_LABEL = 'proof:complex'
 const LOCK_FILE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock|Pipfile\.lock|Gemfile\.lock|composer\.lock|go\.sum|mix\.lock)$/
+const CI_CONFIG = /^\.github\/workflows\//
 const DOC_FILE = /\.(md|mdx|markdown|rst|adoc)$/i
 const WHITESPACE_SENSITIVE = /\.(py|ya?ml|mk|haml|pug|slim|coffee|nim)$|(^|\/)(Makefile|GNUmakefile)$/
 const RISK_PATHS = [
@@ -200,7 +201,7 @@ export function plan(root, values) {
     lines: counted.reduce((sum, change) => sum + change.lines, 0),
     docsOnly: changed.length > 0 && paths.every(path => DOC_FILE.test(path) && !CODE_FILE.test(path)),
     newExports: newExports(root, base, code),
-    risk: paths.filter(path => !LOCK_FILE.test(path) && !DOC_FILE.test(path) && RISK_PATHS.some(pattern => pattern.test(path))),
+    risk: paths.filter(path => !LOCK_FILE.test(path) && !DOC_FILE.test(path) && !CI_CONFIG.test(path) && RISK_PATHS.some(pattern => pattern.test(path))),
     records: touchedRecords(root, base, paths),
     ui: paths.filter(path => UI_FILE.test(path)),
     code,

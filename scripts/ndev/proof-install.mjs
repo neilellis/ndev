@@ -15,13 +15,15 @@ const ACTIONS = {
 }
 const FRAMEWORKS = [['next', 3000], ['nuxt', 3000], ['astro', 4321], ['@sveltejs/kit', 5173], ['vite', 5173], ['react-scripts', 3000]]
 const LOCKFILES = [['pnpm-lock.yaml', 'pnpm'], ['yarn.lock', 'yarn'], ['package-lock.json', 'npm'], ['npm-shrinkwrap.json', 'npm']]
+const BUN_LOCKFILES = ['bun.lockb', 'bun.lock']
 const INSTALL = {
   npm: ['npm ci'],
+  unlocked: ['npm install'],
   pnpm: ['corepack enable', 'pnpm install --frozen-lockfile'],
   yarn: ['corepack enable', 'yarn install --frozen-lockfile'],
   berry: ['corepack enable', 'yarn install --immutable'],
 }
-const ADD_PLAYWRIGHT = { npm: 'npm install -D playwright', pnpm: 'pnpm add -D playwright', yarn: 'yarn add -D playwright', berry: 'yarn add -D playwright' }
+const ADD_PLAYWRIGHT = { npm: 'npm install -D playwright', unlocked: 'npm install -D playwright', pnpm: 'pnpm add -D playwright', yarn: 'yarn add -D playwright', berry: 'yarn add -D playwright' }
 const REF_REPAIR = 'Pass the ndev commit to pin: --ref $(gh api repos/neilellis/ndev/commits/main --jq .sha)'
 
 function readJson(file) {
@@ -73,30 +75,40 @@ function workspaceDirs(root, manifest) {
 }
 
 function packageManager(root) {
-  if (existsSync(join(root, 'bun.lockb')) || existsSync(join(root, 'bun.lock'))) throw new CliError(1, `${root} uses bun, and the Proof workflow installs dependencies only with npm, pnpm or yarn.`, { repair: 'Use npm, pnpm or yarn for the project, or write .github/workflows/ndev-proof.yml by hand.' })
+  if (BUN_LOCKFILES.some(file => existsSync(join(root, file)))) throw new CliError(1, `${root} uses bun, and the Proof workflow installs dependencies only with npm, pnpm or yarn.`, { repair: 'Use npm, pnpm or yarn for the project, or write .github/workflows/ndev-proof.yml by hand.' })
   const found = LOCKFILES.find(([file]) => existsSync(join(root, file)))
-  if (!found) return 'npm'
-  if (found[1] === 'yarn' && (existsSync(join(root, '.yarnrc.yml')) || /^yarn@([2-9]|\d{2,})/.test(readJson(join(root, 'package.json')).packageManager ?? ''))) return 'berry'
+  if (!found) return 'unlocked'
+  const manifest = join(root, 'package.json')
+  if (found[1] === 'yarn' && (existsSync(join(root, '.yarnrc.yml')) || (existsSync(manifest) && /^yarn@([2-9]|\d{2,})/.test(readJson(manifest).packageManager ?? '')))) return 'berry'
   return found[1]
 }
 
-function serverIn(root, dir, manifest, manager) {
+function serverIn(dir, manifest, manager, installDir) {
   const deps = { ...manifest.dependencies, ...manifest.devDependencies }
   const framework = FRAMEWORKS.find(([name]) => deps[name])
   if (!framework) return null
   const script = manifest.scripts?.dev ? 'dev' : manifest.scripts?.start ? 'start' : null
   if (!script) return null
   const port = Number(manifest.scripts[script].match(/(?:--port|-p)[ =](\d+)/)?.[1] ?? framework[1])
-  const server = { command: `${manager === 'berry' ? 'yarn' : manager} run ${script}`, ...(dir === '.' ? {} : { cwd: dir }), port, ready: `http://localhost:${port}/`, routes: ['/'] }
-  return { name: dir === '.' ? 'web' : basename(dir), dir, framework: framework[0], server, playwright: Boolean(deps.playwright || deps['@playwright/test']) }
+  const server = { command: `${{ berry: 'yarn', unlocked: 'npm' }[manager] ?? manager} run ${script}`, ...(dir === '.' ? {} : { cwd: dir }), port, ready: `http://localhost:${port}/`, routes: ['/'] }
+  return { name: dir === '.' ? 'web' : basename(dir), dir, framework: framework[0], server, manager, install: installDir, playwright: Boolean(deps.playwright || deps['@playwright/test']) }
+}
+
+function standaloneDirs(root, members) {
+  return readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules' && !members.includes(entry.name))
+    .map(entry => entry.name)
+    .sort()
+    .filter(dir => existsSync(join(root, dir, 'package.json')) && [...LOCKFILES.map(([file]) => file), ...BUN_LOCKFILES].some(file => existsSync(join(root, dir, file))))
 }
 
 function detect(root, manager) {
   const file = join(root, 'package.json')
-  if (!existsSync(file)) return []
-  const manifest = readJson(file)
-  const found = [serverIn(root, '.', manifest, manager)]
-  for (const dir of workspaceDirs(root, manifest)) found.push(serverIn(root, dir, readJson(join(root, dir, 'package.json')), manager))
+  const manifest = existsSync(file) ? readJson(file) : {}
+  const members = existsSync(file) ? workspaceDirs(root, manifest) : []
+  const found = existsSync(file) ? [serverIn('.', manifest, manager, '.')] : []
+  for (const dir of members) found.push(serverIn(dir, readJson(join(root, dir, 'package.json')), manager, '.'))
+  for (const dir of standaloneDirs(root, members)) found.push(serverIn(dir, readJson(join(root, dir, 'package.json')), packageManager(join(root, dir)), dir))
   const servers = found.filter(Boolean)
   for (const server of servers) {
     const same = servers.filter(other => other.name === server.name)
@@ -119,12 +131,20 @@ function secretState(slug) {
   return { state: result.stdout.split('\n').map(line => line.trim()).includes('ANTHROPIC_API_KEY') ? 'set' : 'missing' }
 }
 
-function workflow({ ref, servers, manager }) {
-  const install = servers.length === 0 ? [] : [
-    '      - name: Install the project dependencies',
-    ...(INSTALL[manager].length === 1 ? [`        run: ${INSTALL[manager][0]}`] : ['        run: |', ...INSTALL[manager].map(line => `          ${line}`)]),
-    '      - name: Install the browser for the snapshots',
-    '        run: npx playwright install --with-deps chromium',
+function step(name, lines, dir) {
+  return [
+    `      - name: ${name}`,
+    ...(lines.length === 1 ? [`        run: ${lines[0]}`] : ['        run: |', ...lines.map(line => `          ${line}`)]),
+    ...(dir === '.' ? [] : [`        working-directory: ${dir}`]),
+  ]
+}
+
+function workflow({ ref, servers, root }) {
+  const installs = [...new Map([...(root ? [['.', root]] : []), ...servers.map(server => [server.install, server.manager])]).entries()]
+  const browsers = [...new Set(servers.map(server => server.dir))]
+  const install = [
+    ...installs.flatMap(([dir, manager]) => step(`Install the dependencies${dir === '.' ? '' : ` in ${dir}`}`, INSTALL[manager], dir)),
+    ...browsers.flatMap(dir => step(`Install the browser for the snapshots${dir === '.' ? '' : ` of ${dir}`}`, ['npx playwright install --with-deps chromium'], dir)),
   ]
   return [
     'name: ndev proof',
@@ -214,15 +234,16 @@ function planWorkflow(root, text, force, dryRun) {
   return { path, text, action: 'update' }
 }
 
-function describe({ root, slug, servers, config, file, secret, playwright, manager, dryRun }) {
+function describe({ root, slug, servers, config, file, secret, playwright, unlocked, dryRun }) {
   const lines = [`${dryRun ? 'Would install' : 'Installed'} Proof in ${root}.`]
   lines.push(file.action === 'differs' ? `${file.path}: differs from the workflow that this ndev writes; --force would replace it.` : `${file.path}: ${file.action}${dryRun && file.action !== 'unchanged' ? ' (dry run)' : ''}.`)
+  for (const dir of unlocked) lines.push(`${dir === '.' ? root : join(root, dir)} has no lockfile, so the workflow runs npm install, and each run can get other versions. Commit a lockfile to pin them: npm install${dir === '.' ? '' : ` in ${dir}`}, then commit package-lock.json.`)
   if (servers.length === 0) lines.push('No dev server found: no package.json script runs a known web framework, so the visual check is skipped.')
   for (const found of servers) lines.push(`Dev server ${found.name} (${found.framework}): ${found.server.command}${found.server.cwd ? ` in ${found.server.cwd}` : ''}, ready at ${found.server.ready}, routes ${found.server.routes.join(', ')}.`)
   if (config.kept) lines.push(`${config.path} already has devServers, so they were kept.`)
   if (config.action === 'pending') lines.push(`${config.path}: pending. Confirm the dev servers above, then run ndev proof install ${root} --yes to write them and the proof section.`)
   else lines.push(`${config.path}: ${config.action}${dryRun && config.action !== 'unchanged' ? ' (dry run)' : ''}.`)
-  for (const dir of playwright.missing) lines.push(`Playwright is not a dependency${dir === '.' ? '' : ` of ${dir}`}, and the snapshots need it: ${dir === '.' ? '' : `cd ${dir} && `}${ADD_PLAYWRIGHT[manager]}`)
+  for (const { dir, manager } of servers.filter(server => playwright.missing.includes(server.dir))) lines.push(`Playwright is not a dependency${dir === '.' ? '' : ` of ${dir}`}, and the snapshots need it: ${dir === '.' ? '' : `cd ${dir} && `}${ADD_PLAYWRIGHT[manager]}`)
   if (secret.state === 'set') lines.push('The ANTHROPIC_API_KEY secret is set.')
   else if (secret.state === 'missing') lines.push(`The ANTHROPIC_API_KEY secret is not a repository secret of ${slug}. An organization secret is not listed here; if there is none, set it: gh secret set ANTHROPIC_API_KEY --repo ${slug}`)
   else lines.push(`The ANTHROPIC_API_KEY secret could not be checked: ${secret.reason}. Check it: gh secret list${slug ? ` --repo ${slug}` : ''}`)
@@ -236,10 +257,11 @@ export function proofInstall(path, values) {
   const manager = packageManager(root)
   const found = detect(root, manager)
   const slug = slugOf(root)
-  const file = planWorkflow(root, workflow({ ref, servers: found, manager }), values.force, values['dry-run'])
+  const file = planWorkflow(root, workflow({ ref, servers: found, root: existsSync(join(root, 'package.json')) ? manager : null }), values.force, values['dry-run'])
   const config = planConfig(root, found, values.yes)
   const playwright = { missing: found.filter(server => !server.playwright).map(server => server.dir) }
   const secret = secretState(slug)
+  const unlocked = [...new Set([...(manager === 'unlocked' && existsSync(join(root, 'package.json')) ? ['.'] : []), ...found.filter(server => server.manager === 'unlocked').map(server => server.install)])]
   if (!values['dry-run']) {
     if (file.action === 'create' || file.action === 'update') {
       mkdirSync(dirname(file.path), { recursive: true })
@@ -253,6 +275,6 @@ export function proofInstall(path, values) {
     workflow: { path: file.path, action: file.action },
     config: { path: config.path, action: config.action },
     dryRun: Boolean(values['dry-run']),
-    text: describe({ root, slug, servers: found, config, file, secret, playwright, manager, dryRun: values['dry-run'] }),
+    text: describe({ root, slug, servers: found, config, file, secret, playwright, unlocked, dryRun: values['dry-run'] }),
   }
 }

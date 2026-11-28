@@ -116,15 +116,23 @@ test('a Vite project with pnpm gets its port from the script, and the missing Pl
   assert.match(result.json.result.text, /gh secret set ANTHROPIC_API_KEY --repo acme\/web/)
 })
 
-test('a project with no web app gets the workflow with no dev server, install or browser step', t => {
+test('a project with no web app installs its dependencies for the tests and the model check, with no dev server or browser step', t => {
   const repo = project(t, library)
   const result = install(repo, ['--yes'])
   assert.equal(result.status, 0, JSON.stringify(result.json))
   assert.equal(config(repo.root).devServers, undefined)
   assert.deepEqual(config(repo.root).proof, {})
   const workflow = read(repo.root, WORKFLOW)
-  assert.doesNotMatch(workflow, /npm ci|playwright/)
+  assert.match(workflow, /run: npm ci\n/)
+  assert.doesNotMatch(workflow, /playwright/)
   assert.deepEqual(result.json.result.servers, [])
+})
+
+test('a project with no package.json gets no install step', t => {
+  const repo = project(t, { 'main.py': 'print(1)\n' })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.doesNotMatch(read(repo.root, WORKFLOW), /Install the dependencies|playwright/)
 })
 
 test('--dry-run writes nothing and says what it would write', t => {
@@ -265,4 +273,89 @@ test('two workspace apps with one folder name stop the install, naming both', t 
   assert.match(result.json.error.message, /apps\/web/)
   assert.match(result.json.error.message, /packages\/web/)
   assert.ok(!existsSync(join(repo.root, WORKFLOW)))
+})
+
+test('a web app in a subfolder with its own lockfile is found and installed in that folder', t => {
+  const repo = project(t, {
+    'package.json': { name: 'tool', scripts: { test: 'node --test' } },
+    'package-lock.json': { lockfileVersion: 3 },
+    'site/package.json': { name: 'site', scripts: { dev: 'next dev' }, dependencies: { next: '16.0.0' }, devDependencies: { playwright: '1.50.0' } },
+    'site/pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+    'notes/package.json': { name: 'notes', scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } },
+  })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.deepEqual(config(repo.root).devServers, { site: { command: 'pnpm run dev', cwd: 'site', port: 3000, ready: 'http://localhost:3000/', routes: ['/'] } })
+  const workflow = read(repo.root, WORKFLOW)
+  assert.match(workflow, /pnpm install --frozen-lockfile\n\s+working-directory: site/)
+  assert.match(workflow, /npx playwright install --with-deps chromium\n\s+working-directory: site/)
+  assert.match(workflow, /run: npm ci\n(?!\s+working-directory)/)
+  assert.equal(workflow.match(/playwright install/g).length, 1)
+})
+
+test('a subfolder app with no Playwright gets the add command of its own package manager', t => {
+  const repo = project(t, {
+    'site/package.json': { name: 'site', scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } },
+    'site/yarn.lock': '# yarn lockfile v1\n',
+  })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.deepEqual(result.json.result.playwright.missing, ['site'])
+  assert.match(result.json.result.text, /cd site && yarn add -D playwright/)
+  const workflow = read(repo.root, WORKFLOW)
+  assert.match(workflow, /yarn install --frozen-lockfile\n\s+working-directory: site/)
+  assert.doesNotMatch(workflow, /npm ci/)
+})
+
+test('a workspace member with its own lockfile is installed at the root, once', t => {
+  const repo = project(t, {
+    'package.json': { name: 'mono', private: true, workspaces: ['apps/*'] },
+    'package-lock.json': { lockfileVersion: 3 },
+    'apps/web/package.json': { name: 'web', scripts: { dev: 'next dev' }, dependencies: { next: '16.0.0' } },
+    'apps/web/package-lock.json': { lockfileVersion: 3 },
+  })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  const workflow = read(repo.root, WORKFLOW)
+  assert.equal(workflow.match(/npm ci/g).length, 1)
+  assert.doesNotMatch(workflow, /npm ci\n\s+working-directory/)
+})
+
+test('a subfolder app named like the root app stops the install with both folders named', t => {
+  const repo = project(t, {
+    'package.json': { name: 'web', scripts: { dev: 'next dev' }, dependencies: { next: '16.0.0' } },
+    'package-lock.json': { lockfileVersion: 3 },
+    'web/package.json': { name: 'web', scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } },
+    'web/package-lock.json': { lockfileVersion: 3 },
+  })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 1)
+  assert.match(result.json.error.message, /\. and web would both be named "web"/)
+})
+
+test('a subfolder app that uses bun stops the install and names the folder', t => {
+  const repo = project(t, {
+    'site/package.json': { name: 'site', scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } },
+    'site/bun.lock': '{}\n',
+  })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 1)
+  assert.match(result.json.error.message, /site uses bun/)
+})
+
+test('a root yarn.lock with no package.json does not stop the install', t => {
+  const repo = project(t, { 'yarn.lock': '# yarn lockfile v1\n', 'main.py': 'print(1)\n' })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, result.stderr)
+  assert.doesNotMatch(read(repo.root, WORKFLOW), /Install the dependencies/)
+})
+
+test('a root package.json with no lockfile installs with npm install, and the result says why', t => {
+  const repo = project(t, { 'package.json': { name: 'lib', scripts: { test: 'node --test' } } })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  const workflow = read(repo.root, WORKFLOW)
+  assert.match(workflow, /run: npm install\n/)
+  assert.doesNotMatch(workflow, /npm ci/)
+  assert.match(result.json.result.text, /no lockfile/)
 })

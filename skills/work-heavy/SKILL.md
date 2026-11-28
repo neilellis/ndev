@@ -149,7 +149,10 @@ code checks. For a code change, the dead-code sweep is part of final verificatio
 Batch small dependent issues into one branch and PR, in dependency order. Keep unrelated issues and
 risky schema, auth or migration work separate. A related discovery becomes a linked sub-issue that
 this PR carries. An unrelated discovery becomes a separate issue, with no PR. Check the closing
-references again after every PR body edit. Details: `references/prs.md`.
+references again after every PR body edit. The PR body has a `## Lessons` section: what the work
+taught, or that there is none and why. When the project has `.github/workflows/ndev-proof.yml`, run
+`ndev proof run --local` before the PR leaves draft. Details: `references/prs.md` and
+`${CLAUDE_PLUGIN_ROOT}/kb/proof.md`.
 
 ## Excuses
 
