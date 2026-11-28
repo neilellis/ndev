@@ -211,3 +211,24 @@ test('proof limits merge each tier with its defaults', t => {
   const { main } = repository(t, { proof: { limits: { standard: { budget: 1 } } } })
   assert.deepEqual(proofSettingsAt(main, 'main').limits, { standard: { turns: 40, budget: 1 }, complex: { turns: 100, budget: 10 } })
 })
+
+test('in GitHub Actions a dev server never sees the credentials of the Proof job', t => {
+  const tree = worktree(t, { devServers: { web: { command: 'env > envdump; touch ready.flag; sleep 30', port: 4996, ready: 'ready.flag', timeout: 10 } } })
+  const secrets = { ANTHROPIC_API_KEY: 'k', GH_TOKEN: 'g', GITHUB_TOKEN: 'h', ACTIONS_RUNTIME_TOKEN: 'r', ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'i', ACTIONS_ID_TOKEN_REQUEST_URL: 'u', ACTIONS_CACHE_URL: 'c', ACTIONS_RESULTS_URL: 'r', CLAUDE_CODE_OAUTH_TOKEN: 'o', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.extraheader', GIT_CONFIG_VALUE_0: 'AUTHORIZATION: basic x' }
+  const result = spawnSync(executable, ['project', 'dev-servers', 'start', 'web', '--json'], { cwd: tree, encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...secrets, KEEP_ME: 'yes', GITHUB_ACTIONS: 'true' } })
+  assert.equal(result.status, 0, result.stderr + result.stdout)
+  t.after(() => stop(JSON.parse(result.stdout).result.pid))
+  const names = readFileSync(join(tree, 'envdump'), 'utf8').split('\n').map(line => line.split('=')[0])
+  assert.ok(names.includes('KEEP_ME'))
+  for (const name of Object.keys(secrets)) assert.ok(!names.includes(name), `${name} reached the dev server`)
+})
+
+test('outside GitHub Actions a dev server keeps the developer token', t => {
+  const tree = worktree(t, { devServers: { web: { command: 'env > envdump; touch ready.flag; sleep 30', port: 4995, ready: 'ready.flag', timeout: 10 } } })
+  const env = { ...process.env, GH_TOKEN: 'g' }
+  delete env.GITHUB_ACTIONS
+  const result = spawnSync(executable, ['project', 'dev-servers', 'start', 'web', '--json'], { cwd: tree, encoding: 'utf8', timeout: 60_000, env })
+  assert.equal(result.status, 0, result.stderr + result.stdout)
+  t.after(() => stop(JSON.parse(result.stdout).result.pid))
+  assert.ok(readFileSync(join(tree, 'envdump'), 'utf8').split('\n').includes('GH_TOKEN=g'))
+})

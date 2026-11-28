@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { argsFor, checked, CliError, gitWorkspace, releaseRoot, run } from './common.mjs'
 import { evidence } from './proof-evidence.mjs'
 import { report } from './proof-report.mjs'
+import { proofInstall } from './proof-install.mjs'
 import { proofRun } from './proof-run.mjs'
 import { snapshots } from './proof-snapshots.mjs'
 import { CODE_FILE, DOCS_SITES, REQUIREMENTS, UI_FILE } from './proof-paths.mjs'
@@ -236,6 +237,10 @@ export function runProof([verb, ...argv]) {
   if (verb === 'run') {
     const { values } = argsFor(argv, { pr: { type: 'string' }, local: { type: 'boolean' }, base: { type: 'string' }, out: { type: 'string' }, body: { type: 'string' } }, repair)
     return proofRun(gitWorkspace().root, values)
+  }
+  if (verb === 'install') {
+    const { values, positionals } = argsFor(argv, { 'dry-run': { type: 'boolean' }, yes: { type: 'boolean' }, force: { type: 'boolean' }, ref: { type: 'string' } }, repair, { positionals: 1 })
+    return proofInstall(positionals[0], values)
   }
   throw new CliError(2, `Unknown proof command ${JSON.stringify(verb)}.`, { repair: 'ndev proof --help' })
 }
