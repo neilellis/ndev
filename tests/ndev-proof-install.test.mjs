@@ -266,3 +266,20 @@ test('two workspace apps with one folder name stop the install, naming both', t 
   assert.match(result.json.error.message, /packages\/web/)
   assert.ok(!existsSync(join(repo.root, WORKFLOW)))
 })
+
+test('a web app in a subfolder with its own lockfile is found and installed in that folder', t => {
+  const repo = project(t, {
+    'package.json': { name: 'tool', scripts: { test: 'node --test' } },
+    'package-lock.json': { lockfileVersion: 3 },
+    'site/package.json': { name: 'site', scripts: { dev: 'next dev' }, dependencies: { next: '16.0.0' }, devDependencies: { playwright: '1.50.0' } },
+    'site/pnpm-lock.yaml': "lockfileVersion: '9.0'\n",
+    'notes/package.json': { name: 'notes', scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } },
+  })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.deepEqual(config(repo.root).devServers, { site: { command: 'pnpm run dev', cwd: 'site', port: 3000, ready: 'http://localhost:3000/', routes: ['/'] } })
+  const workflow = read(repo.root, WORKFLOW)
+  assert.match(workflow, /pnpm install --frozen-lockfile\n\s+working-directory: site/)
+  assert.match(workflow, /npx playwright install --with-deps chromium\n\s+working-directory: site/)
+  assert.doesNotMatch(workflow, /npm ci/)
+})
