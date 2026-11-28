@@ -97,6 +97,7 @@ function rowsOf(plan, verdict) {
 function bodyOf(plan, verdict, rows, grid) {
   const detail = row => cell([row.reason, row.evidence.map(cite).join('; ')].filter(Boolean).join(': ') || '-')
   const lines = [MARKER, `## Proof of ${plan.head.slice(0, 12)}`, '']
+  if (plan.notice) lines.push(`Notice: ${safe(plan.notice).replace(/\s*\n\s*/g, ' ')}`, '')
   if (plan.skip) lines.push(`Proof skipped: ${plan.skip.reason}.`, '')
   else if (verdict?.summary) lines.push(safe(verdict.summary.trim()).slice(0, CELL_LIMIT * 2), '')
   lines.push('| | Check | State | Detail |', '|---|---|---|---|')
@@ -185,5 +186,5 @@ export function report(root, values) {
       repair: 'Fix each failed check, or say in the pull request why it does not apply, then push again.', details: result,
     })
   }
-  return { ...result, text: `Proof ${conclusion} for ${plan.head.slice(0, 12)}: ${states}.${posted}` }
+  return { ...result, text: `Proof ${conclusion} for ${plan.head.slice(0, 12)}: ${states}.${posted}${values.local ? `\n\n${body}` : ''}` }
 }
