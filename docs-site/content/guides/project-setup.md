@@ -183,8 +183,8 @@ When the agent fails, stops at a limit, or writes no valid verdict, each check t
 `ndev proof install <project-path> [--dry-run] [--yes] [--force] [--ref <ndev commit>]` sets up Proof in a project:
 
 1. It writes `.github/workflows/ndev-proof.yml`. The workflow pins ndev to one commit (`--ref`, else this ndev's commit on `main`), pins each action to a commit, and pins the Claude Code version. It runs on each pull request from the same repository, with one run at a time for each pull request. The job has only `contents: write`, `pull-requests: write` and `checks: write`.
-2. It finds the dev servers, and installs the dependencies with npm, pnpm or yarn (Yarn 2 and later with `--immutable`): a `dev` or `start` script in `package.json`, or in a workspace package, that runs Next.js, Nuxt, Astro, SvelteKit, Vite or Create React App. The port comes from `--port` or `-p` in the script, else the framework default.
-3. With `--yes`, it adds `devServers` and `proof` to `.ndev.json`. It keeps the dev servers that the file already has. Without `--yes`, it shows the servers and writes no config.
+2. It finds the dev servers, and installs the dependencies with npm, pnpm or yarn (Yarn 2 and later with `--immutable`): a `dev` or `start` script in `package.json`, or in a workspace package, that runs Next.js, Nuxt, Astro, SvelteKit, Vite or Create React App. The port comes from `--port` or `-p` in the script. Else it comes from a literal `server: { port: N }` or `server.port = N` in `vite.config.*` or `astro.config.*` in the app folder. Else it is the framework default. When the config sets the port in another way, the install does not guess: it uses the default.
+3. With `--yes`, it adds `devServers` and `proof` to `.ndev.json`. It keeps the dev servers that the file already has. When it writes and `.neil-dev.json` exists, it moves that file to `.ndev.json` (with `git mv` when git tracks it) and says so. Without `--yes`, it shows the servers and writes no config.
 4. It says whether the `ANTHROPIC_API_KEY` secret is set, and gives the `gh secret set` command when it is not.
 5. It says how to make `ndev proof` a required check: add it as a required status check in a rule at `https://github.com/<owner>/<repo>/settings/rules`.
 
@@ -192,7 +192,7 @@ With `--dry-run`, it writes nothing. A second run changes nothing. When you chan
 
 In GitHub Actions, a dev server does not get the job's credentials. The run removes `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `GH_TOKEN` and `GITHUB_TOKEN` from its environment, and also the Actions tokens and the git credential settings. On your computer, a dev server keeps your environment.
 
-A pull request from a fork gets no run, because its code then runs in the job that holds the key. It gets no `ndev proof` check, so when the check is required, it cannot merge until a maintainer runs Proof on it. The workflow job is named `ndev proof run`, so that only the result of Proof sets the `ndev proof` check.
+A pull request from a fork gets no secret, so Proof skips it. A second job, `ndev proof skipped for a fork`, writes the reason to the job summary. It has no permissions, gets no secret and does not check out the code. The pull request gets no `ndev proof` check. When the check is required, it cannot merge until a maintainer pushes its branch to the repository and Proof runs there. The workflow job is named `ndev proof run`, so that only the result of Proof sets the `ndev proof` check.
 
 ## Project defaults and credentials
 

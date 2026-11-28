@@ -359,3 +359,71 @@ test('a root package.json with no lockfile installs with npm install, and the re
   assert.doesNotMatch(workflow, /npm ci/)
   assert.match(result.json.result.text, /no lockfile/)
 })
+
+test('an install that writes the config moves a tracked .neil-dev.json to .ndev.json with git mv, and says so', t => {
+  const repo = project(t, { ...next, '.neil-dev.json': { github: { repo: 'acme/web' } } })
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  assert.ok(!existsSync(join(repo.root, '.neil-dev.json')))
+  assert.deepEqual(config(repo.root).github, { repo: 'acme/web' })
+  assert.deepEqual(Object.keys(config(repo.root).devServers), ['web'])
+  assert.equal(result.json.result.config.path, join(repo.root, '.ndev.json'))
+  assert.match(git(repo.root, 'status', '--porcelain'), /^R. \.neil-dev\.json -> \.ndev\.json$/m)
+  assert.match(result.json.result.text, /Moved .*\.neil-dev\.json to .*\.ndev\.json/)
+})
+
+test('an install that does not write the config leaves .neil-dev.json where it is', t => {
+  const legacy = { devServers: { web: { command: 'npm run dev', port: 3000, ready: 'http://localhost:3000/', routes: ['/'] } }, proof: {} }
+  for (const [args, files] of [[['--dry-run', '--yes'], next], [[], next], [['--yes'], { ...next, '.neil-dev.json': legacy }]]) {
+    const repo = project(t, { '.neil-dev.json': { github: { repo: 'acme/web' } }, ...files })
+    const result = install(repo, args)
+    assert.equal(result.status, 0, JSON.stringify(result.json))
+    assert.ok(existsSync(join(repo.root, '.neil-dev.json')), args.join(' '))
+    assert.ok(!existsSync(join(repo.root, '.ndev.json')), args.join(' '))
+    assert.doesNotMatch(result.json.result.text, /Moved/)
+  }
+})
+
+const job = (workflow, name) => workflow.match(new RegExp(`^  ${name}:\\n((?:    .*\\n|\\n)*)`, 'm'))?.[1]
+
+test('a pull request from a fork gets a job that says why Proof skipped it, with no secret, permission or checkout', t => {
+  const repo = project(t, next)
+  const result = install(repo, ['--yes'])
+  assert.equal(result.status, 0, JSON.stringify(result.json))
+  const workflow = read(repo.root, WORKFLOW)
+  assert.match(job(workflow, 'proof'), /if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository/)
+  const fork = job(workflow, 'fork')
+  assert.ok(fork, workflow)
+  assert.match(fork, /if: github\.event\.pull_request\.head\.repo\.full_name != github\.repository/)
+  assert.match(fork, /permissions: \{\}/)
+  assert.match(fork, /GITHUB_STEP_SUMMARY/)
+  assert.match(fork, /fork/)
+  assert.match(fork, /ANTHROPIC_API_KEY/)
+  assert.match(fork, /push the branch/)
+  assert.doesNotMatch(fork, /uses:|secrets\.|\$\{\{ github\.event\.pull_request\.(title|body|head\.ref)/)
+  assert.doesNotMatch(fork, /^    name: ndev proof$/m)
+  assert.match(result.json.result.text, /fork.*says why/)
+})
+
+test('a Vite or Astro app with no port in its script takes the literal server port from its framework config', t => {
+  const cases = [
+    [{ 'package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } }, 'vite.config.ts': "import { defineConfig } from 'vite'\nexport default defineConfig({ server: { host: true, port: 4100 } })\n" }, 4100],
+    [{ 'package.json': { scripts: { dev: 'astro dev' }, dependencies: { astro: '5.0.0' } }, 'astro.config.mjs': 'export default {\n  server: {\n    port: 4400,\n  },\n}\n' }, 4400],
+    [{ 'package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } }, 'vite.config.js': 'const config = {}\nconfig.server.port = 4200\nexport default config\n' }, 4200],
+    [{ 'package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '6.0.0' } }, 'vite.config.js': 'export default { server: { port: Number(process.env.PORT) } }\n' }, 5173],
+    [{ 'package.json': { scripts: { dev: 'vite --port 4000' }, devDependencies: { vite: '6.0.0' } }, 'vite.config.js': 'export default { server: { port: 4100 } }\n' }, 4000],
+  ]
+  for (const [files, port] of cases) {
+    const repo = project(t, { ...files, 'package-lock.json': { lockfileVersion: 3 } })
+    const result = install(repo, ['--yes'])
+    assert.equal(result.status, 0, JSON.stringify(result.json))
+    assert.equal(config(repo.root).devServers.web.port, port, JSON.stringify(files))
+    assert.equal(config(repo.root).devServers.web.ready, `http://localhost:${port}/`)
+  }
+})
+
+test('the proof-install skill names no path of one machine', () => {
+  const skill = read(repoRoot, 'skills/proof-install/SKILL.md')
+  assert.doesNotMatch(skill, /\/Users\/|\/home\//)
+  assert.match(skill, /\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/work\/worktree-env\.sh stop/)
+})

@@ -88,5 +88,5 @@ ndev proof run --local --base origin/main --body <file>
 ## Security limits
 
 - The code of the pull request runs in the job that holds `ANTHROPIC_API_KEY` and a token with write access. The install of the dependencies, the requirement checks and the dev servers run that code. Proof removes the key and the tokens from the environment of the dev servers. Code that the pull request changes can still read the files and the memory of the job. Merge only pull requests from people that you trust to run code with your key.
-- A pull request from a fork gets no run. Its code does not get the key. It gets no `ndev proof` check either, so it cannot merge while the check is required. A maintainer can push the branch to the repository to run Proof on it.
+- A pull request from a fork gets no secret, so Proof skips it. Its code does not get the key. A second job writes the reason to the job summary. That job has no permissions and does not check out the code. The pull request gets no `ndev proof` check, so it cannot merge while the check is required. A maintainer can push the branch to the repository to run Proof on it.
 - The workflow pins ndev, Claude Code and each action to a fixed version. Run `ndev proof install` again to move the pins.

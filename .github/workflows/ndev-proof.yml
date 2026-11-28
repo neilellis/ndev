@@ -66,3 +66,19 @@ jobs:
           name: ndev-proof
           path: ${{ runner.temp }}/proof
           if-no-files-found: ignore
+
+  fork:
+    name: ndev proof skipped for a fork
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Say why Proof skipped this pull request
+        run: |
+          {
+            echo "## ndev proof skipped"
+            echo
+            echo "This pull request comes from a fork, so GitHub gives its workflow no ANTHROPIC_API_KEY, and Proof cannot run."
+            echo "To run Proof, a maintainer can push the branch to this repository and open the pull request from there."
+          } >> "$GITHUB_STEP_SUMMARY"
